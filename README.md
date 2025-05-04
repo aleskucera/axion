@@ -2,6 +2,10 @@
 
 **Axion** is a high-performance, differentiable physics simulator designed for robotics research, machine learning, and applications requiring accurate gradients through complex dynamics.
 
+<div align="center">
+    <img src="data/sphere.gif" width="800px"</img>
+</div>
+
 ## Overview
 
 Differentiable simulators are crucial tools for bridging physics-based modeling with gradient-based optimization techniques common in machine learning and robotics. Axion aims to provide a powerful and flexible simulation environment that addresses key challenges in the field, focusing on:
