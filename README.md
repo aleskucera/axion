@@ -1,5 +1,5 @@
 <div align="center">
-    <img src="data/logo_axion.png" width="700px"</img>
+    <img src="data/axion_logo2.png" width="700px"</img>
 </div>
 
 # Axion: A Differentiable Physics Simulator
