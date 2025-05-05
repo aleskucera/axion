@@ -1,6 +1,10 @@
 <div align="center">
     <h1>Axion: A Differentiable Physics Simulator</h1>
+    <br>
     <img src="data/axion_logo2.png" width="700px"</img>
+    <br>
+    <br>
+    <br>
 </div>
 
 **Axion** is a high-performance, differentiable physics simulator designed for robotics research, machine learning, and applications requiring accurate gradients through complex dynamics.
