@@ -4,8 +4,7 @@ from typing import Tuple
 import numpy as np
 import warp as wp
 import warp.context as wpc
-from axion.ncp import scaled_fisher_burmeister_derivatives
-from axion.ncp import scaled_fisher_burmeister_evaluate
+from axion.ncp import scaled_fisher_burmeister
 from warp.sim import ModelShapeGeometry
 from warp.sim import ModelShapeMaterials
 
@@ -19,9 +18,9 @@ def _compute_restitution_coefficient(
     """Computes the average coefficient of restitution for a contact pair."""
     e = 0.0
     if shape_a >= 0 and shape_b >= 0:
-        e = (
-            shape_materials.restitution[shape_a] + shape_materials.restitution[shape_b]
-        ) * 0.5
+        e_a = shape_materials.restitution[shape_a]
+        e_b = shape_materials.restitution[shape_b]
+        e = (e_a + e_b) * 0.5
     elif shape_a >= 0:
         e = shape_materials.restitution[shape_a]
     elif shape_b >= 0:
@@ -63,13 +62,11 @@ def _compute_complementarity_argument(
 
 @wp.func
 def _compute_contact_kinematics(
-    # Per-contact inputs
-    tid: int,
-    contact_point0: wp.array(dtype=wp.vec3),
-    contact_point1: wp.array(dtype=wp.vec3),
-    contact_normal: wp.array(dtype=wp.vec3),
-    contact_shape0: wp.array(dtype=wp.int32),
-    contact_shape1: wp.array(dtype=wp.int32),
+    point_a: wp.vec3,
+    point_b: wp.vec3,
+    normal: wp.vec3,
+    shape_a: wp.int32,
+    shape_b: wp.int32,
     # Per-body inputs
     body_q: wp.array(dtype=wp.transform),
     body_com: wp.array(dtype=wp.vec3),
@@ -80,9 +77,6 @@ def _compute_contact_kinematics(
     Calculates gap, Jacobians, and body indices for a single contact.
     Returns a bool 'is_active' and the computed values.
     """
-    shape_a = contact_shape0[tid]
-    shape_b = contact_shape1[tid]
-
     # Guard against self-contact
     if shape_a == shape_b:
         return False, 0.0, wp.spatial_vector(), wp.spatial_vector(), -1, -1
@@ -98,19 +92,21 @@ def _compute_contact_kinematics(
         thickness_b = geo.thickness[shape_b]
 
     # Compute world-space contact points and lever arms (r_a, r_b)
-    n = contact_normal[tid]
-    p_world_a = contact_point0[tid]
-    p_world_b = contact_point1[tid]
+    n = normal
+    p_world_a = point_a
+    p_world_b = point_b
     r_a = wp.vec3(0.0)
     r_b = wp.vec3(0.0)
 
     if body_a >= 0:
         X_wb_a = body_q[body_a]
-        p_world_a = wp.transform_point(X_wb_a, p_world_a) + thickness_a * n
+        offset_a = thickness_a * normal
+        p_world_a = wp.transform_point(X_wb_a, point_a) - offset_a
         r_a = p_world_a - wp.transform_point(X_wb_a, body_com[body_a])
     if body_b >= 0:
         X_wb_b = body_q[body_b]
-        p_world_b = wp.transform_point(X_wb_b, p_world_b) + thickness_b * n
+        offset_b = thickness_b * normal
+        p_world_b = wp.transform_point(X_wb_b, point_b) + offset_b
         r_b = p_world_b - wp.transform_point(X_wb_b, body_com[body_b])
 
     # Calculate penetration depth (gap)
@@ -128,32 +124,31 @@ def _compute_contact_kinematics(
 
 
 @wp.kernel
-def evaluate_contact_constraint_fully_fused(
-    # All inputs combined
-    body_q: wp.array(dtype=wp.transform),
-    body_com: wp.array(dtype=wp.vec3),
+def contact_constraint(
+    body_q: wp.array(dtype=wp.transform),  # [B, 7]
+    body_com: wp.array(dtype=wp.vec3),  # [B, 3]
     geo: ModelShapeGeometry,
-    body_qd: wp.array(dtype=wp.spatial_vector),
-    body_qd_prev: wp.array(dtype=wp.spatial_vector),
-    shape_body: wp.array(dtype=int),
+    body_qd: wp.array(dtype=wp.spatial_vector),  # [B, 6]
+    body_qd_prev: wp.array(dtype=wp.spatial_vector),  # [B, 6]
+    shape_body: wp.array(dtype=int),  # [B]
     shape_materials: ModelShapeMaterials,
-    contact_count: wp.array(dtype=wp.int32),
-    contact_point0: wp.array(dtype=wp.vec3),
-    contact_point1: wp.array(dtype=wp.vec3),
-    contact_normal: wp.array(dtype=wp.vec3),
-    contact_shape0: wp.array(dtype=wp.int32),
-    contact_shape1: wp.array(dtype=wp.int32),
-    lambda_n: wp.array(dtype=wp.float32),
+    contact_count: wp.array(dtype=wp.int32),  # [1]
+    contact_point0: wp.array(dtype=wp.vec3),  # [C, 3]
+    contact_point1: wp.array(dtype=wp.vec3),  # [C, 3]
+    contact_normal: wp.array(dtype=wp.vec3),  # [C, 3]
+    contact_shape0: wp.array(dtype=wp.int32),  # [C]
+    contact_shape1: wp.array(dtype=wp.int32),  # [C]
+    lambda_n: wp.array(dtype=wp.float32),  # [C]
     # Scalar parameters
     dt: wp.float32,
     stabilization_factor: wp.float32,
     fb_alpha: wp.float32,
     fb_beta: wp.float32,
     fb_epsilon: wp.float32,
-    # Final outputs
-    res: wp.array(dtype=wp.float32),
-    dres_n_dlambda_n: wp.array(dtype=wp.float32, ndim=2),
-    dres_n_dbody_qd: wp.array(dtype=wp.float32, ndim=2),
+    # Outputs:
+    res: wp.array(dtype=wp.float32),  # [C]
+    dres_n_dlambda_n: wp.array(dtype=wp.float32, ndim=2),  # [C, C]
+    dres_n_dbody_qd: wp.array(dtype=wp.float32, ndim=2),  # [C, 6B]
 ):
     tid = wp.tid()
 
@@ -163,14 +158,12 @@ def evaluate_contact_constraint_fully_fused(
         dres_n_dlambda_n[tid, tid] = -1.0
         return
 
-    # STEP 1: Compute Kinematics (Gap, Jacobians)
     is_active, gap, J_n_a, J_n_b, body_a, body_b = _compute_contact_kinematics(
-        tid,
-        contact_point0,
-        contact_point1,
-        contact_normal,
-        contact_shape0,
-        contact_shape1,
+        contact_point0[tid],
+        contact_point1[tid],
+        contact_normal[tid],
+        contact_shape0[tid],
+        contact_shape1[tid],
         body_q,
         body_com,
         shape_body,
@@ -185,12 +178,10 @@ def evaluate_contact_constraint_fully_fused(
         # No need to write to diagonal/off-diagonal derivative terms if they are already zero.
         return
 
-    # STEP 2: Compute Restitution
     e = _compute_restitution_coefficient(
         contact_shape0[tid], contact_shape1[tid], shape_materials
     )
 
-    # STEP 3: Compute Complementarity Argument
     complementarity_arg = _compute_complementarity_argument(
         J_n_a,
         J_n_b,
@@ -205,20 +196,23 @@ def evaluate_contact_constraint_fully_fused(
     )
 
     # STEP 4: Compute Final Residual and Derivatives
-    res[tid] = scaled_fisher_burmeister_evaluate(
-        lambda_n[tid], complementarity_arg, fb_alpha, fb_beta, fb_epsilon
-    )
-    da, db = scaled_fisher_burmeister_derivatives(
+    res_n, dfb_da, dfb_db = scaled_fisher_burmeister(
         lambda_n[tid], complementarity_arg, fb_alpha, fb_beta, fb_epsilon
     )
 
-    dres_n_dlambda_n[tid, tid] = da
+    # Store the residual
+    res[tid] = res_n
+
+    # ∂res_n / ∂lambda_n [C, C]
+    dres_n_dlambda_n[tid, tid] = dfb_da
+
+    # ∂res_n / ∂body_qd [C, 6B]
     for i in range(wp.static(6)):
-        dres_n_dbody_qd[tid, body_a * 6 + i] = db * J_n_a[i]
-        dres_n_dbody_qd[tid, body_b * 6 + i] = -db * J_n_b[i]
+        dres_n_dbody_qd[tid, body_a * 6 + i] = dfb_db * J_n_a[i]
+        dres_n_dbody_qd[tid, body_b * 6 + i] = -dfb_db * J_n_b[i]
 
 
-def setup_full_kernel_data(num_bodies, num_contacts, device):
+def setup_data(num_bodies, num_contacts, device):
     """Generates all necessary input and output arrays for the fully fused kernel."""
     B, C = num_bodies, num_contacts
     shape0 = np.random.randint(0, B, size=C, dtype=np.int32)
@@ -268,13 +262,13 @@ def setup_full_kernel_data(num_bodies, num_contacts, device):
     return data
 
 
-def run_fully_fused_benchmark(num_bodies, num_contacts, num_iterations=200):
+def run_benchmark(num_bodies, num_contacts, num_iterations=200):
     """Measures execution time of the fully fused kernel using standard launch vs. CUDA graph."""
     print(
         f"\n--- Benchmarking FULLY FUSED Kernel: B={num_bodies}, C={num_contacts}, Iterations={num_iterations} ---"
     )
     device = wp.get_device()
-    data = setup_full_kernel_data(num_bodies, num_contacts, device)
+    data = setup_data(num_bodies, num_contacts, device)
     params = data["params"]
 
     kernel_inputs = [
@@ -303,7 +297,7 @@ def run_fully_fused_benchmark(num_bodies, num_contacts, num_iterations=200):
     # --- 1. Standard Launch Benchmark ---
     print("1. Benching Standard Kernel Launch...")
     wp.launch(
-        evaluate_contact_constraint_fully_fused,
+        contact_constraint,
         dim=num_contacts,
         inputs=kernel_inputs,
         outputs=kernel_outputs,
@@ -314,7 +308,7 @@ def run_fully_fused_benchmark(num_bodies, num_contacts, num_iterations=200):
     start_time = time.perf_counter()
     for _ in range(num_iterations):
         wp.launch(
-            evaluate_contact_constraint_fully_fused,
+            contact_constraint,
             dim=num_contacts,
             inputs=kernel_inputs,
             outputs=kernel_outputs,
@@ -329,7 +323,7 @@ def run_fully_fused_benchmark(num_bodies, num_contacts, num_iterations=200):
         print("2. Benching CUDA Graph Launch...")
         with wp.ScopedCapture() as capture:
             wp.launch(
-                evaluate_contact_constraint_fully_fused,
+                contact_constraint,
                 dim=num_contacts,
                 inputs=kernel_inputs,
                 outputs=kernel_outputs,
@@ -366,7 +360,7 @@ if __name__ == "__main__":
         )
 
     # Run benchmarks at various scales
-    run_fully_fused_benchmark(num_bodies=100, num_contacts=100)
-    run_fully_fused_benchmark(num_bodies=500, num_contacts=500)
-    run_fully_fused_benchmark(num_bodies=1000, num_contacts=2000)
-    run_fully_fused_benchmark(num_bodies=2000, num_contacts=4000)
+    run_benchmark(num_bodies=100, num_contacts=100)
+    run_benchmark(num_bodies=500, num_contacts=500)
+    run_benchmark(num_bodies=1000, num_contacts=2000)
+    run_benchmark(num_bodies=2000, num_contacts=4000)
