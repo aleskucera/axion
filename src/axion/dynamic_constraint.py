@@ -87,11 +87,13 @@ def body_dynamics_kernel(
     )
     res_body[tid] = wp.spatial_vector(res_ang, res_lin)
 
-    for i in wp.static(range(3)):
-        dres_dbody_qd[tid * 6 + 3 + i, tid * 6 + 3 + i] = m * inv_dt
-    for i in wp.static(range(3)):
-        for j in wp.static(range(3)):
-            dres_dbody_qd[tid * 6 + i, tid * 6 + j] = I[i, j] * inv_dt
+    for i in range(wp.static(3)):
+        st_i = wp.static(i)
+        dres_dbody_qd[tid * 6 + 3 + st_i, tid * 6 + 3 + st_i] = m * inv_dt
+    for i in range(wp.static(3)):
+        for j in range(wp.static(3)):
+            st_i, st_j = wp.static(i), wp.static(j)
+            dres_dbody_qd[tid * 6 + st_i, tid * 6 + st_j] = I[st_i, st_j] * inv_dt
 
 
 @wp.kernel
@@ -136,12 +138,14 @@ def contact_contribution_kernel(
     impulse_force = lambda_n[tid] * inv_dt
     if body_a >= 0:
         wp.atomic_add(res_contact, body_a, -J_n_a * impulse_force)
-        for i in wp.static(range(6)):
-            dres_dlambda_n[body_a * 6 + i, tid] = -J_n_a[i] * inv_dt
+        for i in range(wp.static(6)):
+            st_i = wp.static(i)
+            dres_dlambda_n[body_a * 6 + st_i, tid] = -J_n_a[st_i] * inv_dt
     if body_b >= 0:
         wp.atomic_add(res_contact, body_b, -J_n_b * impulse_force)
-        for i in wp.static(range(6)):
-            dres_dlambda_n[body_b * 6 + i, tid] = -J_n_b[i] * inv_dt
+        for i in range(wp.static(6)):
+            st_i = wp.static(i)
+            dres_dlambda_n[body_b * 6 + st_i, tid] = -J_n_b[st_i] * inv_dt
 
 
 @wp.kernel
