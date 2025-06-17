@@ -221,7 +221,7 @@ def setup_fused_kernel_data(num_bodies, num_contacts, device):
 
 
 def run_fused_kernel_benchmark(num_bodies, num_contacts, num_iterations=200):
-    """Measures the execution time of the fused kernel."""
+    """Measures kernel execution time using standard launch vs. CUDA graph."""
     print(
         f"\n--- Benchmarking Fused Kernel: B={num_bodies}, C={num_contacts}, Iterations={num_iterations} ---"
     )
@@ -229,7 +229,6 @@ def run_fused_kernel_benchmark(num_bodies, num_contacts, num_iterations=200):
     data = setup_fused_kernel_data(num_bodies, num_contacts, device)
     params = data["params"]
 
-    # Define kernel arguments for clarity
     kernel_inputs = [
         data["body_qd"],
         data["body_qd_prev"],
@@ -249,7 +248,8 @@ def run_fused_kernel_benchmark(num_bodies, num_contacts, num_iterations=200):
     ]
     kernel_outputs = [data["res"], data["dres_n_dlambda_n"], data["dres_n_dbody_qd"]]
 
-    # 1. Warm-up run to ensure kernel is compiled before timing
+    # --- 1. Standard Launch Benchmark ---
+    print("1. Benching Standard Kernel Launch...")
     wp.launch(
         compute_contact_residuals_and_derivatives_fused,
         dim=num_contacts,
@@ -257,9 +257,8 @@ def run_fused_kernel_benchmark(num_bodies, num_contacts, num_iterations=200):
         outputs=kernel_outputs,
         device=device,
     )
-    wp.synchronize()
+    wp.synchronize()  # Warm-up
 
-    # 2. Timed execution loop
     start_time = time.perf_counter()
     for _ in range(num_iterations):
         wp.launch(
@@ -269,15 +268,39 @@ def run_fused_kernel_benchmark(num_bodies, num_contacts, num_iterations=200):
             outputs=kernel_outputs,
             device=device,
         )
+    wp.synchronize()
+    standard_launch_ms = (time.perf_counter() - start_time) / num_iterations * 1000
+    print(f"   Avg. Time: {standard_launch_ms:.4f} ms")
 
-    # 3. Synchronize and record time
-    wp.synchronize()  # Crucial: Wait for all GPU work to finish
-    end_time = time.perf_counter()
+    # --- 2. CUDA Graph Benchmark (only on GPU) ---
+    if device.is_cuda:
+        print("2. Benching CUDA Graph Launch...")
+        with wp.ScopedCapture() as capture:
+            wp.launch(
+                compute_contact_residuals_and_derivatives_fused,
+                dim=num_contacts,
+                inputs=kernel_inputs,
+                outputs=kernel_outputs,
+                device=device,
+            )
+        graph = capture.graph
 
-    total_time = end_time - start_time
-    avg_time_ms = (total_time / num_iterations) * 1000
+        wp.capture_launch(graph)
+        wp.synchronize()  # Warm-up
 
-    print(f"Average execution time: {avg_time_ms:.4f} ms")
+        start_time = time.perf_counter()
+        for _ in range(num_iterations):
+            wp.capture_launch(graph)
+        wp.synchronize()
+        graph_launch_ms = (time.perf_counter() - start_time) / num_iterations * 1000
+
+        print(f"   Avg. Time: {graph_launch_ms:.4f} ms")
+        if graph_launch_ms > 0:
+            speedup = standard_launch_ms / graph_launch_ms
+            print(f"   Speedup from Graph: {speedup:.2f}x")
+    else:
+        print("2. Skipping CUDA Graph benchmark (not on a GPU device).")
+
     print("--------------------------------------------------------------------")
 
 
