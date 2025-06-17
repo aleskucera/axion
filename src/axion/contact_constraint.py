@@ -664,6 +664,7 @@ if __name__ == "__main__":
     wp.init()
 
     # Run tests with different scales
-    run_performance_benchmark(num_bodies=500, num_contacts=5000)
-    run_performance_benchmark(num_bodies=1000, num_contacts=20000)
-    run_performance_benchmark(num_bodies=2000, num_contacts=50000)
+    run_performance_benchmark(num_bodies=50, num_contacts=100)
+    run_performance_benchmark(num_bodies=500, num_contacts=500)
+    run_performance_benchmark(num_bodies=1000, num_contacts=2000)
+    run_performance_benchmark(num_bodies=2000, num_contacts=5000)
