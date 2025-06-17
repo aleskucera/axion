@@ -270,7 +270,7 @@ def run_fused_kernel_benchmark(num_bodies, num_contacts, num_iterations=200):
         )
     wp.synchronize()
     standard_launch_ms = (time.perf_counter() - start_time) / num_iterations * 1000
-    print(f"   Avg. Time: {standard_launch_ms:.4f} ms")
+    print(f"   Avg. Time: {standard_launch_ms:.3f} ms")
 
     # --- 2. CUDA Graph Benchmark (only on GPU) ---
     if device.is_cuda:
@@ -294,7 +294,7 @@ def run_fused_kernel_benchmark(num_bodies, num_contacts, num_iterations=200):
         wp.synchronize()
         graph_launch_ms = (time.perf_counter() - start_time) / num_iterations * 1000
 
-        print(f"   Avg. Time: {graph_launch_ms:.4f} ms")
+        print(f"   Avg. Time: {graph_launch_ms:.3f} ms")
         if graph_launch_ms > 0:
             speedup = standard_launch_ms / graph_launch_ms
             print(f"   Speedup from Graph: {speedup:.2f}x")

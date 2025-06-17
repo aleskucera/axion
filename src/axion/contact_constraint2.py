@@ -549,7 +549,7 @@ def run_performance_benchmark(num_bodies, num_contacts, num_iterations=100):
     wp.synchronize()
     standard_time = (time.perf_counter() - start_time) / num_iterations
 
-    print(f"Standard Sequential Launch..: {standard_time * 1000:.4f} ms per iteration")
+    print(f"Standard Sequential Launch..: {standard_time * 1000:.3f} ms per iteration")
 
     # --- 2. Benchmark: CUDA Graph ---
     with wp.ScopedCapture() as capture:
@@ -649,7 +649,7 @@ def run_performance_benchmark(num_bodies, num_contacts, num_iterations=100):
     wp.synchronize()
     graph_time = (time.perf_counter() - start_time) / num_iterations
 
-    print(f"CUDA Graph Launch...........: {graph_time * 1000:.4f} ms per iteration")
+    print(f"CUDA Graph Launch...........: {graph_time * 1000:.3f} ms per iteration")
 
     # --- 3. Report Results ---
     if graph_time > 1e-9:
