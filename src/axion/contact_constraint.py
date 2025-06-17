@@ -291,7 +291,7 @@ if __name__ == "__main__":
         print("Warning: No CUDA device found. Performance will be poor.")
 
     # Run benchmarks at various scales to observe performance characteristics
-    run_fused_kernel_benchmark(num_bodies=500, num_contacts=5000)
-    run_fused_kernel_benchmark(num_bodies=1000, num_contacts=20000)
-    run_fused_kernel_benchmark(num_bodies=2000, num_contacts=50000)
-    run_fused_kernel_benchmark(num_bodies=4000, num_contacts=100000)
+    run_fused_kernel_benchmark(num_bodies=100, num_contacts=100)
+    run_fused_kernel_benchmark(num_bodies=500, num_contacts=500)
+    run_fused_kernel_benchmark(num_bodies=1000, num_contacts=2000)
+    run_fused_kernel_benchmark(num_bodies=2000, num_contacts=5000)
