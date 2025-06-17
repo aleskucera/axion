@@ -281,7 +281,6 @@ def run_benchmark(num_bodies, num_contacts, num_iterations=200):
 
     start_time = time.perf_counter()
     for _ in range(num_iterations):
-        clear_outputs()
         with wp.ScopedStream(stream1):
             wp.launch(body_dynamics_kernel, dim=num_bodies, inputs=body_kernel_args)
         with wp.ScopedStream(stream2):
@@ -301,8 +300,7 @@ def run_benchmark(num_bodies, num_contacts, num_iterations=200):
         print("2. Benching CUDA Graph Launch (with concurrent streams)...")
         with wp.ScopedCapture() as capture:
             # The entire sequence, including clears and stream usage, is captured.
-            clear_outputs()
-            with wp.ScopedStream(stream1):
+            with wp.ScopedStream(stream2):
                 wp.launch(body_dynamics_kernel, dim=num_bodies, inputs=body_kernel_args)
             with wp.ScopedStream(stream2):
                 wp.launch(
