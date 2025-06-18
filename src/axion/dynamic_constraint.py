@@ -60,7 +60,7 @@ def unconstrained_dynamics_kernel(
     body_inertia: wp.array(dtype=wp.mat33),  # [B]
     dt: wp.float32,
     # Outputs:
-    res_body: wp.array(dtype=wp.spatial_vector),  # [B]
+    res: wp.array(dtype=wp.spatial_vector),  # [B]
     dres_dbody_qd: wp.array(dtype=wp.float32, ndim=2),  # [6B, 6B]
 ):
     """Computes the unconstrained dynamics residual and its derivative w.r.t. body_qd."""
@@ -80,7 +80,7 @@ def unconstrained_dynamics_kernel(
     res_ang = I * (w - w_prev) - t * dt
     res_lin = m * (v - v_prev) - f * dt - m * gravity * dt
 
-    res_body[tid] = wp.spatial_vector(res_ang, res_lin)
+    res[tid] = wp.spatial_vector(res_ang, res_lin)
 
     for i in range(wp.static(3)):
         st_i = wp.static(i)
@@ -105,10 +105,9 @@ def contact_constraint_contribution_kernel(
     lambda_n: wp.array(dtype=wp.float32),  # [C]
     dt: wp.float32,
     # Outputs:
-    res_contact: wp.array(dtype=wp.spatial_vector),  # [B]
+    res: wp.array(dtype=wp.spatial_vector),  # [B]
     dres_dlambda_n: wp.array(dtype=wp.float32, ndim=2),  # [6B, C]
 ):
-    """Computes contact impulse contributions and derivative w.r.t. lambda_n."""
     tid = wp.tid()
     if tid >= lambda_n.shape[0]:
         return
@@ -131,12 +130,12 @@ def contact_constraint_contribution_kernel(
 
     impulse_force = lambda_n[tid] * inv_dt
     if body_a >= 0:
-        wp.atomic_add(res_contact, body_a, -J_n_a * impulse_force)
+        wp.atomic_add(res, body_a, -J_n_a * impulse_force)
         for i in range(wp.static(6)):
             st_i = wp.static(i)
             dres_dlambda_n[body_a * 6 + st_i, tid] = -J_n_a[st_i] * inv_dt
     if body_b >= 0:
-        wp.atomic_add(res_contact, body_b, -J_n_b * impulse_force)
+        wp.atomic_add(res, body_b, -J_n_b * impulse_force)
         for i in range(wp.static(6)):
             st_i = wp.static(i)
             dres_dlambda_n[body_b * 6 + st_i, tid] = -J_n_b[st_i] * inv_dt
@@ -197,9 +196,7 @@ def setup_data(num_bodies, num_contacts, device):
         "lambda_n": wp.array(np.random.rand(C), dtype=wp.float32, device=device),
         "params": {"dt": 1.0 / 60.0, "gravity": wp.vec3(0.0, -9.8, 0.0)},
         # *** NEW: Separated residual buffers ***
-        "res_body": wp.zeros(B, dtype=wp.spatial_vector, device=device),
-        "res_contact": wp.zeros(B, dtype=wp.spatial_vector, device=device),
-        "res_final": wp.zeros(B, dtype=wp.spatial_vector, device=device),
+        "res": wp.zeros(B, dtype=wp.spatial_vector, device=device),
         "dres_dbody_qd": wp.zeros((6 * B, 6 * B), dtype=wp.float32, device=device),
         "dres_dlambda_n": wp.zeros((6 * B, C), dtype=wp.float32, device=device),
     }
@@ -214,10 +211,6 @@ def run_benchmark(num_bodies, num_contacts, num_iterations=200):
     data = setup_data(num_bodies, num_contacts, device)
     params = data["params"]
 
-    # Create streams for concurrent execution
-    stream1 = wp.Stream(device=device)
-    stream2 = wp.Stream(device=device)
-
     # --- Prepare kernel arguments ---
     body_kernel_args = [
         data["body_qd"],
@@ -227,7 +220,7 @@ def run_benchmark(num_bodies, num_contacts, num_iterations=200):
         data["body_mass"],
         data["body_inertia"],
         params["dt"],
-        data["res_body"],
+        data["res"],
         data["dres_dbody_qd"],
     ]
 
@@ -243,51 +236,37 @@ def run_benchmark(num_bodies, num_contacts, num_iterations=200):
         data["contact_shape1"],
         data["lambda_n"],
         params["dt"],
-        data["res_contact"],
+        data["res"],
         data["dres_dlambda_n"],
     ]
 
-    sum_kernel_args = [data["res_body"], data["res_contact"], data["res_final"]]
-
     def clear_outputs():
         # Clear all output buffers
-        data["res_body"].zero_()
-        data["res_contact"].zero_()
-        data["res_final"].zero_()
+        data["res"].zero_()
         data["dres_dbody_qd"].zero_()
         data["dres_dlambda_n"].zero_()
 
     # --- 1. Standard Launch Benchmark (with streams) ---
     print("1. Benching Standard Kernel Launch (with concurrent streams)...")
     clear_outputs()
-    with wp.ScopedStream(stream1):
+    wp.launch(unconstrained_dynamics_kernel, dim=num_bodies, inputs=body_kernel_args)
+    wp.launch(
+        contact_constraint_contribution_kernel,
+        dim=num_contacts,
+        inputs=contact_kernel_args,
+    )
+    wp.synchronize()  # Warm-up
+
+    start_time = time.perf_counter()
+    for _ in range(num_iterations):
         wp.launch(
             unconstrained_dynamics_kernel, dim=num_bodies, inputs=body_kernel_args
         )
-    with wp.ScopedStream(stream2):
         wp.launch(
             contact_constraint_contribution_kernel,
             dim=num_contacts,
             inputs=contact_kernel_args,
         )
-    wp.synchronize()  # Wait for both streams to finish
-    wp.launch(sum_residuals_kernel, dim=num_bodies, inputs=sum_kernel_args)
-    wp.synchronize()  # Warm-up
-
-    start_time = time.perf_counter()
-    for _ in range(num_iterations):
-        with wp.ScopedStream(stream1):
-            wp.launch(
-                unconstrained_dynamics_kernel, dim=num_bodies, inputs=body_kernel_args
-            )
-        with wp.ScopedStream(stream2):
-            wp.launch(
-                contact_constraint_contribution_kernel,
-                dim=num_contacts,
-                inputs=contact_kernel_args,
-            )
-        wp.synchronize()  # Wait for independent kernels
-        wp.launch(sum_residuals_kernel, dim=num_bodies, inputs=sum_kernel_args)
     wp.synchronize()  # Wait for the final sum
     standard_launch_ms = (time.perf_counter() - start_time) / num_iterations * 1000
     print(f"   Avg. Time: {standard_launch_ms:.3f} ms")
@@ -297,25 +276,16 @@ def run_benchmark(num_bodies, num_contacts, num_iterations=200):
         print("2. Benching CUDA Graph Launch (with concurrent streams)...")
         with wp.ScopedCapture() as capture:
             # The entire sequence, including clears and stream usage, is captured.
-            with wp.ScopedStream(stream2):
-                wp.launch(
-                    unconstrained_dynamics_kernel,
-                    dim=num_bodies,
-                    inputs=body_kernel_args,
-                )
-            with wp.ScopedStream(stream2):
-                wp.launch(
-                    contact_constraint_contribution_kernel,
-                    dim=num_contacts,
-                    inputs=contact_kernel_args,
-                )
-            # Graph capture understands that the next launch must wait for the streams
-            # it depends on (implicitly all, since there's no finer-grained dependency).
-            # The most correct way is to have the summation on a stream that depends
-            # on the others, but a simple synchronize works for graph capture.
-            # Warp's graph capture will serialize these three launches, but the CUDA
-            # runtime may still overlap stream1 and stream2 during execution.
-            wp.launch(sum_residuals_kernel, dim=num_bodies, inputs=sum_kernel_args)
+            wp.launch(
+                unconstrained_dynamics_kernel,
+                dim=num_bodies,
+                inputs=body_kernel_args,
+            )
+            wp.launch(
+                contact_constraint_contribution_kernel,
+                dim=num_contacts,
+                inputs=contact_kernel_args,
+            )
 
         graph = capture.graph
         wp.capture_launch(graph)
