@@ -5,18 +5,8 @@ from axion.ncp import scaled_fisher_burmeister_derivatives
 from axion.ncp import scaled_fisher_burmeister_evaluate
 
 
-# This file should test the functionality of the Scaled Fisher-Burmeister function, which is the NCP function used in the NSN engine.
-# First test is the evaluation of the function itself.
-# When the NCP function returns zero, the following should be true:
-# 1. If the first argument is zero, the second argument should be larger than zero.
-# 2. If the second argument is zero, the first argument should be larger than zero.
-
-
-# Secondly the derivatives should be tested. The derivatives should be tested against finite differences.
-
 ALPHA = 1.0
 BETA = 1.0
-EPSILON = 1e-12
 
 
 @wp.kernel
@@ -26,12 +16,11 @@ def eval_wrapper(
     b: wp.array(dtype=wp.float32),
     alpha: float,
     beta: float,
-    epsilon: float,
     # outputs:
     result: wp.array(dtype=wp.float32),
 ):
     i = wp.tid()
-    result[i] = scaled_fisher_burmeister_evaluate(a[i], b[i], alpha, beta, epsilon)
+    result[i] = scaled_fisher_burmeister_evaluate(a[i], b[i], alpha, beta)
 
 
 @wp.kernel
@@ -41,15 +30,12 @@ def derivative_wrapper(
     b: wp.array(dtype=wp.float32),
     alpha: float,
     beta: float,
-    epsilon: float,
     # outputs:
     da: wp.array(dtype=wp.float32),
     db: wp.array(dtype=wp.float32),
 ):
     i = wp.tid()
-    da_val, db_val = scaled_fisher_burmeister_derivatives(
-        a[i], b[i], alpha, beta, epsilon
-    )
+    da_val, db_val = scaled_fisher_burmeister_derivatives(a[i], b[i], alpha, beta)
     da[i] = da_val
     db[i] = db_val
 
@@ -74,7 +60,7 @@ def test_scaled_fisher_burmeister_evaluate():
     wp.launch(
         eval_wrapper,
         dim=len(a_values),
-        inputs=[a_wp, b_wp, ALPHA, BETA, EPSILON],
+        inputs=[a_wp, b_wp, ALPHA, BETA],
         outputs=[result_wp],
     )
     result = result_wp.numpy()
@@ -102,7 +88,7 @@ def test_scaled_fisher_burmeister_derivatives():
     wp.launch(
         derivative_wrapper,
         dim=len(a_values),
-        inputs=[a_wp, b_wp, ALPHA, BETA, EPSILON],
+        inputs=[a_wp, b_wp, ALPHA, BETA],
         outputs=[da_wp, db_wp],
     )
 
@@ -118,7 +104,7 @@ def test_scaled_fisher_burmeister_derivatives():
     wp.launch(
         eval_wrapper,
         dim=len(a_values),
-        inputs=[a_wp, b_wp, ALPHA, BETA, EPSILON],
+        inputs=[a_wp, b_wp, ALPHA, BETA],
         outputs=[fb_wp],
     )
     fb = fb_wp.numpy()
@@ -131,7 +117,7 @@ def test_scaled_fisher_burmeister_derivatives():
     wp.launch(
         eval_wrapper,
         dim=len(a_values),
-        inputs=[perturbed_a_wp, b_wp, ALPHA, BETA, EPSILON],
+        inputs=[perturbed_a_wp, b_wp, ALPHA, BETA],
         outputs=[perturbed_fb_wp],
     )
     perturbed_fb = perturbed_fb_wp.numpy()
@@ -144,17 +130,17 @@ def test_scaled_fisher_burmeister_derivatives():
     wp.launch(
         eval_wrapper,
         dim=len(a_values),
-        inputs=[a_wp, perturbed_b_wp, ALPHA, BETA, EPSILON],
+        inputs=[a_wp, perturbed_b_wp, ALPHA, BETA],
         outputs=[perturbed_fb_wp],
     )
     perturbed_fb = perturbed_fb_wp.numpy()
     db_numeric = (perturbed_fb - fb) / delta
 
-    ## Compute absolute differences for detailed comparison
-    # da_diff = np.abs(da_analytic - da_numeric)
-    # db_diff = np.abs(db_analytic - db_numeric)
-    # print("Max da difference:", np.max(da_diff))
-    # print("Max db difference:", np.max(db_diff))
+    # Compute absolute differences for detailed comparison
+    da_diff = np.abs(da_analytic - da_numeric)
+    db_diff = np.abs(db_analytic - db_numeric)
+    print("Max da difference:", np.max(da_diff))
+    print("Max db difference:", np.max(db_diff))
 
     # Verify results with assertions
     assert np.allclose(

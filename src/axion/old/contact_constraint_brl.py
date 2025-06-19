@@ -1,7 +1,9 @@
 import time
+from typing import Tuple
 
 import numpy as np
 import warp as wp
+import warp.context as wpc
 from axion.ncp import scaled_fisher_burmeister
 from warp.sim import ModelShapeGeometry
 from warp.sim import ModelShapeMaterials
@@ -65,6 +67,7 @@ def _compute_contact_kinematics(
     normal: wp.vec3,
     shape_a: wp.int32,
     shape_b: wp.int32,
+    # Per-body inputs
     body_q: wp.array(dtype=wp.transform),
     body_com: wp.array(dtype=wp.vec3),
     shape_body: wp.array(dtype=int),
@@ -121,13 +124,13 @@ def _compute_contact_kinematics(
 
 
 @wp.kernel
-def contact_constraint_kernel(
+def contact_constraint(
     body_q: wp.array(dtype=wp.transform),  # [B, 7]
+    body_com: wp.array(dtype=wp.vec3),  # [B, 3]
+    geo: ModelShapeGeometry,
     body_qd: wp.array(dtype=wp.spatial_vector),  # [B, 6]
     body_qd_prev: wp.array(dtype=wp.spatial_vector),  # [B, 6]
-    body_com: wp.array(dtype=wp.vec3),  # [B, 3]
     shape_body: wp.array(dtype=int),  # [B]
-    shape_geo: ModelShapeGeometry,
     shape_materials: ModelShapeMaterials,
     contact_count: wp.array(dtype=wp.int32),  # [1]
     contact_point0: wp.array(dtype=wp.vec3),  # [C, 3]
@@ -136,29 +139,23 @@ def contact_constraint_kernel(
     contact_shape0: wp.array(dtype=wp.int32),  # [C]
     contact_shape1: wp.array(dtype=wp.int32),  # [C]
     lambda_n: wp.array(dtype=wp.float32),  # [C]
-    # --- Parameters ---
+    # Scalar parameters
     dt: wp.float32,
     stabilization_factor: wp.float32,
     fb_alpha: wp.float32,
     fb_beta: wp.float32,
-    # Indices for outputs
-    res_n_offset: wp.int32,
-    dres_n_dbody_qd_offset: wp.vec2i,
-    dres_n_dlambda_n_offset: wp.vec2i,
-    # --- Outputs ---
-    res: wp.array(dtype=wp.float32),
-    jacobian: wp.array(dtype=wp.float32, ndim=2),
+    fb_epsilon: wp.float32,
+    # Outputs:
+    res: wp.array(dtype=wp.float32),  # [C]
+    dres_n_dlambda_n: wp.array(dtype=wp.float32, ndim=2),  # [C, C]
+    dres_n_dbody_qd: wp.array(dtype=wp.float32, ndim=2),  # [C, 6B]
 ):
     tid = wp.tid()
 
-    # Get the indices for the scalar outputs (residual and derivatives wrt lambda_n)
-    res_idx = res_n_offset + tid
-    jac_lambda_n_idx = dres_n_dlambda_n_offset + wp.vec2i(tid, tid)
-
     # Handle inactive constraints (outside the contact count)
     if tid >= contact_count[0]:
-        res[res_idx] = -lambda_n[tid]
-        jacobian[jac_lambda_n_idx.x, jac_lambda_n_idx.y] = -1.0
+        res[tid] = -lambda_n[tid]
+        dres_n_dlambda_n[tid, tid] = -1.0
         return
 
     is_active, gap, J_n_a, J_n_b, body_a, body_b = _compute_contact_kinematics(
@@ -170,11 +167,15 @@ def contact_constraint_kernel(
         body_q,
         body_com,
         shape_body,
-        shape_geo,
+        geo,
     )
 
     if not is_active:
-        res[res_idx] = 0.0
+        # For non-penetrating contacts, we can treat them as having zero residual and derivatives.
+        # Another option is to simply 'return', leaving the memory un-initialized,
+        # but zeroing is often safer if the results are summed later.
+        res[tid] = 0.0
+        # No need to write to diagonal/off-diagonal derivative terms if they are already zero.
         return
 
     e = _compute_restitution_coefficient(
@@ -196,21 +197,19 @@ def contact_constraint_kernel(
 
     # STEP 4: Compute Final Residual and Derivatives
     res_n, dfb_da, dfb_db = scaled_fisher_burmeister(
-        lambda_n[tid], complementarity_arg, fb_alpha, fb_beta
+        lambda_n[tid], complementarity_arg, fb_alpha, fb_beta, fb_epsilon
     )
 
     # Store the residual
-    res[res_idx] = res_n
+    res[tid] = res_n
 
     # ∂res_n / ∂lambda_n [C, C]
-    jacobian[jac_lambda_n_idx.x, jac_lambda_n_idx.y] = dfb_da
+    dres_n_dlambda_n[tid, tid] = dfb_da
 
-    # ∂res_n / ∂body_qd [C, B6]
+    # ∂res_n / ∂body_qd [C, 6B]
     for i in range(wp.static(6)):
-        x_off = dres_n_dbody_qd_offset.x
-        y_off = dres_n_dbody_qd_offset.y
-        jacobian[x_off + tid, y_off + body_a * 6 + i] = dfb_db * J_n_a[i]
-        jacobian[x_off + tid, y_off + body_b * 6 + i] = -dfb_db * J_n_b[i]
+        dres_n_dbody_qd[tid, body_a * 6 + i] = dfb_db * J_n_a[i]
+        dres_n_dbody_qd[tid, body_b * 6 + i] = -dfb_db * J_n_b[i]
 
 
 def setup_data(num_bodies, num_contacts, device):
@@ -226,7 +225,7 @@ def setup_data(num_bodies, num_contacts, device):
     data = {
         "body_q": wp.array(np.random.rand(B, 7), dtype=wp.transform, device=device),
         "body_com": wp.array(np.random.rand(B, 3), dtype=wp.vec3, device=device),
-        "shape_geo": ModelShapeGeometry(),
+        "geo": ModelShapeGeometry(),
         "body_qd": wp.array(
             np.random.rand(B, 6), dtype=wp.spatial_vector, device=device
         ),
@@ -249,12 +248,11 @@ def setup_data(num_bodies, num_contacts, device):
             "stabilization_factor": 0.2,
             "fb_alpha": 0.25,
             "fb_beta": 0.25,
-            "res_n_offset": 0,
-            "dres_n_dbody_qd_offset": wp.vec2i(0, 0),
-            "dres_n_dlambda_n_offset": wp.vec2i(C, 6 * B),
+            "fb_epsilon": 1e-6,
         },
         "res": wp.zeros(C, dtype=wp.float32, device=device),
-        "jacobian": wp.zeros((2 * C, C + 6 * B), dtype=wp.float32, device=device),
+        "dres_n_dlambda_n": wp.zeros((C, C), dtype=wp.float32, device=device),
+        "dres_n_dbody_qd": wp.zeros((C, 6 * B), dtype=wp.float32, device=device),
     }
 
     data["geo"].thickness = wp.array(np.random.rand(B), dtype=wp.float32, device=device)
@@ -275,10 +273,10 @@ def run_benchmark(num_bodies, num_contacts, num_iterations=200):
 
     kernel_inputs = [
         data["body_q"],
+        data["body_com"],
+        data["geo"],
         data["body_qd"],
         data["body_qd_prev"],
-        data["body_com"],
-        data["shape_geo"],
         data["shape_body"],
         data["shape_materials"],
         data["contact_count"],
@@ -292,16 +290,14 @@ def run_benchmark(num_bodies, num_contacts, num_iterations=200):
         params["stabilization_factor"],
         params["fb_alpha"],
         params["fb_beta"],
-        params["res_n_offset"],
-        params["dres_n_dbody_qd_offset"],
-        params["dres_n_dlambda_n_offset"],
+        params["fb_epsilon"],
     ]
-    kernel_outputs = [data["res"], data["jacobian"]]
+    kernel_outputs = [data["res"], data["dres_n_dlambda_n"], data["dres_n_dbody_qd"]]
 
     # --- 1. Standard Launch Benchmark ---
     print("1. Benching Standard Kernel Launch...")
     wp.launch(
-        contact_constraint_kernel,
+        contact_constraint,
         dim=num_contacts,
         inputs=kernel_inputs,
         outputs=kernel_outputs,
@@ -312,7 +308,7 @@ def run_benchmark(num_bodies, num_contacts, num_iterations=200):
     start_time = time.perf_counter()
     for _ in range(num_iterations):
         wp.launch(
-            contact_constraint_kernel,
+            contact_constraint,
             dim=num_contacts,
             inputs=kernel_inputs,
             outputs=kernel_outputs,
@@ -327,7 +323,7 @@ def run_benchmark(num_bodies, num_contacts, num_iterations=200):
         print("2. Benching CUDA Graph Launch...")
         with wp.ScopedCapture() as capture:
             wp.launch(
-                contact_constraint_kernel,
+                contact_constraint,
                 dim=num_contacts,
                 inputs=kernel_inputs,
                 outputs=kernel_outputs,

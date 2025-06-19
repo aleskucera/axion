@@ -10,6 +10,7 @@ dependencies = [
     { name = "matplotlib" },
     { name = "pytest" },
     { name = "torch" },
+    { name = "usd-core" },
     { name = "warp-lang" },
 ]
 
@@ -18,6 +19,7 @@ requires-dist = [
     { name = "matplotlib", specifier = ">=3.10.3" },
     { name = "pytest", specifier = ">=8.4.0" },
     { name = "torch", specifier = ">=2.7.1" },
+    { name = "usd-core", specifier = ">=25.5.1" },
     { name = "warp-lang", specifier = ">=1.7.2" },
 ]
 
@@ -660,6 +662,16 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/d1/bc/51647cd02527e87d05cb083ccc402f93e441606ff1f01739a62c8ad09ba5/typing_extensions-4.14.0.tar.gz", hash = "sha256:8676b788e32f02ab42d9e7c61324048ae4c6d844a399eebace3d4979d75ceef4", size = 107423, upload-time = "2025-06-02T14:52:11.399Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/69/e0/552843e0d356fbb5256d21449fa957fa4eff3bbc135a74a691ee70c7c5da/typing_extensions-4.14.0-py3-none-any.whl", hash = "sha256:a1514509136dd0b477638fc68d6a91497af5076466ad0fa6c338e44e359944af", size = 43839, upload-time = "2025-06-02T14:52:10.026Z" },
+]
+
+[[package]]
+name = "usd-core"
+version = "25.5.1"
+source = { registry = "https://pypi.org/simple" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/30/3c/c239840e22abbd62d3d28cd2821afe4e0601c3e36273f5a51d0a61f2c634/usd_core-25.5.1-cp312-none-macosx_10_9_universal2.whl", hash = "sha256:15e917c897a59769c3e2507116a2fd6f60c30be3e335c304b3880235482d87fa", size = 40140610, upload-time = "2025-05-20T02:51:25.542Z" },
+    { url = "https://files.pythonhosted.org/packages/b3/8c/951b14a830b6874499e6428ddff226ed21359957e40b75953e4c1cfd395d/usd_core-25.5.1-cp312-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:6484af2c6c26251261f0b3ed40e277080267956325d353604dadf077f2afdcd1", size = 26817066, upload-time = "2025-05-20T02:51:29.801Z" },
+    { url = "https://files.pythonhosted.org/packages/c4/7a/6a2fb3e0d4704b83911f4091b68dd643e6ec62303b43295eb478c4be4340/usd_core-25.5.1-cp312-none-win_amd64.whl", hash = "sha256:56278e520bec6b7207d0c52dc4e82482380f4353abd64f6fb2a7723c95caead8", size = 13917360, upload-time = "2025-05-20T02:51:32.591Z" },
 ]
 
 [[package]]

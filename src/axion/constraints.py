@@ -1,11 +1,7 @@
-import numpy as np
 import warp as wp
 from axion.contact_constraint import contact_constraint_kernel
 from axion.dynamics_constraint import contact_contribution_kernel
 from axion.dynamics_constraint import unconstrained_dynamics_kernel
-from warp.optim.linear import cg
-from warp.sim import Control
-from warp.sim import Integrator
 from warp.sim import Model
 from warp.sim import State
 
@@ -17,8 +13,8 @@ CONTACT_FB_BETA = 0.0  # Fisher-Burmeister scaling factor of the second argument
 
 def linearize_system(
     model: Model,
-    state_in: State,
-    state_out: State,
+    state: State,
+    state_prev: State,
     dt: float,
     lambda_n: wp.array,
     # --- Outputs ---
@@ -50,9 +46,8 @@ def linearize_system(
         kernel=unconstrained_dynamics_kernel,
         dim=B,
         inputs=[
-            state_out.body_qd,
-            state_in.body_qd,
-            state_out.body_f,
+            state.body_qd,
+            state_prev.body_qd,
             model.body_mass,
             model.body_inertia,
             dt,
@@ -67,7 +62,7 @@ def linearize_system(
         kernel=contact_contribution_kernel,
         dim=C,
         inputs=[
-            state_out.body_q,
+            state.body_q,
             model.body_com,
             model.shape_body,
             model.shape_geo,
@@ -78,6 +73,7 @@ def linearize_system(
             model.rigid_contact_shape0,
             model.rigid_contact_shape1,
             lambda_n,
+            dt,
             res_d_offset,
             dres_d_dlambda_n_offset,
         ],
@@ -89,9 +85,9 @@ def linearize_system(
         kernel=contact_constraint_kernel,
         dim=C,
         inputs=[
-            state_out.body_q,
-            state_out.body_qd,
-            state_in.body_qd,
+            state.body_q,
+            state.body_qd,
+            state_prev.body_q,
             model.body_com,
             model.shape_body,
             model.shape_geo,
@@ -113,72 +109,3 @@ def linearize_system(
         ],
         outputs=[res, jacobian],
     )
-
-
-class NSNEngine(Integrator):
-    def __init__(
-        self,
-        tolerance: float = 1e-6,
-        max_iterations: int = 1000,
-        regularization: float = 1e-4,
-    ):
-        super().__init__()
-        self.tolerance = tolerance
-        self.max_iterations = max_iterations
-        self.regularization = regularization
-
-    def simulate(
-        self,
-        model: Model,
-        state_in: State,
-        state_out: State,
-        dt: float,
-        control: Control | None = None,
-    ):
-        B = model.body_count
-        C = model.rigid_contact_max
-
-        if B == 0:
-            raise ValueError("State must contain at least one body.")
-
-        if state_in.particle_count > 0:
-            raise ValueError("NSNEngine does not support particles.")
-
-        if control is None:
-            control = model.control(clone_variables=False)
-
-        # Get the initial guess for the output state. This will be used as the starting point for the iterative solver.
-        self.integrate_bodies(model, state_in, state_out, dt)
-
-        lambda_n = wp.zeros((C,), dtype=wp.float32, device=model.device)
-
-        res = wp.zeros((6 * B + C,), dtype=wp.float32, device=model.device)
-        jacobian = wp.zeros(
-            (6 * B + C, 6 * B + C), dtype=wp.float32, device=model.device
-        )
-        x = wp.array(np.random.rand(6 * B + C).astype(np.float32), device=model.device)
-        wp.copy(x, state_out.body_qd, dest_offset=0, src_offset=0, count=B)
-
-        for _ in range(self.max_iterations):
-            # Compute the linearized system
-            linearize_system(model, state_in, state_out, dt, lambda_n, res, jacobian)
-
-            # Solve the linear system
-            cg(
-                A=jacobian,
-                b=res,
-                x=x,
-                tol=self.tolerance,
-                maxiter=50,
-            )
-
-            wp.copy(state_out.body_qd, x, dest_offset=0, src_offset=0, count=6 * B)
-            wp.copy(lambda_n, x, dest_offset=0, src_offset=6 * B, count=C)
-
-
-def main():
-    print(f"Hello world")
-
-
-if __name__ == "__main__":
-    main()
