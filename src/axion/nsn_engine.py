@@ -3,6 +3,8 @@ import warp as wp
 from axion.contact_constraint import contact_constraint_kernel
 from axion.dynamics_constraint import contact_contribution_kernel
 from axion.dynamics_constraint import unconstrained_dynamics_kernel
+from axion.utils.add_inplace import add_inplace
+from warp.optim.linear import bicgstab
 from warp.optim.linear import cg
 from warp.sim import Control
 from warp.sim import Integrator
@@ -11,8 +13,8 @@ from warp.sim import State
 
 
 CONTACT_CONSTRAINT_STABILIZATION = 0.1  # Baumgarte stabilization factor
-CONTACT_FB_ALPHA = 1.0  # Fisher-Burmeister scaling factor of the first argument
-CONTACT_FB_BETA = 0.0  # Fisher-Burmeister scaling factor of the second argument
+CONTACT_FB_ALPHA = 0.25  # Fisher-Burmeister scaling factor of the first argument
+CONTACT_FB_BETA = 0.25  # Fisher-Burmeister scaling factor of the second argument
 
 
 def linearize_system(
@@ -22,7 +24,7 @@ def linearize_system(
     dt: float,
     lambda_n: wp.array,
     # --- Outputs ---
-    res: wp.array,
+    neg_res: wp.array,
     jacobian: wp.array,
 ):
     B = model.body_count
@@ -37,12 +39,12 @@ def linearize_system(
 
     # Get the offset for the derivatives in the jacobian
     dres_d_dbody_qd_offset = wp.vec2i(0, 0)
-    dres_d_dlambda_n_offset = wp.vec2i(6 * B, 0)
-    dres_n_dbody_qd_offset = wp.vec2i(0, 6 * B)
+    dres_d_dlambda_n_offset = wp.vec2i(0, 6 * B)
+    dres_n_dbody_qd_offset = wp.vec2i(6 * B, 0)
     dres_n_dlambda_n_offset = wp.vec2i(6 * B, 6 * B)
 
     # Clean up the output arrays
-    res.zero_()
+    neg_res.zero_()
     jacobian.zero_()
 
     # Compute the dynamics contact constraint
@@ -60,7 +62,7 @@ def linearize_system(
             res_d_offset,
             dres_d_dbody_qd_offset,
         ],
-        outputs=[res, jacobian],
+        outputs=[neg_res, jacobian],
         device=model.device,
     )
     wp.launch(
@@ -81,7 +83,7 @@ def linearize_system(
             res_d_offset,
             dres_d_dlambda_n_offset,
         ],
-        outputs=[res, jacobian],
+        outputs=[neg_res, jacobian],
     )
 
     # Compute the contact constraint
@@ -111,8 +113,22 @@ def linearize_system(
             dres_n_dbody_qd_offset,
             dres_n_dlambda_n_offset,
         ],
-        outputs=[res, jacobian],
+        outputs=[neg_res, jacobian],
     )
+
+
+def add_delta_x(
+    delta_x: wp.array,
+    body_qd: wp.array,
+    lambda_n: wp.array,
+    d_offset: int,
+    n_offset: int,
+):
+
+    B = body_qd.shape[0]
+    C = lambda_n.shape[0]
+    add_inplace(body_qd, delta_x, 0, d_offset, B)
+    add_inplace(lambda_n, delta_x, 0, n_offset, C)
 
 
 class NSNEngine(Integrator):
@@ -138,6 +154,8 @@ class NSNEngine(Integrator):
         B = model.body_count
         C = model.rigid_contact_max
 
+        print("Rigid max contacts: ", C)
+
         if B == 0:
             raise ValueError("State must contain at least one body.")
 
@@ -151,34 +169,38 @@ class NSNEngine(Integrator):
         self.integrate_bodies(model, state_in, state_out, dt)
 
         lambda_n = wp.zeros((C,), dtype=wp.float32, device=model.device)
-
-        res = wp.zeros((6 * B + C,), dtype=wp.float32, device=model.device)
+        neg_res = wp.zeros((6 * B + C,), dtype=wp.float32, device=model.device)
         jacobian = wp.zeros(
             (6 * B + C, 6 * B + C), dtype=wp.float32, device=model.device
         )
-        x = wp.array(np.random.rand(6 * B + C).astype(np.float32), device=model.device)
-        wp.copy(x, state_out.body_qd, dest_offset=0, src_offset=0, count=B)
+        delta_x = wp.zeros((6 * B + C), device=model.device)
+
+        in_contact: bool = model.rigid_contact_count.numpy()[0] > 0
+
+        if in_contact:
+            print("CONTACTS DETECTED")
 
         for _ in range(self.max_iterations):
             # Compute the linearized system
-            linearize_system(model, state_in, state_out, dt, lambda_n, res, jacobian)
-
-            # Solve the linear system
-            cg(
-                A=jacobian,
-                b=res,
-                x=x,
-                tol=self.tolerance,
-                maxiter=50,
+            linearize_system(
+                model, state_in, state_out, dt, lambda_n, neg_res, jacobian
             )
 
-            wp.copy(state_out.body_qd, x, dest_offset=0, src_offset=0, count=6 * B)
-            wp.copy(lambda_n, x, dest_offset=0, src_offset=6 * B, count=C)
+            # print("Residual: ", -neg_res.numpy())
+            res_norm = np.linalg.norm(neg_res.numpy())
+            if res_norm < 1e-3:
+                print(f"Converged with residual norm: {res_norm}")
+                break
 
+            # Solve the linear system
+            delta_x.zero_()
+            _, lin_res_norm, _ = bicgstab(
+                A=jacobian,
+                b=neg_res,
+                x=delta_x,
+                tol=self.tolerance,
+                maxiter=100,
+            )
 
-def main():
-    print(f"Hello world")
+            add_delta_x(delta_x, state_out.body_qd, lambda_n, 0, 6 * B)
 
-
-if __name__ == "__main__":
-    main()

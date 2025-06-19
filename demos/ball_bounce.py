@@ -16,19 +16,20 @@ def ball_world_model(gravity: bool = True) -> wp.sim.Model:
         builder = wp.sim.ModelBuilder(gravity=0.0, up_vector=wp.vec3(0, 0, 1))
 
     b = builder.add_body(
-        origin=wp.transform((0.5, 0.0, 1.5), wp.quat_identity()), name="ball"
+        origin=wp.transform((0.0, 0.0, 2.5), wp.quat_identity()), name="ball"
     )
     builder.add_shape_sphere(
         body=b,
         radius=1.0,
-        density=100.0,
+        density=10.0,
         ke=2000.0,
         kd=10.0,
         kf=200.0,
         mu=1.0,
+        restitution=1.0,
         thickness=0.05,
     )
-    builder.set_ground_plane(ke=10, kd=10, kf=0.0, mu=1.0)
+    builder.set_ground_plane(ke=10, kd=10, kf=0.0, mu=1.0, restitution=1.0)
     model = builder.finalize()
 
     return model
@@ -61,8 +62,8 @@ class BallBounceSim:
 
         # Simulation and rendering parameters
         self.fps = 30
-        self.num_frames = 30
-        self.sim_substeps = 1
+        self.num_frames = 120
+        self.sim_substeps = 5
         self.frame_dt = 1.0 / self.fps
         self.sim_dt = self.frame_dt / self.sim_substeps
         self.sim_duration = self.num_frames * self.frame_dt
@@ -72,19 +73,17 @@ class BallBounceSim:
         self.time = np.linspace(0, self.sim_duration, self.sim_steps)
 
         # self.integrator = wp.sim.SemiImplicitIntegrator()
-        # self.integrator = wp.sim.XPBDIntegrator(
-        #     enable_restitution=True, rigid_contact_relaxation=0.0
-        # )
         self.integrator = NSNEngine()
-        self.renderer = wp.sim.render.SimRenderer(self.model, USD_FILE, scaling=1.0)
+        self.renderer = wp.sim.render.SimRenderer(self.model, USD_FILE, scaling=100.0)
 
         self.states = [self.model.state() for _ in range(self.sim_steps + 1)]
-        self.trajectory = wp.empty(len(self.time), dtype=wp.vec3, requires_grad=True)
+        self.trajectory = wp.empty(len(self.time), dtype=wp.vec3)
 
     def forward(self):
         for i in range(self.sim_steps):
-            with wp.ScopedTimer("Simulation Step"):
+            with wp.ScopedTimer("Collision Detection"):
                 wp.sim.collide(self.model, self.states[i])
+            with wp.ScopedTimer("Simulation Step"):
                 self.integrator.simulate(
                     self.model, self.states[i], self.states[i + 1], self.sim_dt
                 )

@@ -20,7 +20,7 @@ def unconstrained_dynamics_kernel(
     res_d_offset: wp.int32,
     dres_d_dbody_qd_offset: wp.vec2i,
     # --- Outputs ---
-    res: wp.array(dtype=wp.float32),  # [B]
+    neg_res: wp.array(dtype=wp.float32),  # [B]
     jacobian: wp.array(dtype=wp.float32, ndim=2),
 ):
     tid = wp.tid()
@@ -38,13 +38,14 @@ def unconstrained_dynamics_kernel(
 
     res_ang = I * (w - w_prev) - t * dt
     res_lin = m * (v - v_prev) - f * dt - m * gravity * dt
+    # wp.printf("Res_lin_z: %.3f\n", res_lin.z)
 
     res_d = wp.spatial_vector(res_ang, res_lin)
 
+    offset = res_d_offset + tid * 6
     for i in range(wp.static(6)):
         st_i = wp.static(i)
-        off = res_d_offset + tid
-        res[off + st_i] = res_d[st_i]
+        neg_res[offset + st_i] = -res_d[st_i]
 
     # ∂res_d / ∂body_qd [6B, 6B]
     # Angular part:
@@ -54,6 +55,7 @@ def unconstrained_dynamics_kernel(
             x_off = dres_d_dbody_qd_offset.x + tid * 6
             y_off = dres_d_dbody_qd_offset.y + tid * 6
             jacobian[x_off + st_i, y_off + st_j] = I[st_i, st_j]
+
     # Linear part:
     for i in range(wp.static(3)):
         st_i = wp.static(i)
@@ -79,7 +81,7 @@ def contact_contribution_kernel(
     res_d_offset: wp.int32,
     dres_d_dlambda_n_offset: wp.vec2i,
     # --- Outputs ---
-    res: wp.array(dtype=wp.float32),
+    neg_res: wp.array(dtype=wp.float32),
     jacobian: wp.array(dtype=wp.float32, ndim=2),
 ):
     tid = wp.tid()
@@ -104,9 +106,10 @@ def contact_contribution_kernel(
     if body_a >= 0:
         # Accumulate the residual for body_a
         res_offset = res_d_offset + body_a * 6
+        res_body_a = -J_n_a * lambda_n[tid]
         for i in range(wp.static(6)):
             st_i = wp.static(i)
-            wp.atomic_add(res, res_offset + st_i, -J_n_a[st_i] * lambda_n[tid])
+            wp.atomic_add(neg_res, res_offset + st_i, -res_body_a[st_i])
 
         # Update the Jacobian derivative for body_a
         x_offset = dres_d_dlambda_n_offset.x + body_a * 6
@@ -118,9 +121,10 @@ def contact_contribution_kernel(
     if body_b >= 0:
         # Accumulate the residual for body_b
         res_offset = res_d_offset + body_b * 6
+        res_body_b = -J_n_b * lambda_n[tid]
         for i in range(wp.static(6)):
             st_i = wp.static(i)
-            wp.atomic_add(res, res_offset + st_i, -J_n_b[st_i] * lambda_n[tid])
+            wp.atomic_add(neg_res, res_offset + st_i, -res_body_b[st_i])
 
         # Update the Jacobian derivative for body_b
         x_offset = dres_d_dlambda_n_offset.x + body_b * 6

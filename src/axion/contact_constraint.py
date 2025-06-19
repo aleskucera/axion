@@ -44,16 +44,18 @@ def _compute_complementarity_argument(
     which represents the complementarity condition (v_n + bias).
     """
     # Relative normal velocity at the current time step
-    delta_v_n = wp.dot(J_n_a, body_qd_a) - wp.dot(J_n_b, body_qd_b)
+    delta_v_n = wp.dot(J_n_a, body_qd_a) + wp.dot(J_n_b, body_qd_b)
 
     # Relative normal velocity at the previous time step
-    delta_v_n_prev = wp.dot(J_n_a, body_qd_prev_a) - wp.dot(J_n_b, body_qd_prev_b)
+    delta_v_n_prev = wp.dot(J_n_a, body_qd_prev_a) + wp.dot(J_n_b, body_qd_prev_b)
 
     # Baumgarte stabilization bias from penetration depth
-    b_err = -(stabilization_factor / dt) * gap
+    b_err = stabilization_factor / dt * gap
+    # b_err = 0.0
 
     # Restitution bias from previous velocity
-    b_rest = restitution * delta_v_n_prev
+    b_rest = -restitution * delta_v_n_prev
+    # b_rest = 0.0
 
     return delta_v_n + b_err + b_rest
 
@@ -97,8 +99,8 @@ def _compute_contact_kinematics(
 
     if body_a >= 0:
         X_wb_a = body_q[body_a]
-        offset_a = thickness_a * normal
-        p_world_a = wp.transform_point(X_wb_a, point_a) - offset_a
+        offset_a = -thickness_a * normal
+        p_world_a = wp.transform_point(X_wb_a, point_a) + offset_a
         r_a = p_world_a - wp.transform_point(X_wb_a, body_com[body_a])
     if body_b >= 0:
         X_wb_b = body_q[body_b]
@@ -114,8 +116,8 @@ def _compute_contact_kinematics(
         return False, 0.0, wp.spatial_vector(), wp.spatial_vector(), body_a, body_b
 
     # Compute Jacobians
-    J_n_a = wp.spatial_vector(-wp.cross(r_a, n), -n)
-    J_n_b = wp.spatial_vector(wp.cross(r_b, n), n)
+    J_n_a = wp.spatial_vector(wp.cross(r_a, n), n)
+    J_n_b = wp.spatial_vector(-wp.cross(r_b, n), -n)
 
     return True, gap, J_n_a, J_n_b, body_a, body_b
 
@@ -146,7 +148,7 @@ def contact_constraint_kernel(
     dres_n_dbody_qd_offset: wp.vec2i,
     dres_n_dlambda_n_offset: wp.vec2i,
     # --- Outputs ---
-    res: wp.array(dtype=wp.float32),
+    neg_res: wp.array(dtype=wp.float32),
     jacobian: wp.array(dtype=wp.float32, ndim=2),
 ):
     tid = wp.tid()
@@ -157,8 +159,10 @@ def contact_constraint_kernel(
 
     # Handle inactive constraints (outside the contact count)
     if tid >= contact_count[0]:
-        res[res_idx] = -lambda_n[tid]
-        jacobian[jac_lambda_n_idx.x, jac_lambda_n_idx.y] = -1.0
+        # res[res_idx] = -lambda_n[tid]
+        # jacobian[jac_lambda_n_idx.x, jac_lambda_n_idx.y] = -1.0
+        neg_res[res_idx] = 0.0
+        jacobian[jac_lambda_n_idx.x, jac_lambda_n_idx.y] = 1e-6
         return
 
     is_active, gap, J_n_a, J_n_b, body_a, body_b = _compute_contact_kinematics(
@@ -174,43 +178,63 @@ def contact_constraint_kernel(
     )
 
     if not is_active:
-        res[res_idx] = 0.0
+        neg_res[res_idx] = 0.0
         return
 
     e = _compute_restitution_coefficient(
         contact_shape0[tid], contact_shape1[tid], shape_materials
     )
 
+    # Safely get body velocities, handling ground body (-1)
+    body_qd_a = wp.spatial_vector()
+    body_qd_prev_a = wp.spatial_vector()
+    if body_a >= 0:
+        body_qd_a = body_qd[body_a]
+        body_qd_prev_a = body_qd_prev[body_a]
+
+    body_qd_b = wp.spatial_vector()
+    body_qd_prev_b = wp.spatial_vector()
+    if body_b >= 0:
+        body_qd_b = body_qd[body_b]
+        body_qd_prev_b = body_qd_prev[body_b]
+
     complementarity_arg = _compute_complementarity_argument(
         J_n_a,
         J_n_b,
-        body_qd[body_a],
-        body_qd[body_b],
-        body_qd_prev[body_a],
-        body_qd_prev[body_b],
+        body_qd_a,
+        body_qd_b,
+        body_qd_prev_a,
+        body_qd_prev_b,
         gap,
         e,
         dt,
         stabilization_factor,
     )
 
-    # STEP 4: Compute Final Residual and Derivatives
     res_n, dfb_da, dfb_db = scaled_fisher_burmeister(
         lambda_n[tid], complementarity_arg, fb_alpha, fb_beta
     )
 
     # Store the residual
-    res[res_idx] = res_n
+    neg_res[res_idx] = -res_n
 
     # ∂res_n / ∂lambda_n [C, C]
     jacobian[jac_lambda_n_idx.x, jac_lambda_n_idx.y] = dfb_da
 
     # ∂res_n / ∂body_qd [C, B6]
-    for i in range(wp.static(6)):
-        x_off = dres_n_dbody_qd_offset.x
-        y_off = dres_n_dbody_qd_offset.y
-        jacobian[x_off + tid, y_off + body_a * 6 + i] = dfb_db * J_n_a[i]
-        jacobian[x_off + tid, y_off + body_b * 6 + i] = -dfb_db * J_n_b[i]
+    if body_a >= 0:
+        for i in range(wp.static(6)):
+            st_i = wp.static(i)
+            x_off = dres_n_dbody_qd_offset.x + tid
+            y_off = dres_n_dbody_qd_offset.y + body_a * 6
+            jacobian[x_off, y_off + st_i] = dfb_db * J_n_a[i]
+
+    if body_b >= 0:
+        for i in range(wp.static(6)):
+            st_i = wp.static(i)
+            x_off = dres_n_dbody_qd_offset.x + tid
+            y_off = dres_n_dbody_qd_offset.y + body_b * 6
+            jacobian[x_off, y_off + st_i] = dfb_db * J_n_b[i]
 
 
 def setup_data(num_bodies, num_contacts, device):
