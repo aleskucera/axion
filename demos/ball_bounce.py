@@ -146,6 +146,7 @@ def ball_bounce_simulation():
     model = BallBounceSim()
     model.forward()
     model.save_usd()
+    model.save_trajectory()
 
 
 if __name__ == "__main__":
