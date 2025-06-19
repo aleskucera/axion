@@ -4,7 +4,9 @@ import warp as wp
 import warp.optim
 import warp.sim.render
 from axion.nsn_engine import NSNEngine
+from tqdm import tqdm
 
+DEBUG = True
 USD_FILE = "ball_bounce.usd"
 PLOT_FILE = "ball_bounce_plot.png"
 
@@ -75,37 +77,41 @@ class BallBounceSim:
         # self.integrator = wp.sim.SemiImplicitIntegrator()
         self.integrator = NSNEngine()
         self.renderer = wp.sim.render.SimRenderer(self.model, USD_FILE, scaling=100.0)
+        self.render = False  # Set to True to enable rendering
 
-        self.states = [self.model.state() for _ in range(self.sim_steps + 1)]
-        self.trajectory = wp.empty(len(self.time), dtype=wp.vec3)
+        self.state_in = self.model.state()
+        self.state_out = self.model.state()
 
-    def forward(self):
-        for i in range(self.sim_steps):
-            with wp.ScopedTimer("Collision Detection"):
-                wp.sim.collide(self.model, self.states[i])
-            with wp.ScopedTimer("Simulation Step"):
-                self.integrator.simulate(
-                    self.model, self.states[i], self.states[i + 1], self.sim_dt
-                )
-                wp.launch(
-                    kernel=update_trajectory_kernel,
-                    dim=1,
-                    inputs=[self.trajectory, self.states[i].body_q, i, 0],
-                )
+        self.use_cuda_graph = wp.get_device().is_cuda
+        if self.use_cuda_graph:
+            with wp.ScopedCapture() as capture:
+                self.step()
+            self.graph = capture.graph
 
-    def save_usd(self, fps: int = 30):
-        frame_interval = 1.0 / fps  # time interval per frame
+    def simulate(self):
+        frame_interval = 1.0 / self.fps  # time interval per frame
         last_rendered_time = 0.0  # tracks the time of the last rendered frame
 
-        print("Creating USD render...")
-        for t, state in zip(self.time, self.states):
-            if t >= last_rendered_time:  # render only if enough time has passed
-                self.renderer.begin_frame(t)
-                self.renderer.render(state)
-                self.renderer.end_frame()
-                last_rendered_time += frame_interval  # update to next frame time
+        with wp.ScopedTimer("Simulation", active=DEBUG):
+            for i in tqdm(range(self.sim_steps), desc="Simulating", disable=DEBUG):
+                with wp.ScopedTimer(f"Step {i + 1}/{self.sim_steps}", active=DEBUG):
+                    if self.use_cuda_graph:
+                        wp.capture_launch(self.graph)
+                    else:
+                        self.step()
+
+                if self.render and self.time[i] >= last_rendered_time:
+                    self.renderer.begin_frame(self.time[i])
+                    self.renderer.render(self.state_in)
+                    self.renderer.end_frame()
+                    last_rendered_time += frame_interval
 
         self.renderer.save()
+
+    def step(self):
+        wp.sim.collide(self.model, self.state_in)
+        self.integrator.simulate(self.model, self.state_in, self.state_out, self.sim_dt)
+        self.state_in, self.state_out = self.state_out, self.state_in
 
     def save_trajectory(self):
         """Save the trajectory as matplotlib png plot."""
@@ -142,10 +148,8 @@ class BallBounceSim:
 
 
 def ball_bounce_simulation():
-    model = BallBounceSim()
-    model.forward()
-    model.save_usd()
-    model.save_trajectory()
+    sim = BallBounceSim()
+    sim.simulate()
 
 
 if __name__ == "__main__":
