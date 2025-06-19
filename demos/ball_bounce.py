@@ -4,11 +4,10 @@ import warp as wp
 import warp.optim
 import warp.sim.render
 from axion.nsn_engine import NSNEngine
-from tqdm import tqdm
 
-DEBUG = True
+DEBUG = False
 USD_FILE = "ball_bounce.usd"
-PLOT_FILE = "ball_bounce_plot.png"
+PLOT_FILE = "ball_bounce_trajectory.png"
 
 
 def ball_world_model(gravity: bool = True) -> wp.sim.Model:
@@ -17,20 +16,73 @@ def ball_world_model(gravity: bool = True) -> wp.sim.Model:
     else:
         builder = wp.sim.ModelBuilder(gravity=0.0, up_vector=wp.vec3(0, 0, 1))
 
-    b = builder.add_body(
-        origin=wp.transform((0.0, 0.0, 2.5), wp.quat_identity()), name="ball"
+    # ball1 = builder.add_body(
+    #     origin=wp.transform((0.0, 0.0, 2.0), wp.quat_identity()), name="ball1"
+    # )
+    # builder.add_shape_sphere(
+    #     body=ball1,
+    #     radius=1.0,
+    #     density=10.0,
+    #     ke=2000.0,
+    #     kd=10.0,
+    #     kf=200.0,
+    #     mu=1.0,
+    #     restitution=0.5,
+    #     thickness=0.0,
+    # )
+
+    ball2 = builder.add_body(
+        origin=wp.transform((0.3, 0.0, 4.5), wp.quat_identity()), name="ball2"
     )
+
     builder.add_shape_sphere(
-        body=b,
+        body=ball2,
         radius=1.0,
         density=10.0,
         ke=2000.0,
         kd=10.0,
         kf=200.0,
         mu=1.0,
-        restitution=1.0,
-        thickness=0.05,
+        restitution=0.5,
+        thickness=0.0,
     )
+
+    ball3 = builder.add_body(
+        origin=wp.transform((-0.6, 0.0, 6.5), wp.quat_identity()), name="ball3"
+    )
+
+    builder.add_shape_sphere(
+        body=ball3,
+        radius=0.8,
+        density=10.0,
+        ke=2000.0,
+        kd=10.0,
+        kf=200.0,
+        mu=1.0,
+        restitution=0.5,
+        thickness=0.0,
+    )
+
+    box1 = builder.add_body(
+        origin=wp.transform((0.0, 0.0, 8.6), wp.quat_identity()), name="box1"
+    )
+
+    builder.add_shape_box(
+        body=box1,
+        hx=0.5,
+        hy=0.5,
+        hz=0.5,
+        density=20.0,
+        ke=2000.0,
+        kd=10.0,
+        kf=200.0,
+        mu=1.0,
+        restitution=0.2,
+        thickness=0.0,
+    )
+
+    # builder.body_qd[box1] = wp.spatial_vector(0.35, 0.0, 0.0, 0.0, 0.0, 0.0)
+
     builder.set_ground_plane(ke=10, kd=10, kf=0.0, mu=1.0, restitution=1.0)
     model = builder.finalize()
 
@@ -64,8 +116,8 @@ class BallBounceSim:
 
         # Simulation and rendering parameters
         self.fps = 30
-        self.num_frames = 120
-        self.sim_substeps = 5
+        self.num_frames = 90
+        self.sim_substeps = 10
         self.frame_dt = 1.0 / self.fps
         self.sim_dt = self.frame_dt / self.sim_substeps
         self.sim_duration = self.num_frames * self.frame_dt
@@ -75,43 +127,42 @@ class BallBounceSim:
         self.time = np.linspace(0, self.sim_duration, self.sim_steps)
 
         # self.integrator = wp.sim.SemiImplicitIntegrator()
+        # self.integrator = wp.sim.XPBDIntegrator(
+        #     enable_restitution=True, rigid_contact_relaxation=0.0
+        # )
         self.integrator = NSNEngine()
-        self.renderer = wp.sim.render.SimRenderer(self.model, USD_FILE, scaling=100.0)
-        self.render = False  # Set to True to enable rendering
+        self.renderer = wp.sim.render.SimRenderer(self.model, USD_FILE, scaling=1.0)
 
-        self.state_in = self.model.state()
-        self.state_out = self.model.state()
+        self.states = [self.model.state() for _ in range(self.sim_steps + 1)]
+        self.trajectory = wp.empty(len(self.time), dtype=wp.vec3, requires_grad=True)
 
-        self.use_cuda_graph = wp.get_device().is_cuda
-        if self.use_cuda_graph:
-            with wp.ScopedCapture() as capture:
-                self.step()
-            self.graph = capture.graph
+    def forward(self):
+        for i in range(self.sim_steps):
+            with wp.ScopedTimer("Collision Detection"):
+                wp.sim.collide(self.model, self.states[i])
+            with wp.ScopedTimer("Simulation Step"):
+                self.integrator.simulate(
+                    self.model, self.states[i], self.states[i + 1], self.sim_dt
+                )
+                wp.launch(
+                    kernel=update_trajectory_kernel,
+                    dim=1,
+                    inputs=[self.trajectory, self.states[i].body_q, i, 0],
+                )
 
-    def simulate(self):
-        frame_interval = 1.0 / self.fps  # time interval per frame
+    def save_usd(self, fps: int = 30):
+        frame_interval = 1.0 / fps  # time interval per frame
         last_rendered_time = 0.0  # tracks the time of the last rendered frame
 
-        with wp.ScopedTimer("Simulation", active=DEBUG):
-            for i in tqdm(range(self.sim_steps), desc="Simulating", disable=DEBUG):
-                with wp.ScopedTimer(f"Step {i + 1}/{self.sim_steps}", active=DEBUG):
-                    if self.use_cuda_graph:
-                        wp.capture_launch(self.graph)
-                    else:
-                        self.step()
-
-                if self.render and self.time[i] >= last_rendered_time:
-                    self.renderer.begin_frame(self.time[i])
-                    self.renderer.render(self.state_in)
-                    self.renderer.end_frame()
-                    last_rendered_time += frame_interval
+        print("Creating USD render...")
+        for t, state in zip(self.time, self.states):
+            if t >= last_rendered_time:  # render only if enough time has passed
+                self.renderer.begin_frame(t)
+                self.renderer.render(state)
+                self.renderer.end_frame()
+                last_rendered_time += frame_interval  # update to next frame time
 
         self.renderer.save()
-
-    def step(self):
-        wp.sim.collide(self.model, self.state_in)
-        self.integrator.simulate(self.model, self.state_in, self.state_out, self.sim_dt)
-        self.state_in, self.state_out = self.state_out, self.state_in
 
     def save_trajectory(self):
         """Save the trajectory as matplotlib png plot."""
@@ -148,8 +199,10 @@ class BallBounceSim:
 
 
 def ball_bounce_simulation():
-    sim = BallBounceSim()
-    sim.simulate()
+    model = BallBounceSim()
+    model.forward()
+    model.save_usd()
+    model.save_trajectory()
 
 
 if __name__ == "__main__":

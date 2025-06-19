@@ -16,13 +16,22 @@ def setup_test_scene(device):
     builder = wp.sim.ModelBuilder(up_vector=wp.vec3(0, 0, 1))
 
     # Add a dynamic box with some initial rotation
-    builder.add_body(
+    ball1 = builder.add_body(
         origin=wp.transform(
             (0.0, 0.45, 0.0), wp.quat_from_axis_angle(wp.vec3(0, 0, 1), 0.0)
         ),
-        name="box",
+        name="ball1",
     )
-    builder.add_shape_sphere(body=0, radius=0.5, density=10.0)
+    builder.add_shape_sphere(body=ball1, radius=0.5, density=10.0)
+
+    # Add a dynamic box with some initial rotation
+    ball2 = builder.add_body(
+        origin=wp.transform(
+            (2.0, 0.45, 0.0), wp.quat_from_axis_angle(wp.vec3(0, 0, 1), 0.0)
+        ),
+        name="ball2",
+    )
+    builder.add_shape_sphere(body=ball2, radius=0.5, density=10.0)
 
     model = builder.finalize(device=device)
     model.ground = True  # Ensures contact with ground plane is handled

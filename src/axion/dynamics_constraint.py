@@ -85,7 +85,7 @@ def contact_contribution_kernel(
     jacobian: wp.array(dtype=wp.float32, ndim=2),
 ):
     tid = wp.tid()
-    if tid >= contact_count.shape[0]:
+    if tid >= contact_count[0]:
         return
 
     is_active, _, J_n_a, J_n_b, body_a, body_b = _compute_contact_kinematics(

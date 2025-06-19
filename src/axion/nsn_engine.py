@@ -173,6 +173,11 @@ class NSNEngine(Integrator):
         )
         delta_x = wp.zeros((6 * B + C), device=model.device)
 
+        is_collision = model.rigid_contact_count.numpy()[0] > 0
+
+        # if is_collision:
+        #     print("COLLISION DETECTED")
+
         for _ in range(self.max_iterations):
             # Compute the linearized system
             linearize_system(
@@ -180,10 +185,10 @@ class NSNEngine(Integrator):
             )
 
             # print("Residual: ", -neg_res.numpy())
-            # res_norm = np.linalg.norm(neg_res.numpy())
-            # if res_norm < 1e-3:
-            #     # print(f"Converged with residual norm: {res_norm}")
-            #     break
+            res_norm = np.linalg.norm(neg_res.numpy())
+            if res_norm < 1e-3:
+                # print(f"Converged with residual norm: {res_norm}")
+                break
 
             # Solve the linear system
             delta_x.zero_()
@@ -192,7 +197,7 @@ class NSNEngine(Integrator):
                 b=neg_res,
                 x=delta_x,
                 tol=self.tolerance,
-                maxiter=100,
+                maxiter=300,
             )
 
             add_delta_x(delta_x, state_out.body_qd, lambda_n, 0, 6 * B)

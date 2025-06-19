@@ -179,6 +179,7 @@ def contact_constraint_kernel(
 
     if not is_active:
         neg_res[res_idx] = 0.0
+        jacobian[jac_lambda_n_idx.x, jac_lambda_n_idx.y] = 1e-6
         return
 
     e = _compute_restitution_coefficient(
