@@ -135,7 +135,7 @@ class NSNEngine(Integrator):
     def __init__(
         self,
         tolerance: float = 1e-6,
-        max_iterations: int = 1000,
+        max_iterations: int = 10,
         regularization: float = 1e-4,
     ):
         super().__init__()
@@ -180,10 +180,10 @@ class NSNEngine(Integrator):
             )
 
             # print("Residual: ", -neg_res.numpy())
-            res_norm = np.linalg.norm(neg_res.numpy())
-            if res_norm < 1e-3:
-                # print(f"Converged with residual norm: {res_norm}")
-                break
+            # res_norm = np.linalg.norm(neg_res.numpy())
+            # if res_norm < 1e-3:
+            #     # print(f"Converged with residual norm: {res_norm}")
+            #     break
 
             # Solve the linear system
             delta_x.zero_()
