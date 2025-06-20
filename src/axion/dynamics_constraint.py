@@ -38,7 +38,6 @@ def unconstrained_dynamics_kernel(
 
     res_ang = I * (w - w_prev) - t * dt
     res_lin = m * (v - v_prev) - f * dt - m * gravity * dt
-    # wp.printf("Res_lin_z: %.3f\n", res_lin.z)
 
     res_d = wp.spatial_vector(res_ang, res_lin)
 
