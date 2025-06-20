@@ -278,7 +278,7 @@ def setup_data(num_bodies, num_contacts, device):
             "dres_n_dbody_qd_offset": wp.vec2i(0, 0),
             "dres_n_dlambda_n_offset": wp.vec2i(C, 6 * B),
         },
-        "res": wp.zeros(C, dtype=wp.float32, device=device),
+        "neg_res": wp.zeros(C, dtype=wp.float32, device=device),
         "jacobian": wp.zeros((2 * C, C + 6 * B), dtype=wp.float32, device=device),
     }
 
@@ -305,8 +305,8 @@ def run_benchmark(num_bodies, num_contacts, num_iterations=200):
         data["body_qd"],
         data["body_qd_prev"],
         data["body_com"],
-        data["shape_geo"],
         data["shape_body"],
+        data["shape_geo"],
         data["shape_materials"],
         data["contact_count"],
         data["contact_point0"],
