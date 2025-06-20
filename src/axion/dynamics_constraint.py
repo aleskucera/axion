@@ -178,7 +178,7 @@ def setup_data(num_bodies, num_contacts, device):
             "dres_d_dbody_qd_offset": wp.vec2i(0, 0),
             "dres_d_dlambda_n_offset": wp.vec2i(6 * B, 6 * B),
         },
-        "res": wp.zeros(B, dtype=wp.spatial_vector, device=device),
+        "neg_res": wp.zeros(B, dtype=wp.spatial_vector, device=device),
         "jacobian": wp.zeros((12 * B, 6 * B + C), dtype=wp.float32, device=device),
     }
 
@@ -209,7 +209,7 @@ def run_benchmark(num_bodies, num_contacts, num_iterations=200):
         params["dres_d_dbody_qd_offset"],
     ]
     unconstrained_dynamics_kernel_outputs = [
-        data["res"],
+        data["neg_res"],
         data["jacobian"],
     ]
 
@@ -230,7 +230,7 @@ def run_benchmark(num_bodies, num_contacts, num_iterations=200):
     ]
 
     contact_kernel_outputs = [
-        data["res"],
+        data["neg_res"],
         data["jacobian"],
     ]
 

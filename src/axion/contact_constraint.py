@@ -323,7 +323,7 @@ def run_benchmark(num_bodies, num_contacts, num_iterations=200):
         params["dres_n_dbody_qd_offset"],
         params["dres_n_dlambda_n_offset"],
     ]
-    kernel_outputs = [data["res"], data["jacobian"]]
+    kernel_outputs = [data["neg_res"], data["jacobian"]]
 
     # --- 1. Standard Launch Benchmark ---
     print("1. Benching Standard Kernel Launch...")
