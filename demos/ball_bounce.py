@@ -16,20 +16,20 @@ def ball_world_model(gravity: bool = True) -> wp.sim.Model:
     else:
         builder = wp.sim.ModelBuilder(gravity=0.0, up_vector=wp.vec3(0, 0, 1))
 
-    # ball1 = builder.add_body(
-    #     origin=wp.transform((0.0, 0.0, 2.0), wp.quat_identity()), name="ball1"
-    # )
-    # builder.add_shape_sphere(
-    #     body=ball1,
-    #     radius=1.0,
-    #     density=10.0,
-    #     ke=2000.0,
-    #     kd=10.0,
-    #     kf=200.0,
-    #     mu=1.0,
-    #     restitution=0.5,
-    #     thickness=0.0,
-    # )
+    ball1 = builder.add_body(
+        origin=wp.transform((0.0, 0.0, 2.0), wp.quat_identity()), name="ball1"
+    )
+    builder.add_shape_sphere(
+        body=ball1,
+        radius=1.0,
+        density=10.0,
+        ke=2000.0,
+        kd=10.0,
+        kf=200.0,
+        mu=1.0,
+        restitution=0.5,
+        thickness=0.0,
+    )
 
     ball2 = builder.add_body(
         origin=wp.transform((0.3, 0.0, 4.5), wp.quat_identity()), name="ball2"
@@ -63,27 +63,42 @@ def ball_world_model(gravity: bool = True) -> wp.sim.Model:
         thickness=0.0,
     )
 
-    box1 = builder.add_body(
-        origin=wp.transform((0.0, 0.0, 8.6), wp.quat_identity()), name="box1"
+    ball4 = builder.add_body(
+        origin=wp.transform((-0.6, 0.0, 10.5), wp.quat_identity()), name="ball3"
     )
 
-    builder.add_shape_box(
-        body=box1,
-        hx=0.5,
-        hy=0.5,
-        hz=0.5,
-        density=20.0,
+    builder.add_shape_sphere(
+        body=ball4,
+        radius=0.5,
+        density=10.0,
         ke=2000.0,
         kd=10.0,
         kf=200.0,
         mu=1.0,
-        restitution=0.2,
+        restitution=0.5,
+        thickness=0.0,
+    )
+    box1 = builder.add_body(
+        origin=wp.transform((0.0, 0.0, 9.0), wp.quat_identity()), name="box1"
+    )
+
+    builder.add_shape_box(
+        body=box1,
+        hx=0.8,
+        hy=0.8,
+        hz=0.8,
+        density=10.0,
+        ke=2000.0,
+        kd=10.0,
+        kf=200.0,
+        mu=1.0,
+        restitution=0.5,
         thickness=0.0,
     )
 
     # builder.body_qd[box1] = wp.spatial_vector(0.35, 0.0, 0.0, 0.0, 0.0, 0.0)
 
-    builder.set_ground_plane(ke=10, kd=10, kf=0.0, mu=1.0, restitution=1.0)
+    builder.set_ground_plane(ke=10, kd=10, kf=0.0, mu=1.0, restitution=0.8)
     model = builder.finalize()
 
     return model
@@ -116,7 +131,7 @@ class BallBounceSim:
 
         # Simulation and rendering parameters
         self.fps = 30
-        self.num_frames = 90
+        self.num_frames = 120
         self.sim_substeps = 10
         self.frame_dt = 1.0 / self.fps
         self.sim_dt = self.frame_dt / self.sim_substeps

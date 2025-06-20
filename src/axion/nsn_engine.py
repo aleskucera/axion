@@ -6,6 +6,8 @@ from axion.dynamics_constraint import unconstrained_dynamics_kernel
 from axion.utils.add_inplace import add_inplace
 from warp.optim.linear import bicgstab
 from warp.optim.linear import cg
+from warp.optim.linear import gmres
+from warp.optim.linear import preconditioner
 from warp.sim import Control
 from warp.sim import Integrator
 from warp.sim import Model
@@ -134,7 +136,7 @@ def add_delta_x(
 class NSNEngine(Integrator):
     def __init__(
         self,
-        tolerance: float = 1e-6,
+        tolerance: float = 1e-4,
         max_iterations: int = 10,
         regularization: float = 1e-4,
     ):
@@ -186,18 +188,23 @@ class NSNEngine(Integrator):
 
             # print("Residual: ", -neg_res.numpy())
             res_norm = np.linalg.norm(neg_res.numpy())
-            if res_norm < 1e-3:
+            if res_norm < 0.1:
                 # print(f"Converged with residual norm: {res_norm}")
                 break
 
+            M = preconditioner(jacobian, ptype="diag")
+
             # Solve the linear system
             delta_x.zero_()
-            _, lin_res_norm, _ = bicgstab(
+            _, _, _ = gmres(
                 A=jacobian,
                 b=neg_res,
                 x=delta_x,
+                restart=64,
                 tol=self.tolerance,
+                # atol=self.tolerance,
                 maxiter=300,
+                M=M,
             )
 
             add_delta_x(delta_x, state_out.body_qd, lambda_n, 0, 6 * B)

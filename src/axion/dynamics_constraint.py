@@ -182,7 +182,9 @@ def setup_data(num_bodies, num_contacts, device):
         "jacobian": wp.zeros((12 * B, 6 * B + C), dtype=wp.float32, device=device),
     }
 
-    data["geo"].thickness = wp.array(np.random.rand(B), dtype=wp.float32, device=device)
+    data["shape_geo"].thickness = wp.array(
+        np.random.rand(B), dtype=wp.float32, device=device
+    )
     return data
 
 
