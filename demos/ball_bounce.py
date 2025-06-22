@@ -5,8 +5,8 @@ import warp.optim
 import warp.sim.render
 from axion.nsn_engine2 import NSNEngine
 
-wp.config.mode = "debug"
-wp.config.verify_cuda = True
+# wp.config.mode = "debug"
+# wp.config.verify_cuda = True
 # wp.config.verify_fp = True
 
 DEBUG = False

@@ -329,7 +329,7 @@ class NSNEngine(Integrator):
 
             # Check if the residual is within the tolerance
             res_norm = np.linalg.norm(self.h.numpy())
-            if res_norm < 0.05:
+            if res_norm < 0.01:
                 # print(f"Converged with residual norm: {res_norm}")
                 break
 
@@ -342,7 +342,7 @@ class NSNEngine(Integrator):
                 tol=self.tolerance,
                 maxiter=300,
                 M=M,
-                use_cuda_graph=False,
+                use_cuda_graph=True,
             )
 
             # g := J^T @ Δλ - g
