@@ -121,7 +121,7 @@ def _compute_contact_kinematics(
 
 
 @wp.kernel
-def contact_constraint_kernel(
+def contact_constraint_kernel2(
     body_q: wp.array(dtype=wp.transform),  # [B, 7]
     body_qd: wp.array(dtype=wp.spatial_vector),  # [B, 6]
     body_qd_prev: wp.array(dtype=wp.spatial_vector),  # [B, 6]
@@ -246,30 +246,143 @@ def contact_constraint_kernel(
             J_values[offset + st_i] = J_n_b[st_i]
 
 
+@wp.kernel
+def contact_constraint_kernel(
+    body_q: wp.array(dtype=wp.transform),  # [B, 7]
+    body_qd: wp.array(dtype=wp.spatial_vector),  # [B, 6]
+    body_qd_prev: wp.array(dtype=wp.spatial_vector),  # [B, 6]
+    body_com: wp.array(dtype=wp.vec3),  # [B, 3]
+    shape_body: wp.array(dtype=int),  # [B]
+    shape_geo: ModelShapeGeometry,
+    shape_materials: ModelShapeMaterials,
+    contact_count: wp.array(dtype=wp.int32),  # [1]
+    contact_point0: wp.array(dtype=wp.vec3),  # [C, 3]
+    contact_point1: wp.array(dtype=wp.vec3),  # [C, 3]
+    contact_normal: wp.array(dtype=wp.vec3),  # [C, 3]
+    contact_shape0: wp.array(dtype=wp.int32),  # [C]
+    contact_shape1: wp.array(dtype=wp.int32),  # [C]
+    lambda_n: wp.array(dtype=wp.float32),  # [C]
+    # --- Parameters ---
+    dt: wp.float32,
+    stabilization_factor: wp.float32,
+    fb_alpha: wp.float32,
+    fb_beta: wp.float32,
+    # Indices for outputs
+    res_n_offset: wp.int32,
+    dres_n_dbody_qd_offset: wp.vec2i,
+    dres_n_dlambda_n_offset: wp.vec2i,
+    # --- Outputs ---
+    neg_res: wp.array(dtype=wp.float32),
+    jacobian: wp.array(dtype=wp.float32, ndim=2),
+):
+    tid = wp.tid()
+
+    # Get the indices for the scalar outputs (residual and derivatives wrt lambda_n)
+    res_idx = res_n_offset + tid
+    jac_lambda_n_idx = dres_n_dlambda_n_offset + wp.vec2i(tid, tid)
+
+    # Handle inactive constraints (outside the contact count)
+    if tid >= contact_count[0]:
+        # res[res_idx] = -lambda_n[tid]
+        # jacobian[jac_lambda_n_idx.x, jac_lambda_n_idx.y] = -1.0
+        neg_res[res_idx] = 0.0
+        jacobian[jac_lambda_n_idx.x, jac_lambda_n_idx.y] = 1e-6
+        return
+
+    is_active, gap, J_n_a, J_n_b, body_a, body_b = _compute_contact_kinematics(
+        contact_point0[tid],
+        contact_point1[tid],
+        contact_normal[tid],
+        contact_shape0[tid],
+        contact_shape1[tid],
+        body_q,
+        body_com,
+        shape_body,
+        shape_geo,
+    )
+
+    if not is_active:
+        neg_res[res_idx] = 0.0
+        jacobian[jac_lambda_n_idx.x, jac_lambda_n_idx.y] = 1e-6
+        return
+
+    e = _compute_restitution_coefficient(
+        contact_shape0[tid], contact_shape1[tid], shape_materials
+    )
+
+    # Safely get body velocities, handling ground body (-1)
+    body_qd_a = wp.spatial_vector()
+    body_qd_prev_a = wp.spatial_vector()
+    if body_a >= 0:
+        body_qd_a = body_qd[body_a]
+        body_qd_prev_a = body_qd_prev[body_a]
+
+    body_qd_b = wp.spatial_vector()
+    body_qd_prev_b = wp.spatial_vector()
+    if body_b >= 0:
+        body_qd_b = body_qd[body_b]
+        body_qd_prev_b = body_qd_prev[body_b]
+
+    complementarity_arg = _compute_complementarity_argument(
+        J_n_a,
+        J_n_b,
+        body_qd_a,
+        body_qd_b,
+        body_qd_prev_a,
+        body_qd_prev_b,
+        gap,
+        e,
+        dt,
+        stabilization_factor,
+    )
+
+    res_n, dfb_da, dfb_db = scaled_fisher_burmeister(
+        lambda_n[tid], complementarity_arg, fb_alpha, fb_beta
+    )
+
+    # Store the residual
+    neg_res[res_idx] = -res_n
+
+    # ∂res_n / ∂lambda_n [C, C]
+    jacobian[jac_lambda_n_idx.x, jac_lambda_n_idx.y] = dfb_da
+
+    # ∂res_n / ∂body_qd [C, B6]
+    if body_a >= 0:
+        for i in range(wp.static(6)):
+            st_i = wp.static(i)
+            x_off = dres_n_dbody_qd_offset.x + tid
+            y_off = dres_n_dbody_qd_offset.y + body_a * 6
+            jacobian[x_off, y_off + st_i] = dfb_db * J_n_a[st_i]
+
+    if body_b >= 0:
+        for i in range(wp.static(6)):
+            st_i = wp.static(i)
+            x_off = dres_n_dbody_qd_offset.x + tid
+            y_off = dres_n_dbody_qd_offset.y + body_b * 6
+            jacobian[x_off, y_off + st_i] = dfb_db * J_n_b[st_i]
+
+
 def setup_data(num_bodies, num_contacts, device):
-    """Generates all necessary input and output arrays for the kernel."""
+    """Generates all necessary input and output arrays for the fully fused kernel."""
     B, C = num_bodies, num_contacts
-    # We assume num_shapes == num_bodies for this test
-    # Generate contacts between two different random bodies
     shape0 = np.random.randint(0, B, size=C, dtype=np.int32)
     shape1 = np.random.randint(0, B, size=C, dtype=np.int32)
     mask = shape0 == shape1
     while np.any(mask):
-        shape1[mask] = np.random.randint(0, B, size=np.sum(mask), dtype=np.int32)
+        shape1[mask] = np.random.randint(0, B - 1, size=np.sum(mask), dtype=np.int32)
         mask = shape0 == shape1
 
     data = {
-        # --- Inputs ---
         "body_q": wp.array(np.random.rand(B, 7), dtype=wp.transform, device=device),
+        "body_com": wp.array(np.random.rand(B, 3), dtype=wp.vec3, device=device),
+        "shape_geo": ModelShapeGeometry(),
         "body_qd": wp.array(
             np.random.rand(B, 6), dtype=wp.spatial_vector, device=device
         ),
         "body_qd_prev": wp.array(
             np.random.rand(B, 6), dtype=wp.spatial_vector, device=device
         ),
-        "body_com": wp.array(np.random.rand(B, 3), dtype=wp.vec3, device=device),
-        "shape_body": wp.array(np.arange(B, dtype=wp.int32), dtype=int, device=device),
-        "shape_geo": ModelShapeGeometry(),
+        "shape_body": wp.array(np.arange(B, dtype=np.int32), dtype=int, device=device),
         "shape_materials": ModelShapeMaterials(),
         "contact_count": wp.array([C], dtype=wp.int32, device=device),
         "contact_point0": wp.array(np.random.rand(C, 3), dtype=wp.vec3, device=device),
@@ -280,25 +393,19 @@ def setup_data(num_bodies, num_contacts, device):
         "contact_shape0": wp.array(shape0, dtype=wp.int32, device=device),
         "contact_shape1": wp.array(shape1, dtype=wp.int32, device=device),
         "lambda_n": wp.array(np.random.rand(C), dtype=wp.float32, device=device),
-        # --- Parameters ---
         "params": {
             "dt": 0.01,
             "stabilization_factor": 0.2,
             "fb_alpha": 0.25,
             "fb_beta": 0.25,
-            "h_n_offset": 0,
-            "J_n_offset": 0,
-            "C_n_offset": 0,
+            "res_n_offset": 0,
+            "dres_n_dbody_qd_offset": wp.vec2i(0, 0),
+            "dres_n_dlambda_n_offset": wp.vec2i(C, 6 * B),
         },
-        # --- Outputs ---
-        "g": wp.zeros(B * 6, dtype=wp.float32, device=device),
-        "h": wp.zeros(C, dtype=wp.float32, device=device),
-        # Each contact contributes two 6-dof Jacobians (12 floats)
-        "J_values": wp.zeros(C * 12, dtype=wp.float32, device=device),
-        "C_values": wp.zeros(C, dtype=wp.float32, device=device),
+        "neg_res": wp.zeros(C, dtype=wp.float32, device=device),
+        "jacobian": wp.zeros((2 * C, C + 6 * B), dtype=wp.float32, device=device),
     }
 
-    # Populate geometry and material properties for all bodies/shapes
     data["shape_geo"].thickness = wp.array(
         np.random.rand(B), dtype=wp.float32, device=device
     )
@@ -309,17 +416,15 @@ def setup_data(num_bodies, num_contacts, device):
 
 
 def run_benchmark(num_bodies, num_contacts, num_iterations=200):
-    """Measures execution time of the kernel using standard launch vs. CUDA graph."""
+    """Measures execution time of the fully fused kernel using standard launch vs. CUDA graph."""
     print(
-        f"\n--- Benchmarking Kernel: B={num_bodies}, C={num_contacts}, Iterations={num_iterations} ---"
+        f"\n--- Benchmarking FULLY FUSED Kernel: B={num_bodies}, C={num_contacts}, Iterations={num_iterations} ---"
     )
     device = wp.get_device()
     data = setup_data(num_bodies, num_contacts, device)
     params = data["params"]
 
-    # Assemble the list of arguments in the exact order the kernel expects.
-    # This includes all inputs, parameters, and outputs.
-    kernel_args = [
+    kernel_inputs = [
         data["body_q"],
         data["body_qd"],
         data["body_qd_prev"],
@@ -338,32 +443,30 @@ def run_benchmark(num_bodies, num_contacts, num_iterations=200):
         params["stabilization_factor"],
         params["fb_alpha"],
         params["fb_beta"],
-        params["h_n_offset"],
-        params["J_n_offset"],
-        params["C_n_offset"],
-        data["g"],
-        data["h"],
-        data["J_values"],
-        data["C_values"],
+        params["res_n_offset"],
+        params["dres_n_dbody_qd_offset"],
+        params["dres_n_dlambda_n_offset"],
     ]
+    kernel_outputs = [data["neg_res"], data["jacobian"]]
 
     # --- 1. Standard Launch Benchmark ---
     print("1. Benching Standard Kernel Launch...")
-    # Warm-up launch
     wp.launch(
-        kernel=contact_constraint_kernel,
+        contact_constraint_kernel,
         dim=num_contacts,
-        inputs=kernel_args,
+        inputs=kernel_inputs,
+        outputs=kernel_outputs,
         device=device,
     )
-    wp.synchronize()
+    wp.synchronize()  # Warm-up
 
     start_time = time.perf_counter()
     for _ in range(num_iterations):
         wp.launch(
-            kernel=contact_constraint_kernel,
+            contact_constraint_kernel,
             dim=num_contacts,
-            inputs=kernel_args,
+            inputs=kernel_inputs,
+            outputs=kernel_outputs,
             device=device,
         )
     wp.synchronize()
@@ -375,15 +478,15 @@ def run_benchmark(num_bodies, num_contacts, num_iterations=200):
         print("2. Benching CUDA Graph Launch...")
         with wp.ScopedCapture() as capture:
             wp.launch(
-                kernel=contact_constraint_kernel,
+                contact_constraint_kernel,
                 dim=num_contacts,
-                inputs=kernel_args,
+                inputs=kernel_inputs,
+                outputs=kernel_outputs,
                 device=device,
             )
         graph = capture.graph
-        # Warm-up launch
         wp.capture_launch(graph)
-        wp.synchronize()
+        wp.synchronize()  # Warm-up
 
         start_time = time.perf_counter()
         for _ in range(num_iterations):
