@@ -110,8 +110,8 @@ def fill_J_n_indices_kernel(
         for i in range(wp.static(6)):
             st_i = wp.static(i)
             idxs_offset = J_n_offset + 12 * tid + 6
-            J_rows[idxs_offset + 6 + st_i] = J_n_dense_offset.x + tid
-            J_cols[idxs_offset + 6 + st_i] = J_n_dense_offset.y + 6 * body_b + st_i
+            J_rows[idxs_offset + st_i] = J_n_dense_offset.x + tid
+            J_cols[idxs_offset + st_i] = J_n_dense_offset.y + 6 * body_b + st_i
 
 
 def add_delta_x(
