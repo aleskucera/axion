@@ -10,7 +10,7 @@ from tqdm import tqdm
 # wp.config.verify_fp = True
 
 RENDER = True
-DEBUG = False
+DEBUG = True
 USD_FILE = "ball_bounce.usd"
 PLOT_FILE = "ball_bounce_trajectory.png"
 

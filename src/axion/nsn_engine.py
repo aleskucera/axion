@@ -7,6 +7,7 @@ from axion.contact_constraint import contact_constraint_kernel
 from axion.dynamics_constraint import unconstrained_dynamics_kernel
 from axion.optim.cr import cr_solver_graph_compatible
 from axion.utils.add_inplace import add_inplace
+from numpy.random import beta
 from warp.sim import Control
 from warp.sim import Integrator
 from warp.sim import Model
@@ -186,15 +187,43 @@ class NSNEngine(Integrator):
         self.delta_body_qd = wp.zeros(6 * N_b, dtype=wp.float32, device=device)
         self.delta_lambda = wp.zeros(N_c, dtype=wp.float32, device=device)
 
-        # Warm up bsr_set_from_triplets for H_inv, J, and C
+        # A = J @ H^{-1} @ J^T + C
+        # Z = J @ H^{-1}
+        # C := Y @ J^T + C
+        self.Z = wps.bsr_zeros(N_c, 6 * N_b, block_type=wp.float32, device=device)
+
+        self.mm_work_arrays_1 = wps.bsr_mm_work_arrays()
+        self.mm_work_arrays_2 = wps.bsr_mm_work_arrays()
+
+        # ----------- WARM-UP -----------
         wps.bsr_set_from_triplets(
             self.H_inv, self.H_inv_rows, self.H_inv_cols, self.H_inv_values
         )
         wps.bsr_set_from_triplets(self.J, self.J_rows, self.J_cols, self.J_values)
         wps.bsr_set_from_triplets(self.C, self.C_rows, self.C_cols, self.C_values)
 
-        # Warm up the transpose operation as well, just in case
         wps.bsr_set_transpose(self.J_T, self.J)
+
+        # # Warm up the sparse matrix multiplications
+        # wps.bsr_mm(
+        #     x=self.J,
+        #     y=self.H_inv,
+        #     z=self.Z,
+        #     alpha=1.0,
+        #     beta=0.0,
+        #     work_arrays=self.mm_work_arrays_1,
+        #     reuse_topology=False,
+        # )  # Changes Z
+        #
+        # wps.bsr_mm(
+        #     x=self.Z,
+        #     y=self.J_T,
+        #     z=self.C,
+        #     alpha=1.0,
+        #     beta=1.0,
+        #     work_arrays=self.mm_work_arrays_2,
+        #     reuse_topology=False,
+        # )  # Changes C
 
     def _clear_values(self):
         self.g.zero_()
@@ -328,37 +357,57 @@ class NSNEngine(Integrator):
         self.integrate_bodies(model, state_in, state_out, dt)
 
         for _ in range(self.max_iterations):
-            self._fill_matrices(model, state_in, state_out, dt)
+            with wp.ScopedTimer("Fill Matrices", active=True):
+                self._fill_matrices(model, state_in, state_out, dt)
 
-            # A = J @ H^{-1} @ J^T + C
-            J_H_inv = wps.bsr_mm(self.J, self.H_inv, reuse_topology=True)
-            A = wps.bsr_axpy(
-                x=wps.bsr_mm(J_H_inv, self.J_T, reuse_topology=True), y=self.C
-            )
+            with wp.ScopedTimer("MM", active=True):
 
-            # b = J @ H^{-1} @ g - h
-            wps.bsr_mv(A=J_H_inv, x=self.g, y=self.h, alpha=1.0, beta=-1.0)  # Changes h
+                # A = J @ H^{-1} @ J^T + C
+                wps.bsr_mm(
+                    x=self.J,
+                    y=self.H_inv,
+                    z=self.Z,
+                    alpha=1.0,
+                    beta=0.0,
+                    # work_arrays=self.mm_work_arrays_1,
+                    # reuse_topology=True,
+                )  # Changes Z
 
-            # Solve the linear system A * delta_lambda = b
-            M = wpol.preconditioner(A, ptype="diag")
-            _ = cr_solver_graph_compatible(
-                A=A,
-                b=self.h,
-                x=self.delta_lambda,
-                iters=10,
-                M=M,
-            )
+                wps.bsr_mm(
+                    x=self.Z,
+                    y=self.J_T,
+                    z=self.C,
+                    alpha=1.0,
+                    beta=1.0,
+                    # work_arrays=self.mm_work_arrays_2,
+                    # reuse_topology=True,
+                )  # Changes C
+            with wp.ScopedTimer("Solve", active=True):
+                # b = J @ H^{-1} @ g - h
+                wps.bsr_mv(
+                    A=self.Z, x=self.g, y=self.h, alpha=1.0, beta=-1.0
+                )  # Changes h
 
-            # g := J^T @ Δλ - g
-            wps.bsr_mv(
-                A=self.J_T, x=self.delta_lambda, y=self.g, alpha=1.0, beta=-1.0
-            )  # Changes g
+                # Solve the linear system A * delta_lambda = b
+                M = wpol.preconditioner(self.Z, ptype="diag")
+                _ = cr_solver_graph_compatible(
+                    A=self.C,
+                    b=self.h,
+                    x=self.delta_lambda,
+                    iters=10,
+                    M=M,
+                )
 
-            # Δu := H^{-1} @ g
-            wps.bsr_mv(
-                A=self.H_inv, x=self.g, y=self.delta_body_qd, alpha=1.0, beta=0.0
-            )  # Changes delta_body_qd
+                # g := J^T @ Δλ - g
+                wps.bsr_mv(
+                    A=self.J_T, x=self.delta_lambda, y=self.g, alpha=1.0, beta=-1.0
+                )  # Changes g
 
-            # Add the changes to the state
-            add_inplace(state_out.body_qd, self.delta_body_qd, 0, 0, N_b)
-            add_inplace(self.lambda_n, self.delta_lambda, 0, 0, N_c)
+                # Δu := H^{-1} @ g
+                wps.bsr_mv(
+                    A=self.H_inv, x=self.g, y=self.delta_body_qd, alpha=1.0, beta=0.0
+                )  # Changes delta_body_qd
+
+                # Add the changes to the state
+                add_inplace(state_out.body_qd, self.delta_body_qd, 0, 0, N_b)
+                add_inplace(self.lambda_n, self.delta_lambda, 0, 0, N_c)
