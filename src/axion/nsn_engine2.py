@@ -342,6 +342,7 @@ class NSNEngine(Integrator):
                 tol=self.tolerance,
                 maxiter=300,
                 M=M,
+                use_cuda_graph=False,
             )
 
             # g := J^T @ Δλ - g
