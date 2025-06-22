@@ -1,14 +1,15 @@
 import matplotlib.pyplot as plt
 import numpy as np
 import warp as wp
-import warp.optim
 import warp.sim.render
-from axion.nsn_engine2 import NSNEngine
+from axion.nsn_engine import NSNEngine
+from tqdm import tqdm
 
 # wp.config.mode = "debug"
 # wp.config.verify_cuda = True
 # wp.config.verify_fp = True
 
+RENDER = True
 DEBUG = False
 USD_FILE = "ball_bounce.usd"
 PLOT_FILE = "ball_bounce_trajectory.png"
@@ -152,76 +153,45 @@ class BallBounceSim:
         self.integrator = NSNEngine(self.model)
         self.renderer = wp.sim.render.SimRenderer(self.model, USD_FILE, scaling=1.0)
 
-        self.states = [self.model.state() for _ in range(self.sim_steps + 1)]
-        self.trajectory = wp.empty(len(self.time), dtype=wp.vec3, requires_grad=True)
+        self.state_0 = self.model.state()
+        self.state_1 = self.model.state()
 
-    def forward(self):
-        for i in range(self.sim_steps):
-            with wp.ScopedTimer("Collision Detection"):
-                wp.sim.collide(self.model, self.states[i])
-            with wp.ScopedTimer("Simulation Step"):
-                self.integrator.simulate(
-                    self.model, self.states[i], self.states[i + 1], self.sim_dt
-                )
-                wp.launch(
-                    kernel=update_trajectory_kernel,
-                    dim=1,
-                    inputs=[self.trajectory, self.states[i].body_q, i, 0],
-                )
+        self.use_cuda_graph = wp.get_device().is_cuda
+        if self.use_cuda_graph:
+            with wp.ScopedCapture() as capture:
+                self.step()
+            self.step_graph = capture.graph
 
-    def save_usd(self, fps: int = 30):
-        frame_interval = 1.0 / fps  # time interval per frame
-        last_rendered_time = 0.0  # tracks the time of the last rendered frame
+    def step(self):
+        wp.sim.collide(self.model, self.state_0)
+        self.integrator.simulate(self.model, self.state_0, self.state_1, self.sim_dt)
+        self.state_0, self.state_1 = self.state_1, self.state_0
 
-        print("Creating USD render...")
-        for t, state in zip(self.time, self.states):
-            if t >= last_rendered_time:  # render only if enough time has passed
-                self.renderer.begin_frame(t)
-                self.renderer.render(state)
-                self.renderer.end_frame()
-                last_rendered_time += frame_interval  # update to next frame time
+    def simulate(self):
+        frame_interval = 1.0 / self.fps
+        last_rendered_time = 0.0
 
-        self.renderer.save()
+        for i in tqdm(range(self.sim_steps), desc="Simulating", disable=DEBUG):
+            with wp.ScopedTimer("step", active=DEBUG):
+                if self.use_cuda_graph:
+                    wp.capture_launch(self.step_graph)
+                else:
+                    self.step()
+            if RENDER:
+                t = self.time[i]
+                if t >= last_rendered_time:  # render only if enough time has passed
+                    self.renderer.begin_frame(t)
+                    self.renderer.render(self.state_0)
+                    self.renderer.end_frame()
+                    last_rendered_time += frame_interval  # update to next frame time
 
-    def save_trajectory(self):
-        """Save the trajectory as matplotlib png plot."""
-        trajectory_data = self.trajectory.numpy()
-
-        x = trajectory_data[:, 0]
-        y = trajectory_data[:, 1]
-        z = trajectory_data[:, 2]
-
-        # Make 3 subplots for x, y, z
-        fig, axs = plt.subplots(3, 1, figsize=(10, 15))
-        axs[0].plot(self.time, x, label="X Position", color="blue")
-        axs[0].set_title("X Position Over Time")
-        axs[0].set_xlabel("Time (s)")
-        axs[0].set_ylabel("X Position")
-
-        axs[1].plot(self.time, y, label="Y Position", color="green")
-        axs[1].set_title("Y Position Over Time")
-        axs[1].set_xlabel("Time (s)")
-        axs[1].set_ylabel("Y Position")
-
-        axs[2].plot(self.time, z, label="Z Position", color="red")
-        axs[2].set_title("Z Position Over Time")
-        axs[2].set_xlabel("Time (s)")
-        axs[2].set_ylabel("Z Position")
-
-        plt.tight_layout()
-        plt.savefig(PLOT_FILE)
-
-        try:
-            plt.show()
-        except Exception as e:
-            print(f"Error displaying plot: {e}")
+        if RENDER:
+            self.renderer.save()
 
 
 def ball_bounce_simulation():
     model = BallBounceSim()
-    model.forward()
-    model.save_usd()
-    model.save_trajectory()
+    model.simulate()
 
 
 if __name__ == "__main__":

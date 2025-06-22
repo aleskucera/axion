@@ -2,7 +2,6 @@ import time
 
 import numpy as np
 import warp as wp
-from warp.sim import ModelShapeGeometry
 
 
 @wp.kernel

@@ -3,8 +3,9 @@ import warp as wp
 import warp.context as wpctx
 import warp.optim.linear as wpol
 import warp.sparse as wps
-from axion.contact_constraint import contact_constraint_kernel2
-from axion.dynamics_constraint import unconstrained_dynamics_kernel2
+from axion.contact_constraint import contact_constraint_kernel
+from axion.dynamics_constraint import unconstrained_dynamics_kernel
+from axion.optim.cr import cr_solver_graph_compatible
 from axion.utils.add_inplace import add_inplace
 from warp.sim import Control
 from warp.sim import Integrator
@@ -132,14 +133,13 @@ class NSNEngine(Integrator):
     def __init__(
         self,
         model: Model,
-        tolerance: float = 1e-4,
+        tolerance: float = 1e-3,
         max_iterations: int = 10,
-        regularization: float = 1e-4,
+        use_cuda_graph: bool = True,
     ):
         super().__init__()
         self.tolerance = tolerance
         self.max_iterations = max_iterations
-        self.regularization = regularization
 
         device = model.device
         N_b = model.body_count
@@ -222,7 +222,7 @@ class NSNEngine(Integrator):
 
         # Compute the dynamics contact constraint
         wp.launch(
-            kernel=unconstrained_dynamics_kernel2,
+            kernel=unconstrained_dynamics_kernel,
             dim=N_b,
             inputs=[
                 state_out.body_qd,
@@ -241,7 +241,7 @@ class NSNEngine(Integrator):
 
         # Compute the contact constraint
         wp.launch(
-            kernel=contact_constraint_kernel2,
+            kernel=contact_constraint_kernel,
             dim=N_c,
             inputs=[
                 state_out.body_q,
@@ -327,22 +327,14 @@ class NSNEngine(Integrator):
             # b = J @ H^{-1} @ g - h
             wps.bsr_mv(A=J_H_inv, x=self.g, y=self.h, alpha=1.0, beta=-1.0)  # Changes h
 
-            # Check if the residual is within the tolerance
-            res_norm = np.linalg.norm(self.h.numpy())
-            if res_norm < 0.01:
-                # print(f"Converged with residual norm: {res_norm}")
-                break
-
             # Solve the linear system A * delta_lambda = b
             M = wpol.preconditioner(A, ptype="diag")
-            _, _, _ = wpol.cg(
+            _ = cr_solver_graph_compatible(
                 A=A,
                 b=self.h,
                 x=self.delta_lambda,
-                tol=self.tolerance,
-                maxiter=300,
+                iters=10,
                 M=M,
-                use_cuda_graph=True,
             )
 
             # g := J^T @ Δλ - g
