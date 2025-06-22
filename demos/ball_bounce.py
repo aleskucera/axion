@@ -5,6 +5,10 @@ import warp.optim
 import warp.sim.render
 from axion.nsn_engine2 import NSNEngine
 
+wp.config.mode = "debug"
+wp.config.verify_cuda = True
+# wp.config.verify_fp = True
+
 DEBUG = False
 USD_FILE = "ball_bounce.usd"
 PLOT_FILE = "ball_bounce_trajectory.png"
