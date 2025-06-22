@@ -3,7 +3,7 @@ import numpy as np
 import warp as wp
 import warp.optim
 import warp.sim.render
-from axion.nsn_engine import NSNEngine
+from axion.nsn_engine2 import NSNEngine
 
 DEBUG = False
 USD_FILE = "ball_bounce.usd"
@@ -145,7 +145,7 @@ class BallBounceSim:
         # self.integrator = wp.sim.XPBDIntegrator(
         #     enable_restitution=True, rigid_contact_relaxation=0.0
         # )
-        self.integrator = NSNEngine()
+        self.integrator = NSNEngine(self.model)
         self.renderer = wp.sim.render.SimRenderer(self.model, USD_FILE, scaling=1.0)
 
         self.states = [self.model.state() for _ in range(self.sim_steps + 1)]

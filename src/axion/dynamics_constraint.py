@@ -4,6 +4,63 @@ import numpy as np
 import warp as wp
 from axion.contact_constraint import _compute_contact_kinematics
 from warp.sim import ModelShapeGeometry
+from warp.sparse import bsr_set_from_triplets
+from warp.sparse import BsrMatrix
+
+
+@wp.kernel
+def unconstrained_dynamics_kernel2(
+    body_qd: wp.array(dtype=wp.spatial_vector),  # [B]
+    body_qd_prev: wp.array(dtype=wp.spatial_vector),  # [B]
+    body_f: wp.array(dtype=wp.spatial_vector),  # [B]
+    body_mass: wp.array(dtype=wp.float32),  # [B]
+    body_mass_inv: wp.array(dtype=wp.float32),  # [B]
+    body_inertia: wp.array(dtype=wp.mat33),  # [B]
+    body_inertia_inv: wp.array(dtype=wp.mat33),  # [B]
+    # --- Parameters ---
+    dt: wp.float32,
+    gravity: wp.vec3,  # [3]
+    # --- Outputs ---
+    g: wp.array(dtype=wp.float32),  # [B]
+    H_inv_values: wp.array(dtype=wp.float32),  # [12B]
+):
+    tid = wp.tid()
+    if tid >= body_qd.shape[0]:
+        return
+
+    w = wp.spatial_top(body_qd[tid])
+    v = wp.spatial_bottom(body_qd[tid])
+    w_prev = wp.spatial_top(body_qd_prev[tid])
+    v_prev = wp.spatial_bottom(body_qd_prev[tid])
+    t = wp.spatial_top(body_f[tid])
+    f = wp.spatial_bottom(body_f[tid])
+
+    m, I = body_mass[tid], body_inertia[tid]
+
+    res_ang = I * (w - w_prev) - t * dt
+    res_lin = m * (v - v_prev) - f * dt - m * gravity * dt
+
+    # --- g --- [6B]
+    g_b = wp.spatial_vector(res_ang, res_lin)
+    for i in range(wp.static(6)):
+        st_i = wp.static(i)
+        g[tid * 6 + st_i] = g_b[st_i]
+
+    m_inv, I_inv = body_mass_inv[tid], body_inertia_inv[tid]
+
+    # --- H_inv --- [6B, 6B]
+    # Angular part:
+    for r in range(wp.static(3)):  # rows
+        for c in range(wp.static(3)):  # columns
+            st_r, st_c = wp.static(r), wp.static(c)
+            flat_idx = st_r * 3 + st_c
+            H_inv_values[tid * 12 + flat_idx] = I_inv[st_r, st_c]
+
+    # Linear part:
+    for i in range(wp.static(3)):
+        st_i = wp.static(i)
+        flat_idx = 9 + st_i
+        H_inv_values[tid * 12 + flat_idx] = m_inv
 
 
 @wp.kernel
