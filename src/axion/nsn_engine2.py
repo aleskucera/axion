@@ -64,8 +64,8 @@ def generate_compliance_block_indices(max_rigid_contacts: int, device: wpctx.Dev
         C_rows (np.array): Row indices of non-zero elements.
         C_cols (np.array): Column indices of non-zero elements.
     """
-    C_rows = np.arange(0, max_rigid_contacts + 1, dtype=np.int32)
-    C_cols = np.arange(0, max_rigid_contacts + 1, dtype=np.int32)
+    C_rows = np.arange(0, max_rigid_contacts, dtype=np.int32)
+    C_cols = np.arange(0, max_rigid_contacts, dtype=np.int32)
     C_rows = wp.array(C_rows, dtype=wp.int32, device=device)
     C_cols = wp.array(C_cols, dtype=wp.int32, device=device)
     return C_rows, C_cols
