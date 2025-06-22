@@ -331,8 +331,10 @@ class NSNEngine(Integrator):
             self._fill_matrices(model, state_in, state_out, dt)
 
             # A = J @ H^{-1} @ J^T + C
-            J_H_inv = wps.bsr_mm(self.J, self.H_inv)
-            A = wps.bsr_axpy(x=wps.bsr_mm(J_H_inv, self.J_T), y=self.C)
+            J_H_inv = wps.bsr_mm(self.J, self.H_inv, reuse_topology=True)
+            A = wps.bsr_axpy(
+                x=wps.bsr_mm(J_H_inv, self.J_T, reuse_topology=True), y=self.C
+            )
 
             # b = J @ H^{-1} @ g - h
             wps.bsr_mv(A=J_H_inv, x=self.g, y=self.h, alpha=1.0, beta=-1.0)  # Changes h
