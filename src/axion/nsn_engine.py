@@ -186,6 +186,16 @@ class NSNEngine(Integrator):
         self.delta_body_qd = wp.zeros(6 * N_b, dtype=wp.float32, device=device)
         self.delta_lambda = wp.zeros(N_c, dtype=wp.float32, device=device)
 
+        # Warm up bsr_set_from_triplets for H_inv, J, and C
+        wps.bsr_set_from_triplets(
+            self.H_inv, self.H_inv_rows, self.H_inv_cols, self.H_inv_values
+        )
+        wps.bsr_set_from_triplets(self.J, self.J_rows, self.J_cols, self.J_values)
+        wps.bsr_set_from_triplets(self.C, self.C_rows, self.C_cols, self.C_values)
+
+        # Warm up the transpose operation as well, just in case
+        wps.bsr_set_transpose(self.J_T, self.J)
+
     def _clear_values(self):
         self.g.zero_()
         self.h.zero_()
