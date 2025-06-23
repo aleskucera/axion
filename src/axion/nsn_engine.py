@@ -1,4 +1,3 @@
-import numpy as np
 import warp as wp
 import warp.context as wpctx
 import warp.optim.linear as wpol
@@ -17,102 +16,204 @@ CONTACT_FB_ALPHA = 0.25  # Fisher-Burmeister scaling factor of the first argumen
 CONTACT_FB_BETA = 0.25  # Fisher-Burmeister scaling factor of the second argument
 
 
-def generate_mass_block_indices(num_bodies: int, device: wpctx.Device):
-    """
-    Generate row and column indices for non-zero elements of the mass matrix
-    for unconstrained rigid bodies, with velocity vector [omega, v].
-    Each body has a 3x3 inertia tensor (9 non-zero elements) and a 3x3 diagonal
-    mass block (3 non-zero elements).
+@wp.func
+def _compute_Aij(
+    body_mass_inv: wp.array(dtype=wp.float32),
+    body_inertia_inv: wp.array(dtype=wp.mat33),
+    body_i: int,
+    body_j: int,
+    J_i: wp.spatial_vector,
+    J_j: wp.spatial_vector,
+):
+    # Check if the bodies are the same
+    if body_i != body_j:
+        return 0.0
 
-    Args:
-        num_bodies (int): Number of bodies in the system.
-        device (warp.context.Device): The device on which to create the arrays.
+    # Check if the bodies are valid
+    if body_i < 0 or body_j < 0:
+        return 0.0
 
-    Returns:
-        H_rows (np.array): Row indices of non-zero elements.
-        H_cols (np.array): Column indices of non-zero elements.
-    """
-    H_rows = []
-    H_cols = []
+    J_i_ang = wp.spatial_top(J_i)
+    J_i_lin = wp.spatial_bottom(J_i)
+    J_j_ang = wp.spatial_top(J_j)
+    J_j_lin = wp.spatial_bottom(J_j)
 
-    for i in range(num_bodies):  # Loop over each body
-        # Base index for the current body (6x6 block)
-        base = 6 * i
-
-        # Inertia tensor block (3x3, rows/cols: base to base+2)
-        for r in range(3):  # Rows of inertia tensor
-            for c in range(3):  # Columns of inertia tensor
-                H_rows.append(base + r)
-                H_cols.append(base + c)
-
-        # Mass block (3x3 diagonal, rows/cols: base+3 to base+5)
-        for d in range(3):  # Diagonal elements
-            H_rows.append(base + 3 + d)
-            H_cols.append(base + 3 + d)
-    H_rows = wp.array(H_rows, dtype=wp.int32, device=device)
-    H_cols = wp.array(H_cols, dtype=wp.int32, device=device)
-    return H_rows, H_cols
-
-
-def generate_compliance_block_indices(max_rigid_contacts: int, device: wpctx.Device):
-    """
-    Generate row and column indices for non-zero elements of the compliance matrix
-    for rigid contact constraints.
-    Args:
-        max_rigid_contacts (int): Maximum number of rigid contact constraints.
-        device (warp.context.Device): The device on which to create the arrays.
-    Returns:
-        C_rows (np.array): Row indices of non-zero elements.
-        C_cols (np.array): Column indices of non-zero elements.
-    """
-    C_rows = np.arange(0, max_rigid_contacts, dtype=np.int32)
-    C_cols = np.arange(0, max_rigid_contacts, dtype=np.int32)
-    C_rows = wp.array(C_rows, dtype=wp.int32, device=device)
-    C_cols = wp.array(C_cols, dtype=wp.int32, device=device)
-    return C_rows, C_cols
+    # Compute the angular part
+    A_ij_ang = wp.dot(J_i_ang, body_inertia_inv[body_i] @ J_j_ang)
+    A_ij_lin = wp.dot(J_i_lin, body_mass_inv[body_i] * J_j_lin)
+    A_ij = A_ij_ang + A_ij_lin
+    return A_ij
 
 
 @wp.kernel
-def fill_J_n_indices_kernel(
-    shape_body: wp.array(dtype=int),  # [B]
-    contact_count: wp.array(dtype=wp.int32),  # [1]
-    contact_shape0: wp.array(dtype=wp.int32),  # [C]
-    contact_shape1: wp.array(dtype=wp.int32),  # [C]
-    J_n_offset: int,  # Offset for the normal contact constraint Jacobian indices
-    J_n_dense_offset: wp.vec2i,  # Offset for the normal contact constraint Jacobian
-    # --- Outputs ---
-    J_rows: wp.array(dtype=wp.int32),
-    J_cols: wp.array(dtype=wp.int32),
+def update_system_matrix_kernel(
+    body_mass_inv: wp.array(dtype=wp.float32),
+    body_inertia_inv: wp.array(dtype=wp.mat33),
+    contact_body_a: wp.array(dtype=wp.int32),
+    contact_body_b: wp.array(dtype=wp.int32),
+    J_values: wp.array(dtype=wp.spatial_vector, ndim=2),
+    C_values: wp.array(dtype=wp.float32),
+    A: wp.array(dtype=wp.float32, ndim=2),
 ):
-    tid = wp.tid()
+    i, j = wp.tid()
 
-    # Handle inactive constraints (not detected by collide func)
-    if tid >= contact_count[0]:
+    body_a_i = contact_body_a[i]
+    body_b_i = contact_body_b[i]
+    J_ia = J_values[i, 0]
+    J_ib = J_values[i, 1]
+
+    body_a_j = contact_body_a[j]
+    body_b_j = contact_body_b[j]
+    J_ja = J_values[j, 0]
+    J_jb = J_values[j, 1]
+
+    if body_a_i == body_b_i or body_a_j == body_b_j:
+        A[i, j] = 0.0
+
+    A_ij = 0.0
+
+    # Term 1: body_a_i vs body_a_j
+    if body_a_i >= 0 and body_a_i == body_a_j:
+        A_ij += _compute_Aij(
+            body_mass_inv, body_inertia_inv, body_a_i, body_a_j, J_ia, J_ja
+        )
+
+    # Term 2: body_a_i vs body_b_j
+    if body_a_i >= 0 and body_a_i == body_b_j:
+        A_ij += _compute_Aij(
+            body_mass_inv, body_inertia_inv, body_a_i, body_b_j, J_ia, J_jb
+        )
+
+    # Term 3: body_b_i vs body_a_j
+    if body_b_i >= 0 and body_b_i == body_a_j:
+        A_ij += _compute_Aij(
+            body_mass_inv, body_inertia_inv, body_b_i, body_a_j, J_ib, J_ja
+        )
+
+    # Term 4: body_b_i vs body_b_j
+    if body_b_i >= 0 and body_b_i == body_b_j:
+        A_ij += _compute_Aij(
+            body_mass_inv, body_inertia_inv, body_b_i, body_b_j, J_ib, J_jb
+        )
+
+    # Add compliance term C_ij (only on diagonal)
+    if i == j:
+        A_ij += C_values[i]
+
+    A[i, j] = A_ij
+
+
+@wp.func
+def _compute_JHinvG_i(
+    body_mass_inv: wp.array(dtype=wp.float32),
+    body_inertia_inv: wp.array(dtype=wp.mat33),
+    body_idx: int,
+    J: wp.spatial_vector,
+    g: wp.array(dtype=wp.float32),
+):
+    if body_idx < 0:
+        return 0.0
+
+    # H_inv @ g for the angular part
+    g_ang_body = wp.vec3(g[body_idx * 6 + 0], g[body_idx * 6 + 1], g[body_idx * 6 + 2])
+    Hinv_g_ang = body_inertia_inv[body_idx] @ g_ang_body
+
+    # H_inv @ g for the linear part
+    g_lin_body = wp.vec3(g[body_idx * 6 + 3], g[body_idx * 6 + 4], g[body_idx * 6 + 5])
+    Hinv_g_lin = body_mass_inv[body_idx] * g_lin_body
+
+    Hinv_g = wp.spatial_vector(Hinv_g_ang, Hinv_g_lin)
+
+    return wp.dot(J, Hinv_g)
+
+
+@wp.kernel
+def update_system_rhs_kernel(
+    body_mass_inv: wp.array(dtype=wp.float32),
+    body_inertia_inv: wp.array(dtype=wp.mat33),
+    contact_body_a: wp.array(dtype=wp.int32),
+    contact_body_b: wp.array(dtype=wp.int32),
+    J_values: wp.array(dtype=wp.spatial_vector, ndim=2),  # Shape [N_c, 2]
+    g: wp.array(dtype=wp.float32),
+    h: wp.array(dtype=wp.float32),
+    b: wp.array(dtype=wp.float32),
+):
+    tid = wp.tid()  # one thread per contact
+
+    body_a = contact_body_a[tid]
+    body_b = contact_body_b[tid]
+    J_ia = J_values[tid, 0]
+    J_ib = J_values[tid, 1]
+
+    # Calculate (J_i * H^-1 * g)
+    JHinvG = 0.0
+    JHinvG += _compute_JHinvG_i(body_mass_inv, body_inertia_inv, body_a, J_ia, g)
+    JHinvG += _compute_JHinvG_i(body_mass_inv, body_inertia_inv, body_b, J_ib, g)
+
+    b[tid] = JHinvG - h[tid]
+
+
+@wp.kernel
+def compute_JT_delta_lambda_kernel(
+    contact_body_a: wp.array(dtype=wp.int32),
+    contact_body_b: wp.array(dtype=wp.int32),
+    J_values: wp.array(dtype=wp.spatial_vector, ndim=2),  # Shape [N_c, 2]
+    delta_lambda: wp.array(dtype=wp.float32),
+    JT_delta_lambda: wp.array(dtype=wp.float32),
+):
+    tid = wp.tid()  # Over all constraints
+    body_a = contact_body_a[tid]
+    body_b = contact_body_b[tid]
+    J_ia = J_values[tid, 0]
+    J_ib = J_values[tid, 1]
+    dl = delta_lambda[tid]
+
+    if body_a >= 0:
+        for i in range(wp.static(6)):
+            wp.atomic_add(JT_delta_lambda, body_a * 6 + i, J_ia[i] * dl)
+    if body_b >= 0:
+        for i in range(wp.static(6)):
+            wp.atomic_add(JT_delta_lambda, body_b * 6 + i, J_ib[i] * dl)
+
+
+@wp.kernel
+def compute_delta_body_qd_kernel(
+    body_inv_mass: wp.array(dtype=wp.float32),
+    body_inv_inertia: wp.array(dtype=wp.mat33),
+    JT_delta_lambda: wp.array(dtype=wp.float32),
+    g: wp.array(dtype=wp.float32),
+    delta_body_qd: wp.array(dtype=wp.float32),
+):
+    tid = wp.tid()  # Over all bodies * 6
+    body_idx = wp.int32(tid // 6)
+    body_dim = wp.int32(tid % 6)
+
+    if body_idx >= body_inv_mass.shape[0]:
         return
 
-    shape_a = contact_shape0[tid]
-    shape_b = contact_shape1[tid]
+    if body_dim < 3:  # Angular velocity
+        # Construct the 3D vector for the angular part of (J^T * delta_lambda - g)
+        tmp_ang_x = JT_delta_lambda[body_idx * 6 + 0] - g[body_idx * 6 + 0]
+        tmp_ang_y = JT_delta_lambda[body_idx * 6 + 1] - g[body_idx * 6 + 1]
+        tmp_ang_z = JT_delta_lambda[body_idx * 6 + 2] - g[body_idx * 6 + 2]
 
-    # Guard against self-contact
-    if shape_a == shape_b:
-        return
+        # Get the inverse inertia for the current body
+        inertia_inv = body_inv_inertia[body_idx]
 
-    # Get body indices and thickness
-    body_a, body_b = -1, -1
-    if shape_a >= 0:
-        body_a = shape_body[shape_a]
-        for i in range(wp.static(6)):
-            st_i = wp.static(i)
-            idxs_offset = J_n_offset + 12 * tid
-            J_rows[idxs_offset + st_i] = J_n_dense_offset.x + tid
-            J_cols[idxs_offset + st_i] = J_n_dense_offset.y + 6 * body_a + st_i
-    if shape_b >= 0:
-        body_b = shape_body[shape_b]
-        for i in range(wp.static(6)):
-            st_i = wp.static(i)
-            idxs_offset = J_n_offset + 12 * tid + 6
-            J_rows[idxs_offset + st_i] = J_n_dense_offset.x + tid
-            J_cols[idxs_offset + st_i] = J_n_dense_offset.y + 6 * body_b + st_i
+        # Perform the matrix-vector multiplication row by row
+        # body_dim will be 0, 1, or 2, correctly selecting the row.
+        delta_body_qd[tid] = (
+            inertia_inv[body_dim, 0] * tmp_ang_x
+            + inertia_inv[body_dim, 1] * tmp_ang_y
+            + inertia_inv[body_dim, 2] * tmp_ang_z
+        )
+    else:  # Linear velocity
+        # For the linear part, the calculation is simpler as mass is a scalar.
+        # We can compute the value for the current component directly.
+        tmp_lin_component = JT_delta_lambda[tid] - g[tid]
+
+        mass_inv = body_inv_mass[body_idx]
+        delta_body_qd[tid] = mass_inv * tmp_lin_component
 
 
 def add_delta_x(
@@ -147,6 +248,10 @@ class NSNEngine(Integrator):
             model.rigid_contact_max
         )  # Maximum number of rigid contact constraints
 
+        # --- System matrix A and Right-hand side vector b ---
+        self.A = wp.zeros((self.N_c, self.N_c), dtype=wp.float32, device=self.device)
+        self.b = wp.zeros((self.N_c,), dtype=wp.float32, device=self.device)
+
         # ============== RESIDUAL VECTORS ==============
         # Momentum balance vector - this is the residual of the dynamics
         # of the system
@@ -156,48 +261,17 @@ class NSNEngine(Integrator):
         self.h = wp.zeros((self.N_c,), dtype=wp.float32, device=self.device)
         self.h_n_offset = 0  # Offset for the normal contact constraint errors
 
-        # --- Jacobian ---
-        # The constraint block (dense matrix)
-        self.J = wps.bsr_zeros(
-            self.N_c, 6 * self.N_b, block_type=wp.float32, device=self.device
-        )
-        self.J_rows = wp.zeros(
-            12 * self.N_c, dtype=wp.int32, device=self.device
-        )  # Needs to be computed every time
-        self.J_cols = wp.zeros(
-            12 * self.N_c, dtype=wp.int32, device=self.device
-        )  # Needs to be computed every time
-        self.J_values = wp.zeros(12 * self.N_c, dtype=wp.float32, device=self.device)
-        self.J_n_offset = 0
-        self.J_n_dense_offset = wp.vec2i(0, 0)
+        self.J_values = wp.zeros(
+            (self.N_c, 2), dtype=wp.spatial_vector, device=self.device
+        )  # Non-zero values of the constraint Jacobian
+        self.J_n_offset = 0  # Offset for the normal contact constraint Jacobian
 
-        self.J_T = wps.bsr_zeros(
-            self.N_c, 6 * self.N_b, block_type=wp.float32, device=self.device
-        )
+        self.C_values = wp.zeros((self.N_c,), dtype=wp.float32, device=self.device)
+        self.C_n_offset = 0  # Offset for the normal contact constraint
 
-        # Mass block (sparse matrix)
-        self.H_inv = wps.bsr_zeros(
-            6 * self.N_b, 6 * self.N_b, block_type=wp.float32, device=self.device
+        self.JT_delta_lambda = wp.zeros(
+            (self.N_b * 6,), dtype=wp.float32, device=self.device
         )
-        self.H_inv_rows, self.H_inv_cols = generate_mass_block_indices(
-            self.N_b, self.device
-        )
-        self.H_inv_values = wp.zeros(
-            self.N_b * 12, dtype=wp.float32, device=self.device
-        )
-
-        # Compliance block (sparse matrix)
-        self.C = wps.bsr_zeros(
-            self.N_c, self.N_c, block_type=wp.float32, device=self.device
-        )
-        self.C_rows, self.C_cols = generate_compliance_block_indices(
-            self.N_c, self.device
-        )
-        self.C_values = wp.zeros(
-            self.C_rows.shape[0], dtype=wp.float32, device=self.device
-        )
-        self.C_n_offset = 0  # Offset for the normal contact constraint compliance
-
         # Contact impulse vector
         self.lambda_n = wp.zeros(self.N_c, dtype=wp.float32, device=self.device)
 
@@ -207,17 +281,6 @@ class NSNEngine(Integrator):
         self.delta_lambda = wp.zeros(self.N_c, dtype=wp.float32, device=self.device)
 
         # A = J @ H^{-1} @ J^T + C
-        # Z = J @ H^{-1}
-        # C := Y @ J^T + C
-        self.Z = wps.bsr_zeros(
-            self.N_c, 6 * self.N_b, block_type=wp.float32, device=self.device
-        )
-
-        self._warmup_setting_matrices()
-
-        # Set up work arrays for matrix multiplications
-        self.mm_work_arrays_1 = wps.bsr_mm_work_arrays()
-        self.mm_work_arrays_2 = wps.bsr_mm_work_arrays()
 
         # Graphs
         self.use_cuda_graph = use_cuda_graph and wp.get_device().is_cuda
@@ -251,72 +314,25 @@ class NSNEngine(Integrator):
         self._rigid_contact_point0 = model.rigid_contact_point0
         self._rigid_contact_point1 = model.rigid_contact_point1
 
-    def _warmup_setting_matrices(self):
-        wps.bsr_set_from_triplets(
-            self.H_inv, self.H_inv_rows, self.H_inv_cols, self.H_inv_values
-        )
-        wps.bsr_set_from_triplets(self.J, self.J_rows, self.J_cols, self.J_values)
-        wps.bsr_set_from_triplets(self.C, self.C_rows, self.C_cols, self.C_values)
-        wps.bsr_set_transpose(self.J_T, self.J)
-
-    def _warmup_matrix_multiplications(self):
-        wps.bsr_mm(
-            x=self.J,
-            y=self.H_inv,
-            z=self.Z,
-            alpha=1.0,
-            beta=0.0,
-            work_arrays=self.mm_work_arrays_1,
-            reuse_topology=False,
-        )
-
-        wps.bsr_mm(
-            x=self.Z,
-            y=self.J_T,
-            z=self.C,
-            alpha=1.0,
-            beta=1.0,
-            work_arrays=self.mm_work_arrays_2,
-            reuse_topology=False,
-        )
+        self._contact_body_a = wp.zeros(self.N_c, dtype=wp.int32, device=self.device)
+        self._contact_body_b = wp.zeros(self.N_c, dtype=wp.int32, device=self.device)
 
     def _clear_values(self):
         self.g.zero_()
         self.h.zero_()
-        self.H_inv_values.zero_()
         self.J_values.zero_()
         self.C_values.zero_()
+        self.JT_delta_lambda.zero_()
 
-    def __update_constraint_block_indices(self):
-        wp.launch(
-            kernel=fill_J_n_indices_kernel,
-            dim=self.N_c,
-            inputs=[
-                self.shape_body,
-                self._rigid_contact_count,
-                self._rigid_contact_shape0,
-                self._rigid_contact_shape1,
-                self.J_n_offset,
-                self.J_n_dense_offset,
-            ],
-            outputs=[self.J_rows, self.J_cols],
-            device=self.device,
-        )
+        self.A.zero_()
+        self.b.zero_()
 
-    def update_constraint_block_indices(self):
-        if self.constraint_block_graph is not None:
-            wp.capture_launch(self.constraint_block_graph)
-        elif self.use_cuda_graph:
-            with wp.ScopedCapture() as capture:
-                self.__update_constraint_block_indices()
-            self.constraint_block_graph = capture.graph
-        else:
-            self.__update_constraint_block_indices()
+        self._contact_body_a.zero_()
+        self._contact_body_b.zero_()
 
-    def __update_system_values(self):
+    def update_system_values(self):
         self._clear_values()
 
-        # Compute the dynamics contact constraint
         wp.launch(
             kernel=unconstrained_dynamics_kernel,
             dim=self.N_b,
@@ -325,17 +341,13 @@ class NSNEngine(Integrator):
                 self._body_qd_prev,
                 self._body_f,
                 self.body_mass,
-                self.body_inv_mass,
                 self.body_inertia,
-                self.body_inv_inertia,
                 self._dt,
                 self.gravity,
             ],
-            outputs=[self.g, self.H_inv_values],
+            outputs=[self.g],
             device=self.device,
         )
-
-        # Compute the contact constraint
         wp.launch(
             kernel=contact_constraint_kernel,
             dim=self.N_c,
@@ -362,81 +374,79 @@ class NSNEngine(Integrator):
                 self.J_n_offset,
                 self.C_n_offset,
             ],
-            outputs=[self.g, self.h, self.J_values, self.C_values],
+            outputs=[
+                self.g,
+                self.h,
+                self.J_values,
+                self.C_values,
+                self._contact_body_a,
+                self._contact_body_b,
+            ],
+        )
+        wp.launch(
+            kernel=update_system_matrix_kernel,
+            dim=(self.N_c, self.N_c),
+            inputs=[
+                self.body_inv_mass,
+                self.body_inv_inertia,
+                self._contact_body_a,
+                self._contact_body_b,
+                self.J_values,
+                self.C_values,
+            ],
+            outputs=[self.A],
+        )
+        wp.launch(
+            kernel=update_system_rhs_kernel,
+            dim=(self.N_c,),
+            inputs=[
+                self.body_inv_mass,
+                self.body_inv_inertia,
+                self._contact_body_a,
+                self._contact_body_b,
+                self.J_values,
+                self.g,
+                self.h,
+            ],
+            outputs=[self.b],
         )
 
-        # Fill the sparse matrices
-        wps.bsr_set_from_triplets(
-            self.H_inv,
-            self.H_inv_rows,
-            self.H_inv_cols,
-            self.H_inv_values,
-            prune_numerical_zeros=True,
-        )
-        wps.bsr_set_from_triplets(
-            self.J,
-            self.J_rows,
-            self.J_cols,
-            self.J_values,
-            prune_numerical_zeros=True,
-        )
-        wps.bsr_set_from_triplets(
-            self.C,
-            self.C_rows,
-            self.C_cols,
-            self.C_values,
-            prune_numerical_zeros=True,
-        )
-
-        wps.bsr_set_transpose(self.J_T, self.J)
-
-    def update_system_values(self):
-        if self.system_values_graph is not None:
-            wp.capture_launch(self.system_values_graph)
-        elif self.use_cuda_graph:
-            with wp.ScopedCapture() as capture:
-                self.__update_system_values()
-            self.system_values_graph = capture.graph
-        else:
-            self.__update_system_values()
-
-    def __solve_system(self):
-        # b = J @ H^{-1} @ g - h
-        wps.bsr_mv(A=self.Z, x=self.g, y=self.h, alpha=1.0, beta=-1.0)  # Changes h
-
+    def solve_system(self):
         # Solve the linear system A * delta_lambda = b
-        M = wpol.preconditioner(self.C, ptype="diag")
+        M = wpol.preconditioner(self.A, ptype="diag")
         _ = cr_solver_graph_compatible(
-            A=self.C,
-            b=self.h,
+            A=self.A,
+            b=self.b,
             x=self.delta_lambda,
             iters=10,
             M=M,
         )
-
-        # g := J^T @ Δλ - g
-        wps.bsr_mv(
-            A=self.J_T, x=self.delta_lambda, y=self.g, alpha=1.0, beta=-1.0
-        )  # Changes g
-
-        # Δu := H^{-1} @ g
-        wps.bsr_mv(
-            A=self.H_inv, x=self.g, y=self.delta_body_qd, alpha=1.0, beta=0.0
-        )  # Changes delta_body_qd
+        wp.launch(
+            kernel=compute_JT_delta_lambda_kernel,
+            dim=self.N_c,
+            inputs=[
+                self._contact_body_a,
+                self._contact_body_b,
+                self.J_values,
+                self.delta_lambda,
+            ],
+            outputs=[self.JT_delta_lambda],
+        )
+        wp.launch(
+            kernel=compute_delta_body_qd_kernel,
+            dim=6 * self.N_b,
+            inputs=[
+                self.body_inv_mass,
+                self.body_inv_inertia,
+                self.JT_delta_lambda,
+                self.g,
+            ],
+            outputs=[self.delta_body_qd],
+        )
 
         # Add the changes to the state
         add_inplace(self._body_qd, self.delta_body_qd, 0, 0, self.N_b)
         add_inplace(self.lambda_n, self.delta_lambda, 0, 0, self.N_c)
-
-    def solve_system(self):
-        if self.system_solve_graph is not None:
-            wp.capture_launch(self.system_solve_graph)
-        elif self.use_cuda_graph:
-            with wp.ScopedCapture() as capture:
-                self.__solve_system()
-            self.system_solve_graph = capture.graph
-        else:
-            self.__solve_system()
 
     def update_state_variables(
         self, model: Model, state_in: State, state_out: State, dt: float
@@ -468,36 +478,13 @@ class NSNEngine(Integrator):
             self.integrate_bodies(model, state_in, state_out, dt)
             self.update_state_variables(model, state_in, state_out, dt)
 
-        # Get the indices for constraint block J (dependent on the detected contacts)
-        self.update_constraint_block_indices()
-
         for _ in range(self.max_iterations):
             with wp.ScopedTimer("Fill Matrices", active=True):
                 self.update_system_values()
 
-            with wp.ScopedTimer("MM", active=True):
-                # A = J @ H^{-1} @ J^T + C
-                wps.bsr_mm(
-                    x=self.J,
-                    y=self.H_inv,
-                    z=self.Z,
-                    alpha=1.0,
-                    beta=0.0,
-                    # work_arrays=self.mm_work_arrays_1,
-                    # reuse_topology=True,
-                )  # Changes Z
-
-                wps.bsr_mm(
-                    x=self.Z,
-                    y=self.J_T,
-                    z=self.C,
-                    alpha=1.0,
-                    beta=1.0,
-                    # work_arrays=self.mm_work_arrays_2,
-                    # reuse_topology=True,
-                )  # Changes C
             with wp.ScopedTimer("Solve", active=True):
                 self.solve_system()
+
         # Update the state with the new velocities and positions
         with wp.ScopedTimer("Update state", active=True):
             wp.copy(dest=state_out.body_qd, src=self._body_qd)

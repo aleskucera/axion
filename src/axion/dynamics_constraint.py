@@ -10,15 +10,12 @@ def unconstrained_dynamics_kernel(
     body_qd_prev: wp.array(dtype=wp.spatial_vector),  # [B]
     body_f: wp.array(dtype=wp.spatial_vector),  # [B]
     body_mass: wp.array(dtype=wp.float32),  # [B]
-    body_mass_inv: wp.array(dtype=wp.float32),  # [B]
     body_inertia: wp.array(dtype=wp.mat33),  # [B]
-    body_inertia_inv: wp.array(dtype=wp.mat33),  # [B]
     # --- Parameters ---
     dt: wp.float32,
     gravity: wp.vec3,  # [3]
     # --- Outputs ---
     g: wp.array(dtype=wp.float32),  # [B]
-    H_inv_values: wp.array(dtype=wp.float32),  # [12B]
 ):
     tid = wp.tid()
     if tid >= body_qd.shape[0]:
@@ -41,22 +38,6 @@ def unconstrained_dynamics_kernel(
     for i in range(wp.static(6)):
         st_i = wp.static(i)
         g[tid * 6 + st_i] = g_b[st_i]
-
-    m_inv, I_inv = body_mass_inv[tid], body_inertia_inv[tid]
-
-    # --- H_inv --- [6B, 6B]
-    # Angular part:
-    for r in range(wp.static(3)):  # rows
-        for c in range(wp.static(3)):  # columns
-            st_r, st_c = wp.static(r), wp.static(c)
-            flat_idx = st_r * 3 + st_c
-            H_inv_values[tid * 12 + flat_idx] = I_inv[st_r, st_c]
-
-    # Linear part:
-    for i in range(wp.static(3)):
-        st_i = wp.static(i)
-        flat_idx = 9 + st_i
-        H_inv_values[tid * 12 + flat_idx] = m_inv
 
 
 def setup_data(num_bodies, device):

@@ -148,8 +148,10 @@ def contact_constraint_kernel(
     # --- Outputs ---
     g: wp.array(dtype=wp.float32),
     h: wp.array(dtype=wp.float32),
-    J_values: wp.array(dtype=wp.float32),
+    J_values: wp.array(dtype=wp.spatial_vector, ndim=2),
     C_values: wp.array(dtype=wp.float32),
+    contact_body_a: wp.array(dtype=wp.int32),  # [C]
+    contact_body_b: wp.array(dtype=wp.int32),  # [C]
 ):
     tid = wp.tid()
 
@@ -170,6 +172,9 @@ def contact_constraint_kernel(
             shape_geo,
         )
     )
+    # Store body indices for the contact
+    contact_body_a[tid] = body_a
+    contact_body_b[tid] = body_b
 
     # Check that the constraint is really violated
     if not is_active:
@@ -234,16 +239,12 @@ def contact_constraint_kernel(
 
     # --- J --- (constraint Jacobian block)
     if body_a >= 0:
-        for i in range(wp.static(6)):
-            st_i = wp.static(i)
-            offset = J_n_offset + 12 * tid
-            J_values[offset + st_i] = J_n_a[st_i]
+        offset = J_n_offset + tid
+        J_values[offset, 0] = J_n_a
 
     if body_b >= 0:
-        for i in range(wp.static(6)):
-            st_i = wp.static(i)
-            offset = J_n_offset + 12 * tid + 6
-            J_values[offset + st_i] = J_n_b[st_i]
+        offset = J_n_offset + tid
+        J_values[offset, 1] = J_n_b
 
 
 def setup_data(num_bodies, num_contacts, device):

@@ -156,11 +156,11 @@ class BallBounceSim:
         self.state_0 = self.model.state()
         self.state_1 = self.model.state()
 
-        # self.use_cuda_graph = wp.get_device().is_cuda
-        # if self.use_cuda_graph:
-        #     with wp.ScopedCapture() as capture:
-        #         self.step()
-        #     self.step_graph = capture.graph
+        self.use_cuda_graph = wp.get_device().is_cuda
+        if self.use_cuda_graph:
+            with wp.ScopedCapture() as capture:
+                self.step()
+            self.step_graph = capture.graph
 
     def step(self):
         wp.sim.collide(self.model, self.state_0)
