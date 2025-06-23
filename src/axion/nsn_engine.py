@@ -287,7 +287,7 @@ class NSNEngine(Integrator):
         self.J_values.zero_()
         self.C_values.zero_()
 
-    def _fill_constraint_block_indices(self):
+    def __update_constraint_block_indices(self):
         wp.launch(
             kernel=fill_J_n_indices_kernel,
             dim=self.N_c,
@@ -302,6 +302,16 @@ class NSNEngine(Integrator):
             outputs=[self.J_rows, self.J_cols],
             device=self.device,
         )
+
+    def update_constraint_block_indices(self):
+        if self.constraint_block_graph is not None:
+            wp.capture_launch(self.constraint_block_graph)
+        elif self.use_cuda_graph:
+            with wp.ScopedCapture() as capture:
+                self.__update_constraint_block_indices()
+            self.constraint_block_graph = capture.graph
+        else:
+            self.__update_constraint_block_indices()
 
     def __update_system_values(self):
         self._clear_values()
@@ -390,7 +400,45 @@ class NSNEngine(Integrator):
         else:
             self.__update_system_values()
 
-    def _update_variables(
+    def __solve_system(self):
+        # b = J @ H^{-1} @ g - h
+        wps.bsr_mv(A=self.Z, x=self.g, y=self.h, alpha=1.0, beta=-1.0)  # Changes h
+
+        # Solve the linear system A * delta_lambda = b
+        M = wpol.preconditioner(self.C, ptype="diag")
+        _ = cr_solver_graph_compatible(
+            A=self.C,
+            b=self.h,
+            x=self.delta_lambda,
+            iters=10,
+            M=M,
+        )
+
+        # g := J^T @ Δλ - g
+        wps.bsr_mv(
+            A=self.J_T, x=self.delta_lambda, y=self.g, alpha=1.0, beta=-1.0
+        )  # Changes g
+
+        # Δu := H^{-1} @ g
+        wps.bsr_mv(
+            A=self.H_inv, x=self.g, y=self.delta_body_qd, alpha=1.0, beta=0.0
+        )  # Changes delta_body_qd
+
+        # Add the changes to the state
+        add_inplace(self._body_qd, self.delta_body_qd, 0, 0, self.N_b)
+        add_inplace(self.lambda_n, self.delta_lambda, 0, 0, self.N_c)
+
+    def solve_system(self):
+        if self.system_solve_graph is not None:
+            wp.capture_launch(self.system_solve_graph)
+        elif self.use_cuda_graph:
+            with wp.ScopedCapture() as capture:
+                self.__solve_system()
+            self.system_solve_graph = capture.graph
+        else:
+            self.__solve_system()
+
+    def update_state_variables(
         self, model: Model, state_in: State, state_out: State, dt: float
     ):
         self._dt = dt
@@ -418,10 +466,10 @@ class NSNEngine(Integrator):
         # This will be used as the starting point for the iterative solver.
         with wp.ScopedTimer("Initial guess and copy", active=True):
             self.integrate_bodies(model, state_in, state_out, dt)
-            self._update_variables(model, state_in, state_out, dt)
+            self.update_state_variables(model, state_in, state_out, dt)
 
         # Get the indices for constraint block J (dependent on the detected contacts)
-        self._fill_constraint_block_indices()
+        self.update_constraint_block_indices()
 
         for _ in range(self.max_iterations):
             with wp.ScopedTimer("Fill Matrices", active=True):
@@ -449,35 +497,7 @@ class NSNEngine(Integrator):
                     # reuse_topology=True,
                 )  # Changes C
             with wp.ScopedTimer("Solve", active=True):
-                # b = J @ H^{-1} @ g - h
-                wps.bsr_mv(
-                    A=self.Z, x=self.g, y=self.h, alpha=1.0, beta=-1.0
-                )  # Changes h
-
-                # Solve the linear system A * delta_lambda = b
-                M = wpol.preconditioner(self.C, ptype="diag")
-                _ = cr_solver_graph_compatible(
-                    A=self.C,
-                    b=self.h,
-                    x=self.delta_lambda,
-                    iters=10,
-                    M=M,
-                )
-
-                # g := J^T @ Δλ - g
-                wps.bsr_mv(
-                    A=self.J_T, x=self.delta_lambda, y=self.g, alpha=1.0, beta=-1.0
-                )  # Changes g
-
-                # Δu := H^{-1} @ g
-                wps.bsr_mv(
-                    A=self.H_inv, x=self.g, y=self.delta_body_qd, alpha=1.0, beta=0.0
-                )  # Changes delta_body_qd
-
-                # Add the changes to the state
-                add_inplace(self._body_qd, self.delta_body_qd, 0, 0, self.N_b)
-                add_inplace(self.lambda_n, self.delta_lambda, 0, 0, self.N_c)
-
+                self.solve_system()
         # Update the state with the new velocities and positions
         with wp.ScopedTimer("Update state", active=True):
             wp.copy(dest=state_out.body_qd, src=self._body_qd)
