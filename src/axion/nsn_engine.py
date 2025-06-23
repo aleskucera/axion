@@ -235,7 +235,7 @@ class NSNEngine(Integrator):
         self,
         model: Model,
         tolerance: float = 1e-3,
-        max_iterations: int = 10,
+        max_iterations: int = 6,
         use_cuda_graph: bool = True,
     ):
         super().__init__()
@@ -418,7 +418,7 @@ class NSNEngine(Integrator):
             A=self.A,
             b=self.b,
             x=self.delta_lambda,
-            iters=10,
+            iters=5,
             M=M,
         )
         wp.launch(

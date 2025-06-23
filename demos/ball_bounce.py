@@ -137,7 +137,7 @@ class BallBounceSim:
         # Simulation and rendering parameters
         self.fps = 30
         self.num_frames = 90
-        self.sim_substeps = 15
+        self.sim_substeps = 5
         self.frame_dt = 1.0 / self.fps
         self.sim_dt = self.frame_dt / self.sim_substeps
         self.sim_duration = self.num_frames * self.frame_dt
