@@ -5,8 +5,8 @@ import warp.optim.linear as wpol
 import warp.sparse as wps
 from axion.contact_constraint import contact_constraint_kernel
 from axion.dynamics_constraint import unconstrained_dynamics_kernel
-from axion.optim.cr import cr_solver_graph_compatible
 from axion.utils.add_inplace import add_inplace
+from axion.optim.cr import cr_solver_graph_compatible
 from warp.sim import Control
 from warp.sim import Integrator
 from warp.sim import Model
@@ -133,13 +133,14 @@ class NSNEngine(Integrator):
     def __init__(
         self,
         model: Model,
-        tolerance: float = 1e-3,
+        tolerance: float = 1e-4,
         max_iterations: int = 10,
-        use_cuda_graph: bool = True,
+        regularization: float = 1e-4,
     ):
         super().__init__()
         self.tolerance = tolerance
         self.max_iterations = max_iterations
+        self.regularization = regularization
 
         device = model.device
         N_b = model.body_count
@@ -186,44 +187,6 @@ class NSNEngine(Integrator):
         self.delta_body_qd = wp.zeros(6 * N_b, dtype=wp.float32, device=device)
         self.delta_lambda = wp.zeros(N_c, dtype=wp.float32, device=device)
 
-        # A = J @ H^{-1} @ J^T + C
-        # Z = J @ H^{-1}
-        # C := Y @ J^T + C
-        self.Z = wps.bsr_zeros(N_c, 6 * N_b, block_type=wp.float32, device=device)
-
-        self.mm_work_arrays_1 = wps.bsr_mm_work_arrays()
-        self.mm_work_arrays_2 = wps.bsr_mm_work_arrays()
-
-        # ----------- WARM-UP -----------
-        wps.bsr_set_from_triplets(
-            self.H_inv, self.H_inv_rows, self.H_inv_cols, self.H_inv_values
-        )
-        wps.bsr_set_from_triplets(self.J, self.J_rows, self.J_cols, self.J_values)
-        wps.bsr_set_from_triplets(self.C, self.C_rows, self.C_cols, self.C_values)
-
-        wps.bsr_set_transpose(self.J_T, self.J)
-
-        # # Warm up the sparse matrix multiplications
-        # wps.bsr_mm(
-        #     x=self.J,
-        #     y=self.H_inv,
-        #     z=self.Z,
-        #     alpha=1.0,
-        #     beta=0.0,
-        #     work_arrays=self.mm_work_arrays_1,
-        #     reuse_topology=False,
-        # )  # Changes Z
-        #
-        # wps.bsr_mm(
-        #     x=self.Z,
-        #     y=self.J_T,
-        #     z=self.C,
-        #     alpha=1.0,
-        #     beta=1.0,
-        #     work_arrays=self.mm_work_arrays_2,
-        #     reuse_topology=False,
-        # )  # Changes C
-
     def _clear_values(self):
         self.g.zero_()
         self.h.zero_()
@@ -253,9 +216,7 @@ class NSNEngine(Integrator):
         self, model: Model, state_in: State, state_out: State, dt: float
     ):
         self._clear_values()
-        self._fill_constraint_block_indices(
-            model
-        )  # TODO: Doesn't need to be called every time
+        self._fill_constraint_block_indices(model)
 
         N_b = model.body_count
         N_c = model.rigid_contact_max
@@ -358,57 +319,34 @@ class NSNEngine(Integrator):
         self.integrate_bodies(model, state_in, state_out, dt)
 
         for _ in range(self.max_iterations):
-            with wp.ScopedTimer("Fill Matrices", active=True):
-                self._fill_matrices(model, state_in, state_out, dt)
+            self._fill_matrices(model, state_in, state_out, dt)
 
-            with wp.ScopedTimer("MM", active=True):
+            # A = J @ H^{-1} @ J^T + C
+            J_H_inv = wps.bsr_mm(self.J, self.H_inv)
+            A = wps.bsr_axpy(x=wps.bsr_mm(J_H_inv, self.J_T), y=self.C)
 
-                # A = J @ H^{-1} @ J^T + C
-                wps.bsr_mm(
-                    x=self.J,
-                    y=self.H_inv,
-                    z=self.Z,
-                    alpha=1.0,
-                    beta=0.0,
-                    # work_arrays=self.mm_work_arrays_1,
-                    # reuse_topology=True,
-                )  # Changes Z
+            # b = J @ H^{-1} @ g - h
+            wps.bsr_mv(A=J_H_inv, x=self.g, y=self.h, alpha=1.0, beta=-1.0)  # Changes h
 
-                wps.bsr_mm(
-                    x=self.Z,
-                    y=self.J_T,
-                    z=self.C,
-                    alpha=1.0,
-                    beta=1.0,
-                    # work_arrays=self.mm_work_arrays_2,
-                    # reuse_topology=True,
-                )  # Changes C
-            with wp.ScopedTimer("Solve", active=True):
-                # b = J @ H^{-1} @ g - h
-                wps.bsr_mv(
-                    A=self.Z, x=self.g, y=self.h, alpha=1.0, beta=-1.0
-                )  # Changes h
+            M = wpol.preconditioner(A, ptype="diag")
+            _ = cr_solver_graph_compatible(
+                A=A,
+                b=self.h,
+                x=self.delta_lambda,
+                iters=10,
+                M=M,
+            )
 
-                # Solve the linear system A * delta_lambda = b
-                M = wpol.preconditioner(self.C, ptype="diag")
-                _ = cr_solver_graph_compatible(
-                    A=self.C,
-                    b=self.h,
-                    x=self.delta_lambda,
-                    iters=10,
-                    M=M,
-                )
+            # g := J^T @ Δλ - g
+            wps.bsr_mv(
+                A=self.J_T, x=self.delta_lambda, y=self.g, alpha=1.0, beta=-1.0
+            )  # Changes g
 
-                # g := J^T @ Δλ - g
-                wps.bsr_mv(
-                    A=self.J_T, x=self.delta_lambda, y=self.g, alpha=1.0, beta=-1.0
-                )  # Changes g
+            # Δu := H^{-1} @ g
+            wps.bsr_mv(
+                A=self.H_inv, x=self.g, y=self.delta_body_qd, alpha=1.0, beta=0.0
+            )  # Changes delta_body_qd
 
-                # Δu := H^{-1} @ g
-                wps.bsr_mv(
-                    A=self.H_inv, x=self.g, y=self.delta_body_qd, alpha=1.0, beta=0.0
-                )  # Changes delta_body_qd
-
-                # Add the changes to the state
-                add_inplace(state_out.body_qd, self.delta_body_qd, 0, 0, N_b)
-                add_inplace(self.lambda_n, self.delta_lambda, 0, 0, N_c)
+            # Add the changes to the state
+            add_inplace(state_out.body_qd, self.delta_body_qd, 0, 0, N_b)
+            add_inplace(self.lambda_n, self.delta_lambda, 0, 0, N_c)

@@ -220,7 +220,7 @@ class NSNEngine(Integrator):
         self.mm_work_arrays_2 = wps.bsr_mm_work_arrays()
 
         # Graphs
-        self.use_cuda_graph = use_cuda_graph
+        self.use_cuda_graph = use_cuda_graph and wp.get_device().is_cuda
         self.constraint_block_graph = None
         self.system_values_graph = None
         self.matrix_mul_graph = None
@@ -303,7 +303,7 @@ class NSNEngine(Integrator):
             device=self.device,
         )
 
-    def _fill_matrices(self):
+    def __update_system_values(self):
         self._clear_values()
 
         # Compute the dynamics contact constraint
@@ -380,6 +380,16 @@ class NSNEngine(Integrator):
 
         wps.bsr_set_transpose(self.J_T, self.J)
 
+    def update_system_values(self):
+        if self.system_values_graph is not None:
+            wp.capture_launch(self.system_values_graph)
+        elif self.use_cuda_graph:
+            with wp.ScopedCapture() as capture:
+                self.__update_system_values()
+            self.system_values_graph = capture.graph
+        else:
+            self.__update_system_values()
+
     def _update_variables(
         self, model: Model, state_in: State, state_out: State, dt: float
     ):
@@ -415,7 +425,7 @@ class NSNEngine(Integrator):
 
         for _ in range(self.max_iterations):
             with wp.ScopedTimer("Fill Matrices", active=True):
-                self._fill_matrices()
+                self.update_system_values()
 
             with wp.ScopedTimer("MM", active=True):
                 # A = J @ H^{-1} @ J^T + C
@@ -445,7 +455,7 @@ class NSNEngine(Integrator):
                 )  # Changes h
 
                 # Solve the linear system A * delta_lambda = b
-                M = wpol.preconditioner(self.Z, ptype="diag")
+                M = wpol.preconditioner(self.C, ptype="diag")
                 _ = cr_solver_graph_compatible(
                     A=self.C,
                     b=self.h,

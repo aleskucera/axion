@@ -2,7 +2,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import warp as wp
 import warp.sim.render
-from axion.nsn_engine2 import NSNEngine
+from axion.nsn_engine import NSNEngine
 from tqdm import tqdm
 
 # wp.config.mode = "debug"
