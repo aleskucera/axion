@@ -202,16 +202,16 @@ def cr_solver_graph_compatible(
             inputs=[zAz_old, zAz_new, z, p, Az, Ap],
         )
 
-    # ============== 3. Finalization (Optional) ===============================
-    if compute_final_residual:
-        # To get the true final residual, we must recompute r = b - Ax
-        A.matvec(x, b, r, alpha=-1.0, beta=1.0)
-        r_norm_sq = wp.empty(n=1, dtype=scalar_dtype, device=device)
-        array_inner(r, r, out=r_norm_sq)
-
-        # Synchronize to get the final result back to the CPU
-        wp.synchronize()
-        return sqrt(r_norm_sq.numpy()[0])
+    # # ============== 3. Finalization (Optional) ===============================
+    # if compute_final_residual:
+    #     # To get the true final residual, we must recompute r = b - Ax
+    #     A.matvec(x, b, r, alpha=-1.0, beta=1.0)
+    #     r_norm_sq = wp.empty(n=1, dtype=scalar_dtype, device=device)
+    #     array_inner(r, r, out=r_norm_sq)
+    #
+    #     # Synchronize to get the final result back to the CPU
+    #     wp.synchronize()
+    #     return sqrt(r_norm_sq.numpy()[0])
 
     return None
 
