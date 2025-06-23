@@ -2,7 +2,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import warp as wp
 import warp.sim.render
-from axion.nsn_engine import NSNEngine
+from axion.nsn_engine2 import NSNEngine
 from tqdm import tqdm
 
 # wp.config.mode = "debug"
@@ -136,8 +136,8 @@ class BallBounceSim:
 
         # Simulation and rendering parameters
         self.fps = 30
-        self.num_frames = 120
-        self.sim_substeps = 10
+        self.num_frames = 90
+        self.sim_substeps = 15
         self.frame_dt = 1.0 / self.fps
         self.sim_dt = self.frame_dt / self.sim_substeps
         self.sim_duration = self.num_frames * self.frame_dt

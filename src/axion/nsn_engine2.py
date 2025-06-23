@@ -141,144 +141,88 @@ class NSNEngine(Integrator):
         self.tolerance = tolerance
         self.max_iterations = max_iterations
 
-        self.device = model.device
-        self.N_b = model.body_count  # Number of bodies in the system
-        self.N_c = (
-            model.rigid_contact_max
-        )  # Maximum number of rigid contact constraints
+        device = model.device
+        N_b = model.body_count
+        N_c = model.rigid_contact_max
 
-        # ============== RESIDUAL VECTORS ==============
-        # Momentum balance vector - this is the residual of the dynamics
-        # of the system
-        self.g = wp.zeros((self.N_b * 6,), dtype=wp.float32, device=self.device)
-
+        # --- Residual ---
+        # Momentum balance
+        self.g = wp.zeros((N_b * 6,), dtype=wp.float32, device=device)
         # The vector of the constraint errors
-        self.h = wp.zeros((self.N_c,), dtype=wp.float32, device=self.device)
+        self.h = wp.zeros((N_c,), dtype=wp.float32, device=device)
         self.h_n_offset = 0  # Offset for the normal contact constraint errors
 
         # --- Jacobian ---
         # The constraint block (dense matrix)
-        self.J = wps.bsr_zeros(
-            self.N_c, 6 * self.N_b, block_type=wp.float32, device=self.device
-        )
+        self.J = wps.bsr_zeros(N_c, 6 * N_b, block_type=wp.float32, device=device)
         self.J_rows = wp.zeros(
-            12 * self.N_c, dtype=wp.int32, device=self.device
+            12 * N_c, dtype=wp.int32, device=device
         )  # Needs to be computed every time
         self.J_cols = wp.zeros(
-            12 * self.N_c, dtype=wp.int32, device=self.device
+            12 * N_c, dtype=wp.int32, device=device
         )  # Needs to be computed every time
-        self.J_values = wp.zeros(12 * self.N_c, dtype=wp.float32, device=self.device)
+        self.J_values = wp.zeros(12 * N_c, dtype=wp.float32, device=device)
         self.J_n_offset = 0
         self.J_n_dense_offset = wp.vec2i(0, 0)
 
-        self.J_T = wps.bsr_zeros(
-            self.N_c, 6 * self.N_b, block_type=wp.float32, device=self.device
-        )
+        self.J_T = wps.bsr_zeros(N_c, 6 * N_b, block_type=wp.float32, device=device)
 
         # Mass block (sparse matrix)
         self.H_inv = wps.bsr_zeros(
-            6 * self.N_b, 6 * self.N_b, block_type=wp.float32, device=self.device
+            6 * N_b, 6 * N_b, block_type=wp.float32, device=device
         )
-        self.H_inv_rows, self.H_inv_cols = generate_mass_block_indices(
-            self.N_b, self.device
-        )
-        self.H_inv_values = wp.zeros(
-            self.N_b * 12, dtype=wp.float32, device=self.device
-        )
+        self.H_inv_rows, self.H_inv_cols = generate_mass_block_indices(N_b, device)
+        self.H_inv_values = wp.zeros(N_b * 12, dtype=wp.float32, device=device)
 
         # Compliance block (sparse matrix)
-        self.C = wps.bsr_zeros(
-            self.N_c, self.N_c, block_type=wp.float32, device=self.device
-        )
-        self.C_rows, self.C_cols = generate_compliance_block_indices(
-            self.N_c, self.device
-        )
-        self.C_values = wp.zeros(
-            self.C_rows.shape[0], dtype=wp.float32, device=self.device
-        )
+        self.C = wps.bsr_zeros(N_c, N_c, block_type=wp.float32, device=device)
+        self.C_rows, self.C_cols = generate_compliance_block_indices(N_c, device)
+        self.C_values = wp.zeros(self.C_rows.shape[0], dtype=wp.float32, device=device)
         self.C_n_offset = 0  # Offset for the normal contact constraint compliance
 
         # Contact impulse vector
-        self.lambda_n = wp.zeros(self.N_c, dtype=wp.float32, device=self.device)
+        self.lambda_n = wp.zeros(N_c, dtype=wp.float32, device=device)
 
-        self.delta_body_qd = wp.zeros(
-            6 * self.N_b, dtype=wp.float32, device=self.device
-        )
-        self.delta_lambda = wp.zeros(self.N_c, dtype=wp.float32, device=self.device)
+        self.delta_body_qd = wp.zeros(6 * N_b, dtype=wp.float32, device=device)
+        self.delta_lambda = wp.zeros(N_c, dtype=wp.float32, device=device)
 
         # A = J @ H^{-1} @ J^T + C
         # Z = J @ H^{-1}
         # C := Y @ J^T + C
-        self.Z = wps.bsr_zeros(
-            self.N_c, 6 * self.N_b, block_type=wp.float32, device=self.device
-        )
+        self.Z = wps.bsr_zeros(N_c, 6 * N_b, block_type=wp.float32, device=device)
 
-        self._warmup_setting_matrices()
-
-        # Set up work arrays for matrix multiplications
         self.mm_work_arrays_1 = wps.bsr_mm_work_arrays()
         self.mm_work_arrays_2 = wps.bsr_mm_work_arrays()
 
-        # Graphs
-        self.use_cuda_graph = use_cuda_graph
-        self.constraint_block_graph = None
-        self.system_values_graph = None
-        self.matrix_mul_graph = None
-        self.system_solve_graph = None
-
-        self.body_com = model.body_com
-        self.body_mass = model.body_mass
-        self.body_inv_mass = model.body_inv_mass
-        self.body_inertia = model.body_inertia
-        self.body_inv_inertia = model.body_inv_inertia
-
-        self.shape_geo = model.shape_geo
-        self.shape_body = model.shape_body
-        self.shape_materials = model.shape_materials
-
-        self.gravity = model.gravity
-
-        # Modifiable variables
-        self._body_q = model.body_q
-        self._body_qd = model.body_qd
-        self._body_qd_prev = model.body_qd
-        self._body_f = model.body_qd
-        self._dt = 1e-3
-        self._rigid_contact_count = model.rigid_contact_count
-        self._rigid_contact_shape0 = model.rigid_contact_shape0
-        self._rigid_contact_shape1 = model.rigid_contact_shape1
-        self._rigid_contact_normal = model.rigid_contact_normal
-        self._rigid_contact_point0 = model.rigid_contact_point0
-        self._rigid_contact_point1 = model.rigid_contact_point1
-
-    def _warmup_setting_matrices(self):
+        # ----------- WARM-UP -----------
         wps.bsr_set_from_triplets(
             self.H_inv, self.H_inv_rows, self.H_inv_cols, self.H_inv_values
         )
         wps.bsr_set_from_triplets(self.J, self.J_rows, self.J_cols, self.J_values)
         wps.bsr_set_from_triplets(self.C, self.C_rows, self.C_cols, self.C_values)
+
         wps.bsr_set_transpose(self.J_T, self.J)
 
-    def _warmup_matrix_multiplications(self):
-        wps.bsr_mm(
-            x=self.J,
-            y=self.H_inv,
-            z=self.Z,
-            alpha=1.0,
-            beta=0.0,
-            work_arrays=self.mm_work_arrays_1,
-            reuse_topology=False,
-        )
-
-        wps.bsr_mm(
-            x=self.Z,
-            y=self.J_T,
-            z=self.C,
-            alpha=1.0,
-            beta=1.0,
-            work_arrays=self.mm_work_arrays_2,
-            reuse_topology=False,
-        )
+        # # Warm up the sparse matrix multiplications
+        # wps.bsr_mm(
+        #     x=self.J,
+        #     y=self.H_inv,
+        #     z=self.Z,
+        #     alpha=1.0,
+        #     beta=0.0,
+        #     work_arrays=self.mm_work_arrays_1,
+        #     reuse_topology=False,
+        # )  # Changes Z
+        #
+        # wps.bsr_mm(
+        #     x=self.Z,
+        #     y=self.J_T,
+        #     z=self.C,
+        #     alpha=1.0,
+        #     beta=1.0,
+        #     work_arrays=self.mm_work_arrays_2,
+        #     reuse_topology=False,
+        # )  # Changes C
 
     def _clear_values(self):
         self.g.zero_()
@@ -287,64 +231,74 @@ class NSNEngine(Integrator):
         self.J_values.zero_()
         self.C_values.zero_()
 
-    def _fill_constraint_block_indices(self):
+    def _fill_constraint_block_indices(self, model: Model):
+        N_c = model.rigid_contact_max
+
         wp.launch(
             kernel=fill_J_n_indices_kernel,
-            dim=self.N_c,
+            dim=N_c,
             inputs=[
-                self.shape_body,
-                self._rigid_contact_count,
-                self._rigid_contact_shape0,
-                self._rigid_contact_shape1,
+                model.shape_body,
+                model.rigid_contact_count,
+                model.rigid_contact_shape0,
+                model.rigid_contact_shape1,
                 self.J_n_offset,
                 self.J_n_dense_offset,
             ],
             outputs=[self.J_rows, self.J_cols],
-            device=self.device,
+            device=model.device,
         )
 
-    def _fill_matrices(self):
+    def _fill_matrices(
+        self, model: Model, state_in: State, state_out: State, dt: float
+    ):
         self._clear_values()
+        self._fill_constraint_block_indices(
+            model
+        )  # TODO: Doesn't need to be called every time
+
+        N_b = model.body_count
+        N_c = model.rigid_contact_max
 
         # Compute the dynamics contact constraint
         wp.launch(
             kernel=unconstrained_dynamics_kernel,
-            dim=self.N_b,
+            dim=N_b,
             inputs=[
-                self._body_qd,
-                self._body_qd_prev,
-                self._body_f,
-                self.body_mass,
-                self.body_inv_mass,
-                self.body_inertia,
-                self.body_inv_inertia,
-                self._dt,
-                self.gravity,
+                state_out.body_qd,
+                state_in.body_qd,
+                state_out.body_f,
+                model.body_mass,
+                model.body_inv_mass,
+                model.body_inertia,
+                model.body_inv_inertia,
+                dt,
+                model.gravity,
             ],
             outputs=[self.g, self.H_inv_values],
-            device=self.device,
+            device=model.device,
         )
 
         # Compute the contact constraint
         wp.launch(
             kernel=contact_constraint_kernel,
-            dim=self.N_c,
+            dim=N_c,
             inputs=[
-                self._body_q,
-                self._body_qd,
-                self._body_qd_prev,
-                self.body_com,
-                self.shape_body,
-                self.shape_geo,
-                self.shape_materials,
-                self._rigid_contact_count,
-                self._rigid_contact_point0,
-                self._rigid_contact_point1,
-                self._rigid_contact_normal,
-                self._rigid_contact_shape0,
-                self._rigid_contact_shape1,
+                state_out.body_q,
+                state_out.body_qd,
+                state_in.body_qd,
+                model.body_com,
+                model.shape_body,
+                model.shape_geo,
+                model.shape_materials,
+                model.rigid_contact_count,
+                model.rigid_contact_point0,
+                model.rigid_contact_point1,
+                model.rigid_contact_normal,
+                model.rigid_contact_shape0,
+                model.rigid_contact_shape1,
                 self.lambda_n,
-                self._dt,
+                dt,
                 CONTACT_CONSTRAINT_STABILIZATION,
                 CONTACT_FB_ALPHA,
                 CONTACT_FB_BETA,
@@ -380,22 +334,6 @@ class NSNEngine(Integrator):
 
         wps.bsr_set_transpose(self.J_T, self.J)
 
-    def _update_variables(
-        self, model: Model, state_in: State, state_out: State, dt: float
-    ):
-        self._dt = dt
-        self._body_q = state_out.body_q
-        self._body_qd = state_out.body_qd
-        self._body_qd_prev = state_in.body_qd
-        self._body_f = state_out.body_f
-
-        self._rigid_contact_count = model.rigid_contact_count
-        self._rigid_contact_shape0 = model.rigid_contact_shape0
-        self._rigid_contact_shape1 = model.rigid_contact_shape1
-        self._rigid_contact_normal = model.rigid_contact_normal
-        self._rigid_contact_point0 = model.rigid_contact_point0
-        self._rigid_contact_point1 = model.rigid_contact_point1
-
     def simulate(
         self,
         model: Model,
@@ -404,20 +342,27 @@ class NSNEngine(Integrator):
         dt: float,
         control: Control | None = None,
     ):
-        # Get the initial guess for the output state.
-        # This will be used as the starting point for the iterative solver.
-        with wp.ScopedTimer("Initial guess and copy", active=True):
-            self.integrate_bodies(model, state_in, state_out, dt)
-            self._update_variables(model, state_in, state_out, dt)
+        N_b = model.body_count
+        N_c = model.rigid_contact_max
 
-        # Get the indices for constraint block J (dependent on the detected contacts)
-        self._fill_constraint_block_indices()
+        if N_b == 0:
+            raise ValueError("State must contain at least one body.")
+
+        if state_in.particle_count > 0:
+            raise ValueError("NSNEngine does not support particles.")
+
+        if control is None:
+            control = model.control(clone_variables=False)
+
+        # Get the initial guess for the output state. This will be used as the starting point for the iterative solver.
+        self.integrate_bodies(model, state_in, state_out, dt)
 
         for _ in range(self.max_iterations):
             with wp.ScopedTimer("Fill Matrices", active=True):
-                self._fill_matrices()
+                self._fill_matrices(model, state_in, state_out, dt)
 
             with wp.ScopedTimer("MM", active=True):
+
                 # A = J @ H^{-1} @ J^T + C
                 wps.bsr_mm(
                     x=self.J,
@@ -465,10 +410,5 @@ class NSNEngine(Integrator):
                 )  # Changes delta_body_qd
 
                 # Add the changes to the state
-                add_inplace(self._body_qd, self.delta_body_qd, 0, 0, self.N_b)
-                add_inplace(self.lambda_n, self.delta_lambda, 0, 0, self.N_c)
-
-        # Update the state with the new velocities and positions
-        with wp.ScopedTimer("Update state", active=True):
-            wp.copy(dest=state_out.body_qd, src=self._body_qd)
-            wp.copy(dest=state_out.body_q, src=self._body_q)
+                add_inplace(state_out.body_qd, self.delta_body_qd, 0, 0, N_b)
+                add_inplace(self.lambda_n, self.delta_lambda, 0, 0, N_c)
