@@ -173,7 +173,10 @@ class BallBounceSim:
 
         for i in tqdm(range(self.sim_steps), desc="Simulating", disable=DEBUG):
             with wp.ScopedTimer("step", active=DEBUG):
-                self.step()
+                if self.use_cuda_graph:
+                    wp.capture_launch(self.step_graph)
+                else:
+                    self.step()
             if RENDER:
                 t = self.time[i]
                 if t >= last_rendered_time:  # render only if enough time has passed

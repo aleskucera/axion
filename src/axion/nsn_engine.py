@@ -474,18 +474,13 @@ class NSNEngine(Integrator):
     ):
         # Get the initial guess for the output state.
         # This will be used as the starting point for the iterative solver.
-        with wp.ScopedTimer("Initial guess and copy", active=True):
-            self.integrate_bodies(model, state_in, state_out, dt)
-            self.update_state_variables(model, state_in, state_out, dt)
+        self.integrate_bodies(model, state_in, state_out, dt)
+        self.update_state_variables(model, state_in, state_out, dt)
 
         for _ in range(self.max_iterations):
-            with wp.ScopedTimer("Fill Matrices", active=True):
-                self.update_system_values()
-
-            with wp.ScopedTimer("Solve", active=True):
-                self.solve_system()
+            self.update_system_values()
+            self.solve_system()
 
         # Update the state with the new velocities and positions
-        with wp.ScopedTimer("Update state", active=True):
-            wp.copy(dest=state_out.body_qd, src=self._body_qd)
-            wp.copy(dest=state_out.body_q, src=self._body_q)
+        wp.copy(dest=state_out.body_qd, src=self._body_qd)
+        wp.copy(dest=state_out.body_q, src=self._body_q)
