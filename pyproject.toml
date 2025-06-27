@@ -12,6 +12,7 @@ dependencies = [
     "pytest>=8.4.0",
     "torch>=2.7.1",
     "tqdm>=4.67.1",
+    "trimesh>=4.6.12",
     "usd-core>=25.5.1",
     "warp-lang>=1.7.2",
 ]
