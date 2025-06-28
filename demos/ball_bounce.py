@@ -5,9 +5,9 @@ import warp.sim.render
 from axion.nsn_engine import NSNEngine
 from tqdm import tqdm
 
-# wp.config.mode = "debug"
-# wp.config.verify_cuda = True
-# wp.config.verify_fp = True
+wp.config.mode = "debug"
+wp.config.verify_cuda = True
+wp.config.verify_fp = True
 
 RENDER = True
 DEBUG = True
@@ -156,7 +156,7 @@ class BallBounceSim:
         self.state_0 = self.model.state()
         self.state_1 = self.model.state()
 
-        self.use_cuda_graph = wp.get_device().is_cuda
+        self.use_cuda_graph = wp.get_device().is_cuda and not wp.config.verify_cuda
         if self.use_cuda_graph:
             with wp.ScopedCapture() as capture:
                 self.step()

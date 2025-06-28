@@ -135,7 +135,9 @@ def contact_constraint_kernel(
     contact_normal: wp.array(dtype=wp.vec3),  # [C, 3]
     contact_shape0: wp.array(dtype=wp.int32),  # [C]
     contact_shape1: wp.array(dtype=wp.int32),  # [C]
-    lambda_n: wp.array(dtype=wp.float32),  # [C]
+    # --- Velocity impulse variables ---
+    lambda_n_offset: wp.int32,  # Offset for lambda_n
+    _lambda: wp.array(dtype=wp.float32),
     # --- Parameters ---
     dt: wp.float32,
     stabilization_factor: wp.float32,
@@ -211,8 +213,10 @@ def contact_constraint_kernel(
         stabilization_factor,
     )
 
+    lambda_n = _lambda[lambda_n_offset + tid]
+
     phi_n, dphi_dlambda_n, dphi_db = scaled_fisher_burmeister(
-        lambda_n[tid], complementarity_arg, fb_alpha, fb_beta
+        lambda_n, complementarity_arg, fb_alpha, fb_beta
     )
 
     J_n_a = dphi_db * grad_c_n_a
@@ -220,13 +224,13 @@ def contact_constraint_kernel(
 
     # --- g --- (momentum balance)
     if body_a >= 0:
-        g_a = -J_n_a * lambda_n[tid]
+        g_a = -J_n_a * lambda_n
         for i in range(wp.static(6)):
             st_i = wp.static(i)
             wp.atomic_add(g, body_a * 6 + st_i, g_a[st_i])
 
     if body_b >= 0:
-        g_b = -J_n_b * lambda_n[tid]
+        g_b = -J_n_b * lambda_n
         for i in range(wp.static(6)):
             st_i = wp.static(i)
             wp.atomic_add(g, body_b * 6 + st_i, g_b[st_i])
