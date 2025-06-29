@@ -178,10 +178,10 @@ class BallBounceSim:
         self.time = np.linspace(0, self.sim_duration, self.sim_steps)
 
         # self.integrator = wp.sim.SemiImplicitIntegrator()
-        self.integrator = wp.sim.XPBDIntegrator(
-            enable_restitution=True, rigid_contact_relaxation=0.0
-        )
-        self.integrator = NSNEngine(self.model)
+        # self.integrator = wp.sim.XPBDIntegrator(
+        #     enable_restitution=True, rigid_contact_relaxation=0.0
+        # )
+        # self.integrator = NSNEngine(self.model)
         self.renderer = wp.sim.render.SimRenderer(self.model, USD_FILE, scaling=1.0)
 
         self.state_0 = self.model.state()
