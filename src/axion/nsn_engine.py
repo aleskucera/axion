@@ -10,6 +10,8 @@ from warp.sim import Integrator
 from warp.sim import Model
 from warp.sim import State
 
+JOINT_CONSTRAINT_STABILIZATION = 0.01  # Add a new factor for joints
+
 CONTACT_CONSTRAINT_STABILIZATION = 0.1  # Baumgarte stabilization factor
 CONTACT_FB_ALPHA = 0.25  # Fisher-Burmeister scaling factor of the first argument
 CONTACT_FB_BETA = 0.25  # Fisher-Burmeister scaling factor of the second argument
@@ -107,9 +109,6 @@ def update_system_matrix_kernel(
     )
     J_ja = J_values[j, 0]
     J_jb = J_values[j, 1]
-
-    wp.printf("Body A (i) %d, body B (i) %d", body_a_i, body_b_i)
-    wp.printf("Body A (j) %d, body B (j) %d", body_a_j, body_b_j)
 
     if body_a_i == body_b_i or body_a_j == body_b_j:
         A[i, j] = 0.0
@@ -251,8 +250,8 @@ def compute_delta_body_qd_kernel(
     delta_body_qd: wp.array(dtype=wp.float32),
 ):
     tid = wp.tid()  # Over all bodies * 6
-    body_idx = wp.int32(tid // 6)
-    body_dim = wp.int32(tid % 6)
+    body_idx = tid // 6
+    body_dim = tid % 6
 
     if body_idx >= body_inv_mass.shape[0]:
         return
@@ -297,14 +296,8 @@ def add_delta_x(
 
 
 class NSNEngine(Integrator):
-    def __init__(
-        self,
-        model: Model,
-        tolerance: float = 1e-3,
-        max_iterations: int = 6,
-    ):
+    def __init__(self, model: Model, tolerance: float = 1e-3, max_iterations: int = 6):
         super().__init__()
-        self.tolerance = tolerance
         self.max_iterations = max_iterations
 
         self.device = model.device
@@ -472,6 +465,7 @@ class NSNEngine(Integrator):
             dim=self.N_j,
             inputs=[
                 self._body_q,
+                self._body_qd,
                 self.body_com,
                 self.joint_type,
                 self.joint_enabled,
@@ -487,6 +481,9 @@ class NSNEngine(Integrator):
                 # Velocity impulse variables
                 self.lambda_j_offset,
                 self._lambda,
+                # Parameters
+                self._dt,
+                JOINT_CONSTRAINT_STABILIZATION,
                 # Offsets for output arrays
                 self.h_j_offset,
                 self.J_j_offset,

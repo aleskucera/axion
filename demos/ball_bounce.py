@@ -5,9 +5,9 @@ import warp.sim.render
 from axion.nsn_engine import NSNEngine
 from tqdm import tqdm
 
-wp.config.mode = "debug"
-wp.config.verify_cuda = True
-wp.config.verify_fp = True
+# wp.config.mode = "debug"
+# wp.config.verify_cuda = True
+# wp.config.verify_fp = True
 
 RENDER = True
 DEBUG = True
@@ -83,6 +83,7 @@ def ball_world_model(gravity: bool = True) -> wp.sim.Model:
         restitution=0.5,
         thickness=0.0,
     )
+
     box1 = builder.add_body(
         origin=wp.transform((0.0, 0.0, 9.0), wp.quat_identity()), name="box1"
     )
@@ -99,6 +100,36 @@ def ball_world_model(gravity: bool = True) -> wp.sim.Model:
         mu=1.0,
         restitution=0.5,
         thickness=0.0,
+    )
+
+    box_2_rot = wp.quat_from_axis_angle(wp.vec3(0.0, 1.0, 0.0), wp.pi / 4.0)
+    box2 = builder.add_body(
+        origin=wp.transform((0.0, 1.6, 9.0), box_2_rot),
+        name="box2",
+    )
+
+    builder.add_shape_box(
+        body=box2,
+        hx=0.8,
+        hy=0.8,
+        hz=0.8,
+        density=10.0,
+        ke=2000.0,
+        kd=10.0,
+        kf=200.0,
+        mu=1.0,
+        restitution=0.5,
+        thickness=0.0,
+    )
+
+    builder.add_joint_revolute(
+        parent=box1,
+        child=box2,
+        parent_xform=wp.transform((0.0, 0.8, 0.0), wp.quat_identity()),
+        child_xform=wp.transform((0.0, -0.8, 0.0), wp.quat_identity()),
+        axis=wp.vec3(0.0, 1.0, 0.0),
+        linear_compliance=0.0,
+        angular_compliance=0.0,
     )
 
     # builder.body_qd[box1] = wp.spatial_vector(0.35, 0.0, 0.0, 0.0, 0.0, 0.0)
@@ -156,7 +187,7 @@ class BallBounceSim:
         self.state_0 = self.model.state()
         self.state_1 = self.model.state()
 
-        self.use_cuda_graph = wp.get_device().is_cuda and not wp.config.verify_cuda
+        self.use_cuda_graph = wp.get_device().is_cuda
         if self.use_cuda_graph:
             with wp.ScopedCapture() as capture:
                 self.step()
