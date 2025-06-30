@@ -296,7 +296,7 @@ def add_delta_x(
 
 
 class NSNEngine(Integrator):
-    def __init__(self, model: Model, tolerance: float = 1e-3, max_iterations: int = 6):
+    def __init__(self, model: Model, tolerance: float = 1e-3, max_iterations: int = 5):
         super().__init__()
         self.max_iterations = max_iterations
 
