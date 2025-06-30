@@ -12,7 +12,6 @@ from tqdm import tqdm
 RENDER = True
 DEBUG = True
 USD_FILE = "ball_bounce.usd"
-PLOT_FILE = "ball_bounce_trajectory.png"
 
 
 def ball_world_model(gravity: bool = True) -> wp.sim.Model:
@@ -182,7 +181,7 @@ class BallBounceSim:
         #     enable_restitution=True, rigid_contact_relaxation=0.0
         # )
         self.integrator = NSNEngine(self.model)
-        self.renderer = wp.sim.render.SimRenderer(self.model, USD_FILE, scaling=1.0)
+        self.renderer = wp.sim.render.SimRenderer(self.model, USD_FILE, scaling=100.0)
 
         self.state_0 = self.model.state()
         self.state_1 = self.model.state()
@@ -196,7 +195,9 @@ class BallBounceSim:
     def step(self):
         wp.sim.collide(self.model, self.state_0)
         self.integrator.simulate(self.model, self.state_0, self.state_1, self.sim_dt)
-        self.state_0, self.state_1 = self.state_1, self.state_0
+
+        wp.copy(dest=self.state_0.body_q, src=self.state_1.body_q)
+        wp.copy(dest=self.state_0.body_qd, src=self.state_1.body_qd)
 
     def simulate(self):
         frame_interval = 1.0 / self.fps
@@ -209,12 +210,16 @@ class BallBounceSim:
                 else:
                     self.step()
             if RENDER:
-                t = self.time[i]
-                if t >= last_rendered_time:  # render only if enough time has passed
-                    self.renderer.begin_frame(t)
-                    self.renderer.render(self.state_0)
-                    self.renderer.end_frame()
-                    last_rendered_time += frame_interval  # update to next frame time
+                with wp.ScopedTimer("render", active=DEBUG):
+                    wp.synchronize()
+                    t = self.time[i]
+                    if t >= last_rendered_time:  # render only if enough time has passed
+                        self.renderer.begin_frame(t)
+                        self.renderer.render(self.state_0)
+                        self.renderer.end_frame()
+                        last_rendered_time += (
+                            frame_interval  # update to next frame time
+                        )
 
         if RENDER:
             self.renderer.save()
