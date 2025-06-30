@@ -13,6 +13,9 @@ RENDER = True
 DEBUG = True
 USD_FILE = "ball_bounce.usd"
 
+FRICTION = 0.6
+RESTITUTION = 0.8
+
 
 def ball_world_model(gravity: bool = True) -> wp.sim.Model:
     if gravity:
@@ -30,8 +33,8 @@ def ball_world_model(gravity: bool = True) -> wp.sim.Model:
         ke=2000.0,
         kd=10.0,
         kf=200.0,
-        mu=1.0,
-        restitution=0.5,
+        mu=FRICTION,
+        restitution=RESTITUTION,
         thickness=0.0,
     )
 
@@ -46,8 +49,8 @@ def ball_world_model(gravity: bool = True) -> wp.sim.Model:
         ke=2000.0,
         kd=10.0,
         kf=200.0,
-        mu=1.0,
-        restitution=0.5,
+        mu=FRICTION,
+        restitution=RESTITUTION,
         thickness=0.0,
     )
 
@@ -62,13 +65,13 @@ def ball_world_model(gravity: bool = True) -> wp.sim.Model:
         ke=2000.0,
         kd=10.0,
         kf=200.0,
-        mu=1.0,
-        restitution=0.5,
+        mu=FRICTION,
+        restitution=RESTITUTION,
         thickness=0.0,
     )
 
     ball4 = builder.add_body(
-        origin=wp.transform((-0.6, 0.0, 10.5), wp.quat_identity()), name="ball3"
+        origin=wp.transform((-0.6, 0.0, 10.5), wp.quat_identity()), name="ball4"
     )
 
     builder.add_shape_sphere(
@@ -78,8 +81,8 @@ def ball_world_model(gravity: bool = True) -> wp.sim.Model:
         ke=2000.0,
         kd=10.0,
         kf=200.0,
-        mu=1.0,
-        restitution=0.5,
+        mu=FRICTION,
+        restitution=RESTITUTION,
         thickness=0.0,
     )
 
@@ -96,8 +99,8 @@ def ball_world_model(gravity: bool = True) -> wp.sim.Model:
         ke=2000.0,
         kd=10.0,
         kf=200.0,
-        mu=1.0,
-        restitution=0.5,
+        mu=FRICTION,
+        restitution=RESTITUTION,
         thickness=0.0,
     )
 
@@ -116,8 +119,8 @@ def ball_world_model(gravity: bool = True) -> wp.sim.Model:
         ke=2000.0,
         kd=10.0,
         kf=200.0,
-        mu=1.0,
-        restitution=0.5,
+        mu=FRICTION,
+        restitution=RESTITUTION,
         thickness=0.0,
     )
 
@@ -131,34 +134,10 @@ def ball_world_model(gravity: bool = True) -> wp.sim.Model:
         angular_compliance=0.0,
     )
 
-    # builder.body_qd[box1] = wp.spatial_vector(0.35, 0.0, 0.0, 0.0, 0.0, 0.0)
-
-    builder.set_ground_plane(ke=10, kd=10, kf=0.0, mu=1.0, restitution=0.8)
+    builder.set_ground_plane(ke=10, kd=10, kf=0.0, mu=FRICTION, restitution=RESTITUTION)
     model = builder.finalize()
 
     return model
-
-
-@wp.kernel
-def update_trajectory_kernel(
-    trajectory: wp.array(dtype=wp.vec3),
-    q: wp.array(dtype=wp.transform),
-    time_step: wp.int32,
-    q_idx: wp.int32,
-):
-    trajectory[time_step] = wp.transform_get_translation(q[q_idx])
-
-
-@wp.kernel
-def trajectory_loss_kernel(
-    trajectory: wp.array(dtype=wp.vec3f),
-    target_trajectory: wp.array(dtype=wp.vec3f),
-    loss: wp.array(dtype=wp.float32),
-):
-    tid = wp.tid()
-    diff = trajectory[tid] - target_trajectory[tid]
-    distance_loss = wp.dot(diff, diff)
-    wp.atomic_add(loss, 0, distance_loss)
 
 
 class BallBounceSim:
@@ -166,7 +145,7 @@ class BallBounceSim:
 
         # Simulation and rendering parameters
         self.fps = 30
-        self.num_frames = 90
+        self.num_frames = 180
         self.sim_substeps = 5
         self.frame_dt = 1.0 / self.fps
         self.sim_dt = self.frame_dt / self.sim_substeps

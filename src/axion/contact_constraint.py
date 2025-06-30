@@ -2,28 +2,9 @@ import time
 
 import numpy as np
 import warp as wp
-from axion.ncp import scaled_fisher_burmeister
+from axion.utils import scaled_fisher_burmeister
 from warp.sim import ModelShapeGeometry
 from warp.sim import ModelShapeMaterials
-
-
-@wp.func
-def _compute_restitution_coefficient(
-    shape_a: wp.int32,
-    shape_b: wp.int32,
-    shape_materials: ModelShapeMaterials,
-) -> wp.float32:
-    """Computes the average coefficient of restitution for a contact pair."""
-    e = 0.0
-    if shape_a >= 0 and shape_b >= 0:
-        e_a = shape_materials.restitution[shape_a]
-        e_b = shape_materials.restitution[shape_b]
-        e = (e_a + e_b) * 0.5
-    elif shape_a >= 0:
-        e = shape_materials.restitution[shape_a]
-    elif shape_b >= 0:
-        e = shape_materials.restitution[shape_b]
-    return e
 
 
 @wp.func
@@ -56,85 +37,16 @@ def _compute_complementarity_argument(
     return delta_v_n + b_err + b_rest
 
 
-@wp.func
-def _compute_contact_kinematics(
-    point_a: wp.vec3,
-    point_b: wp.vec3,
-    normal: wp.vec3,
-    shape_a: wp.int32,
-    shape_b: wp.int32,
-    body_q: wp.array(dtype=wp.transform),
-    body_com: wp.array(dtype=wp.vec3),
-    shape_body: wp.array(dtype=int),
-    geo: ModelShapeGeometry,
-):
-    """
-    Calculates contact constraint (c_n), time derivatives (grad_c_n_a, grad_c_n_b),
-    and body indices for a single contact.
-
-    Returns a bool 'is_active' and the computed values.
-    """
-    # Guard against self-contact
-    if shape_a == shape_b:
-        return False, 0.0, wp.spatial_vector(), wp.spatial_vector(), -1, -1
-
-    # Get body indices and thickness
-    body_a, body_b = -1, -1
-    thickness_a, thickness_b = 0.0, 0.0
-    if shape_a >= 0:
-        body_a = shape_body[shape_a]
-        thickness_a = geo.thickness[shape_a]
-    if shape_b >= 0:
-        body_b = shape_body[shape_b]
-        thickness_b = geo.thickness[shape_b]
-
-    # Compute world-space contact points and lever arms (r_a, r_b)
-    n = normal
-    p_world_a = point_a
-    p_world_b = point_b
-    r_a = wp.vec3(0.0)
-    r_b = wp.vec3(0.0)
-
-    if body_a >= 0:
-        X_wb_a = body_q[body_a]
-        offset_a = -thickness_a * normal
-        p_world_a = wp.transform_point(X_wb_a, point_a) + offset_a
-        r_a = p_world_a - wp.transform_point(X_wb_a, body_com[body_a])
-    if body_b >= 0:
-        X_wb_b = body_q[body_b]
-        offset_b = thickness_b * normal
-        p_world_b = wp.transform_point(X_wb_b, point_b) + offset_b
-        r_b = p_world_b - wp.transform_point(X_wb_b, body_com[body_b])
-
-    # Calculate penetration depth (gap)
-    c_n = wp.dot(n, p_world_a - p_world_b)
-
-    # If gap is non-negative, the contact is not penetrating and thus inactive
-    if c_n >= 0.0:
-        return False, 0.0, wp.spatial_vector(), wp.spatial_vector(), body_a, body_b
-
-    # Compute Jacobians
-    grad_c_n_a = wp.spatial_vector(wp.cross(r_a, n), n)
-    grad_c_n_b = wp.spatial_vector(-wp.cross(r_b, n), -n)
-
-    return True, c_n, grad_c_n_a, grad_c_n_b, body_a, body_b
-
-
 @wp.kernel
 def contact_constraint_kernel(
-    body_q: wp.array(dtype=wp.transform),  # [B, 7]
-    body_qd: wp.array(dtype=wp.spatial_vector),  # [B, 6]
-    body_qd_prev: wp.array(dtype=wp.spatial_vector),  # [B, 6]
-    body_com: wp.array(dtype=wp.vec3),  # [B, 3]
-    shape_body: wp.array(dtype=int),  # [B]
-    shape_geo: ModelShapeGeometry,
-    shape_materials: ModelShapeMaterials,
-    contact_count: wp.array(dtype=wp.int32),  # [1]
-    contact_point0: wp.array(dtype=wp.vec3),  # [C, 3]
-    contact_point1: wp.array(dtype=wp.vec3),  # [C, 3]
-    contact_normal: wp.array(dtype=wp.vec3),  # [C, 3]
-    contact_shape0: wp.array(dtype=wp.int32),  # [C]
-    contact_shape1: wp.array(dtype=wp.int32),  # [C]
+    body_qd: wp.array(dtype=wp.spatial_vector),
+    body_qd_prev: wp.array(dtype=wp.spatial_vector),
+    contact_gap: wp.array(dtype=wp.float32),
+    J_contact_a: wp.array(dtype=wp.spatial_vector, ndim=2),
+    J_contact_b: wp.array(dtype=wp.spatial_vector, ndim=2),
+    contact_body_a: wp.array(dtype=wp.int32),
+    contact_body_b: wp.array(dtype=wp.int32),
+    contact_restitution_coeff: wp.array(dtype=wp.float32),
     # --- Velocity impulse variables ---
     lambda_n_offset: wp.int32,  # Offset for lambda_n
     _lambda: wp.array(dtype=wp.float32),
@@ -144,49 +56,29 @@ def contact_constraint_kernel(
     fb_alpha: wp.float32,
     fb_beta: wp.float32,
     # Indices for outputs
-    h_n_offset: wp.int32,  # Goes into vector h
-    J_n_offset: wp.int32,  # Goes into the matrix J
-    C_n_offset: wp.int32,  # Goes into the matrix C
+    h_n_offset: wp.int32,
+    J_n_offset: wp.int32,
+    C_n_offset: wp.int32,
     # --- Outputs ---
     g: wp.array(dtype=wp.float32),
     h: wp.array(dtype=wp.float32),
     J_values: wp.array(dtype=wp.spatial_vector, ndim=2),
     C_values: wp.array(dtype=wp.float32),
-    contact_body_a: wp.array(dtype=wp.int32),  # [C]
-    contact_body_b: wp.array(dtype=wp.int32),  # [C]
 ):
     tid = wp.tid()
 
-    # Handle inactive constraints (not detected by collide func)
-    if tid >= contact_count[0]:
+    if contact_gap[tid] >= 0.0:
         return
 
-    is_active, c_n, grad_c_n_a, grad_c_n_b, body_a, body_b = (
-        _compute_contact_kinematics(
-            contact_point0[tid],
-            contact_point1[tid],
-            contact_normal[tid],
-            contact_shape0[tid],
-            contact_shape1[tid],
-            body_q,
-            body_com,
-            shape_body,
-            shape_geo,
-        )
-    )
-    # Store body indices for the contact
-    contact_body_a[tid] = body_a
-    contact_body_b[tid] = body_b
+    c_n = contact_gap[tid]
+    body_a = contact_body_a[tid]
+    body_b = contact_body_b[tid]
 
-    # Check that the constraint is really violated
-    if not is_active:
-        return
+    grad_c_n_a = J_contact_a[tid, 0]
+    grad_c_n_b = J_contact_b[tid, 0]
 
-    e = _compute_restitution_coefficient(
-        contact_shape0[tid], contact_shape1[tid], shape_materials
-    )
+    e = contact_restitution_coeff[tid]
 
-    # Safely get body velocities, handling ground body (-1)
     body_qd_a = wp.spatial_vector()
     body_qd_prev_a = wp.spatial_vector()
     if body_a >= 0:
