@@ -38,6 +38,7 @@ def joint_constraint_kernel(
         or j_type != wp.sim.JOINT_REVOLUTE
         or joint_parent[tid] < 0
     ):
+        # TODO: Handle if joint_parent is -1 (floating joint)
         return
 
     child_idx = joint_child[tid]

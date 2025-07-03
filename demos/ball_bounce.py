@@ -4,6 +4,7 @@ import warp as wp
 import warp.sim.render
 from axion.nsn_engine import NSNEngine
 from tqdm import tqdm
+from warp.sim import Mesh
 
 # wp.config.mode = "debug"
 # wp.config.verify_cuda = True
@@ -13,7 +14,7 @@ RENDER = True
 DEBUG = True
 USD_FILE = "ball_bounce.usd"
 
-FRICTION = 0.6
+FRICTION = 0.8
 RESTITUTION = 0.8
 
 
@@ -117,7 +118,7 @@ def ball_world_model(gravity: bool = True) -> wp.sim.Model:
         hz=0.8,
         density=10.0,
         ke=2000.0,
-        kd=10.0,
+        kd=1000.0,
         kf=200.0,
         mu=FRICTION,
         restitution=RESTITUTION,
@@ -132,11 +133,11 @@ def ball_world_model(gravity: bool = True) -> wp.sim.Model:
         axis=wp.vec3(0.0, 1.0, 0.0),
         linear_compliance=0.0,
         angular_compliance=0.0,
+        mode=wp.sim.JOINT_MODE_TARGET_VELOCITY,
     )
 
     builder.set_ground_plane(ke=10, kd=10, kf=0.0, mu=FRICTION, restitution=RESTITUTION)
     model = builder.finalize()
-
     return model
 
 
@@ -146,7 +147,7 @@ class BallBounceSim:
         # Simulation and rendering parameters
         self.fps = 30
         self.num_frames = 180
-        self.sim_substeps = 5
+        self.sim_substeps = 7
         self.frame_dt = 1.0 / self.fps
         self.sim_dt = self.frame_dt / self.sim_substeps
         self.sim_duration = self.num_frames * self.frame_dt
@@ -159,11 +160,19 @@ class BallBounceSim:
         # self.integrator = wp.sim.XPBDIntegrator(
         #     enable_restitution=True, rigid_contact_relaxation=0.0
         # )
+
         self.integrator = NSNEngine(self.model)
         self.renderer = wp.sim.render.SimRenderer(self.model, USD_FILE, scaling=100.0)
 
         self.state_0 = self.model.state()
         self.state_1 = self.model.state()
+        self.control = self.model.control()
+        self.control.joint_act = wp.full(
+            (self.model.joint_count,), value=3.3, dtype=wp.float32
+        )
+        self.model.joint_target_ke = wp.full(
+            (self.model.joint_count,), value=500.0, dtype=wp.float32
+        )
 
         self.use_cuda_graph = wp.get_device().is_cuda
         if self.use_cuda_graph:
@@ -173,7 +182,9 @@ class BallBounceSim:
 
     def step(self):
         wp.sim.collide(self.model, self.state_0)
-        self.integrator.simulate(self.model, self.state_0, self.state_1, self.sim_dt)
+        self.integrator.simulate(
+            self.model, self.state_0, self.state_1, self.sim_dt, control=self.control
+        )
 
         wp.copy(dest=self.state_0.body_q, src=self.state_1.body_q)
         wp.copy(dest=self.state_0.body_qd, src=self.state_1.body_qd)
@@ -211,6 +222,3 @@ def ball_bounce_simulation():
 
 if __name__ == "__main__":
     ball_bounce_simulation()
-
-# 44 Hz
-# 253x more efficient than the previous version

@@ -131,7 +131,7 @@ def contact_constraint_kernel(
     h[h_n_offset + tid] = phi_n
 
     # --- C --- (compliance block)
-    C_values[C_n_offset + tid] = dphi_dlambda_n
+    C_values[C_n_offset + tid] = dphi_dlambda_n + 0.01
 
     # --- J --- (constraint Jacobian block)
     if body_a >= 0:

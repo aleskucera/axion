@@ -5,6 +5,7 @@ from axion.dynamics_constraint import unconstrained_dynamics_kernel
 from axion.frictional_constraint import frictional_constraint_kernel
 from axion.joint_constraint import joint_constraint_kernel
 from axion.optim.cr import cr_solver_graph_compatible
+from axion.utils import apply_joint_actions_kernel
 from axion.utils import contact_kinematics_kernel
 from axion.utils.add_inplace import add_inplace
 from warp.sim import Control
@@ -320,8 +321,8 @@ class NSNEngine(Integrator):
     def __init__(
         self,
         model: Model,
-        newton_iters: int = 5,
-        linear_iters: int = 5,
+        newton_iters: int = 4,
+        linear_iters: int = 4,
     ):
         super().__init__()
         self.newton_iters = newton_iters
@@ -680,7 +681,7 @@ class NSNEngine(Integrator):
         self._body_q = state_out.body_q
         self._body_qd = state_out.body_qd
         self._body_qd_prev = state_in.body_qd
-        self._body_f = state_out.body_f
+        self._body_f = state_in.body_f
 
         self._rigid_contact_count = model.rigid_contact_count
         self._rigid_contact_shape0 = model.rigid_contact_shape0
@@ -699,6 +700,68 @@ class NSNEngine(Integrator):
     ):
         # Get the initial guess for the output state.
         # This will be used as the starting point for the iterative solver.
+        wp.sim.eval_ik(model, state_in, state_in.joint_q, state_in.joint_qd)
+        # print(
+        #     f"Joint q: {state_in.joint_q.numpy()}, joint qd: {state_in.joint_qd.numpy()}"
+        # )
+        if control is not None:
+            # print(f"Control joint_act: {control.joint_act.numpy()}")
+            # print(f"Joint target_kd: {model.joint_target_kd}")
+            # wp.launch(
+            #     kernel=eval_body_joints,
+            #     dim=model.joint_count,
+            #     inputs=[
+            #         state_in.body_q,
+            #         state_in.body_qd,
+            #         model.body_com,
+            #         model.joint_qd_start,
+            #         model.joint_type,
+            #         model.joint_enabled,
+            #         model.joint_child,
+            #         model.joint_parent,
+            #         model.joint_X_p,
+            #         model.joint_X_c,
+            #         model.joint_axis,
+            #         model.joint_axis_start,
+            #         model.joint_axis_dim,
+            #         model.joint_axis_mode,
+            #         control.joint_act,
+            #         model.joint_target_ke,
+            #         model.joint_target_kd,
+            #         model.joint_limit_lower,
+            #         model.joint_limit_upper,
+            #         model.joint_limit_ke,
+            #         model.joint_limit_kd,
+            #         model.joint_attach_ke,
+            #         model.joint_attach_kd,
+            #     ],
+            #     outputs=[state_in.body_f],
+            # )
+            wp.launch(
+                kernel=apply_joint_actions_kernel,
+                dim=(model.joint_count,),
+                inputs=[
+                    state_in.body_q,
+                    model.body_com,
+                    state_in.joint_q,
+                    state_in.joint_qd,
+                    model.joint_target_ke,
+                    model.joint_target_kd,
+                    model.joint_type,
+                    model.joint_enabled,
+                    model.joint_parent,
+                    model.joint_child,
+                    model.joint_X_p,
+                    model.joint_X_c,
+                    model.joint_axis_start,
+                    model.joint_axis_dim,
+                    model.joint_axis,
+                    model.joint_axis_mode,
+                    control.joint_act,
+                ],
+                outputs=[state_in.body_f],
+            )
+        # print(f"State in body_f: {state_in.body_f.numpy()}")
         self.integrate_bodies(model, state_in, state_out, dt)
         self.update_state_variables(model, state_in, state_out, dt)
 
