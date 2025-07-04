@@ -10,7 +10,7 @@ from warp.sim import Mesh
 # wp.config.verify_cuda = True
 # wp.config.verify_fp = True
 
-RENDER = True
+RENDER = False
 DEBUG = True
 USD_FILE = "helhest.usd"
 
@@ -155,7 +155,10 @@ class BallBounceSim:
         # )
 
         self.integrator = NSNEngine(self.model)
-        self.renderer = wp.sim.render.SimRenderer(self.model, USD_FILE, scaling=100.0)
+        if RENDER:
+            self.renderer = wp.sim.render.SimRenderer(
+                self.model, USD_FILE, scaling=100.0
+            )
 
         self.state_0 = self.model.state()
         self.state_1 = self.model.state()
@@ -252,8 +255,16 @@ class BallBounceSim:
 
 
 def ball_bounce_simulation():
-    model = BallBounceSim()
-    model.simulate_multistep()
+    model0 = BallBounceSim()
+    model1 = BallBounceSim()
+
+    stream0 = wp.Stream()
+    stream1 = wp.Stream()
+
+    with wp.ScopedStream(stream0):
+        model0.simulate_multistep()
+    with wp.ScopedStream(stream1):
+        model1.simulate_multistep()
 
 
 if __name__ == "__main__":
