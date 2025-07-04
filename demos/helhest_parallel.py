@@ -1,3 +1,5 @@
+import time
+
 import matplotlib.pyplot as plt
 import numpy as np
 import warp as wp
@@ -255,6 +257,7 @@ class BallBounceSim:
 
 
 def ball_bounce_simulation():
+    start_time = time.time()
     num_sims = 6
     models = [BallBounceSim() for _ in range(num_sims)]
     streams = [wp.Stream() for _ in range(num_sims)]
@@ -262,6 +265,7 @@ def ball_bounce_simulation():
     for i in range(num_sims):
         with wp.ScopedStream(streams[i]):
             models[i].simulate_multistep()
+    print(f"Simulation took {time.time() - start_time:.4f} seconds")
 
 
 if __name__ == "__main__":
