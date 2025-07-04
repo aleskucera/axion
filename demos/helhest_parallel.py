@@ -255,16 +255,13 @@ class BallBounceSim:
 
 
 def ball_bounce_simulation():
-    model0 = BallBounceSim()
-    model1 = BallBounceSim()
+    num_sims = 6
+    models = [BallBounceSim() for _ in range(num_sims)]
+    streams = [wp.Stream() for _ in range(num_sims)]
 
-    stream0 = wp.Stream()
-    stream1 = wp.Stream()
-
-    with wp.ScopedStream(stream0):
-        model0.simulate_multistep()
-    with wp.ScopedStream(stream1):
-        model1.simulate_multistep()
+    for i in range(num_sims):
+        with wp.ScopedStream(streams[i]):
+            models[i].simulate_multistep()
 
 
 if __name__ == "__main__":
