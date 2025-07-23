@@ -10,12 +10,45 @@ from warp.sim import Mesh
 # wp.config.verify_cuda = True
 # wp.config.verify_fp = True
 
+###################################
+### MAIN SIMULATION CONFIGURATION ###
+###################################
 RENDER = True
-DEBUG = True
 USD_FILE = "helhest.usd"
 
 FRICTION = 1.0
 RESTITUTION = 0.8
+
+#######################################
+### PROFILING CONFIGURATION (MARKO) ###
+#######################################
+# Master switch for all profiling. If False, timers are inactive and have no overhead.
+DEBUG = True
+
+# --- ScopedTimer Options ---
+
+# synchronize=True: Waits for all GPU work to finish before stopping the timer.
+# This gives you the total wall-clock time (CPU + GPU).
+# If False, it only measures the time to *launch* the work on the CPU, which is often misleadingly short.
+PROFILE_SYNC = True
+
+# use_nvtx=True: Emits NVTX ranges for visualization in NVIDIA Nsight Systems.
+# Helps correlate CPU launch times with actual GPU execution on a timeline.
+# Requires `pip install nvtx`.
+PROFILE_NVTX = False
+
+# cuda_filter=wp.TIMING_ALL: Enables detailed reporting of individual CUDA activities
+# (kernels, memory copies, etc.). Prints a detailed timeline and summary.
+# This is the most insightful option for text-based GPU profiling.
+PROFILE_CUDA_TIMELINE = True
+
+# --- Logic to apply the settings ---
+if PROFILE_CUDA_TIMELINE:
+    # Use TIMING_ALL to capture kernels, memory copies, and memsets.
+    # You could also be more specific, e.g., wp.TIMING_KERNEL | wp.TIMING_MEMCPY
+    cuda_activity_filter = wp.TIMING_ALL
+else:
+    cuda_activity_filter = 0  # 0 means disabled
 
 
 def ball_world_model(gravity: bool = True) -> wp.sim.Model:
@@ -172,7 +205,7 @@ class BallBounceSim:
             (self.model.joint_count,), value=500.0, dtype=wp.float32
         )
 
-        self.use_cuda_graph = wp.get_device().is_cuda
+        self.use_cuda_graph = wp.get_device().is_cuda and False
         if self.use_cuda_graph:
             with wp.ScopedCapture() as capture:
                 self.multistep()
@@ -205,23 +238,33 @@ class BallBounceSim:
         last_rendered_time = 0.0
 
         for i in tqdm(range(self.sim_steps), desc="Simulating", disable=DEBUG):
-            with wp.ScopedTimer("step", active=DEBUG):
+            # The ScopedTimer is now configured with the flags from the top of the file
+            with wp.ScopedTimer(
+                "step",
+                active=DEBUG,
+                synchronize=PROFILE_SYNC,
+                use_nvtx=PROFILE_NVTX,
+                cuda_filter=cuda_activity_filter,
+            ):
                 if self.use_cuda_graph:
                     wp.capture_launch(self.step_graph)
                 else:
                     self.step()
-                wp.synchronize()
+
             if RENDER:
-                with wp.ScopedTimer("render", active=DEBUG):
-                    t = self.time[i]
-                    if t >= last_rendered_time:  # render only if enough time has passed
+                t = self.time[i]
+                if t >= last_rendered_time:  # render only if enough time has passed
+                    with wp.ScopedTimer(
+                        "render",
+                        active=DEBUG,
+                        synchronize=PROFILE_SYNC,
+                        use_nvtx=PROFILE_NVTX,
+                        cuda_filter=cuda_activity_filter,
+                    ):
                         self.renderer.begin_frame(t)
                         self.renderer.render(self.state_0)
                         self.renderer.end_frame()
-                        last_rendered_time += (
-                            frame_interval  # update to next frame time
-                        )
-                    wp.synchronize()
+                    last_rendered_time += frame_interval  # update to next frame time
 
         if RENDER:
             self.renderer.save()
@@ -231,22 +274,37 @@ class BallBounceSim:
         frame_interval = 1.0 / self.fps
         last_rendered_time = 0.0
         for i in tqdm(range(self.num_frames), desc="Simulating", disable=DEBUG):
-            with wp.ScopedTimer("step", active=DEBUG):
+            # The ScopedTimer is now configured with the flags from the top of the file
+            with wp.ScopedTimer(
+                "step",
+                active=DEBUG,
+                synchronize=PROFILE_SYNC,
+                use_nvtx=PROFILE_NVTX,
+                color="blue",  # You can also customize colors for NVTX
+                cuda_filter=cuda_activity_filter,
+            ):
                 if self.use_cuda_graph:
                     wp.capture_launch(self.step_graph)
                 else:
                     self.multistep()
+
             t += self.frame_dt
             if RENDER:
-                with wp.ScopedTimer("render", active=DEBUG):
-                    wp.synchronize()
-                    if t >= last_rendered_time:
+                if t >= last_rendered_time:
+                    with wp.ScopedTimer(
+                        "render",
+                        active=DEBUG,
+                        synchronize=PROFILE_SYNC,
+                        use_nvtx=PROFILE_NVTX,
+                        color="green",
+                        cuda_filter=cuda_activity_filter,
+                    ):
+                        # The timer will synchronize at the start, ensuring the 'step' phase is complete
+                        # before it begins measuring the render time.
                         self.renderer.begin_frame(t)
                         self.renderer.render(self.state_0)
                         self.renderer.end_frame()
-                        last_rendered_time += (
-                            frame_interval  # update to next frame time
-                        )
+                    last_rendered_time += frame_interval  # update to next frame time
         if RENDER:
             self.renderer.save()
 

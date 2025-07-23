@@ -2,3 +2,5 @@
 .venv/
 
 *.usd
+*.nsys-rep
+*.sqlite

@@ -104,7 +104,8 @@ def cr_solver_graph_compatible(
         The final residual norm if `compute_final_residual` is True, otherwise None.
         The solution `x` is always updated in-place.
     """
-    A = aslinearoperator(A)
+    if isinstance(A, _Matrix):
+        A = aslinearoperator(A)
     M = aslinearoperator(M)
 
     if iters <= 0:
@@ -160,41 +161,30 @@ def cr_solver_graph_compatible(
         # The value from the previous iteration becomes the "old" value for this one.
         wp.copy(dest=zAz_old, src=zAz_new)
 
-        # Preconditioned case
         if M is not None:
-            # y = M^-1 * Ap
+            # Preconditioned case: y = M⁻¹ * Ap
             M.matvec(Ap, y, y, alpha=1.0, beta=0.0)
-            array_inner(Ap, y, out=y_Ap)
-
-            # Update x, r, z
-            wp.launch(
-                kernel=_cr_kernel_1_fixed,
-                dim=vec_dim,
-                device=device,
-                inputs=[zAz_old, y_Ap, x, r, z, p, Ap, y],
-            )
-        # Non-preconditioned case (updates are simpler, like Conjugate Gradient)
         else:
-            # dot(Ap, p) since y=Ap and z=r
-            array_inner(Ap, p, out=y_Ap)  # Using y_Ap as a temp buffer for dot(Ap, p)
+            # Non-preconditioned case: M is identity, so y = Ap
+            wp.copy(dest=y, src=Ap)
 
-            # Update x, r
-            wp.launch(
-                kernel=_cg_kernel_1_fixed,
-                dim=vec_dim,
-                device=device,
-                # In this case zAz_old is rz_old from the CG algorithm
-                inputs=[zAz_old, y_Ap, x, r, p, Ap],
-            )
-            # Update z (which is an alias for r)
-            wp.copy(dest=z, src=r)
+        # dot(y, Ap) is the denominator for alpha
+        array_inner(y, Ap, out=y_Ap)
+
+        # Always use the robust CR update kernel
+        wp.launch(
+            kernel=_cr_kernel_1_fixed,
+            dim=vec_dim,
+            device=device,
+            inputs=[zAz_old, y_Ap, x, r, z, p, Ap, y],
+        )
 
         # Az = A * z
         A.matvec(z, Az, Az, alpha=1.0, beta=0.0)
         # zAz_new = dot(z, Az)
         array_inner(z, Az, out=zAz_new)
 
-        # Update p, Ap
+        # Update p, Ap (this part is the same for both)
         wp.launch(
             kernel=_cr_kernel_2_fixed,
             dim=vec_dim,
