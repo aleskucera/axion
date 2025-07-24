@@ -40,7 +40,7 @@ PROFILE_NVTX = False
 # cuda_filter=wp.TIMING_ALL: Enables detailed reporting of individual CUDA activities
 # (kernels, memory copies, etc.). Prints a detailed timeline and summary.
 # This is the most insightful option for text-based GPU profiling.
-PROFILE_CUDA_TIMELINE = True
+PROFILE_CUDA_TIMELINE = False
 
 # --- Logic to apply the settings ---
 if PROFILE_CUDA_TIMELINE:
@@ -205,7 +205,7 @@ class BallBounceSim:
             (self.model.joint_count,), value=500.0, dtype=wp.float32
         )
 
-        self.use_cuda_graph = wp.get_device().is_cuda and False
+        self.use_cuda_graph = wp.get_device().is_cuda
         if self.use_cuda_graph:
             with wp.ScopedCapture() as capture:
                 self.multistep()

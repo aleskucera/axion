@@ -57,6 +57,44 @@ def get_constraint_body_index(
     return body_a, body_b
 
 
+@wp.func
+def get_constraint_body_index_branchless(
+    joint_parent: wp.array(dtype=wp.int32),
+    joint_child: wp.array(dtype=wp.int32),
+    contact_body_a: wp.array(dtype=wp.int32),
+    contact_body_b: wp.array(dtype=wp.int32),
+    J_j_offset: int,
+    J_n_offset: int,
+    J_f_offset: int,
+    constraint_idx: int,
+):
+    joint_index = (constraint_idx - J_j_offset) // 5
+    normal_index = constraint_idx - J_n_offset
+    friction_index = (constraint_idx - J_f_offset) // 2
+
+    joint_body_a = joint_parent[joint_index]
+    joint_body_b = joint_child[joint_index]
+
+    contact_body_a_n = contact_body_a[normal_index]
+    contact_body_b_n = contact_body_b[normal_index]
+
+    contact_body_a_f = contact_body_a[friction_index]
+    contact_body_b_f = contact_body_b[friction_index]
+
+    body_a = wp.where(
+        constraint_idx < J_n_offset,
+        joint_body_a,
+        wp.where(constraint_idx < J_f_offset, contact_body_a_n, contact_body_a_f),
+    )
+    body_b = wp.where(
+        constraint_idx < J_n_offset,
+        joint_body_b,
+        wp.where(constraint_idx < J_f_offset, contact_body_b_n, contact_body_b_f),
+    )
+
+    return body_a, body_b
+
+
 @wp.kernel
 def kernel_J_transpose_matvec(
     # Constraint layout information
@@ -107,6 +145,56 @@ def kernel_J_transpose_matvec(
     if body_b >= 0:
         for i in range(6):
             wp.atomic_add(out_vec, body_b * 6 + i, J_ib[i] * x_i)
+
+
+@wp.kernel
+def kernel_J_transpose_matvec_branchless(
+    # Constraint layout information
+    joint_parent: wp.array(dtype=wp.int32),
+    joint_child: wp.array(dtype=wp.int32),
+    contact_body_a: wp.array(dtype=wp.int32),
+    contact_body_b: wp.array(dtype=wp.int32),
+    J_j_offset: int,
+    J_n_offset: int,
+    J_f_offset: int,
+    # Jacobian and vector data
+    J_values: wp.array(dtype=wp.spatial_vector, ndim=2),
+    vec_x: wp.array(dtype=wp.float32),
+    # Output array
+    out_vec: wp.array(dtype=wp.float32),
+):
+    constraint_idx = wp.tid()
+
+    # Get body indices and data
+    body_a, body_b = get_constraint_body_index_branchless(
+        joint_parent,
+        joint_child,
+        contact_body_a,
+        contact_body_b,
+        J_j_offset,
+        J_n_offset,
+        J_f_offset,
+        constraint_idx,
+    )
+    J_ia = J_values[constraint_idx, 0]
+    J_ib = J_values[constraint_idx, 1]
+    x_i = vec_x[constraint_idx]
+
+    # Compute branchless multipliers
+    multiplier_a = wp.where(body_a >= 0, 1.0, 0.0)
+    multiplier_b = wp.where(body_b >= 0, 1.0, 0.0)
+
+    # Scatter contributions without branching
+    for i in range(wp.static(6)):
+        st_i = wp.static(i)
+
+        # For body_a
+        index_a = wp.where(body_a >= 0, body_a * 6 + st_i, st_i)
+        wp.atomic_add(out_vec, index_a, J_ia[st_i] * x_i * multiplier_a)
+
+        # For body_b
+        index_b = wp.where(body_b >= 0, body_b * 6 + st_i, st_i)
+        wp.atomic_add(out_vec, index_b, J_ib[st_i] * x_i * multiplier_b)
 
 
 @wp.kernel
@@ -220,6 +308,88 @@ def kernel_J_matvec(
     out_vec[constraint_idx] = result
 
 
+@wp.kernel
+def kernel_J_matvec_branchless(
+    # Constraint layout information
+    joint_parent: wp.array(dtype=wp.int32),
+    joint_child: wp.array(dtype=wp.int32),
+    contact_body_a: wp.array(dtype=wp.int32),
+    contact_body_b: wp.array(dtype=wp.int32),
+    J_j_offset: int,
+    J_n_offset: int,
+    J_f_offset: int,
+    # Jacobian and vector data
+    J_values: wp.array(dtype=wp.spatial_vector, ndim=2),
+    in_vec: wp.array(dtype=wp.float32),
+    # Output array
+    out_vec: wp.array(dtype=wp.float32),
+):
+    """
+    Computes the matrix-vector product: out_vec = J @ in_vec.
+
+    This kernel iterates over each constraint and gathers values from the
+    dynamics-space vector (in_vec) to produce the constraint-space vector (out_vec).
+
+    Args:
+        in_vec: A vector in dynamics space (e.g., M⁻¹ @ Jᵀ @ x).
+        out_vec: The resulting vector in constraint space.
+    """
+    constraint_idx = wp.tid()
+
+    body_a, body_b = get_constraint_body_index_branchless(
+        joint_parent,
+        joint_child,
+        contact_body_a,
+        contact_body_b,
+        J_j_offset,
+        J_n_offset,
+        J_f_offset,
+        constraint_idx,
+    )
+
+    J_ia = J_values[constraint_idx, 0]
+    J_ib = J_values[constraint_idx, 1]
+
+    # Compute masks and base indices for body_a
+    mask_a = wp.select(body_a >= 0, 1.0, 0.0)
+    base_a = wp.select(body_a >= 0, body_a * 6, 0)
+
+    # Construct vel_a with masking
+    vel_a_linear = wp.vec3(
+        in_vec[base_a + 0] * mask_a,
+        in_vec[base_a + 1] * mask_a,
+        in_vec[base_a + 2] * mask_a,
+    )
+    vel_a_angular = wp.vec3(
+        in_vec[base_a + 3] * mask_a,
+        in_vec[base_a + 4] * mask_a,
+        in_vec[base_a + 5] * mask_a,
+    )
+    vel_a = wp.spatial_vector(vel_a_linear, vel_a_angular)
+
+    # Compute masks and base indices for body_b
+    mask_b = wp.select(body_b >= 0, 1.0, 0.0)
+    base_b = wp.select(body_b >= 0, body_b * 6, 0)
+
+    # Construct vel_b with masking
+    vel_b_linear = wp.vec3(
+        in_vec[base_b + 0] * mask_b,
+        in_vec[base_b + 1] * mask_b,
+        in_vec[base_b + 2] * mask_b,
+    )
+    vel_b_angular = wp.vec3(
+        in_vec[base_b + 3] * mask_b,
+        in_vec[base_b + 4] * mask_b,
+        in_vec[base_b + 5] * mask_b,
+    )
+    vel_b = wp.spatial_vector(vel_b_linear, vel_b_angular)
+
+    # Compute the result
+    result = wp.dot(J_ia, vel_a) + wp.dot(J_ib, vel_b)
+
+    out_vec[constraint_idx] = result
+
+
 # --- KERNEL FIX ---
 # This is the kernel that needed to be changed.
 @wp.kernel
@@ -299,7 +469,7 @@ class SystemOperator:
         # --- Step 1: Compute v₁ = Jᵀ @ x ---
         self._tmp_dyn_vec.zero_()
         wp.launch(
-            kernel=kernel_J_transpose_matvec,
+            kernel=kernel_J_transpose_matvec_branchless,
             dim=self.engine.con_dim,
             inputs=[
                 self.engine.joint_parent,
@@ -331,7 +501,7 @@ class SystemOperator:
 
         # --- Step 3: Compute v₃ = J @ v₂ ---
         wp.launch(
-            kernel=kernel_J_matvec,
+            kernel=kernel_J_matvec_branchless,
             dim=self.engine.con_dim,
             inputs=[
                 self.engine.joint_parent,

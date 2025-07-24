@@ -17,7 +17,7 @@ RENDER = True
 USD_FILE = "helhest2.usd"  # CHANGED: Use a different USD file to avoid overwriting
 
 FRICTION = 1.0
-RESTITUTION = 0.8  # CHANGED: Fixed typo from RESTITION to RESTITUTION
+RESTITUTION = 0.5  # CHANGED: Fixed typo from RESTITION to RESTITUTION
 
 #######################################
 ### PROFILING CONFIGURATION         ###
@@ -96,30 +96,34 @@ def build_single_env(gravity=True) -> wp.sim.ModelBuilder:
     else:
         builder = wp.sim.ModelBuilder(gravity=0.0, up_vector=wp.vec3(0, 0, 1))
 
+    z_offset = 0.1
     # Add bodies, shapes, and joints for ONE environment
     left_wheel = builder.add_body(
-        origin=wp.transform((1.5, -1.5, 1.2), wp.quat_identity()), name="ball1"
+        origin=wp.transform((1.5, -1.5, 1.2 + z_offset), wp.quat_identity()),
+        name="ball1",
     )
     builder.add_shape_sphere(
         body=left_wheel, radius=1.0, density=10.0, mu=FRICTION, restitution=RESTITUTION
     )
 
     right_wheel = builder.add_body(
-        origin=wp.transform((1.5, 1.5, 1.2), wp.quat_identity()), name="ball2"
+        origin=wp.transform((1.5, 1.5, 1.2 + z_offset), wp.quat_identity()),
+        name="ball2",
     )
     builder.add_shape_sphere(
         body=right_wheel, radius=1.0, density=10.0, mu=FRICTION, restitution=RESTITUTION
     )
 
     back_wheel = builder.add_body(
-        origin=wp.transform((-2.5, 0.0, 1.2), wp.quat_identity()), name="ball3"
+        origin=wp.transform((-2.5, 0.0, 1.2 + z_offset), wp.quat_identity()),
+        name="ball3",
     )
     builder.add_shape_sphere(
         body=back_wheel, radius=1.0, density=10.0, mu=FRICTION, restitution=RESTITUTION
     )
 
     obstacle1 = builder.add_body(
-        origin=wp.transform((0.0, 0.0, 1.2), wp.quat_identity()), name="box1"
+        origin=wp.transform((0.0, 0.0, 1.2 + z_offset), wp.quat_identity()), name="box1"
     )
     builder.add_shape_box(
         body=obstacle1,
@@ -179,7 +183,7 @@ class BallBounceSim:
         # Compute environment offsets for parallel environments
         offsets = compute_env_offsets(
             num_envs, env_offset=(10.0, 10.0, 0.0), up_axis="Z"
-        )  # IMPROVED: Spacing
+        )
 
         # Add multiple environment instances
         for i in range(num_envs):
@@ -228,7 +232,6 @@ class BallBounceSim:
     def simulate(self):
         t = 0.0
         for _ in tqdm(range(self.num_frames), desc="Simulating Frames", disable=DEBUG):
-            # CHANGED: Added full profiling options to the timer
             with wp.ScopedTimer(
                 "step",
                 active=DEBUG,
@@ -243,7 +246,6 @@ class BallBounceSim:
 
             t += self.frame_dt
             if RENDER:
-                # ADDED: Added a separate profiled timer for rendering
                 with wp.ScopedTimer(
                     "render",
                     active=DEBUG,
@@ -261,7 +263,7 @@ class BallBounceSim:
 
 def ball_bounce_simulation():
     model = BallBounceSim(
-        num_envs=19
+        num_envs=10
     )  # Change number of environments as needed (e.g., 9 for a 3x3 grid)
     model.simulate()
 
