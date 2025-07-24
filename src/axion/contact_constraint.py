@@ -16,6 +16,9 @@ import warp as wp
 from axion.utils import scaled_fisher_burmeister
 
 
+wp.config.lineinfo = True
+
+
 @wp.func
 def _compute_complementarity_argument(
     grad_c_n_a: wp.spatial_vector,
