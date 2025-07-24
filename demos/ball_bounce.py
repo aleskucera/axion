@@ -125,16 +125,16 @@ def ball_world_model(gravity: bool = True) -> wp.sim.Model:
         thickness=0.0,
     )
 
-    builder.add_joint_revolute(
-        parent=box1,
-        child=box2,
-        parent_xform=wp.transform((0.0, 0.8, 0.0), wp.quat_identity()),
-        child_xform=wp.transform((0.0, -0.8, 0.0), wp.quat_identity()),
-        axis=wp.vec3(0.0, 1.0, 0.0),
-        linear_compliance=0.0,
-        angular_compliance=0.0,
-        mode=wp.sim.JOINT_MODE_TARGET_VELOCITY,
-    )
+    # builder.add_joint_revolute(
+    #     parent=box1,
+    #     child=box2,
+    #     parent_xform=wp.transform((0.0, 0.8, 0.0), wp.quat_identity()),
+    #     child_xform=wp.transform((0.0, -0.8, 0.0), wp.quat_identity()),
+    #     axis=wp.vec3(0.0, 1.0, 0.0),
+    #     linear_compliance=0.0,
+    #     angular_compliance=0.0,
+    #     mode=wp.sim.JOINT_MODE_TARGET_VELOCITY,
+    # )
 
     builder.set_ground_plane(ke=10, kd=10, kf=0.0, mu=FRICTION, restitution=RESTITUTION)
     model = builder.finalize()
@@ -167,12 +167,12 @@ class BallBounceSim:
         self.state_0 = self.model.state()
         self.state_1 = self.model.state()
         self.control = self.model.control()
-        self.control.joint_act = wp.full(
-            (self.model.joint_count,), value=3.3, dtype=wp.float32
-        )
-        self.model.joint_target_ke = wp.full(
-            (self.model.joint_count,), value=500.0, dtype=wp.float32
-        )
+        # self.control.joint_act = wp.full(
+        #     (self.model.joint_count,), value=3.3, dtype=wp.float32
+        # )
+        # self.model.joint_target_ke = wp.full(
+        #     (self.model.joint_count,), value=500.0, dtype=wp.float32
+        # )
 
         self.use_cuda_graph = wp.get_device().is_cuda
         if self.use_cuda_graph:

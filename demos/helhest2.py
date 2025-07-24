@@ -14,10 +14,10 @@ from tqdm import tqdm
 ### MAIN SIMULATION CONFIGURATION ###
 ###################################
 RENDER = True
-USD_FILE = "helhest2.usd"  # CHANGED: Use a different USD file to avoid overwriting
+USD_FILE = "helhest2.usd"
 
 FRICTION = 1.0
-RESTITUTION = 0.5  # CHANGED: Fixed typo from RESTITION to RESTITUTION
+RESTITUTION = 0.8
 
 #######################################
 ### PROFILING CONFIGURATION         ###
@@ -96,7 +96,7 @@ def build_single_env(gravity=True) -> wp.sim.ModelBuilder:
     else:
         builder = wp.sim.ModelBuilder(gravity=0.0, up_vector=wp.vec3(0, 0, 1))
 
-    z_offset = 0.1
+    z_offset = 0.2
     # Add bodies, shapes, and joints for ONE environment
     left_wheel = builder.add_body(
         origin=wp.transform((1.5, -1.5, 1.2 + z_offset), wp.quat_identity()),
@@ -168,7 +168,7 @@ class BallBounceSim:
         # Simulation and rendering parameters
         self.fps = 10
         self.num_frames = 30
-        self.sim_substeps = 15
+        self.sim_substeps = 30
         self.frame_dt = 1.0 / self.fps
         self.sim_dt = self.frame_dt / self.sim_substeps
         self.sim_duration = self.num_frames * self.frame_dt
@@ -263,7 +263,7 @@ class BallBounceSim:
 
 def ball_bounce_simulation():
     model = BallBounceSim(
-        num_envs=10
+        num_envs=12
     )  # Change number of environments as needed (e.g., 9 for a 3x3 grid)
     model.simulate()
 

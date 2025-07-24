@@ -1,10 +1,8 @@
-import matplotlib.pyplot as plt
 import numpy as np
 import warp as wp
 import warp.sim.render
 from axion.nsn_engine import NSNEngine
 from tqdm import tqdm
-from warp.sim import Mesh
 
 # wp.config.mode = "debug"
 # wp.config.verify_cuda = True
@@ -17,7 +15,7 @@ RENDER = True
 USD_FILE = "helhest.usd"
 
 FRICTION = 1.0
-RESTITUTION = 0.8
+RESTITUTION = 0.9
 
 #######################################
 ### PROFILING CONFIGURATION (MARKO) ###
@@ -58,12 +56,13 @@ def ball_world_model(gravity: bool = True) -> wp.sim.Model:
         builder = wp.sim.ModelBuilder(gravity=0.0, up_vector=wp.vec3(0, 0, 1))
 
     left_wheel = builder.add_body(
-        origin=wp.transform((1.5, -1.5, 1.2), wp.quat_identity()), name="ball1"
+        origin=wp.transform((1.5, -1.5, 2.2), wp.quat_identity()),
+        name="ball1",
     )
     builder.add_shape_sphere(
         body=left_wheel,
         radius=1.0,
-        density=10.0,
+        density=20.0,
         mu=FRICTION,
         restitution=RESTITUTION,
         thickness=0.0,
@@ -71,13 +70,14 @@ def ball_world_model(gravity: bool = True) -> wp.sim.Model:
     )
 
     right_wheel = builder.add_body(
-        origin=wp.transform((1.5, 1.5, 1.2), wp.quat_identity()), name="ball2"
+        origin=wp.transform((1.5, 1.5, 2.2), wp.quat_identity()),
+        name="ball2",
     )
 
     builder.add_shape_sphere(
         body=right_wheel,
         radius=1.0,
-        density=10.0,
+        density=20.0,
         mu=FRICTION,
         restitution=RESTITUTION,
         thickness=0.0,
@@ -85,29 +85,30 @@ def ball_world_model(gravity: bool = True) -> wp.sim.Model:
     )
 
     back_wheel = builder.add_body(
-        origin=wp.transform((-2.5, 0.0, 1.2), wp.quat_identity()), name="ball3"
+        origin=wp.transform((-2.5, 0.0, 2.2), wp.quat_identity()),
+        name="ball3",
     )
 
     builder.add_shape_sphere(
         body=back_wheel,
         radius=1.0,
-        density=10.0,
+        density=20.0,
         mu=FRICTION,
         restitution=RESTITUTION,
         thickness=0.0,
         collision_group=1,
     )
 
-    obstacle1 = builder.add_body(
-        origin=wp.transform((0.0, 0.0, 1.2), wp.quat_identity()), name="box1"
+    robot_base = builder.add_body(
+        origin=wp.transform((0.0, 0.0, 2.2), wp.quat_identity()), name="box1"
     )
 
     builder.add_shape_box(
-        body=obstacle1,
+        body=robot_base,
         hx=1.5,
         hy=0.5,
         hz=0.5,
-        density=10.0,
+        density=20.0,
         mu=FRICTION,
         restitution=RESTITUTION,
         thickness=0.0,
@@ -115,65 +116,61 @@ def ball_world_model(gravity: bool = True) -> wp.sim.Model:
     )
 
     builder.add_joint_revolute(
-        parent=obstacle1,
+        parent=robot_base,
         child=left_wheel,
         parent_xform=wp.transform((1.5, -1.5, 0.0), wp.quat_identity()),
         child_xform=wp.transform((0.0, 0.0, 0.0), wp.quat_identity()),
         axis=wp.vec3(0.0, 1.0, 0.0),
-        linear_compliance=0.0,
-        angular_compliance=0.0,
+        linear_compliance=0.01,
+        angular_compliance=0.001,
         mode=wp.sim.JOINT_MODE_TARGET_VELOCITY,
     )
     builder.add_joint_revolute(
-        parent=obstacle1,
+        parent=robot_base,
         child=right_wheel,
         parent_xform=wp.transform((1.5, 1.5, 0.0), wp.quat_identity()),
         child_xform=wp.transform((0.0, 0.0, 0.0), wp.quat_identity()),
         axis=wp.vec3(0.0, 1.0, 0.0),
-        linear_compliance=0.0,
-        angular_compliance=0.0,
+        linear_compliance=0.01,
+        angular_compliance=0.001,
         mode=wp.sim.JOINT_MODE_TARGET_VELOCITY,
     )
     builder.add_joint_revolute(
-        parent=obstacle1,
+        parent=robot_base,
         child=back_wheel,
         parent_xform=wp.transform((-2.5, 0.0, 0.0), wp.quat_identity()),
         child_xform=wp.transform((0.0, 0.0, 0.0), wp.quat_identity()),
         axis=wp.vec3(0.0, 1.0, 0.0),
-        linear_compliance=0.0,
-        angular_compliance=0.0,
+        linear_compliance=0.01,
+        angular_compliance=0.001,
         mode=wp.sim.JOINT_MODE_FORCE,
     )
 
-    obstacle1 = builder.add_body(
-        origin=wp.transform((0.0, 0.0, 1.2), wp.quat_identity()), name="box1"
-    )
-
-    builder.add_shape_box(
-        body=-1,
-        pos=wp.vec3(4.5, 0.0, 0.0),
-        hx=1.5,
-        hy=2.5,
-        hz=0.3,
-        density=10.0,
-        mu=FRICTION,
-        restitution=RESTITUTION,
-        thickness=0.0,
-        collision_group=1,
-    )
+    # builder.add_shape_box(
+    #     body=-1,
+    #     pos=wp.vec3(4.5, 0.0, 0.0),
+    #     hx=1.5,
+    #     hy=2.5,
+    #     hz=0.3,
+    #     density=100.0,
+    #     mu=FRICTION,
+    #     restitution=RESTITUTION,
+    #     thickness=0.0,
+    #     collision_group=1,
+    # )
 
     builder.set_ground_plane(ke=10, kd=10, kf=0.0, mu=FRICTION, restitution=RESTITUTION)
     model = builder.finalize()
     return model
 
 
-class BallBounceSim:
+class HelhestSim:
     def __init__(self):
 
         # Simulation and rendering parameters
         self.fps = 10
         self.num_frames = 30
-        self.sim_substeps = 15
+        self.sim_substeps = 20
         self.frame_dt = 1.0 / self.fps
         self.sim_dt = self.frame_dt / self.sim_substeps
         self.sim_duration = self.num_frames * self.frame_dt
@@ -181,11 +178,6 @@ class BallBounceSim:
 
         self.model = ball_world_model(gravity=True)
         self.time = np.linspace(0, self.sim_duration, self.sim_steps)
-
-        # self.integrator = wp.sim.SemiImplicitIntegrator()
-        # self.integrator = wp.sim.XPBDIntegrator(
-        #     enable_restitution=True, rigid_contact_relaxation=0.0
-        # )
 
         self.integrator = NSNEngine(self.model)
         self.renderer = wp.sim.render.SimRenderer(self.model, USD_FILE, scaling=100.0)
@@ -201,11 +193,16 @@ class BallBounceSim:
             ],
             dtype=wp.float32,
         )
-        self.model.joint_target_ke = wp.full(
-            (self.model.joint_count,), value=500.0, dtype=wp.float32
+        self.model.joint_target_ke = wp.array(
+            [
+                300.0,  # left wheel
+                300.0,  # right wheel
+                0.0,  # back wheel
+            ],
+            dtype=wp.float32,
         )
 
-        self.use_cuda_graph = wp.get_device().is_cuda
+        self.use_cuda_graph = wp.get_device().is_cuda and False
         if self.use_cuda_graph:
             with wp.ScopedCapture() as capture:
                 self.multistep()
@@ -238,7 +235,6 @@ class BallBounceSim:
         last_rendered_time = 0.0
 
         for i in tqdm(range(self.sim_steps), desc="Simulating", disable=DEBUG):
-            # The ScopedTimer is now configured with the flags from the top of the file
             with wp.ScopedTimer(
                 "step",
                 active=DEBUG,
@@ -273,8 +269,7 @@ class BallBounceSim:
         t = 0.0
         frame_interval = 1.0 / self.fps
         last_rendered_time = 0.0
-        for i in tqdm(range(self.num_frames), desc="Simulating", disable=DEBUG):
-            # The ScopedTimer is now configured with the flags from the top of the file
+        for _ in tqdm(range(self.num_frames), desc="Simulating", disable=DEBUG):
             with wp.ScopedTimer(
                 "step",
                 active=DEBUG,
@@ -299,8 +294,6 @@ class BallBounceSim:
                         color="green",
                         cuda_filter=cuda_activity_filter,
                     ):
-                        # The timer will synchronize at the start, ensuring the 'step' phase is complete
-                        # before it begins measuring the render time.
                         self.renderer.begin_frame(t)
                         self.renderer.render(self.state_0)
                         self.renderer.end_frame()
@@ -310,7 +303,7 @@ class BallBounceSim:
 
 
 def ball_bounce_simulation():
-    model = BallBounceSim()
+    model = HelhestSim()
     model.simulate_multistep()
 
 

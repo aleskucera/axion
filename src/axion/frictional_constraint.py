@@ -36,7 +36,7 @@ def frictional_constraint_kernel(
 ):
     tid = wp.tid()
 
-    if contact_gap[tid] >= 0.0:
+    if contact_gap[tid] >= 0.1:
         return
 
     body_a = contact_body_a[tid]
@@ -69,7 +69,9 @@ def frictional_constraint_kernel(
     lambda_f = wp.vec2(lambda_f_t, lambda_f_b)
     lambda_f_norm = wp.length(lambda_f)
 
-    lambda_n = _lambda_prev[lambda_n_offset + tid]
+    lambda_n = wp.max(
+        _lambda_prev[lambda_n_offset + tid], 50.0
+    )  # TODO: Why this hack is necessary?
 
     mu = contact_friction_coeff[tid]
     phi_f, _, _ = scaled_fisher_burmeister(

@@ -57,5 +57,5 @@ def apply_joint_actions_kernel(
 
     # write forces
     if is_parent_dynamic:
-        wp.atomic_sub(body_f, parent_idx, wp.spatial_vector(torque, wp.vec3()))
+        wp.atomic_add(body_f, parent_idx, wp.spatial_vector(torque, wp.vec3()))
     wp.atomic_add(body_f, child_idx, wp.spatial_vector(torque, wp.vec3()))

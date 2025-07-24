@@ -3,11 +3,13 @@ from axion.contact_constraint import contact_constraint_kernel
 from axion.dynamics_constraint import unconstrained_dynamics_kernel
 from axion.frictional_constraint import frictional_constraint_kernel
 from axion.joint_constraint import joint_constraint_kernel
-from axion.optim.cr import cr_solver_graph_compatible
+from axion.optim import JacobiPreconditioner
+from axion.optim.cr import cr_solver
 from axion.optim.system_operator import SystemOperator
+from axion.utils import add_inplace
 from axion.utils import apply_joint_actions_kernel
 from axion.utils import contact_kinematics_kernel
-from axion.utils.add_inplace import add_inplace
+from axion.utils import get_constraint_body_index
 from warp.sim import Control
 from warp.sim import Integrator
 from warp.sim import Model
@@ -20,35 +22,6 @@ CONTACT_FB_ALPHA = 0.25
 CONTACT_FB_BETA = 0.25
 FRICTION_FB_ALPHA = 0.25
 FRICTION_FB_BETA = 0.25
-
-
-# --- This function is now defined in system_operator.py, but kept here for kernels that still need it ---
-@wp.func
-def get_constraint_body_index(
-    joint_parent: wp.array(dtype=wp.int32),
-    joint_child: wp.array(dtype=wp.int32),
-    contact_body_a: wp.array(dtype=wp.int32),
-    contact_body_b: wp.array(dtype=wp.int32),
-    J_j_offset: wp.int32,
-    J_n_offset: wp.int32,
-    J_f_offset: wp.int32,
-    J_index: wp.int32,
-):
-    body_a = -1
-    body_b = -1
-    if J_index < J_n_offset:
-        joint_index = (J_index - J_j_offset) // 5
-        body_a = joint_parent[joint_index]
-        body_b = joint_child[joint_index]
-    elif J_index < J_f_offset:
-        contact_index = J_index - J_n_offset
-        body_a = contact_body_a[contact_index]
-        body_b = contact_body_b[contact_index]
-    else:
-        contact_index = (J_index - J_f_offset) // 2
-        body_a = contact_body_a[contact_index]
-        body_b = contact_body_b[contact_index]
-    return body_a, body_b
 
 
 @wp.func
@@ -107,9 +80,7 @@ def update_system_rhs_kernel(
 
 @wp.kernel
 def compute_JT_delta_lambda_kernel(
-    # This kernel is still needed to update body velocities after solving for delta_lambda
-    # (It is nearly identical to kernel_J_transpose_matvec in the system operator,
-    # but kept separate for clarity of purpose)
+    # Constraint layout information
     joint_parent: wp.array(dtype=wp.int32),
     joint_child: wp.array(dtype=wp.int32),
     contact_body_a: wp.array(dtype=wp.int32),
@@ -117,11 +88,14 @@ def compute_JT_delta_lambda_kernel(
     J_j_offset: int,
     J_n_offset: int,
     J_f_offset: int,
+    # Jacobian and vector data
     J_values: wp.array(dtype=wp.spatial_vector, ndim=2),
     delta_lambda: wp.array(dtype=wp.float32),
+    # Output array
     JT_delta_lambda: wp.array(dtype=wp.float32),
 ):
-    tid = wp.tid()
+    constraint_idx = wp.tid()
+
     body_a, body_b = get_constraint_body_index(
         joint_parent,
         joint_child,
@@ -130,17 +104,26 @@ def compute_JT_delta_lambda_kernel(
         J_j_offset,
         J_n_offset,
         J_f_offset,
-        tid,
+        constraint_idx,
     )
-    J_ia = J_values[tid, 0]
-    J_ib = J_values[tid, 1]
-    dl = delta_lambda[tid]
-    if body_a >= 0:
-        for i in range(wp.static(6)):
-            wp.atomic_add(JT_delta_lambda, body_a * 6 + i, J_ia[i] * dl)
-    if body_b >= 0:
-        for i in range(wp.static(6)):
-            wp.atomic_add(JT_delta_lambda, body_b * 6 + i, J_ib[i] * dl)
+    J_ia = J_values[constraint_idx, 0]
+    J_ib = J_values[constraint_idx, 1]
+    dl = delta_lambda[constraint_idx]
+
+    # Compute branchless multipliers (because of bodies that are -1)
+    multiplier_a = wp.where(body_a >= 0, 1.0, 0.0)
+    multiplier_b = wp.where(body_b >= 0, 1.0, 0.0)
+
+    for i in range(wp.static(6)):
+        st_i = wp.static(i)
+
+        # For body_a
+        index_a = wp.where(body_a >= 0, body_a * 6 + st_i, st_i)
+        wp.atomic_add(JT_delta_lambda, index_a, J_ia[st_i] * dl * multiplier_a)
+
+        # For body_b
+        index_b = wp.where(body_b >= 0, body_b * 6 + st_i, st_i)
+        wp.atomic_add(JT_delta_lambda, index_b, J_ib[st_i] * dl * multiplier_b)
 
 
 @wp.kernel
@@ -192,7 +175,7 @@ class NSNEngine(Integrator):
         self,
         model: Model,
         newton_iters: int = 4,
-        linear_iters: int = 4,
+        linear_iters: int = 3,
     ):
         super().__init__()
         self.newton_iters = newton_iters
@@ -309,6 +292,7 @@ class NSNEngine(Integrator):
         # --- System matrix A and Right-hand side vector b ---
         self.A_op = SystemOperator(self)
         self._b = wp.zeros((con_dim,), dtype=wp.float32, device=self.device)
+        self.preconditioner = JacobiPreconditioner(self)
 
     def _clear_values(self):
         """Resets only the necessary arrays for the next Newton iteration."""
@@ -466,7 +450,7 @@ class NSNEngine(Integrator):
                 self._C_values,
             ],
         )
-
+        self.preconditioner.update()  # Update the preconditioner with new values
         wp.launch(
             kernel=update_system_rhs_kernel,
             dim=(self.con_dim,),
@@ -489,16 +473,13 @@ class NSNEngine(Integrator):
 
     def solve_system(self):
         """Solves the linear system using the matrix-free CR solver."""
-        # A preconditioner would be beneficial here, but for now we use None.
-        M = None
-
         # The key change: Pass the SystemOperator object to the solver.
-        _ = cr_solver_graph_compatible(
+        _ = cr_solver(
             A=self.A_op,
             b=self._b,
             x=self._delta_lambda,
             iters=self.linear_iters,
-            M=M,
+            preconditioner=self.preconditioner,
         )
 
         # The post-solve steps are the same: apply the computed impulses.
