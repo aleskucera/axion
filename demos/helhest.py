@@ -202,7 +202,7 @@ class HelhestSim:
             dtype=wp.float32,
         )
 
-        self.use_cuda_graph = wp.get_device().is_cuda and False
+        self.use_cuda_graph = wp.get_device().is_cuda
         if self.use_cuda_graph:
             with wp.ScopedCapture() as capture:
                 self.multistep()

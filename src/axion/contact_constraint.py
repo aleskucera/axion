@@ -223,11 +223,152 @@ def contact_constraint_kernel(
         J_values[offset, 1] = J_n_b
 
 
-def setup_data(num_bodies, num_contacts, device):
-    """Generates random input and output arrays for the kernel benchmark."""
+@wp.kernel
+def contact_constraint_kernel(
+    # --- Body State Inputs ---
+    body_qd: wp.array(dtype=wp.spatial_vector),
+    body_qd_prev: wp.array(dtype=wp.spatial_vector),
+    # --- Pre-computed Contact Kinematics ---
+    contact_gap: wp.array(dtype=wp.float32),
+    J_contact_a: wp.array(dtype=wp.spatial_vector, ndim=2),
+    J_contact_b: wp.array(dtype=wp.spatial_vector, ndim=2),
+    contact_body_a: wp.array(dtype=wp.int32),
+    contact_body_b: wp.array(dtype=wp.int32),
+    contact_restitution_coeff: wp.array(dtype=wp.float32),
+    # --- Velocity Impulse Variables (from current Newton iterate) ---
+    lambda_n_offset: wp.int32,
+    _lambda: wp.array(dtype=wp.float32),
+    # --- Simulation & Solver Parameters ---
+    dt: wp.float32,
+    stabilization_factor: wp.float32,
+    fb_alpha: wp.float32,
+    fb_beta: wp.float32,
+    # --- Offsets for Output Arrays ---
+    h_n_offset: wp.int32,
+    J_n_offset: wp.int32,
+    C_n_offset: wp.int32,
+    # --- Outputs (contributions to the linear system) ---
+    g: wp.array(dtype=wp.float32),
+    h: wp.array(dtype=wp.float32),
+    J_values: wp.array(dtype=wp.spatial_vector, ndim=2),
+    C_values: wp.array(dtype=wp.float32),
+):
+    tid = wp.tid()
+
+    # 1. Create the activity multiplier. This replaces `if contact_gap[tid] >= 0.0: return`
+    # It will be 1.0 for penetrating contacts, and 0.0 for others.
+    is_active = wp.where(contact_gap[tid] < 0.0, 1.0, 0.0)
+
+    c_n = contact_gap[tid]
+    body_a = contact_body_a[tid]
+    body_b = contact_body_b[tid]
+
+    grad_c_n_a = J_contact_a[tid, 0]
+    grad_c_n_b = J_contact_b[tid, 0]
+
+    e = contact_restitution_coeff[tid]
+
+    # 2. Perform safe, branchless reads for body velocities.
+    # We use the same pattern as in your `system_operator.py` to handle fixed bodies (-1).
+    multiplier_a = wp.where(body_a >= 0, 1.0, 0.0)
+    safe_idx_a = wp.where(body_a >= 0, body_a, 0)  # Read from a valid index (0)
+    body_qd_a = body_qd[safe_idx_a] * multiplier_a  # Zero out if body is fixed
+    body_qd_prev_a = body_qd_prev[safe_idx_a] * multiplier_a
+
+    multiplier_b = wp.where(body_b >= 0, 1.0, 0.0)
+    safe_idx_b = wp.where(body_b >= 0, body_b, 0)
+    body_qd_b = body_qd[safe_idx_b] * multiplier_b
+    body_qd_prev_b = body_qd_prev[safe_idx_b] * multiplier_b
+
+    # Computations proceed for all threads. For inactive threads, the results
+    # will be zeroed-out by the `is_active` multiplier before they are written.
+    complementarity_arg = _compute_complementarity_argument(
+        grad_c_n_a,
+        grad_c_n_b,
+        body_qd_a,
+        body_qd_b,
+        body_qd_prev_a,
+        body_qd_prev_b,
+        c_n,
+        e,
+        dt,
+        stabilization_factor,
+    )
+
+    lambda_n = _lambda[lambda_n_offset + tid]
+
+    phi_n, dphi_dlambda_n, dphi_db = scaled_fisher_burmeister(
+        lambda_n, complementarity_arg, fb_alpha, fb_beta
+    )
+
+    J_n_a = dphi_db * grad_c_n_a
+    J_n_b = dphi_db * grad_c_n_b
+
+    # --- Update global system components with multipliers ---
+
+    # 1. Update `g` (momentum balance residual)
+    g_contrib = -grad_c_n_a * lambda_n
+    for i in range(wp.static(6)):
+        st_i = wp.static(i)
+        # Use the safe-indexing pattern. The value added is scaled by both activity multipliers.
+        wp.atomic_add(
+            g, safe_idx_a * 6 + st_i, g_contrib[st_i] * is_active * multiplier_a
+        )
+
+    g_contrib = -grad_c_n_b * lambda_n
+    for i in range(wp.static(6)):
+        st_i = wp.static(i)
+        wp.atomic_add(
+            g, safe_idx_b * 6 + st_i, g_contrib[st_i] * is_active * multiplier_b
+        )
+
+    # 2. Update `h` (constraint violation residual)
+    # The result is multiplied by `is_active` before being written.
+    h[h_n_offset + tid] = phi_n * is_active
+
+    # 3. Update `C` (diagonal compliance block: ∂φ/∂λ)
+    C_values[C_n_offset + tid] = (dphi_dlambda_n + 1e-6) * is_active
+
+    # 4. Update `J` (constraint Jacobian block: ∂φ/∂v)
+    offset = J_n_offset + tid
+    # Write a zero vector if contact is inactive OR if body is fixed.
+    J_values[offset, 0] = J_n_a * is_active * multiplier_a
+    J_values[offset, 1] = J_n_b * is_active * multiplier_b
+
+
+def setup_data(
+    num_bodies,
+    num_contacts,
+    device,
+    inactive_contact_ratio=0.0,
+    fixed_body_ratio=0.0,
+):
+    """
+    Generates random input and output arrays for the kernel benchmark.
+
+    Args:
+        num_bodies (int): Total number of bodies in the simulation.
+        num_contacts (int): Total number of potential contacts.
+        device (str): The Warp device to create arrays on.
+        inactive_contact_ratio (float): The fraction (0.0 to 1.0) of contacts
+            that should be inactive (i.e., not penetrating).
+        fixed_body_ratio (float): The fraction (0.0 to 1.0) of contacts
+            that should involve a fixed body (index -1).
+    """
     N_b, N_c = num_bodies, num_contacts
 
-    # Ensure a body does not contact itself
+    # --- Generate Contact Gaps ---
+    # Start with all contacts penetrating, then make a fraction of them inactive.
+    gaps = np.random.rand(N_c) * -0.1  # All negative (active)
+    num_inactive = int(N_c * inactive_contact_ratio)
+    if num_inactive > 0:
+        inactive_indices = np.random.choice(N_c, num_inactive, replace=False)
+        gaps[inactive_indices] = (
+            np.random.rand(num_inactive) * 0.1
+        )  # Make them positive
+
+    # --- Generate Body Indices ---
+    # Start with all valid body indices, ensuring no self-contacts.
     body_a_indices = np.random.randint(0, N_b, size=N_c, dtype=np.int32)
     body_b_indices = np.random.randint(0, N_b, size=N_c, dtype=np.int32)
     mask = body_a_indices == body_b_indices
@@ -237,44 +378,51 @@ def setup_data(num_bodies, num_contacts, device):
         )
         mask = body_a_indices == body_b_indices
 
-    # The total number of constraints (con_dim) from nsn_engine is needed for _lambda
-    num_j_constraints = 0  # Assuming no joints for this standalone test
-    con_dim = num_j_constraints + N_c * 3  # Normal + 2 Frictional
+    # Now, introduce fixed bodies (-1) for a fraction of contacts.
+    num_fixed = int(N_c * fixed_body_ratio)
+    if num_fixed > 0:
+        fixed_indices = np.random.choice(N_c, num_fixed, replace=False)
+        # For each chosen contact, randomly set either body A or B to be fixed.
+        # This avoids creating static-static (-1 vs -1) contacts.
+        chooser = np.random.randint(0, 2, size=num_fixed)
+        body_a_indices[fixed_indices[chooser == 0]] = -1
+        body_b_indices[fixed_indices[chooser == 1]] = -1
 
-    # Data is converted from NumPy to Warp arrays, a key part of interoperability.
-    # See: https://nvidia.github.io/warp/modules/interoperability.html
+    # The rest of the setup is the same
+    num_j_constraints = 0
+    con_dim = num_j_constraints + N_c * 3
+
+    # Warp data creation using wp.from_numpy for better interoperability [nvidia.github.io/warp](https://nvidia.github.io/warp/modules/interoperability.html#warp.from_numpy)
     data = {
-        # --- Inputs ---
-        "body_qd": wp.array(
-            np.random.rand(N_b, 6) - 0.5, dtype=wp.spatial_vector, device=device
-        ),
-        "body_qd_prev": wp.array(
-            np.random.rand(N_b, 6) - 0.5, dtype=wp.spatial_vector, device=device
-        ),
-        "contact_gap": wp.array(
-            np.random.rand(N_c) * -0.1, dtype=wp.float32, device=device
-        ),  # Force penetration
-        "J_contact_a": wp.array(
-            np.random.rand(N_c, 3, 6) - 0.5,
+        "body_qd": wp.from_numpy(
+            (np.random.rand(N_b, 6) - 0.5).astype(np.float32),
             dtype=wp.spatial_vector,
-            ndim=2,
             device=device,
         ),
-        "J_contact_b": wp.array(
-            np.random.rand(N_c, 3, 6) - 0.5,
+        "body_qd_prev": wp.from_numpy(
+            (np.random.rand(N_b, 6) - 0.5).astype(np.float32),
             dtype=wp.spatial_vector,
-            ndim=2,
             device=device,
         ),
-        "contact_body_a": wp.array(body_a_indices, dtype=wp.int32, device=device),
-        "contact_body_b": wp.array(body_b_indices, dtype=wp.int32, device=device),
-        "contact_restitution_coeff": wp.array(
-            np.random.rand(N_c) * 0.5, dtype=wp.float32, device=device
+        "contact_gap": wp.from_numpy(gaps.astype(np.float32), device=device),
+        "J_contact_a": wp.from_numpy(
+            (np.random.rand(N_c, 3, 6) - 0.5).astype(np.float32),
+            dtype=wp.spatial_vector,
+            device=device,
         ),
-        "_lambda": wp.array(
-            np.random.rand(con_dim) * 0.1, dtype=wp.float32, device=device
+        "J_contact_b": wp.from_numpy(
+            (np.random.rand(N_c, 3, 6) - 0.5).astype(np.float32),
+            dtype=wp.spatial_vector,
+            device=device,
         ),
-        # --- Parameters ---
+        "contact_body_a": wp.from_numpy(body_a_indices, device=device),
+        "contact_body_b": wp.from_numpy(body_b_indices, device=device),
+        "contact_restitution_coeff": wp.from_numpy(
+            (np.random.rand(N_c) * 0.5).astype(np.float32), device=device
+        ),
+        "_lambda": wp.from_numpy(
+            (np.random.rand(con_dim) * 0.1).astype(np.float32), device=device
+        ),
         "params": {
             "lambda_n_offset": num_j_constraints,
             "dt": 0.01,
@@ -285,7 +433,6 @@ def setup_data(num_bodies, num_contacts, device):
             "J_n_offset": num_j_constraints,
             "C_n_offset": num_j_constraints,
         },
-        # --- Outputs ---
         "g": wp.zeros(N_b * 6, dtype=wp.float32, device=device),
         "h": wp.zeros(con_dim, dtype=wp.float32, device=device),
         "J_values": wp.zeros((con_dim, 2), dtype=wp.spatial_vector, device=device),
@@ -294,16 +441,29 @@ def setup_data(num_bodies, num_contacts, device):
     return data
 
 
-def run_benchmark(num_bodies, num_contacts, num_iterations=200):
+def run_benchmark(
+    num_bodies,
+    num_contacts,
+    num_iterations=200,
+    inactive_contact_ratio=0.0,
+    fixed_body_ratio=0.0,
+):
     """Measures execution time of the kernel using standard launch vs. CUDA graph."""
     print(
-        f"\n--- Benchmarking Kernel: N_b={num_bodies}, N_c={num_contacts}, Iterations={num_iterations} ---"
+        f"\n--- Benchmarking: N_b={num_bodies}, N_c={num_contacts}, "
+        f"Inactive={inactive_contact_ratio:.0%}, Fixed={fixed_body_ratio:.0%}, "
+        f"Iters={num_iterations} ---"
     )
     device = wp.get_device()
-    data = setup_data(num_bodies, num_contacts, device)
+    data = setup_data(
+        num_bodies,
+        num_contacts,
+        device,
+        inactive_contact_ratio,
+        fixed_body_ratio,
+    )
+    # The rest of the function remains the same...
     params = data["params"]
-
-    # Assemble the list of arguments in the exact order the kernel expects.
     kernel_args = [
         data["body_qd"],
         data["body_qd_prev"],
@@ -327,10 +487,7 @@ def run_benchmark(num_bodies, num_contacts, num_iterations=200):
         data["J_values"],
         data["C_values"],
     ]
-
-    # --- 1. Standard Launch Benchmark ---
     print("1. Benching Standard Kernel Launch...")
-    # Warm-up launch for JIT compilation
     wp.launch(
         kernel=contact_constraint_kernel,
         dim=num_contacts,
@@ -338,14 +495,8 @@ def run_benchmark(num_bodies, num_contacts, num_iterations=200):
         device=device,
     )
     wp.synchronize()
-
-    # For accurate timing, we must synchronize the CPU and GPU streams.
-    # CUDA operations are asynchronous, so a CPU timer would otherwise finish
-    # before the GPU work is actually done.
-    # See: https://nvidia.github.io/warp/profiling.html
     start_time = time.perf_counter()
     for _ in range(num_iterations):
-        # Reset g since it is accumulated with atomic_add
         data["g"].zero_()
         wp.launch(
             kernel=contact_constraint_kernel,
@@ -356,14 +507,9 @@ def run_benchmark(num_bodies, num_contacts, num_iterations=200):
     wp.synchronize()
     standard_launch_ms = (time.perf_counter() - start_time) / num_iterations * 1000
     print(f"   Avg. Time: {standard_launch_ms:.3f} ms")
-
-    # --- 2. CUDA Graph Benchmark (only on GPU) ---
     if device.is_cuda:
         print("2. Benching CUDA Graph Launch...")
-        # CUDA graphs are highly efficient for replaying the same operation with
-        # different data, avoiding CPU launch overhead.
         data["g"].zero_()
-
         with wp.ScopedCapture() as capture:
             wp.launch(
                 kernel=contact_constraint_kernel,
@@ -372,25 +518,20 @@ def run_benchmark(num_bodies, num_contacts, num_iterations=200):
                 device=device,
             )
         graph = capture.graph
-
-        # Warm-up launch
         wp.capture_launch(graph)
         wp.synchronize()
-
         start_time = time.perf_counter()
         for _ in range(num_iterations):
             data["g"].zero_()
             wp.capture_launch(graph)
         wp.synchronize()
         graph_launch_ms = (time.perf_counter() - start_time) / num_iterations * 1000
-
         print(f"   Avg. Time: {graph_launch_ms:.3f} ms")
         if graph_launch_ms > 0:
             speedup = standard_launch_ms / graph_launch_ms
             print(f"   Speedup from Graph: {speedup:.2f}x")
     else:
         print("2. Skipping CUDA Graph benchmark (not on a CUDA-enabled device).")
-
     print("--------------------------------------------------------------------")
 
 
@@ -404,8 +545,34 @@ if __name__ == "__main__":
             "Warning: No CUDA device found. Performance will be poor and CUDA graph test will be skipped."
         )
 
-    # Run benchmarks at various scales
-    run_benchmark(num_bodies=10, num_contacts=100)
-    run_benchmark(num_bodies=500, num_contacts=100)
-    run_benchmark(num_bodies=500, num_contacts=500)
-    run_benchmark(num_bodies=1000, num_contacts=50000)
+    # --- Baseline Benchmarks (all active contacts, no fixed bodies) ---
+    print("\n>>> Running Baseline Benchmarks (0% Inactive, 0% Fixed)...")
+    run_benchmark(num_bodies=400, num_contacts=800)
+    run_benchmark(num_bodies=400, num_contacts=5000)
+
+    # --- Divergence Benchmarks (inactive contacts) ---
+    # This is the key test for comparing the branching vs. branchless kernels.
+    print("\n>>> Running Divergence Benchmarks (50% Inactive Contacts)...")
+    run_benchmark(
+        num_bodies=400,
+        num_contacts=800,
+        inactive_contact_ratio=0.5,
+    )
+
+    # --- Fixed Body Benchmarks ---
+    # This tests the logic for safely handling body index -1.
+    print("\n>>> Running Fixed Body Benchmarks (20% Fixed Bodies)...")
+    run_benchmark(
+        num_bodies=400,
+        num_contacts=800,
+        fixed_body_ratio=0.2,
+    )
+
+    # --- Combined Scenario ---
+    print("\n>>> Running Combined Scenario Benchmarks (50% Inactive, 20% Fixed)...")
+    run_benchmark(
+        num_bodies=400,
+        num_contacts=800,
+        inactive_contact_ratio=0.5,
+        fixed_body_ratio=0.2,
+    )

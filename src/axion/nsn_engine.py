@@ -294,6 +294,10 @@ class NSNEngine(Integrator):
         self._b = wp.zeros((con_dim,), dtype=wp.float32, device=self.device)
         self.preconditioner = JacobiPreconditioner(self)
 
+        self.stream1 = wp.Stream(device=self.device)
+        self.stream2 = wp.Stream(device=self.device)
+        self.stream3 = wp.Stream(device=self.device)
+
     def _clear_values(self):
         """Resets only the necessary arrays for the next Newton iteration."""
         # _g, _b are fully overwritten, no need to zero.
@@ -335,7 +339,6 @@ class NSNEngine(Integrator):
 
     def update_system_values(self):
         self._clear_values()
-
         wp.launch(
             kernel=unconstrained_dynamics_kernel,
             dim=self.N_b,
@@ -351,105 +354,113 @@ class NSNEngine(Integrator):
             outputs=[self._g],
             device=self.device,
         )
-        wp.launch(
-            kernel=contact_constraint_kernel,
-            dim=self.N_c,
-            inputs=[
-                self._body_qd,
-                self._body_qd_prev,
-                self._contact_gap,
-                self._J_contact_a,
-                self._J_contact_b,
-                self._contact_body_a,
-                self._contact_body_b,
-                self._contact_restitution_coeff,
-                # Velocity impulse variables
-                self.lambda_n_offset,
-                self._lambda,
-                # Parameters
-                self._dt,
-                CONTACT_CONSTRAINT_STABILIZATION,
-                CONTACT_FB_ALPHA,
-                CONTACT_FB_BETA,
-                # Offsets for output arrays
-                self.h_n_offset,
-                self.J_n_offset,
-                self.C_n_offset,
-            ],
-            outputs=[
-                self._g,
-                self._h,
-                self._J_values,
-                self._C_values,
-            ],
-        )
-        wp.launch(
-            kernel=joint_constraint_kernel,
-            dim=self.N_j,
-            inputs=[
-                self._body_q,
-                self._body_qd,
-                self.body_com,
-                self.joint_type,
-                self.joint_enabled,
-                self.joint_parent,
-                self.joint_child,
-                self.joint_X_p,
-                self.joint_X_c,
-                self.joint_axis_start,
-                self.joint_axis_dim,
-                self.joint_axis,
-                self.joint_linear_compliance,
-                self.joint_angular_compliance,
-                # Velocity impulse variables
-                self.lambda_j_offset,
-                self._lambda,
-                # Parameters
-                self._dt,
-                JOINT_CONSTRAINT_STABILIZATION,
-                # Offsets for output arrays
-                self.h_j_offset,
-                self.J_j_offset,
-                self.C_j_offset,
-            ],
-            outputs=[
-                self._g,
-                self._h,
-                self._J_values,
-                self._C_values,
-            ],
-        )
-        wp.launch(
-            kernel=frictional_constraint_kernel,
-            dim=self.N_c,
-            inputs=[
-                self._body_qd,
-                self._contact_gap,
-                self._J_contact_a,
-                self._J_contact_b,
-                self._contact_body_a,
-                self._contact_body_b,
-                self._contact_friction_coeff,
-                # Velocity impulse variables
-                self.lambda_n_offset,
-                self.lambda_f_offset,
-                self._lambda,
-                self._lambda_prev,
-                # Parameters
-                FRICTION_FB_ALPHA,
-                FRICTION_FB_BETA,
-                # Offsets for output arrays
-                self.h_f_offset,
-                self.J_f_offset,
-                self.C_f_offset,
-            ],
-            outputs=[
-                self._g,
-                self._h,
-                self._J_values,
-                self._C_values,
-            ],
-        )
+        with wp.ScopedStream(self.stream1):
+            wp.launch(
+                kernel=contact_constraint_kernel,
+                dim=self.N_c,
+                inputs=[
+                    self._body_qd,
+                    self._body_qd_prev,
+                    self._contact_gap,
+                    self._J_contact_a,
+                    self._J_contact_b,
+                    self._contact_body_a,
+                    self._contact_body_b,
+                    self._contact_restitution_coeff,
+                    # Velocity impulse variables
+                    self.lambda_n_offset,
+                    self._lambda,
+                    # Parameters
+                    self._dt,
+                    CONTACT_CONSTRAINT_STABILIZATION,
+                    CONTACT_FB_ALPHA,
+                    CONTACT_FB_BETA,
+                    # Offsets for output arrays
+                    self.h_n_offset,
+                    self.J_n_offset,
+                    self.C_n_offset,
+                ],
+                outputs=[
+                    self._g,
+                    self._h,
+                    self._J_values,
+                    self._C_values,
+                ],
+            )
+        with wp.ScopedStream(self.stream2):
+            wp.launch(
+                kernel=joint_constraint_kernel,
+                dim=self.N_j,
+                inputs=[
+                    self._body_q,
+                    self._body_qd,
+                    self.body_com,
+                    self.joint_type,
+                    self.joint_enabled,
+                    self.joint_parent,
+                    self.joint_child,
+                    self.joint_X_p,
+                    self.joint_X_c,
+                    self.joint_axis_start,
+                    self.joint_axis_dim,
+                    self.joint_axis,
+                    self.joint_linear_compliance,
+                    self.joint_angular_compliance,
+                    # Velocity impulse variables
+                    self.lambda_j_offset,
+                    self._lambda,
+                    # Parameters
+                    self._dt,
+                    JOINT_CONSTRAINT_STABILIZATION,
+                    # Offsets for output arrays
+                    self.h_j_offset,
+                    self.J_j_offset,
+                    self.C_j_offset,
+                ],
+                outputs=[
+                    self._g,
+                    self._h,
+                    self._J_values,
+                    self._C_values,
+                ],
+            )
+        with wp.ScopedStream(self.stream3):
+            wp.launch(
+                kernel=frictional_constraint_kernel,
+                dim=self.N_c,
+                inputs=[
+                    self._body_qd,
+                    self._contact_gap,
+                    self._J_contact_a,
+                    self._J_contact_b,
+                    self._contact_body_a,
+                    self._contact_body_b,
+                    self._contact_friction_coeff,
+                    # Velocity impulse variables
+                    self.lambda_n_offset,
+                    self.lambda_f_offset,
+                    self._lambda,
+                    self._lambda_prev,
+                    # Parameters
+                    FRICTION_FB_ALPHA,
+                    FRICTION_FB_BETA,
+                    # Offsets for output arrays
+                    self.h_f_offset,
+                    self.J_f_offset,
+                    self.C_f_offset,
+                ],
+                outputs=[
+                    self._g,
+                    self._h,
+                    self._J_values,
+                    self._C_values,
+                ],
+            )
+
+        wp.wait_stream(self.stream1)
+        wp.wait_stream(self.stream2)
+        wp.wait_stream(self.stream3)
+
         self.preconditioner.update()  # Update the preconditioner with new values
         wp.launch(
             kernel=update_system_rhs_kernel,
@@ -568,6 +579,7 @@ class NSNEngine(Integrator):
                 ],
                 outputs=[state_in.body_f],
             )
+
         self.integrate_bodies(model, state_in, state_out, dt)
         self.update_state_variables(model, state_in, state_out, dt)
 
