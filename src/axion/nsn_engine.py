@@ -174,8 +174,8 @@ class NSNEngine(Integrator):
     def __init__(
         self,
         model: Model,
-        newton_iters: int = 4,
-        linear_iters: int = 5,
+        newton_iters: int = 10,
+        linear_iters: int = 10,
     ):
         super().__init__()
         self.newton_iters = newton_iters
@@ -420,6 +420,13 @@ class NSNEngine(Integrator):
                 self._C_values,
             ],
         )
+        print(
+            f"({self._rigid_contact_count.numpy()[0]}) Lambda prev n: {self._lambda_prev.numpy()[self.lambda_n_offset:self.lambda_n_offset + 5]}"
+        )
+
+        # print(
+        #     f"({self._rigid_contact_count.numpy()[0]}) Contact gap: {self._contact_gap.numpy()[0:5]}"
+        # )
         wp.launch(
             kernel=frictional_constraint_kernel,
             dim=self.N_c,

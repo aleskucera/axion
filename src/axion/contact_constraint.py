@@ -16,9 +16,6 @@ import warp as wp
 from axion.utils import scaled_fisher_burmeister
 
 
-wp.config.lineinfo = True
-
-
 @wp.func
 def _compute_complementarity_argument(
     grad_c_n_a: wp.spatial_vector,
@@ -68,7 +65,7 @@ def _compute_complementarity_argument(
 
     # Restitution bias based on pre-collision velocity
     # We only apply restitution if the pre-collision velocity is approaching.
-    b_rest = -restitution * delta_v_n_prev
+    b_rest = -restitution * wp.min(delta_v_n_prev, 0.0)
 
     return delta_v_n + b_err + b_rest
 
@@ -110,8 +107,8 @@ def contact_constraint_kernel(
     (i.e., where penetration has occurred), it calculates the contributions to
     the global linear system being solved by the Non-Smooth Newton engine.
 
-    It implements the complementarity condition `0 <= λ_n ⟂ G(v, λ) >= 0` using a
-    Fisher-Burmeister function `φ(λ_n, G(v, λ)) = 0`.
+    It implements the complementarity condition `0 <= λ_n ⟂ G(u, λ) >= 0` using a
+    Fisher-Burmeister function `φ(λ_n, G(v, λ)) = 0 = h_n`.
 
     Args:
         body_qd: (N_b, 6) Current spatial velocities of all bodies.
@@ -133,14 +130,18 @@ def contact_constraint_kernel(
 
     Outputs (written via atomic adds or direct indexing):
         g: (N_b * 6,) Accumulates generalized forces. This kernel adds `-J_n^T * λ_n`.
-        h: (con_dim,) Stores the constraint residuals. This kernel writes `φ_n` to `h[h_n_offset + tid]`.
-        J_values: (con_dim, 2) Stores Jacobian blocks. This kernel writes `∂φ_n/∂v` into the relevant rows.
-        C_values: (con_dim,) Stores compliance blocks. This kernel writes `∂φ_n/∂λ_n` into the relevant indices.
+        h: (con_dim,) Stores the constraint residuals. This kernel writes `h_n` to `h[h_n_offset + tid]`.
+        J_values: (con_dim, 2) Stores Jacobian blocks. This kernel writes `∂h_n/∂u` into the relevant rows.
+        C_values: (con_dim,) Stores compliance blocks. This kernel writes `∂h_n/∂λ_n` into the relevant indices.
     """
     tid = wp.tid()
 
-    # Ignore contacts with no penetration
+    # Contact that are not penetrating
     if contact_gap[tid] >= 0.0:
+        h[h_n_offset + tid] = _lambda[lambda_n_offset + tid]
+        C_values[C_n_offset + tid] = 1.0
+        J_values[J_n_offset + tid, 0] = wp.spatial_vector()
+        J_values[J_n_offset + tid, 1] = wp.spatial_vector()
         return
 
     c_n = contact_gap[tid]
@@ -210,18 +211,17 @@ def contact_constraint_kernel(
     # 2. Update `h` (constraint violation residual)
     h[h_n_offset + tid] = phi_n
 
-    # 3. Update `C` (diagonal compliance block of the system matrix: ∂φ/∂λ)
+    # 3. Update `C` (diagonal compliance block of the system matrix: ∂h/∂λ)
     C_values[C_n_offset + tid] = (
-        dphi_dlambda_n + 1e-6
+        dphi_dlambda_n + 1e-8
     )  # Add a small constant for numerical stability
 
-    # 4. Update `J` (constraint Jacobian block of the system matrix: ∂φ/∂v)
+    # 4. Update `J` (constraint Jacobian block of the system matrix: ∂h/∂u)
+    offset = J_n_offset + tid
     if body_a >= 0:
-        offset = J_n_offset + tid
         J_values[offset, 0] = J_n_a
 
     if body_b >= 0:
-        offset = J_n_offset + tid
         J_values[offset, 1] = J_n_b
 
 

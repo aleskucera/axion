@@ -4,6 +4,7 @@ import warp.sim.render
 from axion.nsn_engine import NSNEngine
 from tqdm import tqdm
 
+np.set_printoptions(suppress=False, precision=2)
 # wp.config.mode = "debug"
 # wp.config.verify_cuda = True
 # wp.config.verify_fp = True
@@ -14,8 +15,8 @@ from tqdm import tqdm
 RENDER = True
 USD_FILE = "helhest.usd"
 
-FRICTION = 1.0
-RESTITUTION = 0.5
+FRICTION = 0.0
+RESTITUTION = 0.0
 
 #######################################
 ### PROFILING CONFIGURATION (MARKO) ###
@@ -33,7 +34,7 @@ PROFILE_SYNC = True
 # use_nvtx=True: Emits NVTX ranges for visualization in NVIDIA Nsight Systems.
 # Helps correlate CPU launch times with actual GPU execution on a timeline.
 # Requires `pip install nvtx`.
-PROFILE_NVTX = True
+PROFILE_NVTX = False
 
 # cuda_filter=wp.TIMING_ALL: Enables detailed reporting of individual CUDA activities
 # (kernels, memory copies, etc.). Prints a detailed timeline and summary.
@@ -62,7 +63,7 @@ def ball_world_model(gravity: bool = True) -> wp.sim.Model:
     builder.add_shape_sphere(
         body=left_wheel,
         radius=1.0,
-        density=20.0,
+        density=200.0,
         mu=FRICTION,
         restitution=RESTITUTION,
         thickness=0.0,
@@ -77,7 +78,7 @@ def ball_world_model(gravity: bool = True) -> wp.sim.Model:
     builder.add_shape_sphere(
         body=right_wheel,
         radius=1.0,
-        density=20.0,
+        density=200.0,
         mu=FRICTION,
         restitution=RESTITUTION,
         thickness=0.0,
@@ -92,7 +93,7 @@ def ball_world_model(gravity: bool = True) -> wp.sim.Model:
     builder.add_shape_sphere(
         body=back_wheel,
         radius=1.0,
-        density=20.0,
+        density=200.0,
         mu=FRICTION,
         restitution=RESTITUTION,
         thickness=0.0,
@@ -202,7 +203,7 @@ class HelhestSim:
             dtype=wp.float32,
         )
 
-        self.use_cuda_graph = wp.get_device().is_cuda
+        self.use_cuda_graph = wp.get_device().is_cuda and False
         if self.use_cuda_graph:
             with wp.ScopedCapture() as capture:
                 self.multistep()
