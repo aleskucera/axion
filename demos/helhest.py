@@ -15,7 +15,7 @@ RENDER = True
 USD_FILE = "helhest.usd"
 
 FRICTION = 1.0
-RESTITUTION = 0.9
+RESTITUTION = 0.5
 
 #######################################
 ### PROFILING CONFIGURATION (MARKO) ###
@@ -33,7 +33,7 @@ PROFILE_SYNC = True
 # use_nvtx=True: Emits NVTX ranges for visualization in NVIDIA Nsight Systems.
 # Helps correlate CPU launch times with actual GPU execution on a timeline.
 # Requires `pip install nvtx`.
-PROFILE_NVTX = False
+PROFILE_NVTX = True
 
 # cuda_filter=wp.TIMING_ALL: Enables detailed reporting of individual CUDA activities
 # (kernels, memory copies, etc.). Prints a detailed timeline and summary.
@@ -108,7 +108,7 @@ def ball_world_model(gravity: bool = True) -> wp.sim.Model:
         hx=1.5,
         hy=0.5,
         hz=0.5,
-        density=20.0,
+        density=100.0,
         mu=FRICTION,
         restitution=RESTITUTION,
         thickness=0.0,
@@ -146,18 +146,18 @@ def ball_world_model(gravity: bool = True) -> wp.sim.Model:
         mode=wp.sim.JOINT_MODE_FORCE,
     )
 
-    # builder.add_shape_box(
-    #     body=-1,
-    #     pos=wp.vec3(4.5, 0.0, 0.0),
-    #     hx=1.5,
-    #     hy=2.5,
-    #     hz=0.3,
-    #     density=100.0,
-    #     mu=FRICTION,
-    #     restitution=RESTITUTION,
-    #     thickness=0.0,
-    #     collision_group=1,
-    # )
+    builder.add_shape_box(
+        body=-1,
+        pos=wp.vec3(4.5, 0.0, 0.0),
+        hx=1.5,
+        hy=2.5,
+        hz=0.3,
+        density=100.0,
+        mu=FRICTION,
+        restitution=RESTITUTION,
+        thickness=0.0,
+        collision_group=1,
+    )
 
     builder.set_ground_plane(ke=10, kd=10, kf=0.0, mu=FRICTION, restitution=RESTITUTION)
     model = builder.finalize()
@@ -170,7 +170,7 @@ class HelhestSim:
         # Simulation and rendering parameters
         self.fps = 10
         self.num_frames = 30
-        self.sim_substeps = 20
+        self.sim_substeps = 30
         self.frame_dt = 1.0 / self.fps
         self.sim_dt = self.frame_dt / self.sim_substeps
         self.sim_duration = self.num_frames * self.frame_dt

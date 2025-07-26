@@ -68,7 +68,7 @@ def _compute_complementarity_argument(
 
     # Restitution bias based on pre-collision velocity
     # We only apply restitution if the pre-collision velocity is approaching.
-    b_rest = -restitution * wp.min(delta_v_n_prev, 0.0)
+    b_rest = -restitution * delta_v_n_prev
 
     return delta_v_n + b_err + b_rest
 
@@ -211,7 +211,9 @@ def contact_constraint_kernel(
     h[h_n_offset + tid] = phi_n
 
     # 3. Update `C` (diagonal compliance block of the system matrix: ∂φ/∂λ)
-    C_values[C_n_offset + tid] = dphi_dlambda_n + 1e-6
+    C_values[C_n_offset + tid] = (
+        dphi_dlambda_n + 1e-6
+    )  # Add a small constant for numerical stability
 
     # 4. Update `J` (constraint Jacobian block of the system matrix: ∂φ/∂v)
     if body_a >= 0:
@@ -221,119 +223,6 @@ def contact_constraint_kernel(
     if body_b >= 0:
         offset = J_n_offset + tid
         J_values[offset, 1] = J_n_b
-
-
-@wp.kernel
-def contact_constraint_kernel(
-    # --- Body State Inputs ---
-    body_qd: wp.array(dtype=wp.spatial_vector),
-    body_qd_prev: wp.array(dtype=wp.spatial_vector),
-    # --- Pre-computed Contact Kinematics ---
-    contact_gap: wp.array(dtype=wp.float32),
-    J_contact_a: wp.array(dtype=wp.spatial_vector, ndim=2),
-    J_contact_b: wp.array(dtype=wp.spatial_vector, ndim=2),
-    contact_body_a: wp.array(dtype=wp.int32),
-    contact_body_b: wp.array(dtype=wp.int32),
-    contact_restitution_coeff: wp.array(dtype=wp.float32),
-    # --- Velocity Impulse Variables (from current Newton iterate) ---
-    lambda_n_offset: wp.int32,
-    _lambda: wp.array(dtype=wp.float32),
-    # --- Simulation & Solver Parameters ---
-    dt: wp.float32,
-    stabilization_factor: wp.float32,
-    fb_alpha: wp.float32,
-    fb_beta: wp.float32,
-    # --- Offsets for Output Arrays ---
-    h_n_offset: wp.int32,
-    J_n_offset: wp.int32,
-    C_n_offset: wp.int32,
-    # --- Outputs (contributions to the linear system) ---
-    g: wp.array(dtype=wp.float32),
-    h: wp.array(dtype=wp.float32),
-    J_values: wp.array(dtype=wp.spatial_vector, ndim=2),
-    C_values: wp.array(dtype=wp.float32),
-):
-    tid = wp.tid()
-
-    # 1. Create the activity multiplier. This replaces `if contact_gap[tid] >= 0.0: return`
-    # It will be 1.0 for penetrating contacts, and 0.0 for others.
-    is_active = wp.where(contact_gap[tid] < 0.0, 1.0, 0.0)
-
-    c_n = contact_gap[tid]
-    body_a = contact_body_a[tid]
-    body_b = contact_body_b[tid]
-
-    grad_c_n_a = J_contact_a[tid, 0]
-    grad_c_n_b = J_contact_b[tid, 0]
-
-    e = contact_restitution_coeff[tid]
-
-    # 2. Perform safe, branchless reads for body velocities.
-    # We use the same pattern as in your `system_operator.py` to handle fixed bodies (-1).
-    multiplier_a = wp.where(body_a >= 0, 1.0, 0.0)
-    safe_idx_a = wp.where(body_a >= 0, body_a, 0)  # Read from a valid index (0)
-    body_qd_a = body_qd[safe_idx_a] * multiplier_a  # Zero out if body is fixed
-    body_qd_prev_a = body_qd_prev[safe_idx_a] * multiplier_a
-
-    multiplier_b = wp.where(body_b >= 0, 1.0, 0.0)
-    safe_idx_b = wp.where(body_b >= 0, body_b, 0)
-    body_qd_b = body_qd[safe_idx_b] * multiplier_b
-    body_qd_prev_b = body_qd_prev[safe_idx_b] * multiplier_b
-
-    # Computations proceed for all threads. For inactive threads, the results
-    # will be zeroed-out by the `is_active` multiplier before they are written.
-    complementarity_arg = _compute_complementarity_argument(
-        grad_c_n_a,
-        grad_c_n_b,
-        body_qd_a,
-        body_qd_b,
-        body_qd_prev_a,
-        body_qd_prev_b,
-        c_n,
-        e,
-        dt,
-        stabilization_factor,
-    )
-
-    lambda_n = _lambda[lambda_n_offset + tid]
-
-    phi_n, dphi_dlambda_n, dphi_db = scaled_fisher_burmeister(
-        lambda_n, complementarity_arg, fb_alpha, fb_beta
-    )
-
-    J_n_a = dphi_db * grad_c_n_a
-    J_n_b = dphi_db * grad_c_n_b
-
-    # --- Update global system components with multipliers ---
-
-    # 1. Update `g` (momentum balance residual)
-    g_contrib = -grad_c_n_a * lambda_n
-    for i in range(wp.static(6)):
-        st_i = wp.static(i)
-        # Use the safe-indexing pattern. The value added is scaled by both activity multipliers.
-        wp.atomic_add(
-            g, safe_idx_a * 6 + st_i, g_contrib[st_i] * is_active * multiplier_a
-        )
-
-    g_contrib = -grad_c_n_b * lambda_n
-    for i in range(wp.static(6)):
-        st_i = wp.static(i)
-        wp.atomic_add(
-            g, safe_idx_b * 6 + st_i, g_contrib[st_i] * is_active * multiplier_b
-        )
-
-    # 2. Update `h` (constraint violation residual)
-    # The result is multiplied by `is_active` before being written.
-    h[h_n_offset + tid] = phi_n * is_active
-
-    # 3. Update `C` (diagonal compliance block: ∂φ/∂λ)
-    C_values[C_n_offset + tid] = (dphi_dlambda_n + 1e-6) * is_active
-
-    # 4. Update `J` (constraint Jacobian block: ∂φ/∂v)
-    offset = J_n_offset + tid
-    # Write a zero vector if contact is inactive OR if body is fixed.
-    J_values[offset, 0] = J_n_a * is_active * multiplier_a
-    J_values[offset, 1] = J_n_b * is_active * multiplier_b
 
 
 def setup_data(

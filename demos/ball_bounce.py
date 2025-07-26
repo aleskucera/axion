@@ -15,7 +15,7 @@ DEBUG = True
 USD_FILE = "ball_bounce.usd"
 
 FRICTION = 0.8
-RESTITUTION = 0.8
+RESTITUTION = 0.1
 
 
 def ball_world_model(gravity: bool = True) -> wp.sim.Model:

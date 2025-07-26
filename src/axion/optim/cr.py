@@ -73,9 +73,6 @@ def cr_solver(
         iters: The fixed number of iterations to perform.
     """
 
-    if iters <= 0:
-        return 0.0
-
     device = A.device
     scalar_dtype = wp.types.type_scalar_type(A.dtype)
     vec_dim = x.shape[0]
@@ -139,5 +136,3 @@ def cr_solver(
             device=device,
             inputs=[zAz_old, zAz_new, z, p, Az, Ap],
         )
-
-    return None

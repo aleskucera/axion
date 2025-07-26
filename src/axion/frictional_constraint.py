@@ -73,6 +73,7 @@ def frictional_constraint_kernel(
         _lambda_prev[lambda_n_offset + tid], 50.0
     )  # TODO: Why this hack is necessary?
 
+    lambda_n = _lambda_prev[lambda_n_offset + tid]
     mu = contact_friction_coeff[tid]
     phi_f, _, _ = scaled_fisher_burmeister(
         v_rel_norm, mu * lambda_n - lambda_f_norm, fb_alpha, fb_beta
