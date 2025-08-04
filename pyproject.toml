@@ -8,9 +8,11 @@ authors = [
 ]
 requires-python = ">=3.12"
 dependencies = [
+    "h5py>=3.14.0",
     "matplotlib>=3.10.3",
     "nvtx>=0.2.12",
     "pytest>=8.4.0",
+    "taichi>=1.7.3",
     "torch>=2.7.1",
     "tqdm>=4.67.1",
     "trimesh>=4.6.12",

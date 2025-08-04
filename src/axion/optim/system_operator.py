@@ -65,11 +65,13 @@ def kernel_J_transpose_matvec(
 
     # Scatter the product Jᵢᵀ * xᵢ into the appropriate body locations
     if body_a >= 0:
-        for i in range(6):
-            wp.atomic_add(out_vec, body_a * 6 + i, J_ia[i] * x_i)
+        for i in range(wp.static(6)):
+            st_i = wp.static(i)
+            wp.atomic_add(out_vec, body_a * 6 + st_i, J_ia[st_i] * x_i)
     if body_b >= 0:
-        for i in range(6):
-            wp.atomic_add(out_vec, body_b * 6 + i, J_ib[i] * x_i)
+        for i in range(wp.static(6)):
+            st_i = wp.static(i)
+            wp.atomic_add(out_vec, body_b * 6 + st_i, J_ib[st_i] * x_i)
 
 
 # @wp.kernel

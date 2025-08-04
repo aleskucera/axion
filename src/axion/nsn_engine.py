@@ -1,3 +1,6 @@
+from typing import Optional
+
+import h5py
 import warp as wp
 from axion.contact_constraint import contact_constraint_kernel
 from axion.dynamics_constraint import unconstrained_dynamics_kernel
@@ -10,18 +13,105 @@ from axion.utils import add_inplace
 from axion.utils import apply_joint_actions_kernel
 from axion.utils import contact_kinematics_kernel
 from axion.utils import get_constraint_body_index
+from axion.utils import HDF5Logger
 from warp.sim import Control
 from warp.sim import Integrator
 from warp.sim import Model
 from warp.sim import State
 
 # --- Constants remain the same ---
-JOINT_CONSTRAINT_STABILIZATION = 0.01
+JOINT_CONSTRAINT_STABILIZATION = 0.1
 CONTACT_CONSTRAINT_STABILIZATION = 0.1
 CONTACT_FB_ALPHA = 0.25
 CONTACT_FB_BETA = 0.25
 FRICTION_FB_ALPHA = 0.25
 FRICTION_FB_BETA = 0.25
+
+
+@wp.kernel
+def update_J_dense(
+    # Constraint layout information
+    joint_parent: wp.array(dtype=wp.int32),
+    joint_child: wp.array(dtype=wp.int32),
+    contact_body_a: wp.array(dtype=wp.int32),
+    contact_body_b: wp.array(dtype=wp.int32),
+    J_j_offset: int,
+    J_n_offset: int,
+    J_f_offset: int,
+    # Jacobian data
+    J_values: wp.array(dtype=wp.spatial_vector, ndim=2),
+    # Output array
+    J_dense: wp.array(dtype=wp.float32, ndim=2),
+):
+    constraint_idx = wp.tid()
+
+    body_a, body_b = get_constraint_body_index(
+        joint_parent,
+        joint_child,
+        contact_body_a,
+        contact_body_b,
+        J_j_offset,
+        J_n_offset,
+        J_f_offset,
+        constraint_idx,
+    )
+    J_ia = J_values[constraint_idx, 0]
+    J_ib = J_values[constraint_idx, 1]
+
+    if body_a >= 0:
+        body_idx = body_a * 6
+        for i in range(wp.static(6)):
+            st_i = wp.static(i)
+            wp.atomic_add(J_dense, constraint_idx, body_idx + st_i, J_ia[st_i])
+
+    if body_b >= 0:
+        body_idx = body_b * 6
+        for i in range(wp.static(6)):
+            st_i = wp.static(i)
+            wp.atomic_add(J_dense, constraint_idx, body_idx + st_i, J_ib[st_i])
+
+
+@wp.kernel
+def update_Hinv_dense_kernel(
+    body_mass_inv: wp.array(dtype=wp.float32),
+    body_inertia_inv: wp.array(dtype=wp.mat33),
+    H_dense: wp.array(dtype=wp.float32, ndim=2),
+):
+    body_idx = wp.tid()
+
+    if body_idx >= body_mass_inv.shape[0]:
+        return
+
+    # Angular part, write the tensor of inertia inverse
+    for i in range(wp.static(3)):
+        for j in range(wp.static(3)):
+            st_i = wp.static(i)
+            st_j = wp.static(j)
+            h_row = body_idx * 6 + st_i
+            h_col = body_idx * 6 + st_j
+            body_I_inv = body_inertia_inv[body_idx]
+            H_dense[h_row, h_col] = body_I_inv[st_i, st_j]
+
+    # Linear part, write the mass inverse
+    for i in range(wp.static(3)):
+        st_i = wp.static(i)
+        h_row = body_idx * 6 + 3 + st_i
+        h_col = body_idx * 6 + 3 + st_i
+        H_dense[h_row, h_col] = body_mass_inv[body_idx]
+
+
+@wp.kernel
+def update_C_dense_kernel(
+    C_values: wp.array(dtype=wp.float32),
+    C_dense: wp.array(dtype=wp.float32, ndim=2),
+):
+    constraint_idx = wp.tid()
+    if constraint_idx >= C_values.shape[0]:
+        return
+
+    # Fill the diagonal of the constraint matrix C_dense
+    C_value = C_values[constraint_idx]
+    C_dense[constraint_idx, constraint_idx] = C_value
 
 
 @wp.func
@@ -176,6 +266,7 @@ class NSNEngine(Integrator):
         model: Model,
         newton_iters: int = 10,
         linear_iters: int = 10,
+        logger: Optional[HDF5Logger] = None,
     ):
         super().__init__()
         self.newton_iters = newton_iters
@@ -294,9 +385,17 @@ class NSNEngine(Integrator):
         self._b = wp.zeros((con_dim,), dtype=wp.float32, device=self.device)
         self.preconditioner = JacobiPreconditioner(self)
 
-        # self.stream1 = wp.Stream(device=self.device)
-        # self.stream2 = wp.Stream(device=self.device)
-        # self.stream3 = wp.Stream(device=self.device)
+        self.logger = logger
+        if self.logger:
+            self.Hinv_dense = wp.zeros(
+                (dyn_dim, dyn_dim), dtype=wp.float32, device=self.device
+            )
+            self.J_dense = wp.zeros(
+                (con_dim, dyn_dim), dtype=wp.float32, device=self.device
+            )
+            self.C_dense = wp.zeros(
+                (con_dim, con_dim), dtype=wp.float32, device=self.device
+            )
 
     def _clear_values(self):
         """Resets only the necessary arrays for the next Newton iteration."""
@@ -306,6 +405,21 @@ class NSNEngine(Integrator):
             inputs=[self._h, self._J_values, self._C_values],
             device=self.device,
         )
+
+    def update_state_variables(
+        self, model: Model, state_in: State, state_out: State, dt: float
+    ):
+        self._dt = dt
+        self._body_q = state_out.body_q
+        self._body_qd = state_out.body_qd
+        self._body_qd_prev = state_in.body_qd
+        self._body_f = state_in.body_f
+        self._rigid_contact_count = model.rigid_contact_count
+        self._rigid_contact_shape0 = model.rigid_contact_shape0
+        self._rigid_contact_shape1 = model.rigid_contact_shape1
+        self._rigid_contact_normal = model.rigid_contact_normal
+        self._rigid_contact_point0 = model.rigid_contact_point0
+        self._rigid_contact_point1 = model.rigid_contact_point1
 
     def compute_contact_kinematics(self):
         wp.launch(
@@ -420,13 +534,7 @@ class NSNEngine(Integrator):
                 self._C_values,
             ],
         )
-        print(
-            f"({self._rigid_contact_count.numpy()[0]}) Lambda prev n: {self._lambda_prev.numpy()[self.lambda_n_offset:self.lambda_n_offset + 5]}"
-        )
 
-        # print(
-        #     f"({self._rigid_contact_count.numpy()[0]}) Contact gap: {self._contact_gap.numpy()[0:5]}"
-        # )
         wp.launch(
             kernel=frictional_constraint_kernel,
             dim=self.N_c,
@@ -487,6 +595,7 @@ class NSNEngine(Integrator):
             x=self._delta_lambda,
             iters=self.linear_iters,
             preconditioner=self.preconditioner,
+            logger=self.logger,
         )
 
         # The post-solve steps are the same: apply the computed impulses.
@@ -523,21 +632,54 @@ class NSNEngine(Integrator):
         add_inplace(self._body_qd, self._delta_body_qd, 0, 0, self.N_b)
         add_inplace(self._lambda, self._delta_lambda, 0, 0, self.con_dim)
 
-    def update_state_variables(
-        self, model: Model, state_in: State, state_out: State, dt: float
-    ):
-        # This method remains unchanged
-        self._dt = dt
-        self._body_q = state_out.body_q
-        self._body_qd = state_out.body_qd
-        self._body_qd_prev = state_in.body_qd
-        self._body_f = state_in.body_f
-        self._rigid_contact_count = model.rigid_contact_count
-        self._rigid_contact_shape0 = model.rigid_contact_shape0
-        self._rigid_contact_shape1 = model.rigid_contact_shape1
-        self._rigid_contact_normal = model.rigid_contact_normal
-        self._rigid_contact_point0 = model.rigid_contact_point0
-        self._rigid_contact_point1 = model.rigid_contact_point1
+    def log_newton_state(self):
+        if not self.logger:
+            return
+
+        self.Hinv_dense.zero_()
+        self.J_dense.zero_()
+        self.C_dense.zero_()
+
+        wp.launch(
+            kernel=update_Hinv_dense_kernel,
+            dim=self.N_b,
+            inputs=[
+                self.body_inv_mass,
+                self.body_inv_inertia,
+            ],
+            outputs=[self.Hinv_dense],
+        )
+        wp.launch(
+            kernel=update_J_dense,
+            dim=self.con_dim,
+            inputs=[
+                self.joint_parent,
+                self.joint_child,
+                self._contact_body_a,
+                self._contact_body_b,
+                self.J_j_offset,
+                self.J_n_offset,
+                self.J_f_offset,
+                self._J_values,
+            ],
+            outputs=[self.J_dense],
+        )
+        wp.launch(
+            kernel=update_C_dense_kernel,
+            dim=self.con_dim,
+            inputs=[
+                self._C_values,
+            ],
+            outputs=[self.C_dense],
+        )
+
+        wp.synchronize()
+
+        self.logger.log_dataset("Hinv", self.Hinv_dense.numpy())
+        self.logger.log_dataset("J", self.J_dense.numpy())
+        self.logger.log_dataset("C", self.C_dense.numpy())
+        self.logger.log_dataset("g", self._g.numpy())
+        self.logger.log_dataset("h", self._h.numpy())
 
     def simulate(
         self,
@@ -547,6 +689,14 @@ class NSNEngine(Integrator):
         dt: float,
         control: Control | None = None,
     ):
+        if self.logger:
+            self.logger.log_attribute("dt", dt)
+            self.logger.log_attribute("linear_iters", self.linear_iters)
+            self.logger.log_attribute("linear_iters", self.linear_iters)
+            self.logger.log_scalar(
+                "contact_count", self._rigid_contact_count.numpy().item()
+            )
+
         # The main simulation loop logic remains unchanged
         wp.sim.eval_ik(model, state_in, state_in.joint_q, state_in.joint_qd)
         if control is not None:
@@ -582,10 +732,16 @@ class NSNEngine(Integrator):
         self._lambda.zero_()
 
         # The Newton iteration loop now calls the streamlined methods.
-        for _ in range(self.newton_iters):
+        for i in range(self.newton_iters):
             wp.copy(dest=self._lambda_prev, src=self._lambda)
             self.update_system_values()
-            self.solve_system()
+
+            if self.logger:
+                with self.logger.scope(f"newton_{i:02d}"):
+                    self.log_newton_state()  # Log system matrices
+                    self.solve_system()  # solve_system will log its own internal state
+            else:
+                self.solve_system()  # Run without logging
 
         wp.copy(dest=state_out.body_qd, src=self._body_qd)
         wp.copy(dest=state_out.body_q, src=self._body_q)

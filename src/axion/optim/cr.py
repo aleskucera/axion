@@ -2,6 +2,7 @@ from typing import Any
 from typing import Optional
 
 import warp as wp
+from axion.utils import HDF5Logger
 from warp.optim.linear import LinearOperator
 from warp.utils import array_inner
 
@@ -60,6 +61,7 @@ def cr_solver(
     x: wp.array,
     iters: int,
     preconditioner: LinearOperator,
+    logger: Optional[HDF5Logger] = None,
 ) -> Optional[float]:
     """
     Computes an approximate solution to a symmetric, positive-definite linear system
@@ -107,7 +109,7 @@ def cr_solver(
     array_inner(z, Az, out=zAz_new)
 
     # ============== 2. Fixed Iteration Loop ====================================
-    for _ in range(iters):
+    for i in range(iters):
         # The value from the previous iteration becomes the "old" value for this one.
         wp.copy(dest=zAz_old, src=zAz_new)
 
@@ -136,3 +138,8 @@ def cr_solver(
             device=device,
             inputs=[zAz_old, zAz_new, z, p, Az, Ap],
         )
+
+        if logger:
+            with logger.scope(f"linear_iter_{i:02d}"):
+                logger.log_dataset("x", x.numpy())
+                logger.log_dataset("residual", r.numpy())

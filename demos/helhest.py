@@ -2,6 +2,7 @@ import numpy as np
 import warp as wp
 import warp.sim.render
 from axion.nsn_engine import NSNEngine
+from axion.utils import HDF5Logger
 from tqdm import tqdm
 
 np.set_printoptions(suppress=False, precision=2)
@@ -15,7 +16,7 @@ np.set_printoptions(suppress=False, precision=2)
 RENDER = True
 USD_FILE = "helhest.usd"
 
-FRICTION = 0.0
+FRICTION = 1.0
 RESTITUTION = 0.0
 
 #######################################
@@ -63,7 +64,7 @@ def ball_world_model(gravity: bool = True) -> wp.sim.Model:
     builder.add_shape_sphere(
         body=left_wheel,
         radius=1.0,
-        density=200.0,
+        density=2000.0,
         mu=FRICTION,
         restitution=RESTITUTION,
         thickness=0.0,
@@ -109,7 +110,7 @@ def ball_world_model(gravity: bool = True) -> wp.sim.Model:
         hx=1.5,
         hy=0.5,
         hz=0.5,
-        density=100.0,
+        density=10.0,
         mu=FRICTION,
         restitution=RESTITUTION,
         thickness=0.0,
@@ -147,18 +148,18 @@ def ball_world_model(gravity: bool = True) -> wp.sim.Model:
         mode=wp.sim.JOINT_MODE_FORCE,
     )
 
-    builder.add_shape_box(
-        body=-1,
-        pos=wp.vec3(4.5, 0.0, 0.0),
-        hx=1.5,
-        hy=2.5,
-        hz=0.3,
-        density=100.0,
-        mu=FRICTION,
-        restitution=RESTITUTION,
-        thickness=0.0,
-        collision_group=1,
-    )
+    # builder.add_shape_box(
+    #     body=-1,
+    #     pos=wp.vec3(4.5, 0.0, 0.0),
+    #     hx=1.5,
+    #     hy=2.5,
+    #     hz=0.3,
+    #     density=100.0,
+    #     mu=FRICTION,
+    #     restitution=RESTITUTION,
+    #     thickness=0.0,
+    #     collision_group=1,
+    # )
 
     builder.set_ground_plane(ke=10, kd=10, kf=0.0, mu=FRICTION, restitution=RESTITUTION)
     model = builder.finalize()
@@ -169,18 +170,20 @@ class HelhestSim:
     def __init__(self):
 
         # Simulation and rendering parameters
-        self.fps = 10
+        self.fps = 20
         self.num_frames = 30
-        self.sim_substeps = 30
+        self.sim_substeps = 10
         self.frame_dt = 1.0 / self.fps
         self.sim_dt = self.frame_dt / self.sim_substeps
         self.sim_duration = self.num_frames * self.frame_dt
         self.sim_steps = int(self.sim_duration // self.sim_dt)
 
         self.model = ball_world_model(gravity=True)
-        self.time = np.linspace(0, self.sim_duration, self.sim_steps)
+        self.time = np.linspace(0, self.sim_duration, self.sim_steps + 1)
+        self._timestep: int = 0
 
-        self.integrator = NSNEngine(self.model)
+        self.logger = HDF5Logger("helhest_log.h5") if DEBUG else None
+        self.integrator = NSNEngine(self.model, logger=self.logger)
         self.renderer = wp.sim.render.SimRenderer(self.model, USD_FILE, scaling=100.0)
 
         self.state_0 = self.model.state()
@@ -209,18 +212,71 @@ class HelhestSim:
                 self.multistep()
             self.step_graph = capture.graph
 
+    def log_model(self):
+        if self.logger:
+            with self.logger.scope("simulation_info"):
+                self.logger.log_scalar("fps", self.fps)
+                self.logger.log_scalar("num_frames", self.num_frames)
+                self.logger.log_scalar("sim_substeps", self.sim_substeps)
+                self.logger.log_scalar("frame_dt", self.frame_dt)
+                self.logger.log_scalar("sim_dt", self.sim_dt)
+                self.logger.log_scalar("sim_duration", self.sim_duration)
+
+            with self.logger.scope("model_info"):
+                model = self.model
+                self.logger.log_scalar("body_count", model.body_count)
+                self.logger.log_scalar("joint_count", model.joint_count)
+                self.logger.log_scalar("rigid_contact_max", model.rigid_contact_max)
+
+                self.logger.log_dataset("body_com", model.body_com.numpy())
+                self.logger.log_dataset("body_mass", model.body_mass.numpy())
+                self.logger.log_dataset("body_inv_mass", model.body_inv_mass.numpy())
+                self.logger.log_dataset("body_inertia", model.body_inertia.numpy())
+                self.logger.log_dataset(
+                    "body_inv_inertia", model.body_inv_inertia.numpy()
+                )
+                self.logger.log_dataset("shape_body", model.shape_body.numpy())
+
+                self.logger.log_dataset("joint_type", model.joint_type.numpy())
+                self.logger.log_dataset("joint_enabled", model.joint_enabled.numpy())
+                self.logger.log_dataset("joint_parent", model.joint_parent.numpy())
+                self.logger.log_dataset("joint_child", model.joint_child.numpy())
+                self.logger.log_dataset("joint_X_p", model.joint_X_p.numpy())
+                self.logger.log_dataset("joint_X_c", model.joint_X_c.numpy())
+                self.logger.log_dataset(
+                    "joint_axis_start", model.joint_axis_start.numpy()
+                )
+                self.logger.log_dataset("joint_axis_dim", model.joint_axis_dim.numpy())
+                self.logger.log_dataset("joint_axis", model.joint_axis.numpy())
+                self.logger.log_dataset(
+                    "joint_linear_compliance", model.joint_linear_compliance.numpy()
+                )
+                self.logger.log_dataset(
+                    "joint_angular_compliance", model.joint_angular_compliance.numpy()
+                )
+                print("Model logged to helhest_log.h5")
+
     def multistep(self):
         for _ in range(self.sim_substeps):
-            wp.sim.collide(self.model, self.state_0)
-            self.integrator.simulate(
-                self.model,
-                self.state_0,
-                self.state_1,
-                self.sim_dt,
-                control=self.control,
-            )
-            wp.copy(dest=self.state_0.body_q, src=self.state_1.body_q)
-            wp.copy(dest=self.state_0.body_qd, src=self.state_1.body_qd)
+            with (
+                self.logger.scope(f"timestep_{self._timestep:04d}")
+                if self.logger
+                else open("/dev/null")
+            ) as _:
+                if self.logger:
+                    self.logger.log_attribute("time", self.time[self._timestep])
+                    self.logger.log_scalar("time", self.time[self._timestep])
+                wp.sim.collide(self.model, self.state_0)
+                self.integrator.simulate(
+                    self.model,
+                    self.state_0,
+                    self.state_1,
+                    self.sim_dt,
+                    control=self.control,
+                )
+                wp.copy(dest=self.state_0.body_q, src=self.state_1.body_q)
+                wp.copy(dest=self.state_0.body_qd, src=self.state_1.body_qd)
+                self._timestep += 1
 
     def step(self):
         wp.sim.collide(self.model, self.state_0)
@@ -270,37 +326,41 @@ class HelhestSim:
         t = 0.0
         frame_interval = 1.0 / self.fps
         last_rendered_time = 0.0
-        for _ in tqdm(range(self.num_frames), desc="Simulating", disable=DEBUG):
-            with wp.ScopedTimer(
-                "step",
-                active=DEBUG,
-                synchronize=PROFILE_SYNC,
-                use_nvtx=PROFILE_NVTX,
-                color="blue",  # You can also customize colors for NVTX
-                cuda_filter=cuda_activity_filter,
-            ):
-                if self.use_cuda_graph:
-                    wp.capture_launch(self.step_graph)
-                else:
-                    self.multistep()
+        with self.logger if self.logger else open("/dev/null") as _:
+            self.log_model()
+            for _ in tqdm(range(self.num_frames), desc="Simulating", disable=DEBUG):
+                with wp.ScopedTimer(
+                    "step",
+                    active=DEBUG,
+                    synchronize=PROFILE_SYNC,
+                    use_nvtx=PROFILE_NVTX,
+                    color="blue",  # You can also customize colors for NVTX
+                    cuda_filter=cuda_activity_filter,
+                ):
+                    if self.use_cuda_graph:
+                        wp.capture_launch(self.step_graph)
+                    else:
+                        self.multistep()
 
-            t += self.frame_dt
+                t += self.frame_dt
+                if RENDER:
+                    if t >= last_rendered_time:
+                        with wp.ScopedTimer(
+                            "render",
+                            active=DEBUG,
+                            synchronize=PROFILE_SYNC,
+                            use_nvtx=PROFILE_NVTX,
+                            color="green",
+                            cuda_filter=cuda_activity_filter,
+                        ):
+                            self.renderer.begin_frame(t)
+                            self.renderer.render(self.state_0)
+                            self.renderer.end_frame()
+                        last_rendered_time += (
+                            frame_interval  # update to next frame time
+                        )
             if RENDER:
-                if t >= last_rendered_time:
-                    with wp.ScopedTimer(
-                        "render",
-                        active=DEBUG,
-                        synchronize=PROFILE_SYNC,
-                        use_nvtx=PROFILE_NVTX,
-                        color="green",
-                        cuda_filter=cuda_activity_filter,
-                    ):
-                        self.renderer.begin_frame(t)
-                        self.renderer.render(self.state_0)
-                        self.renderer.end_frame()
-                    last_rendered_time += frame_interval  # update to next frame time
-        if RENDER:
-            self.renderer.save()
+                self.renderer.save()
 
 
 def ball_bounce_simulation():
