@@ -65,7 +65,7 @@ def _compute_complementarity_argument(
 
     # Restitution bias based on pre-collision velocity
     # We only apply restitution if the pre-collision velocity is approaching.
-    b_rest = -restitution * wp.min(delta_v_n_prev, 0.0)
+    b_rest = -restitution * delta_v_n_prev
 
     return delta_v_n + b_err + b_rest
 

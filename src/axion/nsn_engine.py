@@ -1,6 +1,5 @@
 from typing import Optional
 
-import h5py
 import warp as wp
 from axion.contact_constraint import contact_constraint_kernel
 from axion.dynamics_constraint import unconstrained_dynamics_kernel
@@ -20,8 +19,8 @@ from warp.sim import Model
 from warp.sim import State
 
 # --- Constants remain the same ---
-JOINT_CONSTRAINT_STABILIZATION = 0.1
-CONTACT_CONSTRAINT_STABILIZATION = 0.1
+JOINT_CONSTRAINT_STABILIZATION = 0.01
+CONTACT_CONSTRAINT_STABILIZATION = 0.0
 CONTACT_FB_ALPHA = 0.25
 CONTACT_FB_BETA = 0.25
 FRICTION_FB_ALPHA = 0.25
@@ -200,20 +199,15 @@ def compute_JT_delta_lambda_kernel(
     J_ib = J_values[constraint_idx, 1]
     dl = delta_lambda[constraint_idx]
 
-    # Compute branchless multipliers (because of bodies that are -1)
-    multiplier_a = wp.where(body_a >= 0, 1.0, 0.0)
-    multiplier_b = wp.where(body_b >= 0, 1.0, 0.0)
+    if body_a >= 0:
+        for i in range(wp.static(6)):
+            st_i = wp.static(i)
+            wp.atomic_add(JT_delta_lambda, body_a * 6 + st_i, J_ia[st_i] * dl)
 
-    for i in range(wp.static(6)):
-        st_i = wp.static(i)
-
-        # For body_a
-        index_a = wp.where(body_a >= 0, body_a * 6 + st_i, st_i)
-        wp.atomic_add(JT_delta_lambda, index_a, J_ia[st_i] * dl * multiplier_a)
-
-        # For body_b
-        index_b = wp.where(body_b >= 0, body_b * 6 + st_i, st_i)
-        wp.atomic_add(JT_delta_lambda, index_b, J_ib[st_i] * dl * multiplier_b)
+    if body_b >= 0:
+        for i in range(wp.static(6)):
+            st_i = wp.static(i)
+            wp.atomic_add(JT_delta_lambda, body_b * 6 + st_i, J_ib[st_i] * dl)
 
 
 @wp.kernel
@@ -261,6 +255,7 @@ def fused_reset_kernel(
 
 
 class NSNEngine(Integrator):
+
     def __init__(
         self,
         model: Model,
@@ -277,9 +272,15 @@ class NSNEngine(Integrator):
         self.N_c = model.rigid_contact_max
         self.N_j = model.joint_count
 
-        num_j_constraints = 5 * self.N_j  # Number of joint constraints
-        num_n_constraints = self.N_c  # Number of normal contact constraints
-        num_f_constraints = 2 * self.N_c  # Number of frictional constraints
+        num_j_constraints = (
+            5 * self.N_j
+        )  # Number of joint constraints (DEBUG: 15; 0,14)
+        num_n_constraints = (
+            self.N_c
+        )  # Number of normal contact constraints (DEBUG: 14;, 15, 28)
+        num_f_constraints = (
+            2 * self.N_c
+        )  # Number of frictional constraints (DEBUG: 28; 29,56)
 
         con_dim = (
             num_j_constraints + num_n_constraints + num_f_constraints
@@ -675,11 +676,23 @@ class NSNEngine(Integrator):
 
         wp.synchronize()
 
+        Hinv_dense_np = self.Hinv_dense.numpy()
+        J_dense_np = self.J_dense.numpy()
+        C_dense_np = self.C_dense.numpy()
+        g_np = self._g.numpy()
+        h_np = self._h.numpy()
+
+        A = J_dense_np @ Hinv_dense_np @ J_dense_np.transpose() + C_dense_np
+        b = J_dense_np @ Hinv_dense_np @ g_np - h_np
+
+        lambda_res = A @ self._delta_lambda.numpy() - b
+
         self.logger.log_dataset("Hinv", self.Hinv_dense.numpy())
         self.logger.log_dataset("J", self.J_dense.numpy())
         self.logger.log_dataset("C", self.C_dense.numpy())
         self.logger.log_dataset("g", self._g.numpy())
         self.logger.log_dataset("h", self._h.numpy())
+        self.logger.log_dataset("lambda_res", lambda_res)
 
     def simulate(
         self,

@@ -78,9 +78,10 @@ def frictional_constraint_kernel(
     """
     tid = wp.tid()
     mu = contact_friction_coeff[tid]
+    lambda_n = _lambda_prev[lambda_n_offset + tid]
 
     # Early exit for inactive contacts
-    if contact_gap[tid] >= 0.0 or mu <= 1e-2:
+    if contact_gap[tid] >= 0.0 or lambda_n * mu <= 1e-2:
         h[h_f_offset + 2 * tid] = _lambda[lambda_f_offset + 2 * tid]
         h[h_f_offset + 2 * tid + 1] = _lambda[lambda_f_offset + 2 * tid + 1]
 
@@ -126,9 +127,9 @@ def frictional_constraint_kernel(
     # REGULARIZATION: Use the normal impulse from the previous Newton iteration
     # to define the friction cone size. We clamp it to a minimum value to
     # prevent the cone from collapsing on new contacts, which causes instability.
-    lambda_n = wp.max(
-        _lambda_prev[lambda_n_offset + tid], 10.0
-    )  # TODO: Resolve this problem
+    # lambda_n = wp.max(
+    #     _lambda_prev[lambda_n_offset + tid], 10.0
+    # )  # TODO: Resolve this problem
     lambda_n = _lambda_prev[lambda_n_offset + tid]
     friction_cone_limit = mu * lambda_n
 
@@ -139,6 +140,7 @@ def frictional_constraint_kernel(
 
     # Compliance factor `w` relates the direction of slip to the friction impulse direction.
     # It becomes the off-diagonal block in the system matrix.
+    # TODO: This can be really large number
     w = (v_rel_norm - phi_f) / (lambda_f_norm + phi_f + 1e-6)
 
     # --- Update global system components ---
@@ -160,8 +162,8 @@ def frictional_constraint_kernel(
 
     # 3. Update `C` (diagonal compliance block of the system matrix)
     # This `w` value forms the coupling between the two tangential directions.
-    C_values[C_f_offset + 2 * tid] = w
-    C_values[C_f_offset + 2 * tid + 1] = w
+    C_values[C_f_offset + 2 * tid] = w + 1e-3
+    C_values[C_f_offset + 2 * tid + 1] = w + 1e-3
 
     # 4. Update `J` (constraint Jacobian block of the system matrix)
     if body_a >= 0:

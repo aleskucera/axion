@@ -29,7 +29,7 @@ def scaled_fisher_burmeister_derivatives(
 
     # Avoid division by zero
     if norm < 1e-6:
-        return 0.0, 1.0
+        return 1.0, 0.0
 
     da = alpha * (1.0 - scaled_a / norm)
     db = beta * (1.0 - scaled_b / norm)
@@ -51,8 +51,8 @@ def scaled_fisher_burmeister(
     value = scaled_a + scaled_b - norm
 
     # Avoid division by zero
-    if norm < 1e-4:
-        return value, 0.0, 1.0
+    if norm < 1e-6:
+        return value, 1.0, 0.0
 
     dvalue_da = alpha * (1.0 - scaled_a / norm)
     dvalue_db = beta * (1.0 - scaled_b / norm)
