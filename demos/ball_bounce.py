@@ -1,14 +1,14 @@
 import numpy as np
 import warp as wp
 import warp.sim.render
-from axion.nsn_engine import NSNEngine
+from axion import NSNEngine
 from axion.utils import HDF5Logger
 from tqdm import tqdm
 
 # Options
 RENDER = True
 USD_FILE = "ball_bounce.usd"
-DEBUG = True
+DEBUG = False
 PROFILE_SYNC = False
 PROFILE_NVTX = False
 PROFILE_CUDA_TIMELINE = False
@@ -202,8 +202,8 @@ class BallBounceSim:
             else open("/dev/null")
         ) as _:
             wp.sim.collide(self.model, self.state_0)
-            if self.model.rigid_contact_count.numpy()[0] > 0:
-                print(f"Contact at timestep {self._timestep}")
+            # if self.model.rigid_contact_count.numpy()[0] > 0:
+            #     print(f"Contact at timestep {self._timestep}")
             self.integrator.simulate(
                 self.model,
                 self.state_0,

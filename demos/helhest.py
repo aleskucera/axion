@@ -1,7 +1,7 @@
 import numpy as np
 import warp as wp
 import warp.sim.render
-from axion.nsn_engine import NSNEngine
+from axion import NSNEngine
 from axion.utils import HDF5Logger
 from tqdm import tqdm
 

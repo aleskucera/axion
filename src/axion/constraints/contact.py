@@ -13,7 +13,8 @@ import time
 
 import numpy as np
 import warp as wp
-from axion.utils import scaled_fisher_burmeister
+
+from .utils import scaled_fisher_burmeister
 
 
 @wp.func

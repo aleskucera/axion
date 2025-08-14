@@ -1,2 +1,3 @@
-def main() -> None:
-    print("Hello from axion!")
+from .core import NSNEngine
+
+__all__ = ["NSNEngine"]
