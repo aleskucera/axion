@@ -127,7 +127,7 @@ def update_system_matrix_kernel(
     A[i, j] = A_ij
 
 
-class DenseSystemOperator(LinearOperator):
+class MatrixSystemOperator(LinearOperator):
     """
     A linear operator that explicitly builds the dense system matrix A = J M⁻¹ Jᵀ + C
     and uses it for matrix-vector products.

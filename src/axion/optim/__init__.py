@@ -1,4 +1,11 @@
-# from .cr import cr_solver
-from .dense_system_operator import DenseSystemOperator
+from .cr import cr_solver
+from .matrix_operator import MatrixSystemOperator
+from .matrixfree_operator import MatrixFreeSystemOperator
 from .preconditioner import JacobiPreconditioner
-from .system_operator import SystemOperator
+
+__all__ = [
+    "cr_solver",
+    "MatrixSystemOperator",
+    "MatrixFreeSystemOperator",
+    "JacobiPreconditioner",
+]

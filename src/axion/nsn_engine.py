@@ -9,9 +9,9 @@ from axion.contact_constraint import contact_constraint_kernel
 from axion.dynamics_constraint import unconstrained_dynamics_kernel
 from axion.frictional_constraint import frictional_constraint_kernel
 from axion.joint_constraint import joint_constraint_kernel
-from axion.optim import DenseSystemOperator
 from axion.optim import JacobiPreconditioner
-from axion.optim import SystemOperator
+from axion.optim import MatrixFreeSystemOperator
+from axion.optim import MatrixSystemOperator
 from axion.optim.cr import cr_solver
 from axion.utils import add_inplace
 from axion.utils import apply_joint_actions_kernel
@@ -408,9 +408,9 @@ class NSNEngine(Integrator):
 
         # --- System matrix A and Right-hand side vector b ---
         if DENSE_MATRIX:
-            self.A_op = DenseSystemOperator(self)
+            self.A_op = MatrixSystemOperator(self)
         else:
-            self.A_op = SystemOperator(self)
+            self.A_op = MatrixFreeSystemOperator(self)
         self._b = wp.zeros((con_dim,), dtype=wp.float32, device=self.device)
         self.preconditioner = JacobiPreconditioner(self)
 

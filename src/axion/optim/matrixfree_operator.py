@@ -16,45 +16,8 @@ Residual (CR) or Conjugate Gradient (CG), allowing the system to be solved
 without ever forming the potentially very large and dense matrix A explicitly.
 """
 import warp as wp
-
-
-@wp.func
-def get_constraint_body_index(
-    joint_parent: wp.array(dtype=wp.int32),
-    joint_child: wp.array(dtype=wp.int32),
-    contact_body_a: wp.array(dtype=wp.int32),
-    contact_body_b: wp.array(dtype=wp.int32),
-    J_j_offset: int,
-    J_n_offset: int,
-    J_f_offset: int,
-    constraint_idx: int,
-):
-    """
-    Determines the two body indices (body_a, body_b) involved in a given constraint.
-
-    This function checks which block the constraint_idx falls into (joint, normal contact,
-    or frictional contact) and returns the corresponding parent/child or body_a/body_b indices.
-    """
-    body_a = -1
-    body_b = -1
-    # Check if a JOINT constraint
-    if constraint_idx < J_n_offset:
-        joint_index = (constraint_idx - J_j_offset) // 5
-        body_a = joint_parent[joint_index]
-        body_b = joint_child[joint_index]
-    # Check if a NORMAL contact constraint
-    elif constraint_idx < J_f_offset:
-        contact_index = constraint_idx - J_n_offset
-        body_a = contact_body_a[contact_index]
-        body_b = contact_body_b[contact_index]
-    # Otherwise, it's a FRICTIONAL contact constraint
-    else:
-        # Each contact has 2 friction constraints
-        contact_index = (constraint_idx - J_f_offset) // 2
-        body_a = contact_body_a[contact_index]
-        body_b = contact_body_b[contact_index]
-
-    return body_a, body_b
+from axion.utils.constraints import get_constraint_body_index
+from warp.optim.linear import LinearOperator
 
 
 @wp.kernel
@@ -220,8 +183,6 @@ def kernel_J_matvec(
     out_vec[constraint_idx] = result
 
 
-# --- KERNEL FIX ---
-# This is the kernel that needed to be changed.
 @wp.kernel
 def kernel_finalize_matvec(
     J_M_inv_Jt_x: wp.array(dtype=wp.float32),
@@ -256,13 +217,13 @@ def kernel_finalize_matvec(
         out_vec_z[i] = beta * vec_y[i] + alpha * a_times_x
 
 
-class SystemOperator:
+class MatrixFreeSystemOperator(LinearOperator):
     """
     A matrix-free linear operator for the system A = J M⁻¹ Jᵀ + C.
 
     This class provides a .matvec() method that computes the matrix-vector
     product A @ x without explicitly constructing the matrix A. It is intended
-    to be used with iterative linear solvers like `cr_solver_graph_compatible`.
+    to be used with iterative linear solvers like `cr_solver`.
     """
 
     def __init__(self, engine):
@@ -274,7 +235,12 @@ class SystemOperator:
                     that holds all the necessary system data (Jacobians,
                     masses, constraint info, etc.).
         """
-        super().__init__()
+        super().__init__(
+            shape=(engine.con_dim, engine.con_dim),
+            dtype=engine._lambda.dtype,
+            device=engine.device,
+            matvec=None,
+        ),
         self.engine = engine
 
         # Pre-allocate temporary buffers for intermediate calculations.
@@ -285,13 +251,6 @@ class SystemOperator:
             engine.con_dim, dtype=wp.float32, device=engine.device
         )
 
-        # Properties required by Warp's linear solver interface
-        self.dtype = engine._lambda.dtype
-        self.device = engine.device
-        self.shape = (engine.con_dim, engine.con_dim)
-
-    # --- MATVEC FIX ---
-    # This is the method that needed to be changed.
     def matvec(self, x, y, z, alpha, beta):
         """
         Computes the matrix-vector product: z = beta * y + alpha * (A @ x).
