@@ -1,13 +1,18 @@
+import time
 from typing import Optional
 
+import numpy as np
+import scipy
 import warp as wp
+import warp.optim.linear as wpol
 from axion.contact_constraint import contact_constraint_kernel
 from axion.dynamics_constraint import unconstrained_dynamics_kernel
 from axion.frictional_constraint import frictional_constraint_kernel
 from axion.joint_constraint import joint_constraint_kernel
+from axion.optim import DenseSystemOperator
 from axion.optim import JacobiPreconditioner
+from axion.optim import SystemOperator
 from axion.optim.cr import cr_solver
-from axion.optim.system_operator import SystemOperator
 from axion.utils import add_inplace
 from axion.utils import apply_joint_actions_kernel
 from axion.utils import contact_kinematics_kernel
@@ -20,11 +25,13 @@ from warp.sim import State
 
 # --- Constants remain the same ---
 JOINT_CONSTRAINT_STABILIZATION = 0.01
-CONTACT_CONSTRAINT_STABILIZATION = 0.0
+CONTACT_CONSTRAINT_STABILIZATION = 0.1
 CONTACT_FB_ALPHA = 0.25
 CONTACT_FB_BETA = 0.25
 FRICTION_FB_ALPHA = 0.25
 FRICTION_FB_BETA = 0.25
+
+DENSE_MATRIX = False
 
 
 @wp.kernel
@@ -121,14 +128,19 @@ def _compute_JHinvG_i(
     J: wp.spatial_vector,
     g: wp.array(dtype=wp.float32),
 ):
-    # This function is used by update_system_rhs_kernel and remains unchanged
     if body_idx < 0:
         return 0.0
+
+    # H_inv @ g for the angular part
     g_ang_body = wp.vec3(g[body_idx * 6 + 0], g[body_idx * 6 + 1], g[body_idx * 6 + 2])
     Hinv_g_ang = body_inertia_inv[body_idx] @ g_ang_body
+
+    # H_inv @ g for the linear part
     g_lin_body = wp.vec3(g[body_idx * 6 + 3], g[body_idx * 6 + 4], g[body_idx * 6 + 5])
     Hinv_g_lin = body_mass_inv[body_idx] * g_lin_body
+
     Hinv_g = wp.spatial_vector(Hinv_g_ang, Hinv_g_lin)
+
     return wp.dot(J, Hinv_g)
 
 
@@ -143,13 +155,13 @@ def update_system_rhs_kernel(
     J_j_offset: wp.int32,
     J_n_offset: wp.int32,
     J_f_offset: wp.int32,
-    J_values: wp.array(dtype=wp.spatial_vector, ndim=2),
+    J_values: wp.array(dtype=wp.spatial_vector, ndim=2),  # Shape [N_c, 2]
     g: wp.array(dtype=wp.float32),
     h: wp.array(dtype=wp.float32),
     b: wp.array(dtype=wp.float32),
 ):
-    # This kernel computes the right-hand-side 'b' and remains unchanged.
-    tid = wp.tid()
+    tid = wp.tid()  # one thread per contact
+
     body_a, body_b = get_constraint_body_index(
         joint_parent,
         joint_child,
@@ -162,8 +174,11 @@ def update_system_rhs_kernel(
     )
     J_ia = J_values[tid, 0]
     J_ib = J_values[tid, 1]
+
+    # Calculate (J_i * H^-1 * g)
     JHinvG = _compute_JHinvG_i(body_mass_inv, body_inertia_inv, body_a, J_ia, g)
     JHinvG += _compute_JHinvG_i(body_mass_inv, body_inertia_inv, body_b, J_ib, g)
+
     b[tid] = JHinvG - h[tid]
 
 
@@ -212,30 +227,40 @@ def compute_JT_delta_lambda_kernel(
 
 @wp.kernel
 def compute_delta_body_qd_kernel(
-    # This kernel is also still needed to update body velocities after the solve
     body_inv_mass: wp.array(dtype=wp.float32),
     body_inv_inertia: wp.array(dtype=wp.mat33),
     JT_delta_lambda: wp.array(dtype=wp.float32),
     g: wp.array(dtype=wp.float32),
     delta_body_qd: wp.array(dtype=wp.float32),
 ):
-    tid = wp.tid()
+    tid = wp.tid()  # Over all bodies * 6
     body_idx = tid // 6
     body_dim = tid % 6
+
     if body_idx >= body_inv_mass.shape[0]:
         return
-    if body_dim < 3:
+
+    if body_dim < 3:  # Angular velocity
+        # Construct the 3D vector for the angular part of (J^T * delta_lambda - g)
         tmp_ang_x = JT_delta_lambda[body_idx * 6 + 0] - g[body_idx * 6 + 0]
         tmp_ang_y = JT_delta_lambda[body_idx * 6 + 1] - g[body_idx * 6 + 1]
         tmp_ang_z = JT_delta_lambda[body_idx * 6 + 2] - g[body_idx * 6 + 2]
+
+        # Get the inverse inertia for the current body
         inertia_inv = body_inv_inertia[body_idx]
+
+        # Perform the matrix-vector multiplication row by row
+        # body_dim will be 0, 1, or 2, correctly selecting the row.
         delta_body_qd[tid] = (
             inertia_inv[body_dim, 0] * tmp_ang_x
             + inertia_inv[body_dim, 1] * tmp_ang_y
             + inertia_inv[body_dim, 2] * tmp_ang_z
         )
-    else:
+    else:  # Linear velocity
+        # For the linear part, the calculation is simpler as mass is a scalar.
+        # We can compute the value for the current component directly.
         tmp_lin_component = JT_delta_lambda[tid] - g[tid]
+
         mass_inv = body_inv_mass[body_idx]
         delta_body_qd[tid] = mass_inv * tmp_lin_component
 
@@ -259,8 +284,8 @@ class NSNEngine(Integrator):
     def __init__(
         self,
         model: Model,
-        newton_iters: int = 10,
-        linear_iters: int = 10,
+        newton_iters: int = 8,
+        linear_iters: int = 4,
         logger: Optional[HDF5Logger] = None,
     ):
         super().__init__()
@@ -382,7 +407,10 @@ class NSNEngine(Integrator):
         )
 
         # --- System matrix A and Right-hand side vector b ---
-        self.A_op = SystemOperator(self)
+        if DENSE_MATRIX:
+            self.A_op = DenseSystemOperator(self)
+        else:
+            self.A_op = SystemOperator(self)
         self._b = wp.zeros((con_dim,), dtype=wp.float32, device=self.device)
         self.preconditioner = JacobiPreconditioner(self)
 
@@ -398,14 +426,180 @@ class NSNEngine(Integrator):
                 (con_dim, con_dim), dtype=wp.float32, device=self.device
             )
 
-    def _clear_values(self):
-        """Resets only the necessary arrays for the next Newton iteration."""
+    def solve_nonlinear_with_scipy(self):
+        """Solve the full nonlinear system with SciPy"""
+        import scipy.optimize
+        import numpy as np
+
+        def residual_function(x):
+            # x contains both lambda and body_qd
+            n_lambda = self.con_dim
+            lambda_vals = x[:n_lambda]
+            body_qd_vals = x[n_lambda:]
+
+            # Store current state
+            lambda_backup = wp.clone(self._lambda)
+            body_qd_backup = wp.clone(self._body_qd)
+
+            try:
+                # Set state from input vector
+                self._lambda.assign(lambda_vals)
+                self._body_qd.assign(body_qd_vals)
+
+                # Compute residuals
+                self.update_system_values()
+
+                # Extract dense system for residual computation
+                A, b, g_np, h_np = self.extract_system_for_scipy()
+
+                # Constraint residual: A * lambda - b = (J*Hinv*J^T + C)*lambda - (J*Hinv*g - h)
+                residual_lambda = A @ lambda_vals - b
+
+                # Momentum residual: g - J^T * lambda
+                J_np = self.J_dense.numpy()
+                residual_momentum = g_np - J_np.T @ lambda_vals
+
+                # Combine residuals
+                total_residual = np.concatenate([residual_lambda, residual_momentum])
+
+                return total_residual
+
+            finally:
+                # Restore original state
+                wp.copy(dest=self._lambda, src=lambda_backup)
+                wp.copy(dest=self._body_qd, src=body_qd_backup)
+
+        # Initial guess from current state
+        x0 = np.concatenate([self._lambda.numpy(), self._body_qd.numpy().flatten()])
+
+        # Solve with scipy.optimize.root
+        result = scipy.optimize.root(
+            residual_function,
+            x0,
+            method="hybr",  # Hybrid method (default, robust)
+            options={"xtol": 1e-8, "maxfev": 1000},
+        )
+
+        return result
+
+    def solve_nonlinear_with_scipy2(self):
+        """Solve the full nonlinear system with SciPy"""
+        import scipy.optimize
+        import numpy as np
+
+        def residual_function(x):
+            # x contains both lambda and body_qd
+            n_lambda = self.con_dim
+            lambda_vals = x[:n_lambda]
+            body_qd_vals = x[n_lambda:]
+
+            # Store current state
+            lambda_backup = wp.clone(self._lambda)
+            body_qd_backup = wp.clone(self._body_qd)
+
+            try:
+                # Set state from input vector
+                self._lambda.assign(lambda_vals)
+                self._body_qd.assign(body_qd_vals)
+
+                # Compute residuals
+                self.update_system_values()
+
+                # Residual is concatenation of g and h vector
+                return np.concatenate([self._g.numpy(), self._h.numpy()])
+
+            finally:
+                # Restore original state
+                wp.copy(dest=self._lambda, src=lambda_backup)
+                wp.copy(dest=self._body_qd, src=body_qd_backup)
+
+        # Initial guess from current state
+        x0 = np.concatenate([self._lambda.numpy(), self._body_qd.numpy().flatten()])
+
+        # Solve with scipy.optimize.root
+        result = scipy.optimize.root(
+            residual_function,
+            x0,
+            method="hybr",  # Hybrid method (default, robust)
+            options={"xtol": 1e-8, "maxfev": 1000},
+        )
+
+        return result
+
+    def extract_system_for_scipy(self):
+        """Extract the system in dense format for external solving"""
+        if not hasattr(self, "Hinv_dense"):
+            # Create dense matrices if they don't exist
+            self.Hinv_dense = wp.zeros(
+                (self.dyn_dim, self.dyn_dim), dtype=wp.float32, device=self.device
+            )
+            self.J_dense = wp.zeros(
+                (self.con_dim, self.dyn_dim), dtype=wp.float32, device=self.device
+            )
+            self.C_dense = wp.zeros(
+                (self.con_dim, self.con_dim), dtype=wp.float32, device=self.device
+            )
+
+        # Clear and rebuild dense matrices
+        self.Hinv_dense.zero_()
+        self.J_dense.zero_()
+        self.C_dense.zero_()
+
         wp.launch(
-            kernel=fused_reset_kernel,
-            dim=self.con_dim,
-            inputs=[self._h, self._J_values, self._C_values],
+            kernel=update_Hinv_dense_kernel,
+            dim=self.N_b,
+            inputs=[self.body_inv_mass, self.body_inv_inertia],
+            outputs=[self.Hinv_dense],
             device=self.device,
         )
+
+        wp.launch(
+            kernel=update_J_dense,
+            dim=self.con_dim,
+            inputs=[
+                self.joint_parent,
+                self.joint_child,
+                self._contact_body_a,
+                self._contact_body_b,
+                self.J_j_offset,
+                self.J_n_offset,
+                self.J_f_offset,
+                self._J_values,
+            ],
+            outputs=[self.J_dense],
+            device=self.device,
+        )
+
+        wp.launch(
+            kernel=update_C_dense_kernel,
+            dim=self.con_dim,
+            inputs=[self._C_values],
+            outputs=[self.C_dense],
+            device=self.device,
+        )
+
+        # Synchronize and convert to numpy
+        wp.synchronize()
+        Hinv_np = self.Hinv_dense.numpy()
+        J_np = self.J_dense.numpy()
+        C_np = self.C_dense.numpy()
+        g_np = self._g.numpy()
+        h_np = self._h.numpy()
+
+        # Build system matrix and RHS
+        A = J_np @ Hinv_np @ J_np.T + C_np
+        b = J_np @ Hinv_np @ g_np - h_np
+
+        return A, b, g_np, h_np
+
+    def _clear_values(self):
+        self._g.zero_()
+        self._h.zero_()
+        self._J_values.zero_()
+        self._C_values.zero_()
+        self._JT_delta_lambda.zero_()
+
+        self._b.zero_()
 
     def update_state_variables(
         self, model: Model, state_in: State, state_out: State, dt: float
@@ -567,7 +761,8 @@ class NSNEngine(Integrator):
                 self._C_values,
             ],
         )
-
+        if DENSE_MATRIX:
+            self.A_op.update()
         self.preconditioner.update()  # Update the preconditioner with new values
         wp.launch(
             kernel=update_system_rhs_kernel,
@@ -590,6 +785,7 @@ class NSNEngine(Integrator):
         )
 
     def solve_system(self):
+        # M = wpol.preconditioner(self.A_op._A, ptype="diag")
         cr_solver(
             A=self.A_op,
             b=self._b,
@@ -600,7 +796,6 @@ class NSNEngine(Integrator):
         )
 
         # The post-solve steps are the same: apply the computed impulses.
-        self._JT_delta_lambda.zero_()  # Must zero before atomic add kernel
         wp.launch(
             kernel=compute_JT_delta_lambda_kernel,
             dim=self.con_dim,
@@ -705,7 +900,6 @@ class NSNEngine(Integrator):
         if self.logger:
             self.logger.log_attribute("dt", dt)
             self.logger.log_attribute("linear_iters", self.linear_iters)
-            self.logger.log_attribute("linear_iters", self.linear_iters)
             self.logger.log_scalar(
                 "contact_count", self._rigid_contact_count.numpy().item()
             )
@@ -755,6 +949,221 @@ class NSNEngine(Integrator):
                     self.solve_system()  # solve_system will log its own internal state
             else:
                 self.solve_system()  # Run without logging
+        wp.copy(dest=state_out.body_qd, src=self._body_qd)
+        wp.copy(dest=state_out.body_q, src=self._body_q)
 
+    def simulate_with_scipy_verification(
+        self,
+        model: Model,
+        state_in: State,
+        state_out: State,
+        dt: float,
+        control: Control | None = None,
+        test_scipy_every: int = 1,  # Test every N Newton iterations
+    ):
+        """Enhanced simulate method with SciPy verification and logging"""
+
+        if self.logger:
+            self.logger.log_attribute("dt", dt)
+            self.logger.log_attribute("linear_iters", self.linear_iters)
+            self.logger.log_attribute("newton_iters", self.newton_iters)
+            self.logger.log_scalar(
+                "contact_count", self._rigid_contact_count.numpy().item()
+            )
+
+        # Initial setup (same as before)
+        wp.sim.eval_ik(model, state_in, state_in.joint_q, state_in.joint_qd)
+        if control is not None:
+            wp.launch(
+                kernel=apply_joint_actions_kernel,
+                dim=(model.joint_count,),
+                inputs=[
+                    state_in.body_q,
+                    model.body_com,
+                    state_in.joint_q,
+                    state_in.joint_qd,
+                    model.joint_target_ke,
+                    model.joint_target_kd,
+                    model.joint_type,
+                    model.joint_enabled,
+                    model.joint_parent,
+                    model.joint_child,
+                    model.joint_X_p,
+                    model.joint_X_c,
+                    model.joint_axis_start,
+                    model.joint_axis_dim,
+                    model.joint_axis,
+                    model.joint_axis_mode,
+                    control.joint_act,
+                ],
+                outputs=[state_in.body_f],
+            )
+
+        self.integrate_bodies(model, state_in, state_out, dt)
+        self.update_state_variables(model, state_in, state_out, dt)
+        self.compute_contact_kinematics()
+        self._lambda.zero_()
+
+        # Test scipy optimization
+        scipy_success = False
+        try:
+            start_time = time.time()
+            scipy_result = self.solve_nonlinear_with_scipy()
+            scipy_solve_time = time.time() - start_time
+            scipy_success = scipy_result.success
+        except Exception as e:
+            print(f"SciPy solve failed: {str(e)}")
+
+        # Newton optimization
+        for i in range(self.newton_iters):
+            wp.copy(dest=self._lambda_prev, src=self._lambda)
+            self.update_system_values()
+
+            # Test with SciPy solver
+            if scipy_success:
+                # Extract SciPy solution
+                scipy_lambda = scipy_result.x[: self.con_dim]
+                scipy_body_qd = scipy_result.x[self.con_dim :]
+
+                # Compare with current state
+                current_lambda = self._lambda.numpy()
+                current_body_qd = self._body_qd.numpy().flatten()
+
+                lambda_error = np.linalg.norm(scipy_lambda - current_lambda)
+                body_qd_error = np.linalg.norm(scipy_body_qd - current_body_qd)
+                lambda_rel_error = lambda_error / (np.linalg.norm(scipy_lambda) + 1e-10)
+                body_qd_rel_error = body_qd_error / (
+                    np.linalg.norm(scipy_body_qd) + 1e-10
+                )
+
+                if self.logger:
+                    with self.logger.scope(f"newton_{i:02d}"):
+                        with self.logger.scope("scipy_comparison"):
+                            # Log SciPy solution details
+                            self.logger.log_scalar(
+                                "scipy_success", float(scipy_success)
+                            )
+                            self.logger.log_scalar("scipy_solve_time", scipy_solve_time)
+                            self.logger.log_scalar("scipy_nfev", scipy_result.nfev)
+                            self.logger.log_scalar(
+                                "scipy_residual_norm",
+                                np.linalg.norm(scipy_result.fun),
+                            )
+
+                            # Log comparison metrics
+                            self.logger.log_scalar("lambda_abs_error", lambda_error)
+                            self.logger.log_scalar("lambda_rel_error", lambda_rel_error)
+                            self.logger.log_scalar("body_qd_abs_error", body_qd_error)
+                            self.logger.log_scalar(
+                                "body_qd_rel_error", body_qd_rel_error
+                            )
+
+                            # Log the solutions themselves
+                            self.logger.log_dataset("scipy_lambda", scipy_lambda)
+                            self.logger.log_dataset("scipy_body_qd", scipy_body_qd)
+                            self.logger.log_dataset("current_lambda", current_lambda)
+                            self.logger.log_dataset("current_body_qd", current_body_qd)
+
+                            # Log residual comparison
+                            self.logger.log_dataset("scipy_residual", scipy_result.fun)
+
+                print(
+                    f"Newton iter {i}: λ rel_err: {lambda_rel_error:.2e}, qd rel_err: {body_qd_rel_error:.2e}"
+                )
+
+            # Regular Newton step with logging
+            if self.logger:
+                with self.logger.scope(f"newton_{i:02d}"):
+                    # Log Newton state before solving
+                    self.log_newton_state()
+
+                    # Add convergence metrics
+                    lambda_norm = np.linalg.norm(self._lambda.numpy())
+                    residual_norm = (
+                        self.compute_residual_norm()
+                        if hasattr(self, "compute_residual_norm")
+                        else 0.0
+                    )
+
+                    self.logger.log_scalar("lambda_norm", lambda_norm)
+                    self.logger.log_scalar("residual_norm", residual_norm)
+
+                    # Solve and log
+                    self.solve_system()
+
+                    # Log step information
+                    step_norm = np.linalg.norm(self._delta_lambda.numpy())
+                    self.logger.log_scalar("step_norm", step_norm)
+            else:
+                self.solve_system()
+
+        # Final state copy
+        wp.copy(dest=state_out.body_qd, src=self._body_qd)
+        wp.copy(dest=state_out.body_q, src=self._body_q)
+
+    def simulate_scipy(
+        self,
+        model: Model,
+        state_in: State,
+        state_out: State,
+        dt: float,
+        control: Control | None = None,
+        test_scipy_every: int = 1,  # Test every N Newton iterations
+    ):
+        """Enhanced simulate method with SciPy verification and logging"""
+
+        if self.logger:
+            self.logger.log_attribute("dt", dt)
+            self.logger.log_attribute("linear_iters", self.linear_iters)
+            self.logger.log_attribute("newton_iters", self.newton_iters)
+            self.logger.log_scalar(
+                "contact_count", self._rigid_contact_count.numpy().item()
+            )
+
+        # Initial setup (same as before)
+        wp.sim.eval_ik(model, state_in, state_in.joint_q, state_in.joint_qd)
+        if control is not None:
+            wp.launch(
+                kernel=apply_joint_actions_kernel,
+                dim=(model.joint_count,),
+                inputs=[
+                    state_in.body_q,
+                    model.body_com,
+                    state_in.joint_q,
+                    state_in.joint_qd,
+                    model.joint_target_ke,
+                    model.joint_target_kd,
+                    model.joint_type,
+                    model.joint_enabled,
+                    model.joint_parent,
+                    model.joint_child,
+                    model.joint_X_p,
+                    model.joint_X_c,
+                    model.joint_axis_start,
+                    model.joint_axis_dim,
+                    model.joint_axis,
+                    model.joint_axis_mode,
+                    control.joint_act,
+                ],
+                outputs=[state_in.body_f],
+            )
+
+        self.integrate_bodies(model, state_in, state_out, dt)
+        self.update_state_variables(model, state_in, state_out, dt)
+        self.compute_contact_kinematics()
+        self._lambda.zero_()
+
+        # Test scipy optimization
+        try:
+            scipy_result = self.solve_nonlinear_with_scipy2()
+        except Exception as e:
+            print(f"SciPy solve failed: {str(e)}")
+
+        n_lambda = self.con_dim
+        self._lambda.assign(wp.from_numpy(scipy_result.x[:n_lambda].astype(np.float32)))
+        body_qd_solution = scipy_result.x[n_lambda:][np.newaxis, :]
+        self._body_qd.assign(wp.from_numpy(body_qd_solution.astype(np.float32)))
+
+        # Final state copy
         wp.copy(dest=state_out.body_qd, src=self._body_qd)
         wp.copy(dest=state_out.body_q, src=self._body_q)

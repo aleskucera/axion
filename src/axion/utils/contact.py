@@ -10,6 +10,7 @@ def compute_restitution_coefficient(
     shape_b: wp.int32,
     shape_materials: ModelShapeMaterials,
 ) -> wp.float32:
+    """Computes the average coefficient of restitution for a contact pair."""
     e = 0.0
     if shape_a >= 0 and shape_b >= 0:
         e_a = shape_materials.restitution[shape_a]

@@ -65,7 +65,19 @@ def _compute_complementarity_argument(
 
     # Restitution bias based on pre-collision velocity
     # We only apply restitution if the pre-collision velocity is approaching.
-    b_rest = -restitution * delta_v_n_prev
+    b_rest = restitution * wp.min(delta_v_n_prev, 0.0)
+    # wp.printf("\nContact:\n")
+    # wp.printf("\tCurrent delta_v_n: %f\n", delta_v_n)
+    # wp.printf("\tPrevious delta_v_n: %f\n", delta_v_n_prev)
+    # wp.printf(
+    #     "\t\t [%f, %f, %f, %f, %f, %f] \n",
+    #     delta_v_n_prev[0],
+    #     delta_v_n_prev[1],
+    #     delta_v_n_prev[2],
+    #     delta_v_n_prev[3],
+    #     delta_v_n_prev[4],
+    #     delta_v_n_prev[5],
+    # )
 
     return delta_v_n + b_err + b_rest
 
@@ -213,7 +225,7 @@ def contact_constraint_kernel(
 
     # 3. Update `C` (diagonal compliance block of the system matrix: ∂h/∂λ)
     C_values[C_n_offset + tid] = (
-        dphi_dlambda_n + 1e-8
+        dphi_dlambda_n + 1e-5
     )  # Add a small constant for numerical stability
 
     # 4. Update `J` (constraint Jacobian block of the system matrix: ∂h/∂u)

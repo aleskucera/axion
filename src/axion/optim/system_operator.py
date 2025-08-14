@@ -16,8 +16,45 @@ Residual (CR) or Conjugate Gradient (CG), allowing the system to be solved
 without ever forming the potentially very large and dense matrix A explicitly.
 """
 import warp as wp
-from axion.utils.constraints import get_constraint_body_index
-from warp.optim.linear import LinearOperator
+
+
+@wp.func
+def get_constraint_body_index(
+    joint_parent: wp.array(dtype=wp.int32),
+    joint_child: wp.array(dtype=wp.int32),
+    contact_body_a: wp.array(dtype=wp.int32),
+    contact_body_b: wp.array(dtype=wp.int32),
+    J_j_offset: int,
+    J_n_offset: int,
+    J_f_offset: int,
+    constraint_idx: int,
+):
+    """
+    Determines the two body indices (body_a, body_b) involved in a given constraint.
+
+    This function checks which block the constraint_idx falls into (joint, normal contact,
+    or frictional contact) and returns the corresponding parent/child or body_a/body_b indices.
+    """
+    body_a = -1
+    body_b = -1
+    # Check if a JOINT constraint
+    if constraint_idx < J_n_offset:
+        joint_index = (constraint_idx - J_j_offset) // 5
+        body_a = joint_parent[joint_index]
+        body_b = joint_child[joint_index]
+    # Check if a NORMAL contact constraint
+    elif constraint_idx < J_f_offset:
+        contact_index = constraint_idx - J_n_offset
+        body_a = contact_body_a[contact_index]
+        body_b = contact_body_b[contact_index]
+    # Otherwise, it's a FRICTIONAL contact constraint
+    else:
+        # Each contact has 2 friction constraints
+        contact_index = (constraint_idx - J_f_offset) // 2
+        body_a = contact_body_a[contact_index]
+        body_b = contact_body_b[contact_index]
+
+    return body_a, body_b
 
 
 @wp.kernel
@@ -65,64 +102,11 @@ def kernel_J_transpose_matvec(
 
     # Scatter the product Jᵢᵀ * xᵢ into the appropriate body locations
     if body_a >= 0:
-        for i in range(wp.static(6)):
-            st_i = wp.static(i)
-            wp.atomic_add(out_vec, body_a * 6 + st_i, J_ia[st_i] * x_i)
+        for i in range(6):
+            wp.atomic_add(out_vec, body_a * 6 + i, J_ia[i] * x_i)
     if body_b >= 0:
-        for i in range(wp.static(6)):
-            st_i = wp.static(i)
-            wp.atomic_add(out_vec, body_b * 6 + st_i, J_ib[st_i] * x_i)
-
-
-# @wp.kernel
-# def kernel_J_transpose_matvec(
-#     # Constraint layout information
-#     joint_parent: wp.array(dtype=wp.int32),
-#     joint_child: wp.array(dtype=wp.int32),
-#     contact_body_a: wp.array(dtype=wp.int32),
-#     contact_body_b: wp.array(dtype=wp.int32),
-#     J_j_offset: int,
-#     J_n_offset: int,
-#     J_f_offset: int,
-#     # Jacobian and vector data
-#     J_values: wp.array(dtype=wp.spatial_vector, ndim=2),
-#     vec_x: wp.array(dtype=wp.float32),
-#     # Output array
-#     out_vec: wp.array(dtype=wp.float32),
-# ):
-#     constraint_idx = wp.tid()
-#
-#     # Get body indices and data
-#     body_a, body_b = get_constraint_body_index(
-#         joint_parent,
-#         joint_child,
-#         contact_body_a,
-#         contact_body_b,
-#         J_j_offset,
-#         J_n_offset,
-#         J_f_offset,
-#         constraint_idx,
-#     )
-#     J_ia = J_values[constraint_idx, 0]
-#     J_ib = J_values[constraint_idx, 1]
-#     x_i = vec_x[constraint_idx]
-#
-#     # Compute branchless multipliers
-#     multiplier_a = wp.where(body_a >= 0, 1.0, 0.0)
-#     multiplier_b = wp.where(body_b >= 0, 1.0, 0.0)
-#
-#     # Scatter contributions without branching
-#     for i in range(wp.static(6)):
-#         st_i = wp.static(i)
-#
-#         # For body_a
-#         # TODO: Trash
-#         index_a = wp.where(body_a >= 0, body_a * 6 + st_i, st_i)
-#         wp.atomic_add(out_vec, index_a, J_ia[st_i] * x_i * multiplier_a)
-#
-#         # For body_b
-#         index_b = wp.where(body_b >= 0, body_b * 6 + st_i, st_i)
-#         wp.atomic_add(out_vec, index_b, J_ib[st_i] * x_i * multiplier_b)
+        for i in range(6):
+            wp.atomic_add(out_vec, body_b * 6 + i, J_ib[i] * x_i)
 
 
 @wp.kernel
@@ -236,88 +220,8 @@ def kernel_J_matvec(
     out_vec[constraint_idx] = result
 
 
-# @wp.kernel
-# def kernel_J_matvec(
-#     # Constraint layout information
-#     joint_parent: wp.array(dtype=wp.int32),
-#     joint_child: wp.array(dtype=wp.int32),
-#     contact_body_a: wp.array(dtype=wp.int32),
-#     contact_body_b: wp.array(dtype=wp.int32),
-#     J_j_offset: int,
-#     J_n_offset: int,
-#     J_f_offset: int,
-#     # Jacobian and vector data
-#     J_values: wp.array(dtype=wp.spatial_vector, ndim=2),
-#     in_vec: wp.array(dtype=wp.float32),
-#     # Output array
-#     out_vec: wp.array(dtype=wp.float32),
-# ):
-#     """
-#     Computes the matrix-vector product: out_vec = J @ in_vec.
-#
-#     This kernel iterates over each constraint and gathers values from the
-#     dynamics-space vector (in_vec) to produce the constraint-space vector (out_vec).
-#
-#     Args:
-#         in_vec: A vector in dynamics space (e.g., M⁻¹ @ Jᵀ @ x).
-#         out_vec: The resulting vector in constraint space.
-#     """
-#     constraint_idx = wp.tid()
-#
-#     body_a, body_b = get_constraint_body_index(
-#         joint_parent,
-#         joint_child,
-#         contact_body_a,
-#         contact_body_b,
-#         J_j_offset,
-#         J_n_offset,
-#         J_f_offset,
-#         constraint_idx,
-#     )
-#
-#     J_ia = J_values[constraint_idx, 0]
-#     J_ib = J_values[constraint_idx, 1]
-#
-#     # Compute masks and base indices for body_a
-#     mask_a = wp.where(body_a >= 0, 1.0, 0.0)
-#     base_a = wp.where(body_a >= 0, body_a * 6, 0)
-#
-#     # Construct vel_a with masking
-#     vel_a_linear = wp.vec3(
-#         in_vec[base_a + 0] * mask_a,
-#         in_vec[base_a + 1] * mask_a,
-#         in_vec[base_a + 2] * mask_a,
-#     )
-#     vel_a_angular = wp.vec3(
-#         in_vec[base_a + 3] * mask_a,
-#         in_vec[base_a + 4] * mask_a,
-#         in_vec[base_a + 5] * mask_a,
-#     )
-#     vel_a = wp.spatial_vector(vel_a_linear, vel_a_angular)
-#
-#     # Compute masks and base indices for body_b
-#     mask_b = wp.where(body_b >= 0, 1.0, 0.0)
-#     base_b = wp.where(body_b >= 0, body_b * 6, 0)
-#
-#     # Construct vel_b with masking
-#     vel_b_linear = wp.vec3(
-#         in_vec[base_b + 0] * mask_b,
-#         in_vec[base_b + 1] * mask_b,
-#         in_vec[base_b + 2] * mask_b,
-#     )
-#     vel_b_angular = wp.vec3(
-#         in_vec[base_b + 3] * mask_b,
-#         in_vec[base_b + 4] * mask_b,
-#         in_vec[base_b + 5] * mask_b,
-#     )
-#     vel_b = wp.spatial_vector(vel_b_linear, vel_b_angular)
-#
-#     # Compute the result
-#     result = wp.dot(J_ia, vel_a) + wp.dot(J_ib, vel_b)
-#
-#     out_vec[constraint_idx] = result
-
-
+# --- KERNEL FIX ---
+# This is the kernel that needed to be changed.
 @wp.kernel
 def kernel_finalize_matvec(
     J_M_inv_Jt_x: wp.array(dtype=wp.float32),
@@ -352,13 +256,13 @@ def kernel_finalize_matvec(
         out_vec_z[i] = beta * vec_y[i] + alpha * a_times_x
 
 
-class SystemOperator(LinearOperator):
+class SystemOperator:
     """
     A matrix-free linear operator for the system A = J M⁻¹ Jᵀ + C.
 
     This class provides a .matvec() method that computes the matrix-vector
     product A @ x without explicitly constructing the matrix A. It is intended
-    to be used with iterative linear solvers like `cr_solver`.
+    to be used with iterative linear solvers like `cr_solver_graph_compatible`.
     """
 
     def __init__(self, engine):
@@ -370,12 +274,7 @@ class SystemOperator(LinearOperator):
                     that holds all the necessary system data (Jacobians,
                     masses, constraint info, etc.).
         """
-        super().__init__(
-            shape=(engine.con_dim, engine.con_dim),
-            dtype=engine._lambda.dtype,
-            device=engine.device,
-            matvec=None,  # Will be set later
-        )
+        super().__init__()
         self.engine = engine
 
         # Pre-allocate temporary buffers for intermediate calculations.
@@ -386,6 +285,13 @@ class SystemOperator(LinearOperator):
             engine.con_dim, dtype=wp.float32, device=engine.device
         )
 
+        # Properties required by Warp's linear solver interface
+        self.dtype = engine._lambda.dtype
+        self.device = engine.device
+        self.shape = (engine.con_dim, engine.con_dim)
+
+    # --- MATVEC FIX ---
+    # This is the method that needed to be changed.
     def matvec(self, x, y, z, alpha, beta):
         """
         Computes the matrix-vector product: z = beta * y + alpha * (A @ x).

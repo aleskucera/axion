@@ -60,7 +60,7 @@ def cr_solver(
     b: wp.array,
     x: wp.array,
     iters: int,
-    preconditioner: LinearOperator,
+    preconditioner: Optional[LinearOperator] = None,
     logger: Optional[HDF5Logger] = None,
 ) -> Optional[float]:
     """
@@ -89,8 +89,11 @@ def cr_solver(
     # Notations below follow the Conjugate Residual method pseudo-code.
     # z := M^-1 r
     # y := M^-1 Ap
-    z = wp.zeros_like(r)
-    preconditioner.matvec(r, z, z, alpha=1.0, beta=0.0)
+    if preconditioner is None:
+        z = wp.clone(r)
+    else:
+        z = wp.zeros_like(r)
+        preconditioner.matvec(r, z, z, alpha=1.0, beta=0.0)
 
     Az = wp.zeros_like(b)
     A.matvec(z, Az, Az, alpha=1.0, beta=0.0)
@@ -98,7 +101,10 @@ def cr_solver(
     p = wp.clone(z)
     Ap = wp.clone(Az)
 
-    y = wp.zeros_like(Ap)
+    if preconditioner is None:
+        y = Ap
+    else:
+        y = wp.zeros_like(Ap)
 
     # Scalar values stored in single-element arrays
     zAz_old = wp.empty(n=1, dtype=scalar_dtype, device=device)
@@ -113,7 +119,10 @@ def cr_solver(
         # The value from the previous iteration becomes the "old" value for this one.
         wp.copy(dest=zAz_old, src=zAz_new)
 
-        preconditioner.matvec(Ap, y, y, alpha=1.0, beta=0.0)
+        if preconditioner is not None:
+            preconditioner.matvec(Ap, y, y, alpha=1.0, beta=0.0)
+        else:
+            wp.copy(dest=y, src=Ap)
 
         # dot(y, Ap) is the denominator for alpha
         array_inner(y, Ap, out=y_Ap)

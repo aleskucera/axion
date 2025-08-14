@@ -12,6 +12,7 @@ dependencies = [
     "matplotlib>=3.10.3",
     "nvtx>=0.2.12",
     "pytest>=8.4.0",
+    "scipy>=1.16.1",
     "taichi>=1.7.3",
     "torch>=2.7.1",
     "tqdm>=4.67.1",
