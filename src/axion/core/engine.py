@@ -383,7 +383,7 @@ class AxionEngine(Integrator, LoggingMixin, NewtonSolverMixin, ScipySolverMixin)
         )
         wp.launch(
             kernel=joint_constraint_kernel,
-            dim=self.N_j,
+            dim=(5, self.N_j),
             inputs=[
                 self._body_q,
                 self._body_qd,

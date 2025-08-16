@@ -1,15 +1,3 @@
-"""
-Defines the core NVIDIA Warp kernel for processing frictional contact constraints.
-
-This module works in tandem with the normal contact constraint to simulate
-Coulomb friction. Its primary role is to compute the residuals and Jacobians
-for tangential forces that oppose relative motion at a contact point.
-
-The implementation uses a velocity-based formulation derived from the
-complementarity condition of the friction cone (`|λ_f| <= µ * λ_n`). It calculates
-the necessary outputs for the main Non-Smooth Newton (NSN) solver to find the
-corrective friction impulses.
-"""
 import time
 
 import numpy as np
@@ -42,26 +30,26 @@ def frictional_constraint_kernel(
     J_f_values: wp.array(dtype=wp.spatial_vector, ndim=2),
     C_f_values: wp.array(dtype=wp.float32),
 ):
-    tid = wp.tid()
-    mu = contact_friction_coeff[tid]
-    lambda_n = lambda_n_prev[tid]
+    contact_idx = wp.tid()
+    mu = contact_friction_coeff[contact_idx]
+    lambda_n = lambda_n_prev[contact_idx]
 
     # Early exit for inactive contacts
-    if contact_gap[tid] >= 0.0 or lambda_n * mu <= 1e-2:
-        h_f[2 * tid] = lambda_f[2 * tid]
-        h_f[2 * tid + 1] = lambda_f[2 * tid + 1]
+    if contact_gap[contact_idx] >= 0.0 or lambda_n * mu <= 1e-2:
+        h_f[2 * contact_idx] = lambda_f[2 * contact_idx]
+        h_f[2 * contact_idx + 1] = lambda_f[2 * contact_idx + 1]
 
-        C_f_values[2 * tid] = 1.0
-        C_f_values[2 * tid + 1] = 1.0
+        C_f_values[2 * contact_idx] = 1.0
+        C_f_values[2 * contact_idx + 1] = 1.0
 
-        J_f_values[2 * tid, 0] = wp.spatial_vector()
-        J_f_values[2 * tid, 1] = wp.spatial_vector()
-        J_f_values[2 * tid + 1, 0] = wp.spatial_vector()
-        J_f_values[2 * tid + 1, 1] = wp.spatial_vector()
+        J_f_values[2 * contact_idx, 0] = wp.spatial_vector()
+        J_f_values[2 * contact_idx, 1] = wp.spatial_vector()
+        J_f_values[2 * contact_idx + 1, 0] = wp.spatial_vector()
+        J_f_values[2 * contact_idx + 1, 1] = wp.spatial_vector()
         return
 
-    body_a = contact_body_a[tid]
-    body_b = contact_body_b[tid]
+    body_a = contact_body_a[contact_idx]
+    body_b = contact_body_b[contact_idx]
 
     # Safely get body velocities (handles fixed bodies with index -1)
     body_qd_a = wp.spatial_vector()
@@ -73,10 +61,10 @@ def frictional_constraint_kernel(
         body_qd_b = body_qd[body_b]
 
     # Tangent vectors are at index 1 and 2
-    grad_c_t1_a = J_contact_a[tid, 1]
-    grad_c_t2_a = J_contact_a[tid, 2]
-    grad_c_t1_b = J_contact_b[tid, 1]
-    grad_c_t2_b = J_contact_b[tid, 2]
+    grad_c_t1_a = J_contact_a[contact_idx, 1]
+    grad_c_t2_a = J_contact_a[contact_idx, 2]
+    grad_c_t1_b = J_contact_b[contact_idx, 1]
+    grad_c_t2_b = J_contact_b[contact_idx, 2]
 
     # Relative tangential velocity at the contact point
     v_t1_rel = wp.dot(grad_c_t1_a, body_qd_a) + wp.dot(grad_c_t1_b, body_qd_b)
@@ -85,8 +73,8 @@ def frictional_constraint_kernel(
     v_rel_norm = wp.length(v_rel)
 
     # Current friction impulse from the global impulse vector
-    lambda_f_t1 = lambda_f[2 * tid]
-    lambda_f_t2 = lambda_f[2 * tid + 1]
+    lambda_f_t1 = lambda_f[2 * contact_idx]
+    lambda_f_t2 = lambda_f[2 * contact_idx + 1]
     lambda_f_norm = wp.length(wp.vec2(lambda_f_t1, lambda_f_t2))
 
     # REGULARIZATION: Use the normal impulse from the previous Newton iteration
@@ -95,7 +83,7 @@ def frictional_constraint_kernel(
     # lambda_n = wp.max(
     #     _lambda_prev[lambda_n_offset + tid], 100.0
     # )  # TODO: Resolve this problem
-    friction_cone_limit = mu * lambda_n_prev[tid]
+    friction_cone_limit = mu * lambda_n_prev[contact_idx]
 
     # Use a non-linear complementarity function to relate slip speed and friction force
     phi_f, _, _ = scaled_fisher_burmeister(
@@ -116,22 +104,22 @@ def frictional_constraint_kernel(
         g[body_b] += -grad_c_t1_b * lambda_f_t1 - grad_c_t2_b * lambda_f_t2
 
     # 2. Update `h` (constraint violation residual)
-    h_f[2 * tid] = v_t1_rel + w * lambda_f_t1
-    h_f[2 * tid + 1] = v_t2_rel + w * lambda_f_t2
+    h_f[2 * contact_idx] = v_t1_rel + w * lambda_f_t1
+    h_f[2 * contact_idx + 1] = v_t2_rel + w * lambda_f_t2
 
     # 3. Update `C` (diagonal compliance block of the system matrix)
     # This `w` value forms the coupling between the two tangential directions.
-    C_f_values[2 * tid] = w + 1e-5
-    C_f_values[2 * tid + 1] = w + 1e-5
+    C_f_values[2 * contact_idx] = w + 1e-5
+    C_f_values[2 * contact_idx + 1] = w + 1e-5
 
     # 4. Update `J` (constraint Jacobian block of the system matrix)
     if body_a >= 0:
-        J_f_values[2 * tid, 0] = grad_c_t1_a
-        J_f_values[2 * tid + 1, 0] = grad_c_t2_a
+        J_f_values[2 * contact_idx, 0] = grad_c_t1_a
+        J_f_values[2 * contact_idx + 1, 0] = grad_c_t2_a
 
     if body_b >= 0:
-        J_f_values[2 * tid, 1] = grad_c_t1_b
-        J_f_values[2 * tid + 1, 1] = grad_c_t2_b
+        J_f_values[2 * contact_idx, 1] = grad_c_t1_b
+        J_f_values[2 * contact_idx + 1, 1] = grad_c_t2_b
 
 
 @wp.kernel
@@ -271,8 +259,6 @@ def setup_data(
         body_a_indices[fixed_indices[chooser == 0]] = -1
         body_b_indices[fixed_indices[chooser == 1]] = -1
 
-    con_dim = N_c * 3  # Assuming 1 normal + 2 friction constraints per contact
-
     data = {
         "body_qd": wp.from_numpy(
             (np.random.rand(N_b, 6) - 0.5).astype(np.float32),
@@ -295,25 +281,18 @@ def setup_data(
         "contact_friction_coeff": wp.from_numpy(
             np.random.rand(N_c).astype(np.float32), device=device
         ),
-        "_lambda": wp.from_numpy(
-            (np.random.rand(con_dim) * 10.0).astype(np.float32), device=device
+        "lambda_f": wp.from_numpy(
+            (np.random.rand(2 * N_c) * 10.0).astype(np.float32), device=device
         ),
-        "_lambda_prev": wp.from_numpy(
-            (np.random.rand(con_dim) * 10.0).astype(np.float32), device=device
+        "lambda_n_prev": wp.from_numpy(
+            (np.random.rand(N_c) * 10.0).astype(np.float32), device=device
         ),
-        "params": {
-            "lambda_n_offset": 0,
-            "lambda_f_offset": N_c,
-            "fb_alpha": 0.25,
-            "fb_beta": 0.25,
-            "h_f_offset": N_c,
-            "J_f_offset": N_c,
-            "C_f_offset": N_c,
-        },
-        "g": wp.zeros(N_b * 6, dtype=wp.float32, device=device),
-        "h": wp.zeros(con_dim, dtype=wp.float32, device=device),
-        "J_values": wp.zeros((con_dim, 2), dtype=wp.spatial_vector, device=device),
-        "C_values": wp.zeros(con_dim, dtype=wp.float32, device=device),
+        "fb_alpha": 0.25,
+        "fb_beta": 0.25,
+        "g": wp.zeros(N_b, dtype=wp.spatial_vector, device=device),
+        "h_f": wp.zeros(2 * N_c, dtype=wp.float32, device=device),
+        "J_f_values": wp.zeros((2 * N_c, 2), dtype=wp.spatial_vector, device=device),
+        "C_f_values": wp.zeros(2 * N_c, dtype=wp.float32, device=device),
     }
     return data
 
@@ -334,7 +313,6 @@ def run_benchmark(
         num_bodies, num_contacts, device, inactive_contact_ratio, fixed_body_ratio
     )
 
-    params = data["params"]
     kernel_args = [
         data["body_qd"],
         data["contact_gap"],
@@ -343,19 +321,14 @@ def run_benchmark(
         data["contact_body_a"],
         data["contact_body_b"],
         data["contact_friction_coeff"],
-        params["lambda_n_offset"],
-        params["lambda_f_offset"],
-        data["_lambda"],
-        data["_lambda_prev"],
-        params["fb_alpha"],
-        params["fb_beta"],
-        params["h_f_offset"],
-        params["J_f_offset"],
-        params["C_f_offset"],
+        data["lambda_f"],
+        data["lambda_n_prev"],
+        data["fb_alpha"],
+        data["fb_beta"],
         data["g"],
-        data["h"],
-        data["J_values"],
-        data["C_values"],
+        data["h_f"],
+        data["J_f_values"],
+        data["C_f_values"],
     ]
 
     print("1. Benching Standard Kernel Launch...")
