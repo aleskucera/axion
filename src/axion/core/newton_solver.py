@@ -347,5 +347,5 @@ class NewtonSolverMixin:
             self.solve_linear_system()
 
             # Add the changes to the state variables.
-            # add_inplace(self._body_qd, self._delta_body_qd, 0, 0, self.N_b)
-            # add_inplace(self._lambda, self._delta_lambda, 0, 0, self.con_dim)
+            add_inplace(self._body_qd, self._delta_body_qd, 0, 0, self.N_b)
+            add_inplace(self._lambda, self._delta_lambda, 0, 0, self.con_dim)
