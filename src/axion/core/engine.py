@@ -504,7 +504,7 @@ class AxionEngine(Integrator, LoggingMixin, NewtonSolverMixin, ScipySolverMixin)
         control: Control | None = None,
         solver: Literal["newton", "scipy"] = "newton",
     ):
-        apply_control(model, state_in, state_out, dt)
+        apply_control(model, state_in, state_out, dt, control)
         self.integrate_bodies(model, state_in, state_out, dt)
         self.update_state_variables(model, state_in, state_out, dt)
 

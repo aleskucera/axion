@@ -150,7 +150,7 @@ def joint_constraint_kernel(
         - J_rot_v_c * lambda_j_v
     )
 
-    g[parent_idx] = (
+    g[parent_idx] += (
         -J_pos_x_p * lambda_j_x
         - J_pos_y_p * lambda_j_y
         - J_pos_z_p * lambda_j_z
