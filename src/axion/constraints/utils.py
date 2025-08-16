@@ -220,6 +220,44 @@ def scaled_fisher_burmeister(
     return value, dvalue_da, dvalue_db
 
 
+@wp.kernel
+def update_constraint_body_idx_kernel(
+    contact_body_a: wp.array(dtype=wp.int32),
+    contact_body_b: wp.array(dtype=wp.int32),
+    joint_parent: wp.array(dtype=wp.int32),
+    joint_child: wp.array(dtype=wp.int32),
+    # --- Parameters ---
+    joint_count: wp.uint32,
+    max_contact_count: wp.uint32,
+    # --- Outputs ---
+    constraint_body_idx: wp.array(dtype=wp.int32, ndim=2),
+):
+    constraint_idx = wp.tid()
+    nj = wp.int32(joint_count)
+    nc = wp.int32(max_contact_count)
+
+    body_a = -1
+    body_b = -1
+
+    if constraint_idx < 5 * nj:
+        joint_index = constraint_idx // 5
+        body_a = joint_parent[joint_index]
+        body_b = joint_child[joint_index]
+    elif constraint_idx < 5 * nj + nc:
+        offset = 5 * nj
+        contact_index = (constraint_idx - offset) // 1
+        body_a = contact_body_a[contact_index]
+        body_b = contact_body_b[contact_index]
+    else:
+        offset = 5 * nj + nc
+        contact_index = (constraint_idx - offset) // 2
+        body_a = contact_body_a[contact_index]
+        body_b = contact_body_b[contact_index]
+
+    constraint_body_idx[constraint_idx, 0] = body_a
+    constraint_body_idx[constraint_idx, 1] = body_b
+
+
 @wp.func
 def get_random_idx_to_res_buffer(state: wp.int32):
     low = wp.static(wp.uint32(MAX_BODIES * 6))

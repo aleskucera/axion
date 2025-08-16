@@ -7,6 +7,7 @@ from axion.constraints import contact_kinematics_kernel
 from axion.constraints import frictional_constraint_kernel
 from axion.constraints import joint_constraint_kernel
 from axion.constraints import unconstrained_dynamics_kernel
+from axion.constraints import update_constraint_body_idx_kernel
 from axion.optim import JacobiPreconditioner
 from axion.optim import MatrixFreeSystemOperator
 from axion.optim import MatrixSystemOperator
@@ -23,44 +24,6 @@ from .newton_solver import NewtonSolverMixin
 from .newton_solver import RES_BUFFER_DIM
 from .scipy_solver import ScipySolverMixin
 from .utils import update_system_rhs_kernel
-
-
-@wp.kernel
-def update_constraint_body_idx_kernel(
-    contact_body_a: wp.array(dtype=wp.int32),
-    contact_body_b: wp.array(dtype=wp.int32),
-    joint_parent: wp.array(dtype=wp.int32),
-    joint_child: wp.array(dtype=wp.int32),
-    # --- Parameters ---
-    joint_count: wp.uint32,
-    max_contact_count: wp.uint32,
-    # --- Outputs ---
-    constraint_body_idx: wp.array(dtype=wp.int32, ndim=2),
-):
-    constraint_idx = wp.tid()
-    nj = wp.int32(joint_count)
-    nc = wp.int32(max_contact_count)
-
-    body_a = -1
-    body_b = -1
-
-    if constraint_idx < 5 * nj:
-        joint_index = constraint_idx // 5
-        body_a = joint_parent[joint_index]
-        body_b = joint_child[joint_index]
-    elif constraint_idx < 5 * nj + nc:
-        offset = 5 * nj
-        contact_index = (constraint_idx - offset) // 1
-        body_a = contact_body_a[contact_index]
-        body_b = contact_body_b[contact_index]
-    else:
-        offset = 5 * nj + nc
-        contact_index = (constraint_idx - offset) // 2
-        body_a = contact_body_a[contact_index]
-        body_b = contact_body_b[contact_index]
-
-    constraint_body_idx[constraint_idx, 0] = body_a
-    constraint_body_idx[constraint_idx, 1] = body_b
 
 
 class AxionEngine(Integrator, LoggingMixin, NewtonSolverMixin, ScipySolverMixin):

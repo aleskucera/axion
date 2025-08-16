@@ -67,7 +67,7 @@ def compute_delta_body_qd_kernel(
     if body_idx >= body_inv_mass.shape[0]:
         return
 
-    top = body_inv_inertia[body_idx] * (
+    top = body_inv_inertia[body_idx] @ (
         wp.spatial_top(JT_delta_lambda[body_idx]) - wp.spatial_top(g[body_idx])
     )
     bot = body_inv_mass[body_idx] * (
