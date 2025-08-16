@@ -15,7 +15,6 @@ res_buffer_vec = wp.types.vector(length=RES_BUFFER_DIM, dtype=wp.float32)
 res_norm_sq_vec = wp.types.vector(length=ALPHA_DIM, dtype=wp.float32)
 
 
-# TODO: Change JT_delta_lambda to wp.spatial_vector array
 @wp.kernel
 def compute_JT_delta_lambda_kernel(
     # Constraint layout information
@@ -30,7 +29,7 @@ def compute_JT_delta_lambda_kernel(
     J_values: wp.array(dtype=wp.spatial_vector, ndim=2),
     delta_lambda: wp.array(dtype=wp.float32),
     # Output array
-    JT_delta_lambda: wp.array(dtype=wp.float32),
+    JT_delta_lambda: wp.array(dtype=wp.spatial_vector),
 ):
     constraint_idx = wp.tid()
 
@@ -49,50 +48,32 @@ def compute_JT_delta_lambda_kernel(
     dl = delta_lambda[constraint_idx]
 
     if body_a >= 0:
-        for i in range(wp.static(6)):
-            st_i = wp.static(i)
-            wp.atomic_add(JT_delta_lambda, body_a * 6 + st_i, J_ia[st_i] * dl)
+        wp.atomic_add(JT_delta_lambda, body_a, dl * J_ia)
 
     if body_b >= 0:
-        for i in range(wp.static(6)):
-            st_i = wp.static(i)
-            wp.atomic_add(JT_delta_lambda, body_b * 6 + st_i, J_ib[st_i] * dl)
+        wp.atomic_add(JT_delta_lambda, body_b, dl * J_ib)
 
 
 @wp.kernel
 def compute_delta_body_qd_kernel(
     body_inv_mass: wp.array(dtype=wp.float32),
     body_inv_inertia: wp.array(dtype=wp.mat33),
-    JT_delta_lambda: wp.array(dtype=wp.float32),
-    g: wp.array(dtype=wp.float32),
-    delta_body_qd: wp.array(dtype=wp.float32),
+    JT_delta_lambda: wp.array(dtype=wp.spatial_vector),
+    g: wp.array(dtype=wp.spatial_vector),
+    delta_body_qd: wp.array(dtype=wp.spatial_vector),
 ):
-    tid = wp.tid()  # Over all bodies * 6
-    body_idx = tid // 6
-    body_dim = tid % 6
+    body_idx = wp.tid()  # Over all bodies * 6
 
     if body_idx >= body_inv_mass.shape[0]:
         return
 
-    if body_dim < 3:  # Angular velocity
-        # Construct the 3D vector for the angular part of (J^T * delta_lambda - g)
-        tmp_ang_x = JT_delta_lambda[body_idx * 6 + 0] - g[body_idx * 6 + 0]
-        tmp_ang_y = JT_delta_lambda[body_idx * 6 + 1] - g[body_idx * 6 + 1]
-        tmp_ang_z = JT_delta_lambda[body_idx * 6 + 2] - g[body_idx * 6 + 2]
-
-        # Get the inverse inertia for the current body
-        inertia_inv = body_inv_inertia[body_idx]
-
-        delta_body_qd[tid] = (
-            inertia_inv[body_dim, 0] * tmp_ang_x
-            + inertia_inv[body_dim, 1] * tmp_ang_y
-            + inertia_inv[body_dim, 2] * tmp_ang_z
-        )
-    else:  # Linear velocity
-        tmp_lin_component = JT_delta_lambda[tid] - g[tid]
-
-        mass_inv = body_inv_mass[body_idx]
-        delta_body_qd[tid] = mass_inv * tmp_lin_component
+    top = body_inv_inertia[body_idx] * (
+        wp.spatial_top(JT_delta_lambda[body_idx]) - wp.spatial_top(g[body_idx])
+    )
+    bot = body_inv_mass[body_idx] * (
+        wp.spatial_bottom(JT_delta_lambda[body_idx]) - wp.spatial_bottom(g[body_idx])
+    )
+    delta_body_qd[body_idx] = wp.spatial_vector(top, bot)
 
 
 @wp.kernel
@@ -192,9 +173,9 @@ class NewtonSolverMixin:
                 self.body_inv_mass,
                 self.body_inv_inertia,
                 self._JT_delta_lambda,
-                self._g,
+                self._g_v,
             ],
-            outputs=[self._delta_body_qd],
+            outputs=[self._delta_body_qd_v],
         )
 
     def fill_residual_buffer(self):

@@ -119,6 +119,7 @@ class AxionEngine(Integrator, LoggingMixin, NewtonSolverMixin, ScipySolverMixin)
         with wp.ScopedDevice(self.device):
             # Residual vectors
             self._g = _zeros(self.dyn_dim)
+            self._g_v = wp.array(self._g, shape=self.N_b, dtype=wp.spatial_vector)
             self._h = _zeros(self.con_dim)
 
             # System matrix components
@@ -126,7 +127,7 @@ class AxionEngine(Integrator, LoggingMixin, NewtonSolverMixin, ScipySolverMixin)
             self._C_values = _zeros(self.con_dim)
 
             # Working vectors
-            self._JT_delta_lambda = _zeros(self.dyn_dim)
+            self._JT_delta_lambda = _zeros(self.N_b, wp.spatial_vector)
             self._lambda = _zeros(self.con_dim)
             self._lambda_prev = _zeros(self.con_dim)
             self._delta_body_qd = _zeros(self.dyn_dim)
@@ -276,7 +277,7 @@ class AxionEngine(Integrator, LoggingMixin, NewtonSolverMixin, ScipySolverMixin)
                 self._dt,
                 self.gravity,
             ],
-            outputs=[self._g],
+            outputs=[self._g_v],
             device=self.device,
         )
         wp.launch(
@@ -305,7 +306,7 @@ class AxionEngine(Integrator, LoggingMixin, NewtonSolverMixin, ScipySolverMixin)
                 self.C_n_offset,
             ],
             outputs=[
-                self._g,
+                self._g_v,
                 self._h,
                 self._J_values,
                 self._C_values,
@@ -341,7 +342,7 @@ class AxionEngine(Integrator, LoggingMixin, NewtonSolverMixin, ScipySolverMixin)
                 self.C_j_offset,
             ],
             outputs=[
-                self._g,
+                self._g_v,
                 self._h,
                 self._J_values,
                 self._C_values,
@@ -373,7 +374,7 @@ class AxionEngine(Integrator, LoggingMixin, NewtonSolverMixin, ScipySolverMixin)
                 self.C_f_offset,
             ],
             outputs=[
-                self._g,
+                self._g_v,
                 self._h,
                 self._J_values,
                 self._C_values,
@@ -399,7 +400,7 @@ class AxionEngine(Integrator, LoggingMixin, NewtonSolverMixin, ScipySolverMixin)
                 self.J_n_offset,
                 self.J_f_offset,
                 self._J_values,
-                self._g,
+                self._g_v,
                 self._h,
             ],
             outputs=[self._b],
@@ -428,7 +429,7 @@ class AxionEngine(Integrator, LoggingMixin, NewtonSolverMixin, ScipySolverMixin)
         # self._lambda.zero_()
 
         if solver == "newton":
-            self.solve_newton_linesearch()
+            self.solve_newton()
         elif solver == "scipy":
             self.solve_scipy()
         else:

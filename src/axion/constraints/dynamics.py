@@ -64,7 +64,7 @@ def unconstrained_dynamics_kernel(
     dt: wp.float32,
     g_accel: wp.vec3,
     # --- Output ---
-    g: wp.array(dtype=wp.float32),
+    g: wp.array(dtype=wp.spatial_vector),
 ):
     body_idx = wp.tid()
     if body_idx >= body_qd.shape[0]:
@@ -80,9 +80,7 @@ def unconstrained_dynamics_kernel(
         g_accel=g_accel,
     )
 
-    for i in range(wp.static(6)):
-        st_i = wp.static(i)
-        g[body_idx * 6 + st_i] = g_b[st_i]
+    g[body_idx] = g_b
 
 
 @wp.kernel

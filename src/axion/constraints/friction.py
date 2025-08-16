@@ -43,7 +43,7 @@ def frictional_constraint_kernel(
     J_f_offset: wp.int32,
     C_f_offset: wp.int32,
     # --- Outputs (contributions to the linear system) ---
-    g: wp.array(dtype=wp.float32),
+    g: wp.array(dtype=wp.spatial_vector),
     h: wp.array(dtype=wp.float32),
     J_values: wp.array(dtype=wp.spatial_vector, ndim=2),
     C_values: wp.array(dtype=wp.float32),
@@ -118,14 +118,10 @@ def frictional_constraint_kernel(
 
     # 1. Update `g` (momentum balance residual: -J^T * λ)
     if body_a >= 0:
-        g_a = -grad_c_t1_a * lambda_f_t1 - grad_c_t2_a * lambda_f_t2
-        for i in range(wp.static(6)):
-            wp.atomic_add(g, body_a * 6 + i, g_a[i])
+        g[body_a] += -grad_c_t1_a * lambda_f_t1 - grad_c_t2_a * lambda_f_t2
 
     if body_b >= 0:
-        g_b = -grad_c_t1_b * lambda_f_t1 - grad_c_t2_b * lambda_f_t2
-        for i in range(wp.static(6)):
-            wp.atomic_add(g, body_b * 6 + i, g_b[i])
+        g[body_b] += -grad_c_t1_b * lambda_f_t1 - grad_c_t2_b * lambda_f_t2
 
     # 2. Update `h` (constraint violation residual)
     h[h_f_offset + 2 * tid] = v_t1_rel + w * lambda_f_t1

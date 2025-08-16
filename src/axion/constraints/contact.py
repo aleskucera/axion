@@ -97,7 +97,7 @@ def contact_constraint_kernel(
     J_n_offset: wp.int32,
     C_n_offset: wp.int32,
     # --- Outputs (contributions to the linear system) ---
-    g: wp.array(dtype=wp.float32),
+    g: wp.array(dtype=wp.spatial_vector),
     h: wp.array(dtype=wp.float32),
     J_values: wp.array(dtype=wp.spatial_vector, ndim=2),
     C_values: wp.array(dtype=wp.float32),
@@ -165,16 +165,10 @@ def contact_constraint_kernel(
 
     # 1. Update `g` (momentum balance residual)
     if body_a >= 0:
-        g_a = -grad_c_n_a * lambda_n
-        for i in range(wp.static(6)):
-            st_i = wp.static(i)
-            wp.atomic_add(g, body_a * 6 + st_i, g_a[st_i])
+        g[body_a] -= grad_c_n_a * lambda_n
 
     if body_b >= 0:
-        g_b = -grad_c_n_b * lambda_n
-        for i in range(wp.static(6)):
-            st_i = wp.static(i)
-            wp.atomic_add(g, body_b * 6 + st_i, g_b[st_i])
+        g[body_b] -= grad_c_n_b * lambda_n
 
     # 2. Update `h` (constraint violation residual)
     h[h_n_offset + tid] = phi_n

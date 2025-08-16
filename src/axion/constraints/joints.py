@@ -54,7 +54,7 @@ def joint_constraint_kernel(
     J_j_offset: wp.int32,
     C_j_offset: wp.int32,
     # --- Outputs (contributions to the linear system) ---
-    g: wp.array(dtype=wp.float32),
+    g: wp.array(dtype=wp.spatial_vector),
     h: wp.array(dtype=wp.float32),
     J_values: wp.array(dtype=wp.spatial_vector, ndim=2),
     C_values: wp.array(dtype=wp.float32),
@@ -149,25 +149,21 @@ def joint_constraint_kernel(
     lambda_j_u = _lambda[base_lambda_idx + 3]
     lambda_j_v = _lambda[base_lambda_idx + 4]
 
-    g_c = (
+    g[child_idx] += (
         -J_pos_x_c * lambda_j_x
         - J_pos_y_c * lambda_j_y
         - J_pos_z_c * lambda_j_z
         - J_rot_u_c * lambda_j_u
         - J_rot_v_c * lambda_j_v
     )
-    for i in range(wp.static(6)):
-        wp.atomic_add(g, child_idx * 6 + i, g_c[i])
 
-    g_p = (
+    g[parent_idx] = (
         -J_pos_x_p * lambda_j_x
         - J_pos_y_p * lambda_j_y
         - J_pos_z_p * lambda_j_z
         - J_rot_u_p * lambda_j_u
         - J_rot_v_p * lambda_j_v
     )
-    for i in range(wp.static(6)):
-        wp.atomic_add(g, parent_idx * 6 + i, g_p[i])
 
     # 3. Compliance (diagonal block C of the system matrix)
     base_C_idx = C_j_offset + tid * 5
