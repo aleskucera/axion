@@ -25,6 +25,32 @@ import numpy as np
 import warp as wp
 
 
+@wp.func
+def dynamics_equation(
+    u: wp.spatial_vector,
+    u_prev: wp.spatial_vector,
+    f: wp.spatial_vector,
+    m: wp.float32,
+    I: wp.mat33,
+    dt: wp.float32,
+    g_accel: wp.vec3,
+):
+    w = wp.spatial_top(u)
+    v = wp.spatial_bottom(u)
+    w_prev = wp.spatial_top(u_prev)
+    v_prev = wp.spatial_bottom(u_prev)
+    f_ang = wp.spatial_top(f)
+    f_lin = wp.spatial_bottom(f)
+
+    # Angular momentum balance: I * Δω - τ_ext * dt
+    res_ang = I * (w - w_prev) - f_ang * dt
+
+    # Linear momentum balance: m * Δv - f_ext * dt
+    res_lin = m * (v - v_prev) - (f_lin + m * g_accel) * dt
+
+    return wp.spatial_vector(res_ang, res_lin)
+
+
 @wp.kernel
 def unconstrained_dynamics_kernel(
     # --- Body State Inputs ---
@@ -36,61 +62,31 @@ def unconstrained_dynamics_kernel(
     body_inertia: wp.array(dtype=wp.mat33),
     # --- Simulation Parameters ---
     dt: wp.float32,
-    gravity: wp.vec3,
+    g_accel: wp.vec3,
     # --- Output ---
     g: wp.array(dtype=wp.float32),
 ):
-    """
-    Computes the residual of the unconstrained Newton-Euler equations of motion.
-
-    This kernel is launched once per body. It calculates the difference between the
-    required change in momentum (left-hand side) and the applied external impulses
-    (right-hand side) over a timestep. The result is the dynamics residual `g`.
-
-    Args:
-        body_qd: (N_b,) Current spatial velocities of all bodies.
-        body_qd_prev: (N_b,) Spatial velocities from the previous timestep.
-        body_f: (N_b,) Externally applied spatial forces (torques and linear forces).
-        body_mass: (N_b,) Scalar mass of each body.
-        body_inertia: (N_b,) 3x3 inertia tensor for each body in its local frame.
-        dt: The simulation timestep duration.
-        gravity: The global gravity vector.
-
-    Outputs:
-        g: (N_b * 6,) The dynamics residual vector. This kernel writes 6 values per body.
-    """
-    tid = wp.tid()
-    if tid >= body_qd.shape[0]:
+    body_idx = wp.tid()
+    if body_idx >= body_qd.shape[0]:
         return
 
-    # Decompose spatial vectors into angular (top) and linear (bottom) components
-    w = wp.spatial_top(body_qd[tid])
-    v = wp.spatial_bottom(body_qd[tid])
-    w_prev = wp.spatial_top(body_qd_prev[tid])
-    v_prev = wp.spatial_bottom(body_qd_prev[tid])
-    t = wp.spatial_top(body_f[tid])
-    f = wp.spatial_bottom(body_f[tid])
+    g_b = dynamics_equation(
+        u=body_qd[body_idx],
+        u_prev=body_qd_prev[body_idx],
+        f=body_f[body_idx],
+        m=body_mass[body_idx],
+        I=body_inertia[body_idx],
+        dt=dt,
+        g_accel=g_accel,
+    )
 
-    m = body_mass[tid]
-    I = body_inertia[tid]
-
-    # Angular momentum balance: I * Δω - τ_ext * dt
-    res_ang = I * (w - w_prev) - t * dt
-
-    # Linear momentum balance: m * Δv - f_ext * dt
-    # Gravity is treated as an external force f_g = m * g. The impulse is f_g * dt.
-    res_lin = m * (v - v_prev) - f * dt - m * gravity * dt
-
-    # Store the 6 components of the residual vector g for the current body
-    g_b = wp.spatial_vector(res_ang, res_lin)
     for i in range(wp.static(6)):
         st_i = wp.static(i)
-        g[tid * 6 + st_i] = g_b[st_i]
+        g[body_idx * 6 + st_i] = g_b[st_i]
 
 
 @wp.kernel
-def dynamics_residuals(
-    # --- Step sizes ---
+def linesearch_dynamics_residuals_kernel(
     alphas: wp.array(dtype=wp.float32),
     delta_body_qd: wp.array(dtype=wp.spatial_vector),
     # --- Body State Inputs ---
@@ -102,44 +98,27 @@ def dynamics_residuals(
     body_inertia: wp.array(dtype=wp.mat33),
     # --- Simulation Parameters ---
     dt: wp.float32,
-    gravity: wp.vec3,
+    g_accel: wp.vec3,
     # --- Output ---
-    g: wp.array(dtype=wp.float32, ndim=2),
+    res_buffer: wp.array(dtype=wp.float32, ndim=2),
 ):
     alpha_idx, body_idx = wp.tid()
     if body_idx >= body_qd.shape[0]:
         return
-    u = body_qd[body_idx]
-    u_prev = body_qd_prev[body_idx]
 
-    alpha = alphas[alpha_idx]
-    delta_u = delta_body_qd[body_idx]
+    g_b = dynamics_equation(
+        u=body_qd[body_idx] + alphas[alpha_idx] * delta_body_qd[body_idx],
+        u_prev=body_qd_prev[body_idx],
+        f=body_f[body_idx],
+        m=body_mass[body_idx],
+        I=body_inertia[body_idx],
+        dt=dt,
+        g_accel=g_accel,
+    )
 
-    u = u + alpha * delta_u
-
-    # Decompose spatial vectors into angular (top) and linear (bottom) components
-    w = wp.spatial_top(u)
-    v = wp.spatial_bottom(u)
-    w_prev = wp.spatial_top(u_prev)
-    v_prev = wp.spatial_bottom(u_prev)
-    t = wp.spatial_top(body_f[body_idx])
-    f = wp.spatial_bottom(body_f[body_idx])
-
-    m = body_mass[body_idx]
-    I = body_inertia[body_idx]
-
-    # Angular momentum balance: I * Δω - τ_ext * dt
-    res_ang = I * (w - w_prev) - t * dt
-
-    # Linear momentum balance: m * Δv - f_ext * dt
-    # Gravity is treated as an external force f_g = m * g. The impulse is f_g * dt.
-    res_lin = m * (v - v_prev) - f * dt - m * gravity * dt
-
-    # Store the 6 components of the residual vector g for the current body
-    g_b = wp.spatial_vector(res_ang, res_lin)
     for i in range(wp.static(6)):
         st_i = wp.static(i)
-        g[alpha_idx, body_idx * 6 + st_i] = g_b[st_i]
+        res_buffer[alpha_idx, body_idx * 6 + st_i] = g_b[st_i]
 
 
 def setup_data(num_bodies, device):

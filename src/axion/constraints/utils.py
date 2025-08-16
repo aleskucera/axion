@@ -2,6 +2,9 @@ import warp as wp
 from warp.sim import ModelShapeGeometry
 from warp.sim import ModelShapeMaterials
 
+MAX_BODIES = 10
+RES_BUFFER_DIM = MAX_BODIES * 6 + 50
+
 
 @wp.func
 def get_constraint_body_index(
@@ -215,3 +218,11 @@ def scaled_fisher_burmeister(
     dvalue_db = beta * (1.0 - scaled_b / norm)
 
     return value, dvalue_da, dvalue_db
+
+
+@wp.func
+def get_random_idx_to_res_buffer(state: wp.int32):
+    low = wp.static(wp.uint32(MAX_BODIES * 6))
+    high = wp.static(wp.uint32(RES_BUFFER_DIM))
+    idx = wp.randu(wp.uint32(state), low, high)
+    return idx

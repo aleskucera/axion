@@ -148,7 +148,7 @@ def cr_solver(
             inputs=[zAz_old, zAz_new, z, p, Az, Ap],
         )
 
-        if logger:
-            with logger.scope(f"linear_iter_{i:02d}"):
-                logger.log_dataset("x", x.numpy())
-                logger.log_dataset("residual", r.numpy())
+        # if logger:
+        #     with logger.scope(f"linear_iter_{i:02d}"):
+        #         logger.log_dataset("x", x.numpy())
+        #         logger.log_dataset("residual", r.numpy())

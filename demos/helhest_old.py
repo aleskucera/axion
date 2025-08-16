@@ -2,7 +2,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import warp as wp
 import warp.sim.render
-from axion import NSNEngine
+from axion import AxionEngine
 from tqdm import tqdm
 from warp.sim import Mesh
 
@@ -16,21 +16,21 @@ from warp.sim import Mesh
 RENDER = True
 USD_FILE = "helhest.usd"
 
-FRICTION = 1.0
-RESTITUTION = 0.0
+FRICTION = 0.8
+RESTITUTION = 0.1
 
 #######################################
 ### PROFILING CONFIGURATION (MARKO) ###
 #######################################
 # Master switch for all profiling. If False, timers are inactive and have no overhead.
-DEBUG = True
+DEBUG = False
 
 # --- ScopedTimer Options ---
 
 # synchronize=True: Waits for all GPU work to finish before stopping the timer.
 # This gives you the total wall-clock time (CPU + GPU).
 # If False, it only measures the time to *launch* the work on the CPU, which is often misleadingly short.
-PROFILE_SYNC = True
+PROFILE_SYNC = False
 
 # use_nvtx=True: Emits NVTX ranges for visualization in NVIDIA Nsight Systems.
 # Helps correlate CPU launch times with actual GPU execution on a timeline.
@@ -110,36 +110,36 @@ def ball_world_model(gravity: bool = True) -> wp.sim.Model:
         thickness=0.0,
     )
 
-    builder.add_joint_revolute(
-        parent=obstacle1,
-        child=left_wheel,
-        parent_xform=wp.transform((1.5, -1.5, 0.0), wp.quat_identity()),
-        child_xform=wp.transform((0.0, 0.0, 0.0), wp.quat_identity()),
-        axis=wp.vec3(0.0, 1.0, 0.0),
-        linear_compliance=0.0,
-        angular_compliance=0.0,
-        mode=wp.sim.JOINT_MODE_TARGET_VELOCITY,
-    )
-    builder.add_joint_revolute(
-        parent=obstacle1,
-        child=right_wheel,
-        parent_xform=wp.transform((1.5, 1.5, 0.0), wp.quat_identity()),
-        child_xform=wp.transform((0.0, 0.0, 0.0), wp.quat_identity()),
-        axis=wp.vec3(0.0, 1.0, 0.0),
-        linear_compliance=0.0,
-        angular_compliance=0.0,
-        mode=wp.sim.JOINT_MODE_TARGET_VELOCITY,
-    )
-    builder.add_joint_revolute(
-        parent=obstacle1,
-        child=back_wheel,
-        parent_xform=wp.transform((-2.5, 0.0, 0.0), wp.quat_identity()),
-        child_xform=wp.transform((0.0, 0.0, 0.0), wp.quat_identity()),
-        axis=wp.vec3(0.0, 1.0, 0.0),
-        linear_compliance=0.0,
-        angular_compliance=0.0,
-        mode=wp.sim.JOINT_MODE_FORCE,
-    )
+    # builder.add_joint_revolute(
+    #     parent=obstacle1,
+    #     child=left_wheel,
+    #     parent_xform=wp.transform((1.5, -1.5, 0.0), wp.quat_identity()),
+    #     child_xform=wp.transform((0.0, 0.0, 0.0), wp.quat_identity()),
+    #     axis=wp.vec3(0.0, 1.0, 0.0),
+    #     linear_compliance=0.0,
+    #     angular_compliance=0.0,
+    #     mode=wp.sim.JOINT_MODE_TARGET_VELOCITY,
+    # )
+    # builder.add_joint_revolute(
+    #     parent=obstacle1,
+    #     child=right_wheel,
+    #     parent_xform=wp.transform((1.5, 1.5, 0.0), wp.quat_identity()),
+    #     child_xform=wp.transform((0.0, 0.0, 0.0), wp.quat_identity()),
+    #     axis=wp.vec3(0.0, 1.0, 0.0),
+    #     linear_compliance=0.0,
+    #     angular_compliance=0.0,
+    #     mode=wp.sim.JOINT_MODE_TARGET_VELOCITY,
+    # )
+    # builder.add_joint_revolute(
+    #     parent=obstacle1,
+    #     child=back_wheel,
+    #     parent_xform=wp.transform((-2.5, 0.0, 0.0), wp.quat_identity()),
+    #     child_xform=wp.transform((0.0, 0.0, 0.0), wp.quat_identity()),
+    #     axis=wp.vec3(0.0, 1.0, 0.0),
+    #     linear_compliance=0.0,
+    #     angular_compliance=0.0,
+    #     mode=wp.sim.JOINT_MODE_FORCE,
+    # )
 
     obstacle1 = builder.add_body(
         origin=wp.transform((0.0, 0.0, 1.2), wp.quat_identity()), name="box1"
@@ -166,9 +166,9 @@ class BallBounceSim:
     def __init__(self):
 
         # Simulation and rendering parameters
-        self.fps = 20
-        self.num_frames = 60
-        self.sim_substeps = 15
+        self.fps = 30
+        self.num_frames = 120
+        self.sim_substeps = 10
         self.frame_dt = 1.0 / self.fps
         self.sim_dt = self.frame_dt / self.sim_substeps
         self.sim_duration = self.num_frames * self.frame_dt
@@ -177,12 +177,7 @@ class BallBounceSim:
         self.model = ball_world_model(gravity=True)
         self.time = np.linspace(0, self.sim_duration, self.sim_steps)
 
-        # self.integrator = wp.sim.SemiImplicitIntegrator()
-        # self.integrator = wp.sim.XPBDIntegrator(
-        #     enable_restitution=True, rigid_contact_relaxation=0.0
-        # )
-
-        self.integrator = NSNEngine(self.model)
+        self.integrator = AxionEngine(self.model)
         self.renderer = wp.sim.render.SimRenderer(self.model, USD_FILE, scaling=100.0)
 
         self.state_0 = self.model.state()
@@ -205,10 +200,10 @@ class BallBounceSim:
             dtype=wp.float32,
         )
 
-        self.use_cuda_graph = wp.get_device().is_cuda and False
+        self.use_cuda_graph = wp.get_device().is_cuda
         if self.use_cuda_graph:
             with wp.ScopedCapture() as capture:
-                self.multistep()
+                self.step()
             self.step_graph = capture.graph
 
     def multistep(self):
@@ -311,7 +306,7 @@ class BallBounceSim:
 
 def ball_bounce_simulation():
     model = BallBounceSim()
-    model.simulate_multistep()
+    model.simulate()
 
 
 if __name__ == "__main__":

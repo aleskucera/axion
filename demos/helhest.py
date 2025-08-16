@@ -1,7 +1,7 @@
 import numpy as np
 import warp as wp
 import warp.sim.render
-from axion import NSNEngine
+from axion import AxionEngine
 from axion.utils import HDF5Logger
 from tqdm import tqdm
 
@@ -183,7 +183,7 @@ class HelhestSim:
         self._timestep: int = 0
 
         self.logger = HDF5Logger("helhest_log.h5") if DEBUG else None
-        self.integrator = NSNEngine(self.model, logger=self.logger)
+        self.integrator = AxionEngine(self.model, logger=self.logger)
         self.renderer = wp.sim.render.SimRenderer(self.model, USD_FILE, scaling=100.0)
 
         self.state_0 = self.model.state()

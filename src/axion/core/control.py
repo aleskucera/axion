@@ -1,4 +1,43 @@
 import warp as wp
+from warp.sim import Control
+from warp.sim import Model
+from warp.sim import State
+
+
+def apply_control(
+    model: Model,
+    state_in: State,
+    state_out: State,
+    dt: float,
+    control: Control | None = None,
+):
+    # The main simulation loop logic remains unchanged
+    wp.sim.eval_ik(model, state_in, state_in.joint_q, state_in.joint_qd)
+    if control is not None:
+        wp.launch(
+            kernel=apply_joint_actions_kernel,
+            dim=(model.joint_count,),
+            inputs=[
+                state_in.body_q,
+                model.body_com,
+                state_in.joint_q,
+                state_in.joint_qd,
+                model.joint_target_ke,
+                model.joint_target_kd,
+                model.joint_type,
+                model.joint_enabled,
+                model.joint_parent,
+                model.joint_child,
+                model.joint_X_p,
+                model.joint_X_c,
+                model.joint_axis_start,
+                model.joint_axis_dim,
+                model.joint_axis,
+                model.joint_axis_mode,
+                control.joint_act,
+            ],
+            outputs=[state_in.body_f],
+        )
 
 
 @wp.kernel

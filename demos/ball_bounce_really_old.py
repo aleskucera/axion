@@ -2,7 +2,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import warp as wp
 import warp.sim.render
-from axion import NSNEngine
+from axion import AxionEngine
 from tqdm import tqdm
 from warp.sim import Mesh
 
@@ -186,7 +186,7 @@ class BallBounceSim:
         # self.integrator = wp.sim.XPBDIntegrator(
         #     enable_restitution=True, rigid_contact_relaxation=0.0
         # )
-        self.integrator = NSNEngine(self.model)
+        self.integrator = AxionEngine(self.model)
         self.renderer = wp.sim.render.SimRenderer(self.model, USD_FILE, scaling=100.0)
 
         self.state_0 = self.model.state()

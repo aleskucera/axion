@@ -1,19 +1,19 @@
 import numpy as np
 import warp as wp
 import warp.sim.render
-from axion import NSNEngine
+from axion import AxionEngine
 from axion.utils import HDF5Logger
 from tqdm import tqdm
 
 # Options
 RENDER = True
 USD_FILE = "ball_bounce.usd"
-DEBUG = False
+DEBUG = True
 PROFILE_SYNC = False
 PROFILE_NVTX = False
 PROFILE_CUDA_TIMELINE = False
 
-FRICTION = 0.0
+FRICTION = 0.8
 RESTITUTION = 0.5
 
 # Optional micro-profiling visibility settings
@@ -163,7 +163,7 @@ class BallBounceSim:
         self._timestep = 0
 
         self.logger = HDF5Logger("ball_bounce_log.h5") if DEBUG else None
-        self.integrator = NSNEngine(self.model, logger=self.logger)
+        self.integrator = AxionEngine(self.model, logger=self.logger)
         self.renderer = wp.sim.render.SimRenderer(
             self.model, USD_FILE, scaling=100.0, fps=self.fps
         )
@@ -210,6 +210,7 @@ class BallBounceSim:
                 self.state_1,
                 self.sim_dt,
                 control=self.control,
+                solver="newton",
             )
             wp.copy(dest=self.state_0.body_q, src=self.state_1.body_q)
             wp.copy(dest=self.state_0.body_qd, src=self.state_1.body_qd)
