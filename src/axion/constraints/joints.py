@@ -44,20 +44,15 @@ def joint_constraint_kernel(
     joint_linear_compliance: wp.array(dtype=wp.float32),
     joint_angular_compliance: wp.array(dtype=wp.float32),
     # --- Velocity Impulse Variables (from current Newton iterate) ---
-    lambda_j_offset: wp.int32,
-    _lambda: wp.array(dtype=wp.float32),
+    lambda_j: wp.array(dtype=wp.float32),
     # --- Simulation & Solver Parameters ---
     dt: wp.float32,
     joint_stabilization_factor: wp.float32,
-    # --- Offsets for Output Arrays ---
-    h_j_offset: wp.int32,
-    J_j_offset: wp.int32,
-    C_j_offset: wp.int32,
     # --- Outputs (contributions to the linear system) ---
     g: wp.array(dtype=wp.spatial_vector),
-    h: wp.array(dtype=wp.float32),
-    J_values: wp.array(dtype=wp.spatial_vector, ndim=2),
-    C_values: wp.array(dtype=wp.float32),
+    h_j: wp.array(dtype=wp.float32),
+    J_j_values: wp.array(dtype=wp.spatial_vector, ndim=2),
+    C_j_values: wp.array(dtype=wp.float32),
 ):
     tid = wp.tid()
     j_type = joint_type[tid]
@@ -134,20 +129,18 @@ def joint_constraint_kernel(
     # --- Update global system components ---
     # 1. Residual Vector h (constraint violation)
     bias_scale = joint_stabilization_factor / dt
-    base_h_idx = h_j_offset + tid * 5
-    h[base_h_idx + 0] = C_dot_pos_x + bias_scale * C_pos.x
-    h[base_h_idx + 1] = C_dot_pos_y + bias_scale * C_pos.y
-    h[base_h_idx + 2] = C_dot_pos_z + bias_scale * C_pos.z
-    h[base_h_idx + 3] = C_dot_rot_u + bias_scale * C_rot_u
-    h[base_h_idx + 4] = C_dot_rot_v + bias_scale * C_rot_v
+    h_j[tid * 5 + 0] = C_dot_pos_x + bias_scale * C_pos.x
+    h_j[tid * 5 + 1] = C_dot_pos_y + bias_scale * C_pos.y
+    h_j[tid * 5 + 2] = C_dot_pos_z + bias_scale * C_pos.z
+    h_j[tid * 5 + 3] = C_dot_rot_u + bias_scale * C_rot_u
+    h_j[tid * 5 + 4] = C_dot_rot_v + bias_scale * C_rot_v
 
     # 2. Update g (momentum balance residual: -J^T * lambda)
-    base_lambda_idx = lambda_j_offset + tid * 5
-    lambda_j_x = _lambda[base_lambda_idx + 0]
-    lambda_j_y = _lambda[base_lambda_idx + 1]
-    lambda_j_z = _lambda[base_lambda_idx + 2]
-    lambda_j_u = _lambda[base_lambda_idx + 3]
-    lambda_j_v = _lambda[base_lambda_idx + 4]
+    lambda_j_x = lambda_j[tid * 5 + 0]
+    lambda_j_y = lambda_j[tid * 5 + 1]
+    lambda_j_z = lambda_j[tid * 5 + 2]
+    lambda_j_u = lambda_j[tid * 5 + 3]
+    lambda_j_v = lambda_j[tid * 5 + 4]
 
     g[child_idx] += (
         -J_pos_x_c * lambda_j_x
@@ -166,25 +159,23 @@ def joint_constraint_kernel(
     )
 
     # 3. Compliance (diagonal block C of the system matrix)
-    base_C_idx = C_j_offset + tid * 5
-    C_values[base_C_idx + 0] = joint_linear_compliance[tid]
-    C_values[base_C_idx + 1] = joint_linear_compliance[tid]
-    C_values[base_C_idx + 2] = joint_linear_compliance[tid]
-    C_values[base_C_idx + 3] = joint_angular_compliance[tid]
-    C_values[base_C_idx + 4] = joint_angular_compliance[tid]
+    C_j_values[tid * 5 + 0] = joint_linear_compliance[tid]
+    C_j_values[tid * 5 + 1] = joint_linear_compliance[tid]
+    C_j_values[tid * 5 + 2] = joint_linear_compliance[tid]
+    C_j_values[tid * 5 + 3] = joint_angular_compliance[tid]
+    C_j_values[tid * 5 + 4] = joint_angular_compliance[tid]
 
     # 4. Jacobian (off-diagonal block J of the system matrix)
-    base_J_idx = J_j_offset + tid * 5
-    J_values[base_J_idx + 0, 0] = J_pos_x_p
-    J_values[base_J_idx + 0, 1] = J_pos_x_c
-    J_values[base_J_idx + 1, 0] = J_pos_y_p
-    J_values[base_J_idx + 1, 1] = J_pos_y_c
-    J_values[base_J_idx + 2, 0] = J_pos_z_p
-    J_values[base_J_idx + 2, 1] = J_pos_z_c
-    J_values[base_J_idx + 3, 0] = J_rot_u_p
-    J_values[base_J_idx + 3, 1] = J_rot_u_c
-    J_values[base_J_idx + 4, 0] = J_rot_v_p
-    J_values[base_J_idx + 4, 1] = J_rot_v_c
+    J_j_values[tid * 5 + 0, 0] = J_pos_x_p
+    J_j_values[tid * 5 + 0, 1] = J_pos_x_c
+    J_j_values[tid * 5 + 1, 0] = J_pos_y_p
+    J_j_values[tid * 5 + 1, 1] = J_pos_y_c
+    J_j_values[tid * 5 + 2, 0] = J_pos_z_p
+    J_j_values[tid * 5 + 2, 1] = J_pos_z_c
+    J_j_values[tid * 5 + 3, 0] = J_rot_u_p
+    J_j_values[tid * 5 + 3, 1] = J_rot_u_c
+    J_j_values[tid * 5 + 4, 0] = J_rot_v_p
+    J_j_values[tid * 5 + 4, 1] = J_rot_v_c
 
 
 @wp.kernel

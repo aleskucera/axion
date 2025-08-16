@@ -110,36 +110,36 @@ def ball_world_model(gravity: bool = True) -> wp.sim.Model:
         thickness=0.0,
     )
 
-    # builder.add_joint_revolute(
-    #     parent=obstacle1,
-    #     child=left_wheel,
-    #     parent_xform=wp.transform((1.5, -1.5, 0.0), wp.quat_identity()),
-    #     child_xform=wp.transform((0.0, 0.0, 0.0), wp.quat_identity()),
-    #     axis=wp.vec3(0.0, 1.0, 0.0),
-    #     linear_compliance=0.0,
-    #     angular_compliance=0.0,
-    #     mode=wp.sim.JOINT_MODE_TARGET_VELOCITY,
-    # )
-    # builder.add_joint_revolute(
-    #     parent=obstacle1,
-    #     child=right_wheel,
-    #     parent_xform=wp.transform((1.5, 1.5, 0.0), wp.quat_identity()),
-    #     child_xform=wp.transform((0.0, 0.0, 0.0), wp.quat_identity()),
-    #     axis=wp.vec3(0.0, 1.0, 0.0),
-    #     linear_compliance=0.0,
-    #     angular_compliance=0.0,
-    #     mode=wp.sim.JOINT_MODE_TARGET_VELOCITY,
-    # )
-    # builder.add_joint_revolute(
-    #     parent=obstacle1,
-    #     child=back_wheel,
-    #     parent_xform=wp.transform((-2.5, 0.0, 0.0), wp.quat_identity()),
-    #     child_xform=wp.transform((0.0, 0.0, 0.0), wp.quat_identity()),
-    #     axis=wp.vec3(0.0, 1.0, 0.0),
-    #     linear_compliance=0.0,
-    #     angular_compliance=0.0,
-    #     mode=wp.sim.JOINT_MODE_FORCE,
-    # )
+    builder.add_joint_revolute(
+        parent=obstacle1,
+        child=left_wheel,
+        parent_xform=wp.transform((1.5, -1.5, 0.0), wp.quat_identity()),
+        child_xform=wp.transform((0.0, 0.0, 0.0), wp.quat_identity()),
+        axis=wp.vec3(0.0, 1.0, 0.0),
+        linear_compliance=0.0,
+        angular_compliance=0.0,
+        mode=wp.sim.JOINT_MODE_TARGET_VELOCITY,
+    )
+    builder.add_joint_revolute(
+        parent=obstacle1,
+        child=right_wheel,
+        parent_xform=wp.transform((1.5, 1.5, 0.0), wp.quat_identity()),
+        child_xform=wp.transform((0.0, 0.0, 0.0), wp.quat_identity()),
+        axis=wp.vec3(0.0, 1.0, 0.0),
+        linear_compliance=0.0,
+        angular_compliance=0.0,
+        mode=wp.sim.JOINT_MODE_TARGET_VELOCITY,
+    )
+    builder.add_joint_revolute(
+        parent=obstacle1,
+        child=back_wheel,
+        parent_xform=wp.transform((-2.5, 0.0, 0.0), wp.quat_identity()),
+        child_xform=wp.transform((0.0, 0.0, 0.0), wp.quat_identity()),
+        axis=wp.vec3(0.0, 1.0, 0.0),
+        linear_compliance=0.0,
+        angular_compliance=0.0,
+        mode=wp.sim.JOINT_MODE_FORCE,
+    )
 
     obstacle1 = builder.add_body(
         origin=wp.transform((0.0, 0.0, 1.2), wp.quat_identity()), name="box1"
@@ -222,7 +222,12 @@ class BallBounceSim:
     def step(self):
         wp.sim.collide(self.model, self.state_0)
         self.integrator.simulate(
-            self.model, self.state_0, self.state_1, self.sim_dt, control=self.control
+            self.model,
+            self.state_0,
+            self.state_1,
+            self.sim_dt,
+            control=self.control,
+            solver="newton",
         )
 
         wp.copy(dest=self.state_0.body_q, src=self.state_1.body_q)

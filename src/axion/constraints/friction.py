@@ -31,39 +31,33 @@ def frictional_constraint_kernel(
     contact_body_b: wp.array(dtype=wp.int32),
     contact_friction_coeff: wp.array(dtype=wp.float32),
     # --- Velocity Impulse Variables ---
-    lambda_n_offset: wp.int32,
-    lambda_f_offset: wp.int32,
-    _lambda: wp.array(dtype=wp.float32),
-    _lambda_prev: wp.array(dtype=wp.float32),
+    lambda_f: wp.array(dtype=wp.float32),
+    lambda_n_prev: wp.array(dtype=wp.float32),
     # --- Simulation & Solver Parameters ---
     fb_alpha: wp.float32,
     fb_beta: wp.float32,
-    # --- Offsets for Output Arrays ---
-    h_f_offset: wp.int32,
-    J_f_offset: wp.int32,
-    C_f_offset: wp.int32,
     # --- Outputs (contributions to the linear system) ---
     g: wp.array(dtype=wp.spatial_vector),
-    h: wp.array(dtype=wp.float32),
-    J_values: wp.array(dtype=wp.spatial_vector, ndim=2),
-    C_values: wp.array(dtype=wp.float32),
+    h_f: wp.array(dtype=wp.float32),
+    J_f_values: wp.array(dtype=wp.spatial_vector, ndim=2),
+    C_f_values: wp.array(dtype=wp.float32),
 ):
     tid = wp.tid()
     mu = contact_friction_coeff[tid]
-    lambda_n = _lambda_prev[lambda_n_offset + tid]
+    lambda_n = lambda_n_prev[tid]
 
     # Early exit for inactive contacts
     if contact_gap[tid] >= 0.0 or lambda_n * mu <= 1e-2:
-        h[h_f_offset + 2 * tid] = _lambda[lambda_f_offset + 2 * tid]
-        h[h_f_offset + 2 * tid + 1] = _lambda[lambda_f_offset + 2 * tid + 1]
+        h_f[2 * tid] = lambda_f[2 * tid]
+        h_f[2 * tid + 1] = lambda_f[2 * tid + 1]
 
-        C_values[C_f_offset + 2 * tid] = 1.0
-        C_values[C_f_offset + 2 * tid + 1] = 1.0
+        C_f_values[2 * tid] = 1.0
+        C_f_values[2 * tid + 1] = 1.0
 
-        J_values[J_f_offset + 2 * tid, 0] = wp.spatial_vector()
-        J_values[J_f_offset + 2 * tid, 1] = wp.spatial_vector()
-        J_values[J_f_offset + 2 * tid + 1, 0] = wp.spatial_vector()
-        J_values[J_f_offset + 2 * tid + 1, 1] = wp.spatial_vector()
+        J_f_values[2 * tid, 0] = wp.spatial_vector()
+        J_f_values[2 * tid, 1] = wp.spatial_vector()
+        J_f_values[2 * tid + 1, 0] = wp.spatial_vector()
+        J_f_values[2 * tid + 1, 1] = wp.spatial_vector()
         return
 
     body_a = contact_body_a[tid]
@@ -91,10 +85,9 @@ def frictional_constraint_kernel(
     v_rel_norm = wp.length(v_rel)
 
     # Current friction impulse from the global impulse vector
-    lambda_f_t1 = _lambda[lambda_f_offset + 2 * tid]
-    lambda_f_t2 = _lambda[lambda_f_offset + 2 * tid + 1]
-    lambda_f = wp.vec2(lambda_f_t1, lambda_f_t2)
-    lambda_f_norm = wp.length(lambda_f)
+    lambda_f_t1 = lambda_f[2 * tid]
+    lambda_f_t2 = lambda_f[2 * tid + 1]
+    lambda_f_norm = wp.length(wp.vec2(lambda_f_t1, lambda_f_t2))
 
     # REGULARIZATION: Use the normal impulse from the previous Newton iteration
     # to define the friction cone size. We clamp it to a minimum value to
@@ -102,8 +95,7 @@ def frictional_constraint_kernel(
     # lambda_n = wp.max(
     #     _lambda_prev[lambda_n_offset + tid], 100.0
     # )  # TODO: Resolve this problem
-    lambda_n = _lambda_prev[lambda_n_offset + tid]
-    friction_cone_limit = mu * lambda_n
+    friction_cone_limit = mu * lambda_n_prev[tid]
 
     # Use a non-linear complementarity function to relate slip speed and friction force
     phi_f, _, _ = scaled_fisher_burmeister(
@@ -124,26 +116,22 @@ def frictional_constraint_kernel(
         g[body_b] += -grad_c_t1_b * lambda_f_t1 - grad_c_t2_b * lambda_f_t2
 
     # 2. Update `h` (constraint violation residual)
-    h[h_f_offset + 2 * tid] = v_t1_rel + w * lambda_f_t1
-    h[h_f_offset + 2 * tid + 1] = v_t2_rel + w * lambda_f_t2
+    h_f[2 * tid] = v_t1_rel + w * lambda_f_t1
+    h_f[2 * tid + 1] = v_t2_rel + w * lambda_f_t2
 
     # 3. Update `C` (diagonal compliance block of the system matrix)
     # This `w` value forms the coupling between the two tangential directions.
-    C_values[C_f_offset + 2 * tid] = w + 1e-5
-    C_values[C_f_offset + 2 * tid + 1] = w + 1e-5
+    C_f_values[2 * tid] = w + 1e-5
+    C_f_values[2 * tid + 1] = w + 1e-5
 
     # 4. Update `J` (constraint Jacobian block of the system matrix)
     if body_a >= 0:
-        offset_t1 = J_f_offset + 2 * tid
-        offset_t2 = J_f_offset + 2 * tid + 1
-        J_values[offset_t1, 0] = grad_c_t1_a
-        J_values[offset_t2, 0] = grad_c_t2_a
+        J_f_values[2 * tid, 0] = grad_c_t1_a
+        J_f_values[2 * tid + 1, 0] = grad_c_t2_a
 
     if body_b >= 0:
-        offset_t1 = J_f_offset + 2 * tid
-        offset_t2 = J_f_offset + 2 * tid + 1
-        J_values[offset_t1, 1] = grad_c_t1_b
-        J_values[offset_t2, 1] = grad_c_t2_b
+        J_f_values[2 * tid, 1] = grad_c_t1_b
+        J_f_values[2 * tid + 1, 1] = grad_c_t2_b
 
 
 @wp.kernel

@@ -22,7 +22,7 @@ def _compute_JHinvG_i(
 
 
 @wp.kernel
-def update_system_rhs_kernel(
+def update_system_rhs_kernel2(
     body_mass_inv: wp.array(dtype=wp.float32),
     body_inertia_inv: wp.array(dtype=wp.mat33),
     joint_parent: wp.array(dtype=wp.int32),
@@ -32,12 +32,12 @@ def update_system_rhs_kernel(
     J_j_offset: wp.int32,
     J_n_offset: wp.int32,
     J_f_offset: wp.int32,
-    J_values: wp.array(dtype=wp.spatial_vector, ndim=2),  # Shape [N_c, 2]
+    J_values: wp.array(dtype=wp.spatial_vector, ndim=2),
     g: wp.array(dtype=wp.spatial_vector),
     h: wp.array(dtype=wp.float32),
     b: wp.array(dtype=wp.float32),
 ):
-    tid = wp.tid()  # one thread per contact
+    tid = wp.tid()
 
     body_a, body_b = get_constraint_body_index(
         joint_parent,
@@ -49,6 +49,31 @@ def update_system_rhs_kernel(
         J_f_offset,
         tid,
     )
+    J_ia = J_values[tid, 0]
+    J_ib = J_values[tid, 1]
+
+    # Calculate (J_i * H^-1 * g)
+    JHinvG = _compute_JHinvG_i(body_mass_inv, body_inertia_inv, body_a, J_ia, g)
+    JHinvG += _compute_JHinvG_i(body_mass_inv, body_inertia_inv, body_b, J_ib, g)
+
+    b[tid] = JHinvG - h[tid]
+
+
+@wp.kernel
+def update_system_rhs_kernel(
+    body_mass_inv: wp.array(dtype=wp.float32),
+    body_inertia_inv: wp.array(dtype=wp.mat33),
+    constraint_body_idx: wp.array(dtype=wp.int32, ndim=2),
+    J_values: wp.array(dtype=wp.spatial_vector, ndim=2),
+    g: wp.array(dtype=wp.spatial_vector),
+    h: wp.array(dtype=wp.float32),
+    b: wp.array(dtype=wp.float32),
+):
+    tid = wp.tid()
+
+    body_a = constraint_body_idx[tid, 0]
+    body_b = constraint_body_idx[tid, 1]
+
     J_ia = J_values[tid, 0]
     J_ib = J_values[tid, 1]
 
