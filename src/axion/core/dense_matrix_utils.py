@@ -1,40 +1,22 @@
-"""
-Dense matrix operations for debugging and analysis.
-"""
 from typing import Tuple
 
 import numpy as np
 import warp as wp
-from axion.constraints import get_constraint_body_index
+from axion.types import GeneralizedMass
 
 
 @wp.kernel
 def update_J_dense(
-    # Constraint layout information
-    joint_parent: wp.array(dtype=wp.int32),
-    joint_child: wp.array(dtype=wp.int32),
-    contact_body_a: wp.array(dtype=wp.int32),
-    contact_body_b: wp.array(dtype=wp.int32),
-    J_j_offset: int,
-    J_n_offset: int,
-    J_f_offset: int,
-    # Jacobian data
+    constraint_body_idx: wp.array(dtype=wp.int32, ndim=2),
     J_values: wp.array(dtype=wp.spatial_vector, ndim=2),
     # Output array
     J_dense: wp.array(dtype=wp.float32, ndim=2),
 ):
     constraint_idx = wp.tid()
 
-    body_a, body_b = get_constraint_body_index(
-        joint_parent,
-        joint_child,
-        contact_body_a,
-        contact_body_b,
-        J_j_offset,
-        J_n_offset,
-        J_f_offset,
-        constraint_idx,
-    )
+    body_a = constraint_body_idx[constraint_idx, 0]
+    body_b = constraint_body_idx[constraint_idx, 1]
+
     J_ia = J_values[constraint_idx, 0]
     J_ib = J_values[constraint_idx, 1]
 
@@ -53,13 +35,12 @@ def update_J_dense(
 
 @wp.kernel
 def update_Hinv_dense_kernel(
-    body_mass_inv: wp.array(dtype=wp.float32),
-    body_inertia_inv: wp.array(dtype=wp.mat33),
+    gen_inv_mass: wp.array(dtype=GeneralizedMass),
     H_dense: wp.array(dtype=wp.float32, ndim=2),
 ):
     body_idx = wp.tid()
 
-    if body_idx >= body_mass_inv.shape[0]:
+    if body_idx >= gen_inv_mass.shape[0]:
         return
 
     # Angular part, write the tensor of inertia inverse
@@ -69,7 +50,7 @@ def update_Hinv_dense_kernel(
             st_j = wp.static(j)
             h_row = body_idx * 6 + st_i
             h_col = body_idx * 6 + st_j
-            body_I_inv = body_inertia_inv[body_idx]
+            body_I_inv = gen_inv_mass.inertia[body_idx]
             H_dense[h_row, h_col] = body_I_inv[st_i, st_j]
 
     # Linear part, write the mass inverse
@@ -77,7 +58,7 @@ def update_Hinv_dense_kernel(
         st_i = wp.static(i)
         h_row = body_idx * 6 + 3 + st_i
         h_col = body_idx * 6 + 3 + st_i
-        H_dense[h_row, h_col] = body_mass_inv[body_idx]
+        H_dense[h_row, h_col] = gen_inv_mass.m[body_idx]
 
 
 @wp.kernel
@@ -130,7 +111,7 @@ class DenseMatrixMixin:
         wp.launch(
             kernel=update_Hinv_dense_kernel,
             dim=self.N_b,
-            inputs=[self.body_inv_mass, self.body_inv_inertia],
+            inputs=[self.gen_inv_mass],
             outputs=[self.Hinv_dense],
             device=self.device,
         )
@@ -140,13 +121,7 @@ class DenseMatrixMixin:
             kernel=update_J_dense,
             dim=self.con_dim,
             inputs=[
-                self.joint_parent,
-                self.joint_child,
-                self._contact_body_a,
-                self._contact_body_b,
-                self.J_j_offset,
-                self.J_n_offset,
-                self.J_f_offset,
+                self._constraint_body_idx,
                 self._J_values,
             ],
             outputs=[self.J_dense],

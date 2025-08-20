@@ -16,25 +16,18 @@ Residual (CR) or Conjugate Gradient (CG), allowing the system to be solved
 without ever forming the potentially very large and dense matrix A explicitly.
 """
 import warp as wp
-from axion.utils.constraints import get_constraint_body_index
+from axion.types import *
+from axion.types import GeneralizedMass
 from warp.optim.linear import LinearOperator
 
 
 @wp.kernel
 def kernel_J_transpose_matvec(
-    # Constraint layout information
-    joint_parent: wp.array(dtype=wp.int32),
-    joint_child: wp.array(dtype=wp.int32),
-    contact_body_a: wp.array(dtype=wp.int32),
-    contact_body_b: wp.array(dtype=wp.int32),
-    J_j_offset: int,
-    J_n_offset: int,
-    J_f_offset: int,
-    # Jacobian and vector data
+    constraint_body_idx: wp.array(dtype=wp.int32, ndim=2),
     J_values: wp.array(dtype=wp.spatial_vector, ndim=2),
     vec_x: wp.array(dtype=wp.float32),
     # Output array
-    out_vec: wp.array(dtype=wp.float32),
+    out_vec: wp.array(dtype=wp.spatial_vector),
 ):
     """
     Computes the matrix-vector product: out_vec = Jᵀ @ vec_x.
@@ -49,35 +42,24 @@ def kernel_J_transpose_matvec(
     """
     constraint_idx = wp.tid()
 
-    body_a, body_b = get_constraint_body_index(
-        joint_parent,
-        joint_child,
-        contact_body_a,
-        contact_body_b,
-        J_j_offset,
-        J_n_offset,
-        J_f_offset,
-        constraint_idx,
-    )
+    body_a = constraint_body_idx[constraint_idx, 0]
+    body_b = constraint_body_idx[constraint_idx, 1]
+
     J_ia = J_values[constraint_idx, 0]
     J_ib = J_values[constraint_idx, 1]
     x_i = vec_x[constraint_idx]
 
-    # Scatter the product Jᵢᵀ * xᵢ into the appropriate body locations
     if body_a >= 0:
-        for i in range(6):
-            wp.atomic_add(out_vec, body_a * 6 + i, J_ia[i] * x_i)
+        out_vec[body_a] += x_i * J_ia
     if body_b >= 0:
-        for i in range(6):
-            wp.atomic_add(out_vec, body_b * 6 + i, J_ib[i] * x_i)
+        out_vec[body_b] += x_i * J_ib
 
 
 @wp.kernel
 def kernel_inv_mass_matvec(
-    body_inv_mass: wp.array(dtype=wp.float32),
-    body_inv_inertia: wp.array(dtype=wp.mat33),
-    in_vec: wp.array(dtype=wp.float32),
-    out_vec: wp.array(dtype=wp.float32),
+    gen_inv_mass: wp.array(dtype=GeneralizedMass),
+    in_vec: wp.array(dtype=wp.spatial_vector),
+    out_vec: wp.array(dtype=wp.spatial_vector),
 ):
     """
     Computes the matrix-vector product: out_vec = M⁻¹ @ in_vec.
@@ -91,40 +73,14 @@ def kernel_inv_mass_matvec(
     """
     body_idx = wp.tid()
 
-    # Angular part (top 3 components)
-    w = wp.vec3(
-        in_vec[body_idx * 6 + 0], in_vec[body_idx * 6 + 1], in_vec[body_idx * 6 + 2]
-    )
-    H_inv = body_inv_inertia[body_idx]
-    w_out = H_inv @ w
-    out_vec[body_idx * 6 + 0] = w_out[0]
-    out_vec[body_idx * 6 + 1] = w_out[1]
-    out_vec[body_idx * 6 + 2] = w_out[2]
-
-    # Linear part (bottom 3 components)
-    v = wp.vec3(
-        in_vec[body_idx * 6 + 3], in_vec[body_idx * 6 + 4], in_vec[body_idx * 6 + 5]
-    )
-    m_inv = body_inv_mass[body_idx]
-    v_out = m_inv * v
-    out_vec[body_idx * 6 + 3] = v_out[0]
-    out_vec[body_idx * 6 + 4] = v_out[1]
-    out_vec[body_idx * 6 + 5] = v_out[2]
+    out_vec[body_idx] = gen_inv_mass[body_idx] * in_vec[body_idx]
 
 
 @wp.kernel
 def kernel_J_matvec(
-    # Constraint layout information
-    joint_parent: wp.array(dtype=wp.int32),
-    joint_child: wp.array(dtype=wp.int32),
-    contact_body_a: wp.array(dtype=wp.int32),
-    contact_body_b: wp.array(dtype=wp.int32),
-    J_j_offset: int,
-    J_n_offset: int,
-    J_f_offset: int,
-    # Jacobian and vector data
+    constraint_body_idx: wp.array(dtype=wp.int32, ndim=2),
     J_values: wp.array(dtype=wp.spatial_vector, ndim=2),
-    in_vec: wp.array(dtype=wp.float32),
+    in_vec: wp.array(dtype=wp.spatial_vector),
     # Output array
     out_vec: wp.array(dtype=wp.float32),
 ):
@@ -140,45 +96,17 @@ def kernel_J_matvec(
     """
     constraint_idx = wp.tid()
 
-    body_a, body_b = get_constraint_body_index(
-        joint_parent,
-        joint_child,
-        contact_body_a,
-        contact_body_b,
-        J_j_offset,
-        J_n_offset,
-        J_f_offset,
-        constraint_idx,
-    )
+    body_a = constraint_body_idx[constraint_idx, 0]
+    body_b = constraint_body_idx[constraint_idx, 1]
 
     J_ia = J_values[constraint_idx, 0]
     J_ib = J_values[constraint_idx, 1]
 
     result = 0.0
-
-    # Gather from body_a
     if body_a >= 0:
-        vel_a = wp.spatial_vector(
-            wp.vec3(
-                in_vec[body_a * 6 + 0], in_vec[body_a * 6 + 1], in_vec[body_a * 6 + 2]
-            ),
-            wp.vec3(
-                in_vec[body_a * 6 + 3], in_vec[body_a * 6 + 4], in_vec[body_a * 6 + 5]
-            ),
-        )
-        result += wp.dot(J_ia, vel_a)
-
-    # Gather from body_b
+        result += wp.dot(J_ia, in_vec[body_a])
     if body_b >= 0:
-        vel_b = wp.spatial_vector(
-            wp.vec3(
-                in_vec[body_b * 6 + 0], in_vec[body_b * 6 + 1], in_vec[body_b * 6 + 2]
-            ),
-            wp.vec3(
-                in_vec[body_b * 6 + 3], in_vec[body_b * 6 + 4], in_vec[body_b * 6 + 5]
-            ),
-        )
-        result += wp.dot(J_ib, vel_b)
+        result += wp.dot(J_ib, in_vec[body_b])
 
     out_vec[constraint_idx] = result
 
@@ -245,7 +173,7 @@ class MatrixFreeSystemOperator(LinearOperator):
 
         # Pre-allocate temporary buffers for intermediate calculations.
         self._tmp_dyn_vec = wp.zeros(
-            engine.dyn_dim, dtype=wp.float32, device=engine.device
+            engine.N_b, dtype=wp.spatial_vector, device=engine.device
         )
         self._tmp_con_vec = wp.zeros(
             engine.con_dim, dtype=wp.float32, device=engine.device
@@ -261,13 +189,7 @@ class MatrixFreeSystemOperator(LinearOperator):
             kernel=kernel_J_transpose_matvec,
             dim=self.engine.con_dim,
             inputs=[
-                self.engine.joint_parent,
-                self.engine.joint_child,
-                self.engine._contact_body_a,
-                self.engine._contact_body_b,
-                self.engine.J_j_offset,
-                self.engine.J_n_offset,
-                self.engine.J_f_offset,
+                self.engine._constraint_body_idx,
                 self.engine._J_values,
                 x,
             ],
@@ -280,8 +202,7 @@ class MatrixFreeSystemOperator(LinearOperator):
             kernel=kernel_inv_mass_matvec,
             dim=self.engine.N_b,
             inputs=[
-                self.engine.body_inv_mass,
-                self.engine.body_inv_inertia,
+                self.engine.gen_inv_mass,
                 self._tmp_dyn_vec,
             ],
             outputs=[self._tmp_dyn_vec],
@@ -293,13 +214,7 @@ class MatrixFreeSystemOperator(LinearOperator):
             kernel=kernel_J_matvec,
             dim=self.engine.con_dim,
             inputs=[
-                self.engine.joint_parent,
-                self.engine.joint_child,
-                self.engine._contact_body_a,
-                self.engine._contact_body_b,
-                self.engine.J_j_offset,
-                self.engine.J_n_offset,
-                self.engine.J_f_offset,
+                self.engine._constraint_body_idx,
                 self.engine._J_values,
                 self._tmp_dyn_vec,
             ],

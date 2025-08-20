@@ -3,7 +3,6 @@ from typing import Optional
 
 import warp as wp
 from axion.constraints import contact_constraint_kernel
-from axion.constraints import contact_kinematics_kernel
 from axion.constraints import frictional_constraint_kernel
 from axion.constraints import joint_constraint_kernel
 from axion.constraints import unconstrained_dynamics_kernel
@@ -25,7 +24,6 @@ from warp.sim import State
 
 from .control import apply_control
 from .logging_utils import LoggingMixin
-from .newton_solver import MAX_BODIES
 from .newton_solver import NewtonSolverMixin
 from .newton_solver import RES_BUFFER_DIM
 from .scipy_solver import ScipySolverMixin
@@ -279,6 +277,7 @@ class AxionEngine(Integrator, LoggingMixin, NewtonSolverMixin, ScipySolverMixin)
             self.gen_mass = wp.empty(self.N_b, dtype=GeneralizedMass)
             self.gen_inv_mass = wp.empty(self.N_b, dtype=GeneralizedMass)
             self._joint_manifold = wp.empty(self.N_j, dtype=JointManifold)
+            self._contact_manifold = wp.empty(self.N_c, dtype=ContactManifold)
 
         wp.launch(
             kernel=generalized_mass_kernel,
@@ -327,7 +326,7 @@ class AxionEngine(Integrator, LoggingMixin, NewtonSolverMixin, ScipySolverMixin)
         self._rigid_contact_point1 = model.rigid_contact_point1
 
         wp.launch(
-            kernel=contact_kinematics_kernel,
+            kernel=contact_manifold_kernel,
             dim=self.N_c,
             inputs=[
                 self._body_q,
@@ -343,13 +342,7 @@ class AxionEngine(Integrator, LoggingMixin, NewtonSolverMixin, ScipySolverMixin)
                 self._rigid_contact_shape1,
             ],
             outputs=[
-                self._contact_gap,
-                self._J_contact_a,
-                self._J_contact_b,
-                self._contact_body_a,
-                self._contact_body_b,
-                self._contact_restitution_coeff,
-                self._contact_friction_coeff,
+                self._contact_manifold,
             ],
             device=self.device,
         )
@@ -381,8 +374,9 @@ class AxionEngine(Integrator, LoggingMixin, NewtonSolverMixin, ScipySolverMixin)
             kernel=update_constraint_body_idx_kernel,
             dim=self.con_dim,
             inputs=[
-                self._contact_body_a,
-                self._contact_body_b,
+                self.shape_body,
+                self._rigid_contact_shape0,
+                self._rigid_contact_shape1,
                 self.joint_parent,
                 self.joint_child,
                 self.N_j,
@@ -419,7 +413,6 @@ class AxionEngine(Integrator, LoggingMixin, NewtonSolverMixin, ScipySolverMixin)
                 self._body_qd,
                 self._lambda_j,
                 self._joint_manifold,
-                # Parameters
                 self._dt,
                 self.joint_stabilization_factor,
             ],
@@ -438,15 +431,8 @@ class AxionEngine(Integrator, LoggingMixin, NewtonSolverMixin, ScipySolverMixin)
             inputs=[
                 self._body_qd,
                 self._body_qd_prev,
-                self._contact_gap,
-                self._J_contact_a,
-                self._J_contact_b,
-                self._contact_body_a,
-                self._contact_body_b,
-                self._contact_restitution_coeff,
-                # Velocity impulse variables
+                self._contact_manifold,
                 self._lambda_n,
-                # Parameters
                 self._dt,
                 self.contact_stabilization_factor,
                 self.contact_fb_alpha,
@@ -465,16 +451,9 @@ class AxionEngine(Integrator, LoggingMixin, NewtonSolverMixin, ScipySolverMixin)
             dim=self.N_c,
             inputs=[
                 self._body_qd,
-                self._contact_gap,
-                self._J_contact_a,
-                self._J_contact_b,
-                self._contact_body_a,
-                self._contact_body_b,
-                self._contact_friction_coeff,
-                # Velocity impulse variables
+                self._contact_manifold,
                 self._lambda_f,
                 self._lambda_n_prev,
-                # Parameters
                 self.friction_fb_alpha,
                 self.friction_fb_beta,
             ],
@@ -489,7 +468,7 @@ class AxionEngine(Integrator, LoggingMixin, NewtonSolverMixin, ScipySolverMixin)
         if not self.matrixfree_representation:
             self.A_op.update()
 
-        self.preconditioner.update()  # Update the preconditioner with new values
+        self.preconditioner.update()
 
         wp.launch(
             kernel=update_system_rhs_kernel,

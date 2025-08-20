@@ -1,5 +1,4 @@
 import warp as wp
-from axion.constraints import get_constraint_body_index
 from axion.constraints import linesearch_contact_residuals_kernel
 from axion.constraints import linesearch_dynamics_residuals_kernel
 from axion.constraints import linesearch_frictional_residuals_kernel
@@ -19,15 +18,7 @@ res_norm_sq_vec = wp.types.vector(length=ALPHA_DIM, dtype=wp.float32)
 
 @wp.kernel
 def compute_JT_delta_lambda_kernel(
-    # Constraint layout information
-    joint_parent: wp.array(dtype=wp.int32),
-    joint_child: wp.array(dtype=wp.int32),
-    contact_body_a: wp.array(dtype=wp.int32),
-    contact_body_b: wp.array(dtype=wp.int32),
-    J_j_offset: int,
-    J_n_offset: int,
-    J_f_offset: int,
-    # Jacobian and vector data
+    constraint_body_idx: wp.array(dtype=wp.int32, ndim=2),
     J_values: wp.array(dtype=wp.spatial_vector, ndim=2),
     delta_lambda: wp.array(dtype=wp.float32),
     # Output array
@@ -35,25 +26,18 @@ def compute_JT_delta_lambda_kernel(
 ):
     constraint_idx = wp.tid()
 
-    body_a, body_b = get_constraint_body_index(
-        joint_parent,
-        joint_child,
-        contact_body_a,
-        contact_body_b,
-        J_j_offset,
-        J_n_offset,
-        J_f_offset,
-        constraint_idx,
-    )
+    body_a = constraint_body_idx[constraint_idx, 0]
+    body_b = constraint_body_idx[constraint_idx, 1]
+
     J_ia = J_values[constraint_idx, 0]
     J_ib = J_values[constraint_idx, 1]
     dl = delta_lambda[constraint_idx]
 
     if body_a >= 0:
-        wp.atomic_add(JT_delta_lambda, body_a, dl * J_ia)
+        JT_delta_lambda[body_a] += dl * J_ia
 
     if body_b >= 0:
-        wp.atomic_add(JT_delta_lambda, body_b, dl * J_ib)
+        JT_delta_lambda[body_b] += dl * J_ib
 
 
 @wp.kernel
@@ -63,18 +47,10 @@ def compute_delta_body_qd_kernel(
     g: wp.array(dtype=wp.spatial_vector),
     delta_body_qd: wp.array(dtype=wp.spatial_vector),
 ):
-    body_idx = wp.tid()  # Over all bodies * 6
+    body_idx = wp.tid()
 
     if body_idx >= gen_inv_mass.shape[0]:
         return
-
-    # top = body_inv_inertia[body_idx] @ (
-    #     wp.spatial_top(JT_delta_lambda[body_idx]) - wp.spatial_top(g[body_idx])
-    # )
-    # bot = body_inv_mass[body_idx] * (
-    #     wp.spatial_bottom(JT_delta_lambda[body_idx]) - wp.spatial_bottom(g[body_idx])
-    # )
-    # delta_body_qd[body_idx] = wp.spatial_vector(top, bot)
 
     delta_body_qd[body_idx] = gen_inv_mass[body_idx] * (
         JT_delta_lambda[body_idx] - g[body_idx]
@@ -159,13 +135,7 @@ class NewtonSolverMixin:
             kernel=compute_JT_delta_lambda_kernel,
             dim=self.con_dim,
             inputs=[
-                self.joint_parent,
-                self.joint_child,
-                self._contact_body_a,
-                self._contact_body_b,
-                self.J_j_offset,
-                self.J_n_offset,
-                self.J_f_offset,
+                self._constraint_body_idx,
                 self._J_values,
                 self._delta_lambda,
             ],

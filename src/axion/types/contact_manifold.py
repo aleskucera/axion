@@ -93,7 +93,7 @@ def contact_manifold_kernel(
     # --- Inputs ---
     body_q: wp.array(dtype=wp.transform),
     body_com: wp.array(dtype=wp.vec3),
-    shape_body: wp.array(dtype=int),
+    shape_body: wp.array(dtype=wp.int32),
     shape_geo: ModelShapeGeometry,
     shape_materials: ModelShapeMaterials,
     contact_count: wp.array(dtype=wp.int32),
@@ -164,6 +164,9 @@ def contact_manifold_kernel(
     manifold.point_b.body_idx = body_b
 
     manifold.gap = wp.dot(n, p_a - p_b)
+
+    if manifold.gap >= 0:
+        manifold.is_active = False
 
     manifold.point_a.jacobian.n = wp.spatial_vector(wp.cross(r_a, n), n)
     manifold.point_a.jacobian.t1 = wp.spatial_vector(wp.cross(r_a, t1), t1)
