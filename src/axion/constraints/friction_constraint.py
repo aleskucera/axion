@@ -1,0 +1,147 @@
+import warp as wp
+from axion.types import ContactInteraction
+
+from .utils import scaled_fisher_burmeister
+
+
+@wp.struct
+class FrictionModelResult:
+    """Holds the computed results from the friction model needed by the solver."""
+
+    slip_velocity: wp.vec2
+    slip_coupling_factor: wp.float32
+
+
+@wp.func
+def compute_friction_model(
+    interaction: ContactInteraction,
+    body_qd_a: wp.spatial_vector,
+    body_qd_b: wp.spatial_vector,
+    friction_impulse: wp.vec2,
+    normal_impulse: wp.float32,
+    fb_alpha: wp.float32,
+    fb_beta: wp.float32,
+) -> FrictionModelResult:
+    """
+    Computes the core terms for the friction constraint model.
+
+    This function calculates the relative slip velocity and the coupling factor 'w'
+    that relates slip to the friction impulse, based on a complementarity condition.
+    """
+    # Unpack Jacobian basis vectors
+    J_t1_a, J_t2_a = interaction.basis_a.tangent1, interaction.basis_a.tangent2
+    J_t1_b, J_t2_b = interaction.basis_b.tangent1, interaction.basis_b.tangent2
+
+    # --- Calculate Slip Velocity ---
+    v_t1 = wp.dot(J_t1_a, body_qd_a) + wp.dot(J_t1_b, body_qd_b)
+    v_t2 = wp.dot(J_t2_a, body_qd_a) + wp.dot(J_t2_b, body_qd_b)
+    slip_velocity = wp.vec2(v_t1, v_t2)
+    slip_speed = wp.length(slip_velocity)
+
+    # --- Calculate Friction Impulse Magnitude & Cone Limit ---
+    friction_impulse_magnitude = wp.length(friction_impulse)
+    friction_cone_limit = interaction.friction_coeff * normal_impulse
+
+    # --- Evaluate Friction Cone Complementarity ---
+    complementarity_gap, _, _ = scaled_fisher_burmeister(
+        slip_speed, friction_cone_limit - friction_impulse_magnitude, fb_alpha, fb_beta
+    )
+
+    # --- Compute the Slip Coupling Factor 'w' ---
+    slip_coupling_factor = (slip_speed - complementarity_gap) / (
+        friction_impulse_magnitude + complementarity_gap + 1e-6
+    )
+
+    # --- Package and return the results ---
+    result = FrictionModelResult()
+    result.slip_velocity = slip_velocity
+    result.slip_coupling_factor = slip_coupling_factor
+    return result
+
+
+@wp.kernel
+def friction_constraint_kernel(
+    # --- Body State Inputs ---
+    body_qd: wp.array(dtype=wp.spatial_vector),
+    interactions: wp.array(dtype=ContactInteraction),
+    # --- Velocity Impulse Variables ---
+    lambda_friction: wp.array(dtype=wp.float32),
+    lambda_normal_prev: wp.array(dtype=wp.float32),
+    # --- Simulation & Solver Parameters ---
+    fb_alpha: wp.float32,
+    fb_beta: wp.float32,
+    compliance: wp.float32,
+    # --- Outputs (contributions to the linear system) ---
+    g: wp.array(dtype=wp.spatial_vector),
+    h_friction: wp.array(dtype=wp.float32),
+    J_friction_values: wp.array(dtype=wp.spatial_vector, ndim=2),
+    C_friction_values: wp.array(dtype=wp.float32),
+):
+    interaction_idx = wp.tid()
+    interaction = interactions[interaction_idx]
+
+    # --- 1. Handle Early Exit for Inactive/Non-Frictional Contacts ---
+    normal_impulse = lambda_normal_prev[interaction_idx]
+    friction_cone_limit = interaction.friction_coeff * normal_impulse
+
+    if not interaction.is_active or friction_cone_limit <= 1e-4:
+        # Unconstrained: h = λ, C = 1, J = 0
+        h_friction[2 * interaction_idx] = lambda_friction[2 * interaction_idx]
+        h_friction[2 * interaction_idx + 1] = lambda_friction[2 * interaction_idx + 1]
+        C_friction_values[2 * interaction_idx] = 1.0
+        C_friction_values[2 * interaction_idx + 1] = 1.0
+        return
+
+    # --- 2. Gather Inputs for the Friction Model ---
+    body_a_idx = interaction.body_a_idx
+    body_b_idx = interaction.body_b_idx
+
+    body_qd_a = wp.spatial_vector()
+    if body_a_idx >= 0:
+        body_qd_a = body_qd[body_a_idx]
+    body_qd_b = wp.spatial_vector()
+    if body_b_idx >= 0:
+        body_qd_b = body_qd[body_b_idx]
+
+    lambda_t1 = lambda_friction[2 * interaction_idx]
+    lambda_t2 = lambda_friction[2 * interaction_idx + 1]
+    friction_impulse = wp.vec2(lambda_t1, lambda_t2)
+
+    # --- 3. Compute Friction Terms by Calling the Model ---
+    model_result = compute_friction_model(
+        interaction,
+        body_qd_a,
+        body_qd_b,
+        friction_impulse,
+        normal_impulse,
+        fb_alpha,
+        fb_beta,
+    )
+    v_t1, v_t2 = model_result.slip_velocity.x, model_result.slip_velocity.y
+    w = model_result.slip_coupling_factor
+
+    # --- 4. Assemble System Matrix Components ---
+    J_t1_a, J_t2_a = interaction.basis_a.tangent1, interaction.basis_a.tangent2
+    J_t1_b, J_t2_b = interaction.basis_b.tangent1, interaction.basis_b.tangent2
+
+    # Update g (forces): g -= J^T * λ
+    if body_a_idx >= 0:
+        g[body_a_idx] -= J_t1_a * lambda_t1 + J_t2_a * lambda_t2
+    if body_b_idx >= 0:
+        g[body_b_idx] -= J_t1_b * lambda_t1 + J_t2_b * lambda_t2
+
+    # Update h (constraint violation): h_t = v_t + w * λ_t
+    h_friction[2 * interaction_idx] = v_t1 + w * lambda_t1
+    h_friction[2 * interaction_idx + 1] = v_t2 + w * lambda_t2
+
+    # Update C (compliance): C_ff = (w + compliance) * I
+    C_friction_values[2 * interaction_idx] = w + compliance
+    C_friction_values[2 * interaction_idx + 1] = w + compliance
+
+    # Update J (Jacobian): J_f = [J_t1; J_t2]
+    if body_a_idx >= 0:
+        J_friction_values[2 * interaction_idx, 0] = J_t1_a
+        J_friction_values[2 * interaction_idx + 1, 0] = J_t2_a
+    if body_b_idx >= 0:
+        J_friction_values[2 * interaction_idx, 1] = J_t1_b
+        J_friction_values[2 * interaction_idx + 1, 1] = J_t2_b

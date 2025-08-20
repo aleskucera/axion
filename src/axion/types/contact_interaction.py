@@ -4,32 +4,32 @@ from warp.sim import ModelShapeMaterials
 
 
 @wp.struct
-class ContactJacobian:
-    n: wp.spatial_vector
-    t1: wp.spatial_vector
-    t2: wp.spatial_vector
+class ContactBasis:
+    """The spatial vector basis (n, t1, t2) for a single body in a contact constraint."""
+
+    normal: wp.spatial_vector
+    tangent1: wp.spatial_vector
+    tangent2: wp.spatial_vector
 
 
 @wp.struct
-class ContactPoint:
-    body_idx: wp.int32
-    jacobian: ContactJacobian
-
-
-@wp.struct
-class ContactManifold:
-    """A complete description of a single contact interaction."""
+class ContactInteraction:
+    """A complete description of a single contact constraint for the solver."""
 
     is_active: wp.bool
 
-    # Kinematics for each body
-    point_a: ContactPoint
-    point_b: ContactPoint
+    # Indices of the two interacting bodies (-1 for static objects)
+    body_a_idx: wp.int32
+    body_b_idx: wp.int32
 
-    # Geometric and material properties
-    gap: wp.float32
-    restitution: wp.float32
-    friction: wp.float32
+    # Per-body constraint data
+    basis_a: ContactBasis
+    basis_b: ContactBasis
+
+    # Shared geometric and material properties
+    penetration_depth: wp.float32
+    restitution_coeff: wp.float32
+    friction_coeff: wp.float32
 
 
 @wp.func
@@ -89,7 +89,7 @@ def compute_friction_coefficient(
 
 
 @wp.kernel
-def contact_manifold_kernel(
+def contact_interaction_kernel(
     # --- Inputs ---
     body_q: wp.array(dtype=wp.transform),
     body_com: wp.array(dtype=wp.vec3),
@@ -103,17 +103,17 @@ def contact_manifold_kernel(
     contact_shape0: wp.array(dtype=wp.int32),
     contact_shape1: wp.array(dtype=wp.int32),
     # --- Single Output ---
-    manifolds: wp.array(dtype=ContactManifold),
+    interactions: wp.array(dtype=ContactInteraction),
 ):
     tid = wp.tid()
 
-    manifold = ContactManifold()  # Create a new manifold struct
+    interaction = ContactInteraction()
     shape_a = contact_shape0[tid]
     shape_b = contact_shape1[tid]
 
     if tid >= contact_count[0] or shape_a == shape_b:
-        manifold.is_active = False
-        manifolds[tid] = manifold
+        interaction.is_active = False
+        interactions[tid] = interaction
         return
 
     # Contact body indices (default to -1)
@@ -159,27 +159,29 @@ def contact_manifold_kernel(
     t1, t2 = orthogonal_basis(n)
 
     # Fill the manifold struct
-    manifold.is_active = True
-    manifold.point_a.body_idx = body_a
-    manifold.point_b.body_idx = body_b
+    interaction.is_active = True
+    interaction.body_a_idx = body_a
+    interaction.body_b_idx = body_b
 
-    manifold.gap = wp.dot(n, p_a - p_b)
+    interaction.penetration_depth = wp.dot(n, p_b - p_a)
 
-    if manifold.gap >= 0:
-        manifold.is_active = False
+    if interaction.penetration_depth <= 0:
+        interaction.is_active = False
 
-    manifold.point_a.jacobian.n = wp.spatial_vector(wp.cross(r_a, n), n)
-    manifold.point_a.jacobian.t1 = wp.spatial_vector(wp.cross(r_a, t1), t1)
-    manifold.point_a.jacobian.t2 = wp.spatial_vector(wp.cross(r_a, t2), t2)
+    interaction.basis_a.normal = wp.spatial_vector(wp.cross(r_a, n), n)
+    interaction.basis_a.tangent1 = wp.spatial_vector(wp.cross(r_a, t1), t1)
+    interaction.basis_a.tangent2 = wp.spatial_vector(wp.cross(r_a, t2), t2)
 
-    manifold.point_b.jacobian.n = wp.spatial_vector(-wp.cross(r_b, n), -n)
-    manifold.point_b.jacobian.t1 = wp.spatial_vector(-wp.cross(r_b, t1), -t1)
-    manifold.point_b.jacobian.t2 = wp.spatial_vector(-wp.cross(r_b, t2), -t2)
+    interaction.basis_b.normal = wp.spatial_vector(-wp.cross(r_b, n), -n)
+    interaction.basis_b.tangent1 = wp.spatial_vector(-wp.cross(r_b, t1), -t1)
+    interaction.basis_b.tangent2 = wp.spatial_vector(-wp.cross(r_b, t2), -t2)
 
-    manifold.restitution = compute_restitution_coefficient(
+    interaction.restitution_coeff = compute_restitution_coefficient(
         shape_a, shape_b, shape_materials
     )
-    manifold.friction = compute_friction_coefficient(shape_a, shape_b, shape_materials)
+    interaction.friction_coeff = compute_friction_coefficient(
+        shape_a, shape_b, shape_materials
+    )
 
     # Write the complete struct to the output array
-    manifolds[tid] = manifold
+    interactions[tid] = interaction

@@ -1,5 +1,5 @@
-from .contact_manifold import contact_manifold_kernel
-from .contact_manifold import ContactManifold
+from .contact_interaction import contact_interaction_kernel
+from .contact_interaction import ContactInteraction
 from .generalized_mass import generalized_mass_kernel
 from .generalized_mass import GeneralizedMass
 from .generalized_mass import mul
@@ -9,8 +9,8 @@ from .joint_manifold import joint_manifold_kernel
 from .joint_manifold import JointManifold
 
 __all__ = [
-    "contact_manifold_kernel",
-    "ContactManifold",
+    "contact_interaction_kernel",
+    "ContactInteraction",
     "generalized_mass_kernel",
     "GeneralizedMass",
     "joint_manifold_kernel",

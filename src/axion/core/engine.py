@@ -3,15 +3,15 @@ from typing import Optional
 
 import warp as wp
 from axion.constraints import contact_constraint_kernel
-from axion.constraints import frictional_constraint_kernel
+from axion.constraints import friction_constraint_kernel
 from axion.constraints import joint_constraint_kernel
 from axion.constraints import unconstrained_dynamics_kernel
 from axion.constraints import update_constraint_body_idx_kernel
 from axion.optim import JacobiPreconditioner
 from axion.optim import MatrixFreeSystemOperator
 from axion.optim import MatrixSystemOperator
-from axion.types import contact_manifold_kernel
-from axion.types import ContactManifold
+from axion.types import contact_interaction_kernel
+from axion.types import ContactInteraction
 from axion.types import generalized_mass_kernel
 from axion.types import GeneralizedMass
 from axion.types import joint_manifold_kernel
@@ -52,6 +52,8 @@ class AxionEngine(Integrator, LoggingMixin, NewtonSolverMixin, ScipySolverMixin)
 
         self.joint_stabilization_factor = joint_stabilization_factor
         self.contact_stabilization_factor = contact_stabilization_factor
+        self.contact_compliance = 1e-5
+        self.friction_compliance = 1e-5
 
         self.contact_fb_alpha = contact_fb_alpha
         self.contact_fb_beta = contact_fb_beta
@@ -277,7 +279,7 @@ class AxionEngine(Integrator, LoggingMixin, NewtonSolverMixin, ScipySolverMixin)
             self.gen_mass = wp.empty(self.N_b, dtype=GeneralizedMass)
             self.gen_inv_mass = wp.empty(self.N_b, dtype=GeneralizedMass)
             self._joint_manifold = wp.empty(self.N_j, dtype=JointManifold)
-            self._contact_manifold = wp.empty(self.N_c, dtype=ContactManifold)
+            self._contact_manifold = wp.empty(self.N_c, dtype=ContactInteraction)
 
         wp.launch(
             kernel=generalized_mass_kernel,
@@ -326,7 +328,7 @@ class AxionEngine(Integrator, LoggingMixin, NewtonSolverMixin, ScipySolverMixin)
         self._rigid_contact_point1 = model.rigid_contact_point1
 
         wp.launch(
-            kernel=contact_manifold_kernel,
+            kernel=contact_interaction_kernel,
             dim=self.N_c,
             inputs=[
                 self._body_q,
@@ -437,6 +439,7 @@ class AxionEngine(Integrator, LoggingMixin, NewtonSolverMixin, ScipySolverMixin)
                 self.contact_stabilization_factor,
                 self.contact_fb_alpha,
                 self.contact_fb_beta,
+                self.contact_compliance,
             ],
             outputs=[
                 self._g_v,
@@ -447,7 +450,7 @@ class AxionEngine(Integrator, LoggingMixin, NewtonSolverMixin, ScipySolverMixin)
         )
 
         wp.launch(
-            kernel=frictional_constraint_kernel,
+            kernel=friction_constraint_kernel,
             dim=self.N_c,
             inputs=[
                 self._body_qd,
@@ -456,6 +459,7 @@ class AxionEngine(Integrator, LoggingMixin, NewtonSolverMixin, ScipySolverMixin)
                 self._lambda_n_prev,
                 self.friction_fb_alpha,
                 self.friction_fb_beta,
+                self.friction_compliance,
             ],
             outputs=[
                 self._g_v,
