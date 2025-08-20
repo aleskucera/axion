@@ -11,6 +11,12 @@ from axion.constraints import update_constraint_body_idx_kernel
 from axion.optim import JacobiPreconditioner
 from axion.optim import MatrixFreeSystemOperator
 from axion.optim import MatrixSystemOperator
+from axion.types import contact_manifold_kernel
+from axion.types import ContactManifold
+from axion.types import generalized_mass_kernel
+from axion.types import GeneralizedMass
+from axion.types import joint_manifold_kernel
+from axion.types import JointManifold
 from axion.utils import HDF5Logger
 from warp.sim import Control
 from warp.sim import Integrator
@@ -269,6 +275,33 @@ class AxionEngine(Integrator, LoggingMixin, NewtonSolverMixin, ScipySolverMixin)
         # Dynamic state references (will be updated each timestep)
         self._dt = 1e-3
 
+        with wp.ScopedDevice(self.device):
+            self.gen_mass = wp.empty(self.N_b, dtype=GeneralizedMass)
+            self.gen_inv_mass = wp.empty(self.N_b, dtype=GeneralizedMass)
+            self._joint_manifold = wp.empty(self.N_j, dtype=JointManifold)
+
+        wp.launch(
+            kernel=generalized_mass_kernel,
+            dim=self.N_b,
+            inputs=[
+                self.body_mass,
+                self.body_inertia,
+            ],
+            outputs=[self.gen_mass],
+            device=self.device,
+        )
+
+        wp.launch(
+            kernel=generalized_mass_kernel,
+            dim=self.N_b,
+            inputs=[
+                self.body_inv_mass,
+                self.body_inv_inertia,
+            ],
+            outputs=[self.gen_inv_mass],
+            device=self.device,
+        )
+
     def _clear_values(self):
         self._g.zero_()
         self._h.zero_()
@@ -318,6 +351,30 @@ class AxionEngine(Integrator, LoggingMixin, NewtonSolverMixin, ScipySolverMixin)
                 self._contact_restitution_coeff,
                 self._contact_friction_coeff,
             ],
+            device=self.device,
+        )
+
+        wp.launch(
+            kernel=joint_manifold_kernel,
+            dim=self.N_j,
+            inputs=[
+                self._body_q,
+                self.body_com,
+                self.joint_type,
+                self.joint_enabled,
+                self.joint_parent,
+                self.joint_child,
+                self.joint_X_p,
+                self.joint_X_c,
+                self.joint_axis_start,
+                self.joint_axis,
+                self.joint_linear_compliance,
+                self.joint_angular_compliance,
+            ],
+            outputs=[
+                self._joint_manifold,
+            ],
+            device=self.device,
         )
 
         wp.launch(
@@ -334,6 +391,7 @@ class AxionEngine(Integrator, LoggingMixin, NewtonSolverMixin, ScipySolverMixin)
             outputs=[
                 self._constraint_body_idx,
             ],
+            device=self.device,
         )
 
     def update_system_values(self):
@@ -346,14 +404,34 @@ class AxionEngine(Integrator, LoggingMixin, NewtonSolverMixin, ScipySolverMixin)
                 self._body_qd,
                 self._body_qd_prev,
                 self._body_f,
-                self.body_mass,
-                self.body_inertia,
+                self.gen_mass,
                 self._dt,
                 self.gravity,
             ],
             outputs=[self._g_v],
             device=self.device,
         )
+
+        wp.launch(
+            kernel=joint_constraint_kernel,
+            dim=(5, self.N_j),
+            inputs=[
+                self._body_qd,
+                self._lambda_j,
+                self._joint_manifold,
+                # Parameters
+                self._dt,
+                self.joint_stabilization_factor,
+            ],
+            outputs=[
+                self._g_v,
+                self._h_j,
+                self._J_j_values,
+                self._C_j_values,
+            ],
+            device=self.device,
+        )
+
         wp.launch(
             kernel=contact_constraint_kernel,
             dim=self.N_c,
@@ -379,37 +457,6 @@ class AxionEngine(Integrator, LoggingMixin, NewtonSolverMixin, ScipySolverMixin)
                 self._h_n,
                 self._J_n_values,
                 self._C_n_values,
-            ],
-        )
-        wp.launch(
-            kernel=joint_constraint_kernel,
-            dim=(5, self.N_j),
-            inputs=[
-                self._body_q,
-                self._body_qd,
-                self.body_com,
-                self.joint_type,
-                self.joint_enabled,
-                self.joint_parent,
-                self.joint_child,
-                self.joint_X_p,
-                self.joint_X_c,
-                self.joint_axis_start,
-                self.joint_axis_dim,
-                self.joint_axis,
-                self.joint_linear_compliance,
-                self.joint_angular_compliance,
-                # Velocity impulse variables
-                self._lambda_j,
-                # Parameters
-                self._dt,
-                self.joint_stabilization_factor,
-            ],
-            outputs=[
-                self._g_v,
-                self._h_j,
-                self._J_j_values,
-                self._C_j_values,
             ],
         )
 
@@ -448,8 +495,7 @@ class AxionEngine(Integrator, LoggingMixin, NewtonSolverMixin, ScipySolverMixin)
             kernel=update_system_rhs_kernel,
             dim=(self.con_dim,),
             inputs=[
-                self.body_inv_mass,
-                self.body_inv_inertia,
+                self.gen_inv_mass,
                 self._constraint_body_idx,
                 self._J_values,
                 self._g_v,

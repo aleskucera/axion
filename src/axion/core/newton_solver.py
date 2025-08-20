@@ -5,6 +5,8 @@ from axion.constraints import linesearch_dynamics_residuals_kernel
 from axion.constraints import linesearch_frictional_residuals_kernel
 from axion.constraints import linesearch_joint_residuals_kernel
 from axion.optim.cr import cr_solver
+from axion.types import *
+from axion.types import GeneralizedMass
 from axion.utils import add_inplace
 
 MAX_BODIES = 10
@@ -56,24 +58,27 @@ def compute_JT_delta_lambda_kernel(
 
 @wp.kernel
 def compute_delta_body_qd_kernel(
-    body_inv_mass: wp.array(dtype=wp.float32),
-    body_inv_inertia: wp.array(dtype=wp.mat33),
+    gen_inv_mass: wp.array(dtype=GeneralizedMass),
     JT_delta_lambda: wp.array(dtype=wp.spatial_vector),
     g: wp.array(dtype=wp.spatial_vector),
     delta_body_qd: wp.array(dtype=wp.spatial_vector),
 ):
     body_idx = wp.tid()  # Over all bodies * 6
 
-    if body_idx >= body_inv_mass.shape[0]:
+    if body_idx >= gen_inv_mass.shape[0]:
         return
 
-    top = body_inv_inertia[body_idx] @ (
-        wp.spatial_top(JT_delta_lambda[body_idx]) - wp.spatial_top(g[body_idx])
+    # top = body_inv_inertia[body_idx] @ (
+    #     wp.spatial_top(JT_delta_lambda[body_idx]) - wp.spatial_top(g[body_idx])
+    # )
+    # bot = body_inv_mass[body_idx] * (
+    #     wp.spatial_bottom(JT_delta_lambda[body_idx]) - wp.spatial_bottom(g[body_idx])
+    # )
+    # delta_body_qd[body_idx] = wp.spatial_vector(top, bot)
+
+    delta_body_qd[body_idx] = gen_inv_mass[body_idx] * (
+        JT_delta_lambda[body_idx] - g[body_idx]
     )
-    bot = body_inv_mass[body_idx] * (
-        wp.spatial_bottom(JT_delta_lambda[body_idx]) - wp.spatial_bottom(g[body_idx])
-    )
-    delta_body_qd[body_idx] = wp.spatial_vector(top, bot)
 
 
 @wp.kernel
@@ -170,8 +175,7 @@ class NewtonSolverMixin:
             kernel=compute_delta_body_qd_kernel,
             dim=self.dyn_dim,
             inputs=[
-                self.body_inv_mass,
-                self.body_inv_inertia,
+                self.gen_inv_mass,
                 self._JT_delta_lambda,
                 self._g_v,
             ],

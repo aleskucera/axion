@@ -11,6 +11,7 @@ dependencies = [
     "h5py>=3.14.0",
     "matplotlib>=3.10.3",
     "nvtx>=0.2.12",
+    "pandas>=2.3.1",
     "pytest>=8.4.0",
     "scipy>=1.16.1",
     "taichi>=1.7.3",
