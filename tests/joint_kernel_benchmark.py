@@ -3,6 +3,7 @@ import time
 import numpy as np
 import warp as wp
 from axion.constraints import joint_constraint_kernel
+from axion.types import JointInteraction
 
 
 def _rand_quat():
@@ -55,59 +56,97 @@ def setup_data(
         parent_indices[world_indices] = -1
 
     # --- Generate Joint States ---
-    joint_enabled = np.ones(N_j, dtype=np.int32)
+    joint_active = np.ones(N_j, dtype=bool)
     num_disabled = int(N_j * disabled_joint_ratio)
     if num_disabled > 0:
         disabled_indices = np.random.choice(N_j, num_disabled, replace=False)
-        joint_enabled[disabled_indices] = 0
+        joint_active[disabled_indices] = False
 
     # --- System and Constraint Dimensions ---
     num_j_constraints = N_j * 5
-    dyn_dim = N_b * 6
 
-    # --- Create NumPy arrays for all kernel arguments ---
-    np_body_q = np.array(
-        [np.concatenate([np.random.randn(3), _rand_quat()]) for _ in range(N_b)],
-        dtype=np.float32,
-    )
-    np_joint_xp = np.array(
-        [np.concatenate([np.random.randn(3), _rand_quat()]) for _ in range(N_j)],
-        dtype=np.float32,
-    )
-    np_joint_xc = np.array(
-        [np.concatenate([np.random.randn(3), _rand_quat()]) for _ in range(N_j)],
-        dtype=np.float32,
-    )
-    np_joint_axis = (np.random.rand(N_j, 3) - 0.5) * 2.0
-    np_joint_axis /= np.linalg.norm(np_joint_axis, axis=1)[:, None]
+    # --- Create Interactions Array ---
+    interactions_list = []
+    for i in range(N_j):
+        inter = JointInteraction()
+        inter.is_active = joint_active[i]
+        inter.parent_idx = parent_indices[i]
+        inter.child_idx = child_indices[i]
+
+        is_world = parent_indices[i] < 0
+
+        # axis0
+        inter.axis0.J_child = wp.spatial_vector(*(np.random.rand(6) - 0.5))
+        inter.axis0.J_parent = (
+            wp.spatial_vector()
+            if is_world
+            else wp.spatial_vector(*(np.random.rand(6) - 0.5))
+        )
+        inter.axis0.error = np.random.rand() * 0.2 - 0.1
+        inter.axis0.compliance = 0.0
+
+        # axis1
+        inter.axis1.J_child = wp.spatial_vector(*(np.random.rand(6) - 0.5))
+        inter.axis1.J_parent = (
+            wp.spatial_vector()
+            if is_world
+            else wp.spatial_vector(*(np.random.rand(6) - 0.5))
+        )
+        inter.axis1.error = np.random.rand() * 0.2 - 0.1
+        inter.axis1.compliance = 0.0
+
+        # axis2
+        inter.axis2.J_child = wp.spatial_vector(*(np.random.rand(6) - 0.5))
+        inter.axis2.J_parent = (
+            wp.spatial_vector()
+            if is_world
+            else wp.spatial_vector(*(np.random.rand(6) - 0.5))
+        )
+        inter.axis2.error = np.random.rand() * 0.2 - 0.1
+        inter.axis2.compliance = 0.0
+
+        # axis3
+        inter.axis3.J_child = wp.spatial_vector(*(np.random.rand(6) - 0.5))
+        inter.axis3.J_parent = (
+            wp.spatial_vector()
+            if is_world
+            else wp.spatial_vector(*(np.random.rand(6) - 0.5))
+        )
+        inter.axis3.error = np.random.rand() * 0.2 - 0.1
+        inter.axis3.compliance = 0.0
+
+        # axis4
+        inter.axis4.J_child = wp.spatial_vector(*(np.random.rand(6) - 0.5))
+        inter.axis4.J_parent = (
+            wp.spatial_vector()
+            if is_world
+            else wp.spatial_vector(*(np.random.rand(6) - 0.5))
+        )
+        inter.axis4.error = np.random.rand() * 0.2 - 0.1
+        inter.axis4.compliance = 0.0
+
+        # axis5
+        inter.axis5.J_child = wp.spatial_vector(*(np.random.rand(6) - 0.5))
+        inter.axis5.J_parent = (
+            wp.spatial_vector()
+            if is_world
+            else wp.spatial_vector(*(np.random.rand(6) - 0.5))
+        )
+        inter.axis5.error = np.random.rand() * 0.2 - 0.1
+        inter.axis5.compliance = 0.0
+
+        interactions_list.append(inter)
+
+    interactions = wp.array(interactions_list, dtype=JointInteraction, device=device)
 
     # --- Create Warp arrays from NumPy data ---
-    # This is an efficient way to move data from the host to the GPU device.
     data = {
-        "body_q": wp.from_numpy(np_body_q, dtype=wp.transform, device=device),
         "body_qd": wp.from_numpy(
             (np.random.rand(N_b, 6) - 0.5).astype(np.float32),
             dtype=wp.spatial_vector,
             device=device,
         ),
-        "body_com": wp.from_numpy(
-            np.zeros((N_b, 3), dtype=np.float32), dtype=wp.vec3, device=device
-        ),
-        "joint_type": wp.array(
-            [wp.sim.JOINT_REVOLUTE] * N_j, dtype=wp.int32, device=device
-        ),
-        "joint_enabled": wp.from_numpy(joint_enabled, device=device),
-        "joint_parent": wp.from_numpy(parent_indices, device=device),
-        "joint_child": wp.from_numpy(child_indices, device=device),
-        "joint_X_p": wp.from_numpy(np_joint_xp, dtype=wp.transform, device=device),
-        "joint_X_c": wp.from_numpy(np_joint_xc, dtype=wp.transform, device=device),
-        "joint_axis_start": wp.array(np.arange(N_j), dtype=wp.int32, device=device),
-        "joint_axis_dim": wp.array([[0, 1]] * N_j, dtype=wp.int32, device=device),
-        "joint_axis": wp.from_numpy(
-            np_joint_axis.astype(np.float32), dtype=wp.vec3, device=device
-        ),
-        "joint_linear_compliance": wp.zeros(N_j, dtype=wp.float32, device=device),
-        "joint_angular_compliance": wp.zeros(N_j, dtype=wp.float32, device=device),
+        "interactions": interactions,
         "lambda_j": wp.zeros(num_j_constraints, dtype=wp.float32, device=device),
         "dt": 1.0 / 60.0,
         "joint_stabilization_factor": 0.1,
@@ -144,21 +183,9 @@ def run_benchmark(
     )
 
     kernel_args = [
-        data["body_q"],
         data["body_qd"],
-        data["body_com"],
-        data["joint_type"],
-        data["joint_enabled"],
-        data["joint_parent"],
-        data["joint_child"],
-        data["joint_X_p"],
-        data["joint_X_c"],
-        data["joint_axis_start"],
-        data["joint_axis_dim"],
-        data["joint_axis"],
-        data["joint_linear_compliance"],
-        data["joint_angular_compliance"],
         data["lambda_j"],
+        data["interactions"],
         data["dt"],
         data["joint_stabilization_factor"],
         data["g"],

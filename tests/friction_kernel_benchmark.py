@@ -2,7 +2,8 @@ import time
 
 import numpy as np
 import warp as wp
-from axion.constraints import frictional_constraint_kernel
+from axion.constraints import friction_constraint_kernel
+from axion.types import ContactInteraction
 
 
 def setup_data(
@@ -18,14 +19,19 @@ def setup_data(
     """
     N_b, N_c = num_bodies, num_contacts
 
-    # Generate contact gaps
-    gaps = np.random.rand(N_c) * -0.1
+    # --- Generate Penetration Depths ---
+    # Start with all contacts penetrating, then make a fraction of them inactive.
+    gaps = np.random.rand(N_c) * -0.1  # All negative (active)
     num_inactive = int(N_c * inactive_contact_ratio)
     if num_inactive > 0:
         inactive_indices = np.random.choice(N_c, num_inactive, replace=False)
-        gaps[inactive_indices] = np.random.rand(num_inactive) * 0.1
+        gaps[inactive_indices] = (
+            np.random.rand(num_inactive) * 0.1
+        )  # Make them positive
+    penetration_depths = -gaps  # Positive for penetration
 
-    # Generate body indices
+    # --- Generate Body Indices ---
+    # Start with all valid body indices, ensuring no self-contacts.
     body_a_indices = np.random.randint(0, N_b, size=N_c, dtype=np.int32)
     body_b_indices = np.random.randint(0, N_b, size=N_c, dtype=np.int32)
     mask = body_a_indices == body_b_indices
@@ -35,12 +41,46 @@ def setup_data(
         )
         mask = body_a_indices == body_b_indices
 
+    # Now, introduce fixed bodies (-1) for a fraction of contacts.
     num_fixed = int(N_c * fixed_body_ratio)
     if num_fixed > 0:
         fixed_indices = np.random.choice(N_c, num_fixed, replace=False)
+        # For each chosen contact, randomly set either body A or B to be fixed.
+        # This avoids creating static-static (-1 vs -1) contacts.
         chooser = np.random.randint(0, 2, size=num_fixed)
         body_a_indices[fixed_indices[chooser == 0]] = -1
         body_b_indices[fixed_indices[chooser == 1]] = -1
+
+    # --- Generate Random Jacobians (Basis Vectors) ---
+    J_a = (np.random.rand(N_c, 3, 6) - 0.5).astype(np.float32)
+    J_b = (np.random.rand(N_c, 3, 6) - 0.5).astype(np.float32)
+
+    # --- Generate Restitution and Friction Coefficients ---
+    restitution_coeffs = (np.random.rand(N_c) * 0.5).astype(np.float32)
+    friction_coeffs = np.random.rand(N_c).astype(np.float32)
+
+    # --- Create Interactions Array ---
+    interactions_list = []
+    for i in range(N_c):
+        inter = ContactInteraction()
+        inter.is_active = penetration_depths[i] > 0.0
+        inter.body_a_idx = body_a_indices[i]
+        inter.body_b_idx = body_b_indices[i]
+        inter.penetration_depth = penetration_depths[i]
+        inter.restitution_coeff = restitution_coeffs[i]
+        inter.friction_coeff = friction_coeffs[i]
+
+        # Set basis vectors from random Jacobians
+        inter.basis_a.normal = wp.spatial_vector(*J_a[i, 0])
+        inter.basis_a.tangent1 = wp.spatial_vector(*J_a[i, 1])
+        inter.basis_a.tangent2 = wp.spatial_vector(*J_a[i, 2])
+        inter.basis_b.normal = wp.spatial_vector(*J_b[i, 0])
+        inter.basis_b.tangent1 = wp.spatial_vector(*J_b[i, 1])
+        inter.basis_b.tangent2 = wp.spatial_vector(*J_b[i, 2])
+
+        interactions_list.append(inter)
+
+    interactions = wp.array(interactions_list, dtype=ContactInteraction, device=device)
 
     data = {
         "body_qd": wp.from_numpy(
@@ -48,22 +88,7 @@ def setup_data(
             dtype=wp.spatial_vector,
             device=device,
         ),
-        "contact_gap": wp.from_numpy(gaps.astype(np.float32), device=device),
-        "J_contact_a": wp.from_numpy(
-            (np.random.rand(N_c, 3, 6) - 0.5).astype(np.float32),
-            dtype=wp.spatial_vector,
-            device=device,
-        ),
-        "J_contact_b": wp.from_numpy(
-            (np.random.rand(N_c, 3, 6) - 0.5).astype(np.float32),
-            dtype=wp.spatial_vector,
-            device=device,
-        ),
-        "contact_body_a": wp.from_numpy(body_a_indices, device=device),
-        "contact_body_b": wp.from_numpy(body_b_indices, device=device),
-        "contact_friction_coeff": wp.from_numpy(
-            np.random.rand(N_c).astype(np.float32), device=device
-        ),
+        "interactions": interactions,
         "lambda_f": wp.from_numpy(
             (np.random.rand(2 * N_c) * 10.0).astype(np.float32), device=device
         ),
@@ -72,6 +97,7 @@ def setup_data(
         ),
         "fb_alpha": 0.25,
         "fb_beta": 0.25,
+        "compliance": 1e-6,
         "g": wp.zeros(N_b, dtype=wp.spatial_vector, device=device),
         "h_f": wp.zeros(2 * N_c, dtype=wp.float32, device=device),
         "J_f_values": wp.zeros((2 * N_c, 2), dtype=wp.spatial_vector, device=device),
@@ -98,16 +124,12 @@ def run_benchmark(
 
     kernel_args = [
         data["body_qd"],
-        data["contact_gap"],
-        data["J_contact_a"],
-        data["J_contact_b"],
-        data["contact_body_a"],
-        data["contact_body_b"],
-        data["contact_friction_coeff"],
+        data["interactions"],
         data["lambda_f"],
         data["lambda_n_prev"],
         data["fb_alpha"],
         data["fb_beta"],
+        data["compliance"],
         data["g"],
         data["h_f"],
         data["J_f_values"],
@@ -116,7 +138,7 @@ def run_benchmark(
 
     print("1. Benching Standard Kernel Launch...")
     wp.launch(
-        kernel=frictional_constraint_kernel,
+        kernel=friction_constraint_kernel,
         dim=num_contacts,
         inputs=kernel_args,
         device=device,
@@ -127,7 +149,7 @@ def run_benchmark(
     for _ in range(num_iterations):
         data["g"].zero_()
         wp.launch(
-            kernel=frictional_constraint_kernel,
+            kernel=friction_constraint_kernel,
             dim=num_contacts,
             inputs=kernel_args,
             device=device,
@@ -141,7 +163,7 @@ def run_benchmark(
         wp.capture_begin()
         data["g"].zero_()
         wp.launch(
-            kernel=frictional_constraint_kernel,
+            kernel=friction_constraint_kernel,
             dim=num_contacts,
             inputs=kernel_args,
             device=device,

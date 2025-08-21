@@ -6,6 +6,7 @@ from .generalized_mass import mul
 from .generalized_mass import scale
 from .joint_interaction import get_joint_axis_kinematics
 from .joint_interaction import joint_interaction_kernel
+from .joint_interaction import JointAxisKinematics
 from .joint_interaction import JointInteraction
 
 __all__ = [
@@ -14,6 +15,7 @@ __all__ = [
     "generalized_mass_kernel",
     "GeneralizedMass",
     "joint_interaction_kernel",
+    "JointAxisKinematics",
     "JointInteraction",
     "get_joint_axis_kinematics",
     "mul",

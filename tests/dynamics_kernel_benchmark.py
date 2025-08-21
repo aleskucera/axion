@@ -3,6 +3,8 @@ import time
 import numpy as np
 import warp as wp
 from axion.constraints import unconstrained_dynamics_kernel
+from axion.types import generalized_mass_kernel
+from axion.types import GeneralizedMass
 
 
 def setup_data(num_bodies, device):
@@ -24,6 +26,23 @@ def setup_data(num_bodies, device):
 
     mass = np.random.rand(B).astype(np.float32) + 1.0
 
+    # Create temporary Warp arrays for raw mass and inertia
+    body_mass_wp = wp.from_numpy(mass, dtype=wp.float32, device=device)
+    body_inertia_wp = wp.from_numpy(
+        inertia_tensors.astype(np.float32), dtype=wp.mat33, device=device
+    )
+
+    # Create the output array for the structured generalized mass
+    gen_mass_wp = wp.zeros(B, dtype=GeneralizedMass, device=device)
+
+    # Launch kernel to populate the generalized mass array from the raw components
+    wp.launch(
+        kernel=generalized_mass_kernel,
+        dim=B,
+        inputs=[body_mass_wp, body_inertia_wp, gen_mass_wp],
+        device=device,
+    )
+
     data = {
         "body_qd": wp.from_numpy(
             (np.random.rand(B, 6) - 0.5).astype(np.float32),
@@ -38,10 +57,7 @@ def setup_data(num_bodies, device):
         "body_f": wp.from_numpy(
             np.zeros((B, 6), dtype=np.float32), dtype=wp.spatial_vector, device=device
         ),
-        "body_mass": wp.from_numpy(mass, dtype=wp.float32, device=device),
-        "body_inertia": wp.from_numpy(
-            inertia_tensors.astype(np.float32), dtype=wp.mat33, device=device
-        ),
+        "gen_mass": gen_mass_wp,  # Use the new structured array
         "dt": 1.0 / 60.0,
         "g_accel": wp.vec3(0.0, -9.8, 0.0),
         "g": wp.zeros(B, dtype=wp.spatial_vector, device=device),
@@ -62,8 +78,7 @@ def run_benchmark(num_bodies, num_iterations=200):
         data["body_qd"],
         data["body_qd_prev"],
         data["body_f"],
-        data["body_mass"],
-        data["body_inertia"],
+        data["gen_mass"],  # Pass the single generalized mass array
         data["dt"],
         data["g_accel"],
         data["g"],

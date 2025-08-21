@@ -3,6 +3,7 @@ import time
 import numpy as np
 import warp as wp
 from axion.constraints import contact_constraint_kernel
+from axion.types import ContactInteraction
 
 
 def setup_data(
@@ -26,7 +27,7 @@ def setup_data(
     """
     N_b, N_c = num_bodies, num_contacts
 
-    # --- Generate Contact Gaps ---
+    # --- Generate Penetration Depths ---
     # Start with all contacts penetrating, then make a fraction of them inactive.
     gaps = np.random.rand(N_c) * -0.1  # All negative (active)
     num_inactive = int(N_c * inactive_contact_ratio)
@@ -35,6 +36,7 @@ def setup_data(
         gaps[inactive_indices] = (
             np.random.rand(num_inactive) * 0.1
         )  # Make them positive
+    penetration_depths = -gaps  # Positive for penetration
 
     # --- Generate Body Indices ---
     # Start with all valid body indices, ensuring no self-contacts.
@@ -57,7 +59,40 @@ def setup_data(
         body_a_indices[fixed_indices[chooser == 0]] = -1
         body_b_indices[fixed_indices[chooser == 1]] = -1
 
-    # Warp data creation using wp.from_numpy for better interoperability [nvidia.github.io/warp](https://nvidia.github.io/warp/modules/interoperability.html#warp.from_numpy)
+    # --- Generate Random Jacobians (Basis Vectors) ---
+    J_a = (np.random.rand(N_c, 3, 6) - 0.5).astype(np.float32)
+    J_b = (np.random.rand(N_c, 3, 6) - 0.5).astype(np.float32)
+
+    # --- Generate Restitution and Friction Coefficients ---
+    restitution_coeffs = (np.random.rand(N_c) * 0.5).astype(np.float32)
+    friction_coeffs = (np.random.rand(N_c) * 0.5 + 0.5).astype(
+        np.float32
+    )  # Random between 0.5 and 1.0
+
+    # --- Create Interactions Array ---
+    interactions_list = []
+    for i in range(N_c):
+        inter = ContactInteraction()
+        inter.is_active = penetration_depths[i] > 0.0
+        inter.body_a_idx = body_a_indices[i]
+        inter.body_b_idx = body_b_indices[i]
+        inter.penetration_depth = penetration_depths[i]
+        inter.restitution_coeff = restitution_coeffs[i]
+        inter.friction_coeff = friction_coeffs[i]
+
+        # Set basis vectors from random Jacobians
+        inter.basis_a.normal = wp.spatial_vector(*J_a[i, 0])
+        inter.basis_a.tangent1 = wp.spatial_vector(*J_a[i, 1])
+        inter.basis_a.tangent2 = wp.spatial_vector(*J_a[i, 2])
+        inter.basis_b.normal = wp.spatial_vector(*J_b[i, 0])
+        inter.basis_b.tangent1 = wp.spatial_vector(*J_b[i, 1])
+        inter.basis_b.tangent2 = wp.spatial_vector(*J_b[i, 2])
+
+        interactions_list.append(inter)
+
+    interactions = wp.array(interactions_list, dtype=ContactInteraction, device=device)
+
+    # Warp data creation
     data = {
         "body_qd": wp.from_numpy(
             (np.random.rand(N_b, 6) - 0.5).astype(np.float32),
@@ -69,22 +104,7 @@ def setup_data(
             dtype=wp.spatial_vector,
             device=device,
         ),
-        "contact_gap": wp.from_numpy(gaps.astype(np.float32), device=device),
-        "J_contact_a": wp.from_numpy(
-            (np.random.rand(N_c, 3, 6) - 0.5).astype(np.float32),
-            dtype=wp.spatial_vector,
-            device=device,
-        ),
-        "J_contact_b": wp.from_numpy(
-            (np.random.rand(N_c, 3, 6) - 0.5).astype(np.float32),
-            dtype=wp.spatial_vector,
-            device=device,
-        ),
-        "contact_body_a": wp.from_numpy(body_a_indices, device=device),
-        "contact_body_b": wp.from_numpy(body_b_indices, device=device),
-        "contact_restitution_coeff": wp.from_numpy(
-            (np.random.rand(N_c) * 0.5).astype(np.float32), device=device
-        ),
+        "interactions": interactions,
         "lambda_n": wp.from_numpy(
             (np.random.rand(N_c) * 0.1).astype(np.float32), device=device
         ),
@@ -92,6 +112,7 @@ def setup_data(
         "stabilization_factor": 0.2,
         "fb_alpha": 0.25,
         "fb_beta": 0.25,
+        "compliance": 1e-6,
         "g": wp.zeros(N_b, dtype=wp.spatial_vector, device=device),
         "h_n": wp.zeros(N_c, dtype=wp.float32, device=device),
         "J_n_values": wp.zeros((N_c, 2), dtype=wp.spatial_vector, device=device),
@@ -124,17 +145,13 @@ def run_benchmark(
     kernel_args = [
         data["body_qd"],
         data["body_qd_prev"],
-        data["contact_gap"],
-        data["J_contact_a"],
-        data["J_contact_b"],
-        data["contact_body_a"],
-        data["contact_body_b"],
-        data["contact_restitution_coeff"],
+        data["interactions"],
         data["lambda_n"],
         data["dt"],
         data["stabilization_factor"],
         data["fb_alpha"],
         data["fb_beta"],
+        data["compliance"],
         data["g"],
         data["h_n"],
         data["J_n_values"],
