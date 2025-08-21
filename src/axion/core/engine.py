@@ -14,8 +14,8 @@ from axion.types import contact_interaction_kernel
 from axion.types import ContactInteraction
 from axion.types import generalized_mass_kernel
 from axion.types import GeneralizedMass
-from axion.types import joint_manifold_kernel
-from axion.types import JointManifold
+from axion.types import joint_interaction_kernel
+from axion.types import JointInteraction
 from axion.utils import HDF5Logger
 from warp.sim import Control
 from warp.sim import Integrator
@@ -278,8 +278,8 @@ class AxionEngine(Integrator, LoggingMixin, NewtonSolverMixin, ScipySolverMixin)
         with wp.ScopedDevice(self.device):
             self.gen_mass = wp.empty(self.N_b, dtype=GeneralizedMass)
             self.gen_inv_mass = wp.empty(self.N_b, dtype=GeneralizedMass)
-            self._joint_manifold = wp.empty(self.N_j, dtype=JointManifold)
-            self._contact_manifold = wp.empty(self.N_c, dtype=ContactInteraction)
+            self._joint_interaction = wp.empty(self.N_j, dtype=JointInteraction)
+            self._contact_interaction = wp.empty(self.N_c, dtype=ContactInteraction)
 
         wp.launch(
             kernel=generalized_mass_kernel,
@@ -344,13 +344,13 @@ class AxionEngine(Integrator, LoggingMixin, NewtonSolverMixin, ScipySolverMixin)
                 self._rigid_contact_shape1,
             ],
             outputs=[
-                self._contact_manifold,
+                self._contact_interaction,
             ],
             device=self.device,
         )
 
         wp.launch(
-            kernel=joint_manifold_kernel,
+            kernel=joint_interaction_kernel,
             dim=self.N_j,
             inputs=[
                 self._body_q,
@@ -367,7 +367,7 @@ class AxionEngine(Integrator, LoggingMixin, NewtonSolverMixin, ScipySolverMixin)
                 self.joint_angular_compliance,
             ],
             outputs=[
-                self._joint_manifold,
+                self._joint_interaction,
             ],
             device=self.device,
         )
@@ -414,7 +414,7 @@ class AxionEngine(Integrator, LoggingMixin, NewtonSolverMixin, ScipySolverMixin)
             inputs=[
                 self._body_qd,
                 self._lambda_j,
-                self._joint_manifold,
+                self._joint_interaction,
                 self._dt,
                 self.joint_stabilization_factor,
             ],
@@ -433,7 +433,7 @@ class AxionEngine(Integrator, LoggingMixin, NewtonSolverMixin, ScipySolverMixin)
             inputs=[
                 self._body_qd,
                 self._body_qd_prev,
-                self._contact_manifold,
+                self._contact_interaction,
                 self._lambda_n,
                 self._dt,
                 self.contact_stabilization_factor,
@@ -454,7 +454,7 @@ class AxionEngine(Integrator, LoggingMixin, NewtonSolverMixin, ScipySolverMixin)
             dim=self.N_c,
             inputs=[
                 self._body_qd,
-                self._contact_manifold,
+                self._contact_interaction,
                 self._lambda_f,
                 self._lambda_n_prev,
                 self.friction_fb_alpha,
