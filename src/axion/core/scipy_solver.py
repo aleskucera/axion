@@ -36,7 +36,7 @@ class ScipySolverMixin(DenseMatrixMixin):
             options={"xtol": tolerance, "maxfev": max_iterations},
         )
 
-        n_lambda = self.con_dim
+        n_lambda = self.dims.con_dim
         self._lambda.assign(wp.from_numpy(result.x[:n_lambda].astype(np.float32)))
         body_qd_solution = result.x[n_lambda:][np.newaxis, :]
         self._body_qd.assign(wp.from_numpy(body_qd_solution.astype(np.float32)))
@@ -45,7 +45,7 @@ class ScipySolverMixin(DenseMatrixMixin):
 
     def _evaluate_residual_old(self, x: np.ndarray) -> np.ndarray:
         """Evaluate residual function for SciPy solver."""
-        n_lambda = self.con_dim
+        n_lambda = self.dims.con_dim
         lambda_vals = x[:n_lambda]
         body_qd_vals = x[n_lambda:]
 
@@ -78,7 +78,7 @@ class ScipySolverMixin(DenseMatrixMixin):
 
     def _evaluate_residual(self, x: np.ndarray) -> np.ndarray:
         # x contains both lambda and body_qd
-        n_lambda = self.con_dim
+        n_lambda = self.dims.con_dim
         lambda_vals = x[:n_lambda]
         body_qd_vals = x[n_lambda:]
 

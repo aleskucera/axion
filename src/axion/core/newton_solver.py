@@ -133,7 +133,7 @@ class NewtonSolverMixin:
         # The post-solve steps are the same: apply the computed impulses.
         wp.launch(
             kernel=compute_JT_delta_lambda_kernel,
-            dim=self.con_dim,
+            dim=self.dims.con_dim,
             inputs=[
                 self._constraint_body_idx,
                 self._J_values,
@@ -143,7 +143,7 @@ class NewtonSolverMixin:
         )
         wp.launch(
             kernel=compute_delta_body_qd_kernel,
-            dim=self.dyn_dim,
+            dim=self.dims.dyn_dim,
             inputs=[
                 self.gen_inv_mass,
                 self._JT_delta_lambda,
@@ -155,7 +155,7 @@ class NewtonSolverMixin:
     def fill_residual_buffer(self):
         wp.launch(
             kernel=linesearch_dynamics_residuals_kernel,
-            dim=(self.N_alpha, self.N_b),
+            dim=(self.dims.N_alpha, self.dims.N_b),
             inputs=[
                 self.alphas,
                 self._delta_body_qd_v,
@@ -172,7 +172,7 @@ class NewtonSolverMixin:
         )
         wp.launch(
             kernel=linesearch_contact_residuals_kernel,
-            dim=(self.N_alpha, self.N_c),
+            dim=(self.dims.N_alpha, self.dims.N_c),
             inputs=[
                 self.alphas,
                 self._delta_lambda,
@@ -198,7 +198,7 @@ class NewtonSolverMixin:
         )
         wp.launch(
             kernel=linesearch_joint_residuals_kernel,
-            dim=(self.N_alpha, self.N_j),
+            dim=(self.dims.N_alpha, self.dims.N_j),
             inputs=[
                 self.alphas,
                 self._delta_lambda,
@@ -229,7 +229,7 @@ class NewtonSolverMixin:
 
         wp.launch(
             kernel=linesearch_friction_residuals_kernel,
-            dim=(self.N_alpha, self.N_c),
+            dim=(self.dims.N_alpha, self.dims.N_c),
             inputs=[
                 self.alphas,
                 self._delta_lambda,
@@ -255,7 +255,7 @@ class NewtonSolverMixin:
     def update_variables(self):
         wp.launch(
             kernel=buffer_to_sq_norm_kernel,
-            dim=(self.N_alpha, RES_BUFFER_DIM),
+            dim=(self.dims.N_alpha, RES_BUFFER_DIM),
             inputs=[self._res_buffer_v],
             outputs=[self._res_norm_sq],
         )
@@ -267,7 +267,7 @@ class NewtonSolverMixin:
         )
         wp.launch(
             kernel=update_variables_kernel,
-            dim=self.N_b + self.con_dim,
+            dim=self.dims.N_b + self.dims.con_dim,
             inputs=[
                 self._best_alpha_idx,
                 self.alphas,
@@ -302,5 +302,5 @@ class NewtonSolverMixin:
             self.solve_linear_system()
 
             # Add the changes to the state variables.
-            add_inplace(self._body_qd, self._delta_body_qd, 0, 0, self.N_b)
-            add_inplace(self._lambda, self._delta_lambda, 0, 0, self.con_dim)
+            add_inplace(self._body_qd, self._delta_body_qd, 0, 0, self.dims.N_b)
+            add_inplace(self._lambda, self._delta_lambda, 0, 0, self.dims.con_dim)

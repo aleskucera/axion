@@ -164,7 +164,7 @@ class MatrixFreeSystemOperator(LinearOperator):
                     masses, constraint info, etc.).
         """
         super().__init__(
-            shape=(engine.con_dim, engine.con_dim),
+            shape=(engine.dims.con_dim, engine.dims.con_dim),
             dtype=engine._lambda.dtype,
             device=engine.device,
             matvec=None,
@@ -173,10 +173,10 @@ class MatrixFreeSystemOperator(LinearOperator):
 
         # Pre-allocate temporary buffers for intermediate calculations.
         self._tmp_dyn_vec = wp.zeros(
-            engine.N_b, dtype=wp.spatial_vector, device=engine.device
+            engine.dims.N_b, dtype=wp.spatial_vector, device=engine.device
         )
         self._tmp_con_vec = wp.zeros(
-            engine.con_dim, dtype=wp.float32, device=engine.device
+            engine.dims.con_dim, dtype=wp.float32, device=engine.device
         )
 
     def matvec(self, x, y, z, alpha, beta):
@@ -187,7 +187,7 @@ class MatrixFreeSystemOperator(LinearOperator):
         self._tmp_dyn_vec.zero_()
         wp.launch(
             kernel=kernel_J_transpose_matvec,
-            dim=self.engine.con_dim,
+            dim=self.engine.dims.con_dim,
             inputs=[
                 self.engine._constraint_body_idx,
                 self.engine._J_values,
@@ -200,7 +200,7 @@ class MatrixFreeSystemOperator(LinearOperator):
         # --- Step 2: Compute v₂ = M⁻¹ @ v₁ ---
         wp.launch(
             kernel=kernel_inv_mass_matvec,
-            dim=self.engine.N_b,
+            dim=self.engine.dims.N_b,
             inputs=[
                 self.engine.gen_inv_mass,
                 self._tmp_dyn_vec,
@@ -212,7 +212,7 @@ class MatrixFreeSystemOperator(LinearOperator):
         # --- Step 3: Compute v₃ = J @ v₂ ---
         wp.launch(
             kernel=kernel_J_matvec,
-            dim=self.engine.con_dim,
+            dim=self.engine.dims.con_dim,
             inputs=[
                 self.engine._constraint_body_idx,
                 self.engine._J_values,
@@ -225,7 +225,7 @@ class MatrixFreeSystemOperator(LinearOperator):
         # --- Step 4: Compute z = beta * y + alpha * (v₃ + C @ x) ---
         wp.launch(
             kernel=kernel_finalize_matvec,
-            dim=self.engine.con_dim,
+            dim=self.engine.dims.con_dim,
             inputs=[
                 self._tmp_con_vec,  # This is J M⁻¹ Jᵀ @ x
                 self.engine._C_values,

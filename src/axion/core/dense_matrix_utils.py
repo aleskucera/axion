@@ -82,15 +82,21 @@ class DenseMatrixMixin:
         """Lazy initialization of dense matrices."""
         if not hasattr(self, "Hinv_dense"):
             self.Hinv_dense = wp.zeros(
-                (self.dyn_dim, self.dyn_dim), dtype=wp.float32, device=self.device
+                (self.dims.dyn_dim, self.dims.dyn_dim),
+                dtype=wp.float32,
+                device=self.device,
             )
         if not hasattr(self, "J_dense"):
             self.J_dense = wp.zeros(
-                (self.con_dim, self.dyn_dim), dtype=wp.float32, device=self.device
+                (self.dims.con_dim, self.dims.dyn_dim),
+                dtype=wp.float32,
+                device=self.device,
             )
         if not hasattr(self, "C_dense"):
             self.C_dense = wp.zeros(
-                (self.con_dim, self.con_dim), dtype=wp.float32, device=self.device
+                (self.dims.con_dim, self.dims.con_dim),
+                dtype=wp.float32,
+                device=self.device,
             )
 
     def update_dense_matrices(self, synchronize: bool = True) -> None:
@@ -110,7 +116,7 @@ class DenseMatrixMixin:
         # Update H^-1 (inverse mass matrix)
         wp.launch(
             kernel=update_Hinv_dense_kernel,
-            dim=self.N_b,
+            dim=self.dims.N_b,
             inputs=[self.gen_inv_mass],
             outputs=[self.Hinv_dense],
             device=self.device,
@@ -119,7 +125,7 @@ class DenseMatrixMixin:
         # Update J (constraint Jacobian)
         wp.launch(
             kernel=update_J_dense,
-            dim=self.con_dim,
+            dim=self.dims.con_dim,
             inputs=[
                 self._constraint_body_idx,
                 self._J_values,
@@ -131,7 +137,7 @@ class DenseMatrixMixin:
         # Update C (compliance matrix)
         wp.launch(
             kernel=update_C_dense_kernel,
-            dim=self.con_dim,
+            dim=self.dims.con_dim,
             inputs=[self._C_values],
             outputs=[self.C_dense],
             device=self.device,

@@ -68,7 +68,7 @@ class JacobiPreconditioner(LinearOperator):
 
     def __init__(self, engine):
         super().__init__(
-            shape=(engine.con_dim, engine.con_dim),
+            shape=(engine.dims.con_dim, engine.dims.con_dim),
             dtype=engine._lambda.dtype,
             device=engine.device,
             matvec=None,  # Will be set later
@@ -77,7 +77,7 @@ class JacobiPreconditioner(LinearOperator):
 
         # Storage for the inverse diagonal elements
         self._P_inv_diag = wp.zeros(
-            engine.con_dim, dtype=wp.float32, device=self.device
+            engine.dims.con_dim, dtype=wp.float32, device=self.device
         )
 
     def update(self):
@@ -87,7 +87,7 @@ class JacobiPreconditioner(LinearOperator):
         """
         wp.launch(
             kernel=compute_inv_diag_kernel,
-            dim=self.engine.con_dim,
+            dim=self.engine.dims.con_dim,
             inputs=[
                 self.engine._constraint_body_idx,
                 self.engine.gen_inv_mass,
@@ -105,7 +105,7 @@ class JacobiPreconditioner(LinearOperator):
         """
         wp.launch(
             kernel=apply_preconditioner_kernel,
-            dim=self.engine.con_dim,
+            dim=self.engine.dims.con_dim,
             inputs=[self._P_inv_diag, x, y, alpha, beta, z],
             device=self.device,
         )
