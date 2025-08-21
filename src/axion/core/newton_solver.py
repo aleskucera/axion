@@ -125,7 +125,7 @@ class NewtonSolverMixin:
             A=self.A_op,
             b=self._b,
             x=self._delta_lambda,
-            iters=self.linear_iters,
+            iters=self.config.linear_iters,
             preconditioner=self.preconditioner,
             logger=self.logger,
         )
@@ -190,9 +190,9 @@ class NewtonSolverMixin:
                 self._lambda,
                 # Parameters
                 self._dt,
-                self.contact_stabilization_factor,
-                self.contact_fb_alpha,
-                self.contact_fb_beta,
+                self.config.contact_stabilization_factor,
+                self.config.contact_fb_alpha,
+                self.config.contact_fb_beta,
             ],
             outputs=[self._res_buffer],
         )
@@ -222,7 +222,7 @@ class NewtonSolverMixin:
                 self._lambda,
                 # Parameters
                 self._dt,
-                self.joint_stabilization_factor,
+                self.config.joint_stabilization_factor,
             ],
             outputs=[self._res_buffer],
         )
@@ -246,8 +246,8 @@ class NewtonSolverMixin:
                 self.lambda_f_offset,
                 self._lambda,
                 # Parameters
-                self.friction_fb_alpha,
-                self.friction_fb_beta,
+                self.config.friction_fb_alpha,
+                self.config.friction_fb_beta,
             ],
             outputs=[self._res_buffer],
         )
@@ -278,7 +278,7 @@ class NewtonSolverMixin:
         )
 
     def solve_newton_linesearch(self):
-        for i in range(self.newton_iters):
+        for i in range(self.config.newton_iters):
             wp.copy(dest=self._lambda_prev, src=self._lambda)
             self.update_system_values()
             self.solve_linear_system()
@@ -290,7 +290,7 @@ class NewtonSolverMixin:
             self.update_variables()
 
     def solve_newton(self):
-        for i in range(self.newton_iters):
+        for i in range(self.config.newton_iters):
             wp.copy(dest=self._lambda_prev, src=self._lambda)
             self.update_system_values()
 

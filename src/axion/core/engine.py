@@ -24,6 +24,7 @@ from warp.sim import State
 
 from .constraint_dimensions import ConstraintDimensions
 from .control import apply_control
+from .engine_config import EngineConfig
 from .logging_utils import LoggingMixin
 from .newton_solver import NewtonSolverMixin
 from .scipy_solver import ScipySolverMixin
@@ -34,33 +35,11 @@ class AxionEngine(Integrator, LoggingMixin, NewtonSolverMixin, ScipySolverMixin)
     def __init__(
         self,
         model: Model,
-        newton_iters: int = 4,
-        linear_iters: int = 4,
-        joint_stabilization_factor: float = 0.01,
-        contact_stabilization_factor: float = 0.1,
-        contact_fb_alpha: float = 0.25,
-        contact_fb_beta: float = 0.25,
-        friction_fb_alpha: float = 0.25,
-        friction_fb_beta: float = 0.25,
-        matrixfree_representation: float = True,
-        linesearch_alphas: tuple = (2.0, 1.0, 0.5, 0.25, 0.125),
+        config: Optional[EngineConfig] = None,
         logger: Optional[HDF5Logger] = None,
     ):
         super().__init__()
-        self.newton_iters = newton_iters
-        self.linear_iters = linear_iters
-
-        self.joint_stabilization_factor = joint_stabilization_factor
-        self.contact_stabilization_factor = contact_stabilization_factor
-        self.contact_compliance = 1e-5
-        self.friction_compliance = 1e-5
-
-        self.contact_fb_alpha = contact_fb_alpha
-        self.contact_fb_beta = contact_fb_beta
-        self.friction_fb_alpha = friction_fb_alpha
-        self.friction_fb_beta = friction_fb_beta
-
-        self.matrixfree_representation = matrixfree_representation
+        self.config = config if config is not None else EngineConfig()
 
         self.logger = logger
 
@@ -69,13 +48,10 @@ class AxionEngine(Integrator, LoggingMixin, NewtonSolverMixin, ScipySolverMixin)
         self.N_b = model.body_count
         self.N_c = model.rigid_contact_max
         self.N_j = model.joint_count
-        self.N_alpha = len(linesearch_alphas)
+        self.N_alpha = len(self.config.linesearch_alphas)
 
         with wp.ScopedDevice(self.device):
-            self.alphas = wp.array(linesearch_alphas, dtype=wp.float32)
-
-        # Constraint dimensions
-        # self._setup_constraint_dimensions()
+            self.alphas = wp.array(self.config.linesearch_alphas, dtype=wp.float32)
 
         self.dims = ConstraintDimensions(self.N_b, self.N_c, self.N_j)
         self._initialize_state_vectors(self.dims)
@@ -85,37 +61,6 @@ class AxionEngine(Integrator, LoggingMixin, NewtonSolverMixin, ScipySolverMixin)
 
         # Initialize system operators
         self._initialize_system_operators()
-
-    def _setup_constraint_dimensions(self):
-        """Setup constraint dimensions and offsets."""
-        nj = 5 * self.N_j  # joint constraints
-        nn = self.N_c  # normal constraints
-        nf = 2 * self.N_c  # friction constraints
-
-        self.dyn_dim = self.N_b * 6  # Dynamic dimensions
-        self.con_dim = nj + nn + nf  # Constraint dimensions
-        self.res_dim = self.dyn_dim + self.con_dim
-
-        assert (
-            self.res_dim > self.dyn_dim
-        ), "Exceeded number of maximum bodies in the scene"
-
-        # Setup offsets for different constraint types
-        self.h_j_offset = 0
-        self.h_n_offset = nj
-        self.h_f_offset = nj + nn
-
-        self.J_j_offset = 0
-        self.J_n_offset = nj
-        self.J_f_offset = nj + nn
-
-        self.C_j_offset = 0
-        self.C_n_offset = nj
-        self.C_f_offset = nj + nn
-
-        self.lambda_j_offset = 0
-        self.lambda_n_offset = nj
-        self.lambda_f_offset = nj + nn
 
     def _initialize_state_vectors(self, dims: ConstraintDimensions):
         def _zeros(shape, dtype=wp.float32):
@@ -192,7 +137,7 @@ class AxionEngine(Integrator, LoggingMixin, NewtonSolverMixin, ScipySolverMixin)
 
     def _initialize_system_operators(self):
         """Initialize system matrix operators and preconditioner."""
-        if self.matrixfree_representation:
+        if self.config.matrixfree_representation:
             self.A_op = MatrixFreeSystemOperator(self)
         else:
             self.A_op = MatrixSystemOperator(self)
@@ -369,7 +314,7 @@ class AxionEngine(Integrator, LoggingMixin, NewtonSolverMixin, ScipySolverMixin)
                 self._lambda_j,
                 self._joint_interaction,
                 self._dt,
-                self.joint_stabilization_factor,
+                self.config.joint_stabilization_factor,
             ],
             outputs=[
                 self._g_v,
@@ -389,10 +334,10 @@ class AxionEngine(Integrator, LoggingMixin, NewtonSolverMixin, ScipySolverMixin)
                 self._contact_interaction,
                 self._lambda_n,
                 self._dt,
-                self.contact_stabilization_factor,
-                self.contact_fb_alpha,
-                self.contact_fb_beta,
-                self.contact_compliance,
+                self.config.contact_stabilization_factor,
+                self.config.contact_fb_alpha,
+                self.config.contact_fb_beta,
+                self.config.contact_compliance,
             ],
             outputs=[
                 self._g_v,
@@ -410,9 +355,9 @@ class AxionEngine(Integrator, LoggingMixin, NewtonSolverMixin, ScipySolverMixin)
                 self._contact_interaction,
                 self._lambda_f,
                 self._lambda_n_prev,
-                self.friction_fb_alpha,
-                self.friction_fb_beta,
-                self.friction_compliance,
+                self.config.friction_fb_alpha,
+                self.config.friction_fb_beta,
+                self.config.friction_compliance,
             ],
             outputs=[
                 self._g_v,
@@ -422,7 +367,7 @@ class AxionEngine(Integrator, LoggingMixin, NewtonSolverMixin, ScipySolverMixin)
             ],
         )
 
-        if not self.matrixfree_representation:
+        if not self.config.matrixfree_representation:
             self.A_op.update()
 
         self.preconditioner.update()

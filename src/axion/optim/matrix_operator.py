@@ -135,7 +135,7 @@ class MatrixSystemOperator(LinearOperator):
 
     def __init__(self, engine):
         super().__init__(
-            shape=(engine.con_dim, engine.con_dim),
+            shape=(engine.dims.con_dim, engine.dims.con_dim),
             dtype=engine._lambda.dtype,
             device=engine.device,
             matvec=None,
@@ -158,9 +158,9 @@ class MatrixSystemOperator(LinearOperator):
                 self.engine.joint_child,
                 self.engine._contact_body_a,
                 self.engine._contact_body_b,
-                self.engine.J_j_offset,
-                self.engine.J_n_offset,
-                self.engine.J_f_offset,
+                self.engine.dims.J_j_offset,
+                self.engine.dims.J_n_offset,
+                self.engine.dims.J_f_offset,
                 self.engine._J_values,
                 self.engine._C_values,
             ],

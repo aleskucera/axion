@@ -3,6 +3,7 @@ import numpy as np
 import warp as wp
 import warp.sim.render
 from axion import AxionEngine
+from axion import EngineConfig
 from tqdm import tqdm
 from warp.sim import Mesh
 
