@@ -1,7 +1,7 @@
 import warp as wp
 from axion.constraints import linesearch_contact_residuals_kernel
 from axion.constraints import linesearch_dynamics_residuals_kernel
-from axion.constraints import linesearch_frictional_residuals_kernel
+from axion.constraints import linesearch_friction_residuals_kernel
 from axion.constraints import linesearch_joint_residuals_kernel
 from axion.optim.cr import cr_solver
 from axion.types import *
@@ -228,7 +228,7 @@ class NewtonSolverMixin:
         )
 
         wp.launch(
-            kernel=linesearch_frictional_residuals_kernel,
+            kernel=linesearch_friction_residuals_kernel,
             dim=(self.N_alpha, self.N_c),
             inputs=[
                 self.alphas,
