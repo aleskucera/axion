@@ -17,7 +17,7 @@ from warp.sim import Mesh
 RENDER = True
 USD_FILE = "helhest.usd"
 
-FRICTION = 0.8
+FRICTION = 0.9
 RESTITUTION = 0.1
 
 #######################################
@@ -117,8 +117,8 @@ def ball_world_model(gravity: bool = True) -> wp.sim.Model:
         parent_xform=wp.transform((1.5, -1.5, 0.0), wp.quat_identity()),
         child_xform=wp.transform((0.0, 0.0, 0.0), wp.quat_identity()),
         axis=wp.vec3(0.0, 1.0, 0.0),
-        linear_compliance=0.0,
-        angular_compliance=0.0,
+        linear_compliance=1e-5,
+        angular_compliance=1e-5,
         mode=wp.sim.JOINT_MODE_TARGET_VELOCITY,
     )
     builder.add_joint_revolute(
@@ -127,8 +127,8 @@ def ball_world_model(gravity: bool = True) -> wp.sim.Model:
         parent_xform=wp.transform((1.5, 1.5, 0.0), wp.quat_identity()),
         child_xform=wp.transform((0.0, 0.0, 0.0), wp.quat_identity()),
         axis=wp.vec3(0.0, 1.0, 0.0),
-        linear_compliance=0.0,
-        angular_compliance=0.0,
+        linear_compliance=1e-5,
+        angular_compliance=1e-5,
         mode=wp.sim.JOINT_MODE_TARGET_VELOCITY,
     )
     builder.add_joint_revolute(
@@ -137,8 +137,8 @@ def ball_world_model(gravity: bool = True) -> wp.sim.Model:
         parent_xform=wp.transform((-2.5, 0.0, 0.0), wp.quat_identity()),
         child_xform=wp.transform((0.0, 0.0, 0.0), wp.quat_identity()),
         axis=wp.vec3(0.0, 1.0, 0.0),
-        linear_compliance=0.0,
-        angular_compliance=0.0,
+        linear_compliance=1e-5,
+        angular_compliance=1e-5,
         mode=wp.sim.JOINT_MODE_FORCE,
     )
 
@@ -228,7 +228,7 @@ class BallBounceSim:
             self.state_1,
             self.sim_dt,
             control=self.control,
-            solver="newton",
+            solver="newton_linesearch",
         )
 
         wp.copy(dest=self.state_0.body_q, src=self.state_1.body_q)

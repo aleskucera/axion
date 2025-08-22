@@ -63,19 +63,18 @@ def compute_friction_model(
 def friction_constraint_kernel(
     # --- Body State Inputs ---
     body_qd: wp.array(dtype=wp.spatial_vector),
+    lambda_f: wp.array(dtype=wp.float32),
+    lambda_n_prev: wp.array(dtype=wp.float32),
     interactions: wp.array(dtype=ContactInteraction),
-    # --- Velocity Impulse Variables ---
-    lambda_friction: wp.array(dtype=wp.float32),
-    lambda_normal_prev: wp.array(dtype=wp.float32),
     # --- Simulation & Solver Parameters ---
     fb_alpha: wp.float32,
     fb_beta: wp.float32,
     compliance: wp.float32,
     # --- Outputs (contributions to the linear system) ---
     g: wp.array(dtype=wp.spatial_vector),
-    h_friction: wp.array(dtype=wp.float32),
-    J_friction_values: wp.array(dtype=wp.spatial_vector, ndim=2),
-    C_friction_values: wp.array(dtype=wp.float32),
+    h_f: wp.array(dtype=wp.float32),
+    J_f_values: wp.array(dtype=wp.spatial_vector, ndim=2),
+    C_f_values: wp.array(dtype=wp.float32),
 ):
     contact_idx = wp.tid()
     constr1_idx = 2 * contact_idx
@@ -84,15 +83,15 @@ def friction_constraint_kernel(
     interaction = interactions[contact_idx]
 
     # --- 1. Handle Early Exit for Inactive/Non-Frictional Contacts ---
-    normal_impulse = lambda_normal_prev[contact_idx]
+    normal_impulse = lambda_n_prev[contact_idx]
     friction_cone_limit = interaction.friction_coeff * normal_impulse
 
     if not interaction.is_active or friction_cone_limit <= 1e-4:
         # Unconstrained: h = λ, C = 1, J = 0
-        h_friction[constr1_idx] = lambda_friction[constr1_idx]
-        h_friction[constr2_idx] = lambda_friction[constr2_idx]
-        C_friction_values[constr1_idx] = 1.0
-        C_friction_values[constr2_idx] = 1.0
+        h_f[constr1_idx] = lambda_f[constr1_idx]
+        h_f[constr2_idx] = lambda_f[constr2_idx]
+        C_f_values[constr1_idx] = 1.0
+        C_f_values[constr2_idx] = 1.0
         return
 
     # --- 2. Gather Inputs for the Friction Model ---
@@ -106,8 +105,8 @@ def friction_constraint_kernel(
     if body_b_idx >= 0:
         body_qd_b = body_qd[body_b_idx]
 
-    lambda_t1 = lambda_friction[constr1_idx]
-    lambda_t2 = lambda_friction[constr2_idx]
+    lambda_t1 = lambda_f[constr1_idx]
+    lambda_t2 = lambda_f[constr2_idx]
     friction_impulse = wp.vec2(lambda_t1, lambda_t2)
 
     # --- 3. Compute Friction Terms by Calling the Model ---
@@ -134,20 +133,20 @@ def friction_constraint_kernel(
         g[body_b_idx] -= J_t1_b * lambda_t1 + J_t2_b * lambda_t2
 
     # Update h (constraint violation): h_t = v_t + w * λ_t
-    h_friction[constr1_idx] = v_t1 + w * lambda_t1
-    h_friction[constr2_idx] = v_t2 + w * lambda_t2
+    h_f[constr1_idx] = v_t1 + w * lambda_t1
+    h_f[constr2_idx] = v_t2 + w * lambda_t2
 
     # Update C (compliance): C_ff = (w + compliance) * I
-    C_friction_values[constr1_idx] = w + compliance
-    C_friction_values[constr2_idx] = w + compliance
+    C_f_values[constr1_idx] = w + compliance
+    C_f_values[constr2_idx] = w + compliance
 
     # Update J (Jacobian): J_f = [J_t1; J_t2]
     if body_a_idx >= 0:
-        J_friction_values[constr1_idx, 0] = J_t1_a
-        J_friction_values[constr2_idx, 0] = J_t2_a
+        J_f_values[constr1_idx, 0] = J_t1_a
+        J_f_values[constr2_idx, 0] = J_t2_a
     if body_b_idx >= 0:
-        J_friction_values[constr1_idx, 1] = J_t1_b
-        J_friction_values[constr2_idx, 1] = J_t2_b
+        J_f_values[constr1_idx, 1] = J_t1_b
+        J_f_values[constr2_idx, 1] = J_t2_b
 
 
 @wp.kernel
@@ -158,10 +157,9 @@ def linesearch_friction_residuals_kernel(
     delta_lambda_n: wp.array(dtype=wp.float32),
     # --- Body State Inputs ---
     body_qd: wp.array(dtype=wp.spatial_vector),
-    interactions: wp.array(dtype=ContactInteraction),
-    # --- Velocity Impulse Variables ---
     lambda_f: wp.array(dtype=wp.float32),
     lambda_n: wp.array(dtype=wp.float32),
+    interactions: wp.array(dtype=ContactInteraction),
     # --- Simulation & Solver Parameters ---
     fb_alpha: wp.float32,
     fb_beta: wp.float32,

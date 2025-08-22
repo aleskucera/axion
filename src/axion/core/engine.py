@@ -39,173 +39,156 @@ class AxionEngine(Integrator, LoggingMixin, NewtonSolverMixin, ScipySolverMixin)
         logger: Optional[HDF5Logger] = None,
     ):
         super().__init__()
+        self.model = model
         self.config = config if config is not None else EngineConfig()
 
         self.logger = logger
 
         # Basic model properties
         self.device = model.device
-        self.N_b = model.body_count
-        self.N_c = model.rigid_contact_max
-        self.N_j = model.joint_count
         self.N_alpha = len(self.config.linesearch_alphas)
 
-        with wp.ScopedDevice(self.device):
-            self.alphas = wp.array(self.config.linesearch_alphas, dtype=wp.float32)
+        self.dims = ConstraintDimensions(
+            N_b=self.model.body_count,
+            N_c=self.model.rigid_contact_max,
+            N_j=self.model.joint_count,
+        )
 
-        self.dims = ConstraintDimensions(self.N_b, self.N_c, self.N_j)
-        self._initialize_state_vectors(self.dims)
-
-        # Store model properties
-        self._store_model_properties(model)
-
-        # Initialize system operators
-        self._initialize_system_operators()
-
-    def _initialize_state_vectors(self, dims: ConstraintDimensions):
         def _zeros(shape, dtype=wp.float32):
-            return wp.zeros(shape, dtype=dtype, device=self.device)
+            return wp.zeros(shape, dtype=dtype)
 
         def slice_if(cond, arr, sl):
             return arr[sl] if cond else None
 
+        def slice_if_2D(cond, arr, sl):
+            return arr[:, sl] if cond else None
+
         with wp.ScopedDevice(self.device):
             # --- Allocate top-level vectors ---
-            self._res = _zeros(dims.res_dim)
-            self._J_values = _zeros((dims.con_dim, 2), wp.spatial_vector)
-            self._C_values = _zeros(dims.con_dim)
-            self._lambda = _zeros(dims.con_dim)
-            self._lambda_prev = _zeros(dims.con_dim)
-            self._constraint_body_idx = _zeros((dims.con_dim, 2), wp.int32)
+            self._res = _zeros(self.dims.res_dim)
+            self._J_values = _zeros((self.dims.con_dim, 2), wp.spatial_vector)
+            self._C_values = _zeros(self.dims.con_dim)
+            self._lambda = _zeros(self.dims.con_dim)
+            self._lambda_prev = _zeros(self.dims.con_dim)
+            self._constraint_body_idx = _zeros((self.dims.con_dim, 2), wp.int32)
 
             # --- Views into residual ---
-            self._g = self._res[: dims.dyn_dim]
-            self._g_v = wp.array(self._g, shape=dims.N_b, dtype=wp.spatial_vector)
-            self._h = self._res[dims.dyn_dim :]
+            self._g = self._res[: self.dims.dyn_dim]
+            self._g_v = wp.array(self._g, shape=self.dims.N_b, dtype=wp.spatial_vector)
+            self._h = self._res[self.dims.dyn_dim :]
 
             # --- Slice-based views ---
             self._h_j, self._h_n, self._h_f = (
-                slice_if(dims.N_j > 0, self._h, dims.joint_slice),
-                slice_if(dims.N_c > 0, self._h, dims.normal_slice),
-                slice_if(dims.N_c > 0, self._h, dims.friction_slice),
+                slice_if(self.dims.N_j > 0, self._h, self.dims.joint_slice),
+                slice_if(self.dims.N_c > 0, self._h, self.dims.normal_slice),
+                slice_if(self.dims.N_c > 0, self._h, self.dims.friction_slice),
             )
 
             self._J_j_values, self._J_n_values, self._J_f_values = (
-                slice_if(dims.N_j > 0, self._J_values, dims.joint_slice),
-                slice_if(dims.N_c > 0, self._J_values, dims.normal_slice),
-                slice_if(dims.N_c > 0, self._J_values, dims.friction_slice),
+                slice_if(self.dims.N_j > 0, self._J_values, self.dims.joint_slice),
+                slice_if(self.dims.N_c > 0, self._J_values, self.dims.normal_slice),
+                slice_if(self.dims.N_c > 0, self._J_values, self.dims.friction_slice),
             )
 
             self._C_j_values, self._C_n_values, self._C_f_values = (
-                slice_if(dims.N_j > 0, self._C_values, dims.joint_slice),
-                slice_if(dims.N_c > 0, self._C_values, dims.normal_slice),
-                slice_if(dims.N_c > 0, self._C_values, dims.friction_slice),
+                slice_if(self.dims.N_j > 0, self._C_values, self.dims.joint_slice),
+                slice_if(self.dims.N_c > 0, self._C_values, self.dims.normal_slice),
+                slice_if(self.dims.N_c > 0, self._C_values, self.dims.friction_slice),
             )
 
             self._lambda_j, self._lambda_n, self._lambda_f = (
-                slice_if(dims.N_j > 0, self._lambda, dims.joint_slice),
-                slice_if(dims.N_c > 0, self._lambda, dims.normal_slice),
-                slice_if(dims.N_c > 0, self._lambda, dims.friction_slice),
+                slice_if(self.dims.N_j > 0, self._lambda, self.dims.joint_slice),
+                slice_if(self.dims.N_c > 0, self._lambda, self.dims.normal_slice),
+                slice_if(self.dims.N_c > 0, self._lambda, self.dims.friction_slice),
             )
 
             self._lambda_j_prev, self._lambda_n_prev, self._lambda_f_prev = (
-                slice_if(dims.N_j > 0, self._lambda_prev, dims.joint_slice),
-                slice_if(dims.N_c > 0, self._lambda_prev, dims.normal_slice),
-                slice_if(dims.N_c > 0, self._lambda_prev, dims.friction_slice),
+                slice_if(self.dims.N_j > 0, self._lambda_prev, self.dims.joint_slice),
+                slice_if(self.dims.N_c > 0, self._lambda_prev, self.dims.normal_slice),
+                slice_if(
+                    self.dims.N_c > 0, self._lambda_prev, self.dims.friction_slice
+                ),
             )
 
             # --- Other working vectors ---
-            self._JT_delta_lambda = _zeros(dims.N_b, wp.spatial_vector)
-            self._delta_body_qd = _zeros(dims.dyn_dim)
+            self._JT_delta_lambda = _zeros(self.dims.N_b, wp.spatial_vector)
+            self._delta_body_qd = _zeros(self.dims.dyn_dim)
             self._delta_body_qd_v = wp.array(
-                self._delta_body_qd, shape=dims.N_b, dtype=wp.spatial_vector
+                self._delta_body_qd, shape=self.dims.N_b, dtype=wp.spatial_vector
             )
-            self._delta_lambda = _zeros(dims.con_dim)
-            self._b = _zeros(dims.con_dim)
+
+            self._delta_lambda = _zeros(self.dims.con_dim)
+            self._delta_lambda_j, self._delta_lambda_n, self._delta_lambda_f = (
+                slice_if(self.dims.N_j > 0, self._delta_lambda, self.dims.joint_slice),
+                slice_if(self.dims.N_c > 0, self._delta_lambda, self.dims.normal_slice),
+                slice_if(
+                    self.dims.N_c > 0, self._delta_lambda, self.dims.friction_slice
+                ),
+            )
+
+            self._b = _zeros(self.dims.con_dim)
 
             # --- Structures for dynamics ---
-            self.gen_mass = wp.empty(self.N_b, dtype=GeneralizedMass)
-            self.gen_inv_mass = wp.empty(self.N_b, dtype=GeneralizedMass)
-            self._joint_interaction = wp.empty(self.N_j, dtype=JointInteraction)
-            self._contact_interaction = wp.empty(self.N_c, dtype=ContactInteraction)
+            self.gen_mass = wp.empty(self.dims.N_b, dtype=GeneralizedMass)
+            self.gen_inv_mass = wp.empty(self.dims.N_b, dtype=GeneralizedMass)
+
+            wp.launch(
+                kernel=generalized_mass_kernel,
+                dim=self.dims.N_b,
+                inputs=[
+                    self.model.body_mass,
+                    self.model.body_inertia,
+                ],
+                outputs=[self.gen_mass],
+            )
+
+            wp.launch(
+                kernel=generalized_mass_kernel,
+                dim=self.dims.N_b,
+                inputs=[
+                    self.model.body_inv_mass,
+                    self.model.body_inv_inertia,
+                ],
+                outputs=[self.gen_inv_mass],
+            )
+
+            self._joint_interaction = wp.empty(self.dims.N_j, dtype=JointInteraction)
+            self._contact_interaction = wp.empty(
+                self.dims.N_c, dtype=ContactInteraction
+            )
 
             # --- Dense matrices for logging (if enabled) ---
             if self.logger:
-                self.Hinv_dense = _zeros((dims.dyn_dim, dims.dyn_dim))
-                self.J_dense = _zeros((dims.con_dim, dims.dyn_dim))
-                self.C_dense = _zeros((dims.con_dim, dims.con_dim))
+                self.Hinv_dense = _zeros((self.dims.dyn_dim, self.dims.dyn_dim))
+                self.J_dense = _zeros((self.dims.con_dim, self.dims.dyn_dim))
+                self.C_dense = _zeros((self.dims.con_dim, self.dims.con_dim))
 
-    def _initialize_system_operators(self):
-        """Initialize system matrix operators and preconditioner."""
+            self.alphas = wp.array(self.config.linesearch_alphas, dtype=wp.float32)
+            self._res_alpha = _zeros((self.N_alpha, self.dims.res_dim))
+
+            self._g_alpha = self._res_alpha[:, : self.dims.dyn_dim]
+            self._g_alpha_v = wp.array(
+                self._g_alpha,
+                shape=(self.N_alpha, self.dims.N_b),
+                dtype=wp.spatial_vector,
+            )
+            self._h_alpha = self._res_alpha[:, self.dims.dyn_dim :]
+
+            self._h_alpha_j, self._h_alpha_n, self._h_alpha_f = (
+                slice_if_2D(self.dims.N_j > 0, self._h_alpha, self.dims.joint_slice),
+                slice_if_2D(self.dims.N_c > 0, self._h_alpha, self.dims.normal_slice),
+                slice_if_2D(self.dims.N_c > 0, self._h_alpha, self.dims.friction_slice),
+            )
+
+            self._res_alpha_norm_sq = _zeros(self.N_alpha)
+            self._best_alpha_idx = _zeros(1, wp.uint32)
+
         if self.config.matrixfree_representation:
             self.A_op = MatrixFreeSystemOperator(self)
         else:
             self.A_op = MatrixSystemOperator(self)
 
         self.preconditioner = JacobiPreconditioner(self)
-
-    def _store_model_properties(self, model: Model):
-        """Store references to model properties that don't change during simulation."""
-        # Body properties
-        self.body_com = model.body_com
-        self.body_mass = model.body_mass
-        self.body_inv_mass = model.body_inv_mass
-        self.body_inertia = model.body_inertia
-        self.body_inv_inertia = model.body_inv_inertia
-
-        # Shape properties
-        self.shape_geo = model.shape_geo
-        self.shape_body = model.shape_body
-        self.shape_materials = model.shape_materials
-
-        # Joint properties
-        self.joint_type = model.joint_type
-        self.joint_enabled = model.joint_enabled
-        self.joint_parent = model.joint_parent
-        self.joint_child = model.joint_child
-        self.joint_X_p = model.joint_X_p
-        self.joint_X_c = model.joint_X_c
-        self.joint_axis_start = model.joint_axis_start
-        self.joint_axis_dim = model.joint_axis_dim
-        self.joint_axis = model.joint_axis
-        self.joint_linear_compliance = model.joint_linear_compliance
-        self.joint_angular_compliance = model.joint_angular_compliance
-
-        # Physics parameters
-        self.gravity = model.gravity
-
-        # Dynamic state references (will be updated each timestep)
-        self._dt = 1e-3
-
-        with wp.ScopedDevice(self.device):
-            self.gen_mass = wp.empty(self.dims.N_b, dtype=GeneralizedMass)
-            self.gen_inv_mass = wp.empty(self.dims.N_b, dtype=GeneralizedMass)
-            self._joint_interaction = wp.empty(self.dims.N_j, dtype=JointInteraction)
-            self._contact_interaction = wp.empty(
-                self.dims.N_c, dtype=ContactInteraction
-            )
-
-        wp.launch(
-            kernel=generalized_mass_kernel,
-            dim=self.dims.N_b,
-            inputs=[
-                self.body_mass,
-                self.body_inertia,
-            ],
-            outputs=[self.gen_mass],
-            device=self.device,
-        )
-
-        wp.launch(
-            kernel=generalized_mass_kernel,
-            dim=self.dims.N_b,
-            inputs=[
-                self.body_inv_mass,
-                self.body_inv_inertia,
-            ],
-            outputs=[self.gen_inv_mass],
-            device=self.device,
-        )
 
     def _clear_values(self):
         self._g.zero_()
@@ -230,10 +213,10 @@ class AxionEngine(Integrator, LoggingMixin, NewtonSolverMixin, ScipySolverMixin)
             dim=self.dims.N_c,
             inputs=[
                 self._body_q,
-                self.body_com,
-                self.shape_body,
-                self.shape_geo,
-                self.shape_materials,
+                self.model.body_com,
+                self.model.shape_body,
+                self.model.shape_geo,
+                self.model.shape_materials,
                 model.rigid_contact_count,
                 model.rigid_contact_point0,
                 model.rigid_contact_point1,
@@ -252,17 +235,17 @@ class AxionEngine(Integrator, LoggingMixin, NewtonSolverMixin, ScipySolverMixin)
             dim=self.dims.N_j,
             inputs=[
                 self._body_q,
-                self.body_com,
-                self.joint_type,
-                self.joint_enabled,
-                self.joint_parent,
-                self.joint_child,
-                self.joint_X_p,
-                self.joint_X_c,
-                self.joint_axis_start,
-                self.joint_axis,
-                self.joint_linear_compliance,
-                self.joint_angular_compliance,
+                self.model.body_com,
+                self.model.joint_type,
+                self.model.joint_enabled,
+                self.model.joint_parent,
+                self.model.joint_child,
+                self.model.joint_X_p,
+                self.model.joint_X_c,
+                self.model.joint_axis_start,
+                self.model.joint_axis,
+                self.model.joint_linear_compliance,
+                self.model.joint_angular_compliance,
             ],
             outputs=[
                 self._joint_interaction,
@@ -274,13 +257,13 @@ class AxionEngine(Integrator, LoggingMixin, NewtonSolverMixin, ScipySolverMixin)
             kernel=update_constraint_body_idx_kernel,
             dim=self.dims.con_dim,
             inputs=[
-                self.shape_body,
+                self.model.shape_body,
                 model.rigid_contact_shape0,
                 model.rigid_contact_shape1,
-                self.joint_parent,
-                self.joint_child,
-                self.N_j,
-                self.N_c,
+                self.model.joint_parent,
+                self.model.joint_child,
+                self.dims.N_j,
+                self.dims.N_c,
             ],
             outputs=[
                 self._constraint_body_idx,
@@ -300,7 +283,7 @@ class AxionEngine(Integrator, LoggingMixin, NewtonSolverMixin, ScipySolverMixin)
                 self._body_f,
                 self.gen_mass,
                 self._dt,
-                self.gravity,
+                self.model.gravity,
             ],
             outputs=[self._g_v],
             device=self.device,
@@ -331,8 +314,8 @@ class AxionEngine(Integrator, LoggingMixin, NewtonSolverMixin, ScipySolverMixin)
             inputs=[
                 self._body_qd,
                 self._body_qd_prev,
-                self._contact_interaction,
                 self._lambda_n,
+                self._contact_interaction,
                 self._dt,
                 self.config.contact_stabilization_factor,
                 self.config.contact_fb_alpha,
@@ -352,9 +335,9 @@ class AxionEngine(Integrator, LoggingMixin, NewtonSolverMixin, ScipySolverMixin)
             dim=self.dims.N_c,
             inputs=[
                 self._body_qd,
-                self._contact_interaction,
                 self._lambda_f,
                 self._lambda_n_prev,
+                self._contact_interaction,
                 self.config.friction_fb_alpha,
                 self.config.friction_fb_beta,
                 self.config.friction_compliance,
@@ -407,6 +390,8 @@ class AxionEngine(Integrator, LoggingMixin, NewtonSolverMixin, ScipySolverMixin)
 
         if solver == "newton":
             self.solve_newton()
+        elif solver == "newton_linesearch":
+            self.solve_newton_linesearch()
         elif solver == "scipy":
             self.solve_scipy()
         else:

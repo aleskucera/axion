@@ -8,13 +8,6 @@ from axion.types import *
 from axion.types import GeneralizedMass
 from axion.utils import add_inplace
 
-MAX_BODIES = 10
-RES_BUFFER_DIM = MAX_BODIES * 6 + 50
-ALPHA_DIM = 5
-
-res_buffer_vec = wp.types.vector(length=RES_BUFFER_DIM, dtype=wp.float32)
-res_norm_sq_vec = wp.types.vector(length=ALPHA_DIM, dtype=wp.float32)
-
 
 @wp.kernel
 def compute_JT_delta_lambda_kernel(
@@ -58,36 +51,39 @@ def compute_delta_body_qd_kernel(
 
 
 @wp.kernel
-def buffer_to_sq_norm_kernel(
-    res_buffers_vectorized: wp.array(dtype=res_buffer_vec),
-    res_norm_sq: wp.array(dtype=wp.float32, ndim=2),
+def update_sq_norm(
+    res_alpha: wp.array(dtype=wp.float32, ndim=2),
+    res_alpha_norm_sq: wp.array(dtype=wp.float32),
 ):
-    assert res_norm_sq.shape[0] == 1, "Invalid shape of the res_norm_sq array"
+    alpha_idx = wp.tid()
 
-    alpha_idx, buff_idx = wp.tid()
+    norm_sq = float(0.0)
+    for i in range(res_alpha.shape[1]):
+        norm_sq += wp.pow(res_alpha[alpha_idx, i], 2.0)
 
-    res_buff = res_buffers_vectorized[alpha_idx]
-
-    if buff_idx < MAX_BODIES * 6:
-        res_norm_sq[0, alpha_idx] += wp.pow(res_buff[buff_idx], 2.0)
-    else:
-        res_norm_sq[0, alpha_idx] += res_buff[buff_idx]
+    res_alpha_norm_sq[alpha_idx] = norm_sq
 
 
 @wp.kernel
 def update_best_alpha_idx(
-    res_norm_sq: wp.array(dtype=res_norm_sq_vec),
+    res_alpha_norm_sq: wp.array(dtype=wp.float32),
     best_alpha_idx: wp.array(dtype=wp.uint32),
 ):
-    assert res_norm_sq.shape[0] == 1, "Invalid shape of the res_norm_sq array"
-    assert best_alpha_idx.shape[0] == 1, "Invalid shape of the best_alpha_idx"
+    tid = wp.tid()
+    if tid > 0:
+        return
 
-    # for i in range(ALPHA_DIM):
-    #     wp.printf("\tRes %f\n", res_norm_sq[0][i])
-    # wp.printf("\tBest alpha %d", wp.argmin(res_norm_sq[0]))
-    # wp.printf("\n")
+    # make them dynamic (mutable) locals:
+    best_idx = wp.uint32(0)  # not: best_idx = 0
+    min_value = wp.float32(3.4e38)  # Largest finite float32 value
 
-    best_alpha_idx[0] = wp.argmin(res_norm_sq[0])
+    for i in range(res_alpha_norm_sq.shape[0]):
+        value = res_alpha_norm_sq[i]
+        if value < min_value:
+            best_idx = wp.uint32(i)  # keep dtype consistent
+            min_value = value
+
+    best_alpha_idx[0] = best_idx
 
 
 @wp.kernel
@@ -155,116 +151,103 @@ class NewtonSolverMixin:
     def fill_residual_buffer(self):
         wp.launch(
             kernel=linesearch_dynamics_residuals_kernel,
-            dim=(self.dims.N_alpha, self.dims.N_b),
+            dim=(self.N_alpha, self.dims.N_b),
             inputs=[
                 self.alphas,
                 self._delta_body_qd_v,
+                # ---
                 self._body_qd,
                 self._body_qd_prev,
                 self._body_f,
-                self.body_mass,
-                self.body_inertia,
+                self.gen_mass,
                 self._dt,
-                self.gravity,
+                self.model.gravity,
             ],
-            outputs=[self._res_buffer],
+            outputs=[self._g_alpha_v],
             device=self.device,
         )
+
         wp.launch(
-            kernel=linesearch_contact_residuals_kernel,
-            dim=(self.dims.N_alpha, self.dims.N_c),
+            kernel=linesearch_joint_residuals_kernel,
+            dim=(self.N_alpha, 5, self.dims.N_j),
             inputs=[
                 self.alphas,
-                self._delta_lambda,
                 self._delta_body_qd_v,
+                self._delta_lambda_j,
+                # ---
+                self._body_qd,
+                self._lambda_j,
+                self._joint_interaction,
+                # Parameters
+                self._dt,
+                self.config.joint_stabilization_factor,
+            ],
+            outputs=[self._g_alpha_v, self._h_alpha_j],
+            device=self.device,
+        )
+
+        wp.launch(
+            kernel=linesearch_contact_residuals_kernel,
+            dim=(self.N_alpha, self.dims.N_c),
+            inputs=[
+                self.alphas,
+                self._delta_body_qd_v,
+                self._delta_lambda_n,
+                # ---
                 self._body_qd,
                 self._body_qd_prev,
-                self._contact_gap,
-                self._J_contact_a,
-                self._J_contact_b,
-                self._contact_body_a,
-                self._contact_body_b,
-                self._contact_restitution_coeff,
-                # Velocity impulse variables
-                self.lambda_n_offset,
-                self._lambda,
+                self._lambda_n,
+                self._contact_interaction,
                 # Parameters
                 self._dt,
                 self.config.contact_stabilization_factor,
                 self.config.contact_fb_alpha,
                 self.config.contact_fb_beta,
+                self.config.contact_compliance,
             ],
-            outputs=[self._res_buffer],
-        )
-        wp.launch(
-            kernel=linesearch_joint_residuals_kernel,
-            dim=(self.dims.N_alpha, self.dims.N_j),
-            inputs=[
-                self.alphas,
-                self._delta_lambda,
-                self._delta_body_qd_v,
-                self._body_q,
-                self._body_qd,
-                self.body_com,
-                self.joint_type,
-                self.joint_enabled,
-                self.joint_parent,
-                self.joint_child,
-                self.joint_X_p,
-                self.joint_X_c,
-                self.joint_axis_start,
-                self.joint_axis_dim,
-                self.joint_axis,
-                self.joint_linear_compliance,
-                self.joint_angular_compliance,
-                # Velocity impulse variables
-                self.lambda_j_offset,
-                self._lambda,
-                # Parameters
-                self._dt,
-                self.config.joint_stabilization_factor,
-            ],
-            outputs=[self._res_buffer],
+            outputs=[self._g_alpha_v, self._h_alpha_n],
+            device=self.device,
         )
 
         wp.launch(
             kernel=linesearch_friction_residuals_kernel,
-            dim=(self.dims.N_alpha, self.dims.N_c),
+            dim=(self.N_alpha, self.dims.N_c),
             inputs=[
                 self.alphas,
-                self._delta_lambda,
                 self._delta_body_qd_v,
+                self._delta_lambda_f,
+                self._delta_lambda_n,
+                # ---
                 self._body_qd,
-                self._contact_gap,
-                self._J_contact_a,
-                self._J_contact_b,
-                self._contact_body_a,
-                self._contact_body_b,
-                self._contact_friction_coeff,
-                # Velocity impulse variables
-                self.lambda_n_offset,
-                self.lambda_f_offset,
-                self._lambda,
+                self._lambda_f,
+                self._lambda_n,
+                self._contact_interaction,
                 # Parameters
                 self.config.friction_fb_alpha,
                 self.config.friction_fb_beta,
+                self.config.friction_compliance,
             ],
-            outputs=[self._res_buffer],
+            outputs=[self._g_alpha_v, self._h_alpha_f],
+            device=self.device,
         )
 
     def update_variables(self):
         wp.launch(
-            kernel=buffer_to_sq_norm_kernel,
-            dim=(self.dims.N_alpha, RES_BUFFER_DIM),
-            inputs=[self._res_buffer_v],
-            outputs=[self._res_norm_sq],
+            kernel=update_sq_norm,
+            dim=self.N_alpha,
+            inputs=[self._res_alpha],
+            outputs=[self._res_alpha_norm_sq],
+            device=self.device,
         )
+
         wp.launch(
             kernel=update_best_alpha_idx,
             dim=1,
-            inputs=[self._res_norm_sq_v],
+            inputs=[self._res_alpha_norm_sq],
             outputs=[self._best_alpha_idx],
+            device=self.device,
         )
+
         wp.launch(
             kernel=update_variables_kernel,
             dim=self.dims.N_b + self.dims.con_dim,
@@ -283,8 +266,8 @@ class NewtonSolverMixin:
             self.update_system_values()
             self.solve_linear_system()
 
-            self._res_buffer.zero_()
-            self._res_norm_sq.zero_()
+            self._g_alpha.zero_()
+            # self._res_norm_sq.zero_()
 
             self.fill_residual_buffer()
             self.update_variables()

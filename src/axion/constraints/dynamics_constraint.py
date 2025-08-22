@@ -45,7 +45,7 @@ def linesearch_dynamics_residuals_kernel(
     dt: wp.float32,
     g_accel: wp.vec3,
     # --- Output ---
-    res_buffer: wp.array(dtype=wp.float32, ndim=2),
+    g_alpha: wp.array(dtype=wp.spatial_vector, ndim=2),
 ):
     alpha_idx, body_idx = wp.tid()
     if body_idx >= body_qd.shape[0]:
@@ -58,8 +58,4 @@ def linesearch_dynamics_residuals_kernel(
 
     f_g = M * wp.spatial_vector(wp.vec3(), g_accel)
 
-    g_b = M * (u - u_prev) - (f + f_g) * dt
-
-    for i in range(wp.static(6)):
-        st_i = wp.static(i)
-        res_buffer[alpha_idx, body_idx * 6 + st_i] = g_b[st_i]
+    g_alpha[alpha_idx, body_idx] = M * (u - u_prev) - (f + f_g) * dt

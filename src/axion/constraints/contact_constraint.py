@@ -49,8 +49,8 @@ def contact_constraint_kernel(
     # --- Body State Inputs ---
     body_qd: wp.array(dtype=wp.spatial_vector),
     body_qd_prev: wp.array(dtype=wp.spatial_vector),
-    interactions: wp.array(dtype=ContactInteraction),
     lambda_n: wp.array(dtype=wp.float32),
+    interactions: wp.array(dtype=ContactInteraction),
     # --- Simulation & Solver Parameters ---
     dt: wp.float32,
     stabilization_factor: wp.float32,
@@ -136,13 +136,13 @@ def contact_constraint_kernel(
 @wp.kernel
 def linesearch_contact_residuals_kernel(
     alphas: wp.array(dtype=wp.float32),
-    delta_lambda: wp.array(dtype=wp.float32),
     delta_body_qd: wp.array(dtype=wp.spatial_vector),
+    delta_lambda_n: wp.array(dtype=wp.float32),
     # --- Body State Inputs ---
     body_qd: wp.array(dtype=wp.spatial_vector),
     body_qd_prev: wp.array(dtype=wp.spatial_vector),
-    interactions: wp.array(dtype=ContactInteraction),
     lambda_n: wp.array(dtype=wp.float32),
+    interactions: wp.array(dtype=ContactInteraction),
     # --- Simulation & Solver Parameters ---
     dt: wp.float32,
     stabilization_factor: wp.float32,
@@ -159,7 +159,7 @@ def linesearch_contact_residuals_kernel(
     alpha = alphas[alpha_idx]
 
     # The normal impulse for this specific contact
-    lambda_normal = lambda_n[contact_idx] + alpha * delta_lambda[contact_idx]
+    lambda_normal = lambda_n[contact_idx] + alpha * delta_lambda_n[contact_idx]
 
     # Early exit for inactive contacts.
     if not interaction.is_active:

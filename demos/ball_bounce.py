@@ -214,7 +214,7 @@ class BallBounceSim:
                 self.state_1,
                 self.sim_dt,
                 control=self.control,
-                solver="newton",
+                solver="newton_linesearch",
             )
             wp.copy(dest=self.state_0.body_q, src=self.state_1.body_q)
             wp.copy(dest=self.state_0.body_qd, src=self.state_1.body_qd)
