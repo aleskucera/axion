@@ -31,9 +31,7 @@ def ball_world_model(gravity: bool = True) -> wp.sim.Model:
     else:
         builder = wp.sim.ModelBuilder(gravity=0.0, up_vector=wp.vec3(0, 0, 1))
 
-    ball1 = builder.add_body(
-        origin=wp.transform((0.0, 0.0, 2.0), wp.quat_identity()), name="ball1"
-    )
+    ball1 = builder.add_body(origin=wp.transform((0.0, 0.0, 2.0), wp.quat_identity()), name="ball1")
     builder.add_shape_sphere(
         body=ball1,
         radius=1.0,
@@ -46,9 +44,7 @@ def ball_world_model(gravity: bool = True) -> wp.sim.Model:
         thickness=0.0,
     )
 
-    ball2 = builder.add_body(
-        origin=wp.transform((0.3, 0.0, 4.5), wp.quat_identity()), name="ball2"
-    )
+    ball2 = builder.add_body(origin=wp.transform((0.3, 0.0, 4.5), wp.quat_identity()), name="ball2")
 
     builder.add_shape_sphere(
         body=ball2,
@@ -94,9 +90,7 @@ def ball_world_model(gravity: bool = True) -> wp.sim.Model:
         thickness=0.0,
     )
 
-    box1 = builder.add_body(
-        origin=wp.transform((0.0, 0.0, 9.0), wp.quat_identity()), name="box1"
-    )
+    box1 = builder.add_body(origin=wp.transform((0.0, 0.0, 9.0), wp.quat_identity()), name="box1")
 
     builder.add_shape_box(
         body=box1,
@@ -165,12 +159,10 @@ class BallBounceSim:
 
         self.logger = HDF5Logger("ball_bounce_log.h5") if DEBUG else None
 
-        engine_config = EngineConfig(newton_iters=4, linear_iters=4)
+        engine_config = EngineConfig(newton_iters=4, linear_iters=4, linesearch_steps=0)
 
         self.integrator = AxionEngine(self.model, engine_config, logger=self.logger)
-        self.renderer = wp.sim.render.SimRenderer(
-            self.model, USD_FILE, scaling=100.0, fps=self.fps
-        )
+        self.renderer = wp.sim.render.SimRenderer(self.model, USD_FILE, scaling=100.0, fps=self.fps)
 
         # Alloc states and controls
         self.state_0 = self.model.state()
@@ -213,8 +205,7 @@ class BallBounceSim:
                 self.state_0,
                 self.state_1,
                 self.sim_dt,
-                control=self.control,
-                solver="newton_linesearch",
+                self.control,
             )
             wp.copy(dest=self.state_0.body_q, src=self.state_1.body_q)
             wp.copy(dest=self.state_0.body_qd, src=self.state_1.body_qd)
@@ -266,15 +257,11 @@ class BallBounceSim:
                     with wp.ScopedTimer("render", active=DEBUG):
                         wp.synchronize()
                         t = self.time[self._timestep]
-                        if (
-                            t >= last_rendered_time
-                        ):  # render only if enough time has passed
+                        if t >= last_rendered_time:  # render only if enough time has passed
                             self.renderer.begin_frame(t)
                             self.renderer.render(self.state_0)
                             self.renderer.end_frame()
-                            last_rendered_time += (
-                                frame_interval  # update to next frame time
-                            )
+                            last_rendered_time += frame_interval  # update to next frame time
 
                 self._timestep += 1
 

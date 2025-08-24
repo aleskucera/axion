@@ -1,27 +1,5 @@
 import warp as wp
 
-MAX_BODIES = 10
-RES_BUFFER_DIM = MAX_BODIES * 6 + 50
-
-
-@wp.func
-def orthogonal_basis(axis: wp.vec3):
-    # Choose v as the unit vector along the axis with the smallest absolute component
-    if wp.abs(axis.x) <= wp.abs(axis.y) and wp.abs(axis.x) <= wp.abs(axis.z):
-        v = wp.vec3(1.0, 0.0, 0.0)
-    elif wp.abs(axis.y) <= wp.abs(axis.z):
-        v = wp.vec3(0.0, 1.0, 0.0)
-    else:
-        v = wp.vec3(0.0, 0.0, 1.0)
-
-    # Compute b1 as the normalized cross product of axis and v
-    b1 = wp.normalize(wp.cross(axis, v))
-
-    # Compute b2 as the cross product of axis and b1
-    b2 = wp.cross(axis, b1)
-
-    return b1, b2
-
 
 @wp.func
 def scaled_fisher_burmeister(
@@ -97,11 +75,3 @@ def update_constraint_body_idx_kernel(
 
     constraint_body_idx[constraint_idx, 0] = body_a
     constraint_body_idx[constraint_idx, 1] = body_b
-
-
-@wp.func
-def get_random_idx_to_res_buffer(state: wp.int32):
-    low = wp.static(wp.uint32(MAX_BODIES * 6))
-    high = wp.static(wp.uint32(RES_BUFFER_DIM))
-    idx = wp.randu(wp.uint32(state), low, high)
-    return idx

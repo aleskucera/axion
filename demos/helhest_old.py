@@ -178,6 +178,7 @@ class BallBounceSim:
         self.model = ball_world_model(gravity=True)
         self.time = np.linspace(0, self.sim_duration, self.sim_steps)
 
+        config = EngineConfig(newton_iters=8, linear_iters=4, linesearch_steps=8)
         self.integrator = AxionEngine(self.model)
         self.renderer = wp.sim.render.SimRenderer(self.model, USD_FILE, scaling=100.0)
 
@@ -228,7 +229,6 @@ class BallBounceSim:
             self.state_1,
             self.sim_dt,
             control=self.control,
-            solver="newton_linesearch",
         )
 
         wp.copy(dest=self.state_0.body_q, src=self.state_1.body_q)

@@ -1,6 +1,4 @@
 from dataclasses import dataclass
-from functools import cached_property
-from typing import Tuple
 
 
 @dataclass(frozen=True)
@@ -74,10 +72,3 @@ class EngineConfig:
 
         # Validate linesearch steps
         _validate_non_negative_int(self.linesearch_steps, "linesearch_steps")
-
-    @cached_property
-    def linesearch_alphas(self) -> Tuple[float, ...]:
-        """Generate linesearch alpha values."""
-        if self.linesearch_steps <= 0:
-            return tuple()
-        return tuple(1.0 / (2**i) for i in range(self.linesearch_steps))

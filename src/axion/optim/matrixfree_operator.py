@@ -165,19 +165,15 @@ class MatrixFreeSystemOperator(LinearOperator):
         """
         super().__init__(
             shape=(engine.dims.con_dim, engine.dims.con_dim),
-            dtype=engine._lambda.dtype,
+            dtype=wp.float32,
             device=engine.device,
             matvec=None,
         ),
         self.engine = engine
 
         # Pre-allocate temporary buffers for intermediate calculations.
-        self._tmp_dyn_vec = wp.zeros(
-            engine.dims.N_b, dtype=wp.spatial_vector, device=engine.device
-        )
-        self._tmp_con_vec = wp.zeros(
-            engine.dims.con_dim, dtype=wp.float32, device=engine.device
-        )
+        self._tmp_dyn_vec = wp.zeros(engine.dims.N_b, dtype=wp.spatial_vector, device=engine.device)
+        self._tmp_con_vec = wp.zeros(engine.dims.con_dim, dtype=wp.float32, device=engine.device)
 
     def matvec(self, x, y, z, alpha, beta):
         """
@@ -189,8 +185,8 @@ class MatrixFreeSystemOperator(LinearOperator):
             kernel=kernel_J_transpose_matvec,
             dim=self.engine.dims.con_dim,
             inputs=[
-                self.engine._constraint_body_idx,
-                self.engine._J_values,
+                self.engine.data.constraint_body_idx,
+                self.engine.data.J_values,
                 x,
             ],
             outputs=[self._tmp_dyn_vec],
@@ -202,7 +198,7 @@ class MatrixFreeSystemOperator(LinearOperator):
             kernel=kernel_inv_mass_matvec,
             dim=self.engine.dims.N_b,
             inputs=[
-                self.engine.gen_inv_mass,
+                self.engine.data.gen_inv_mass,
                 self._tmp_dyn_vec,
             ],
             outputs=[self._tmp_dyn_vec],
@@ -214,8 +210,8 @@ class MatrixFreeSystemOperator(LinearOperator):
             kernel=kernel_J_matvec,
             dim=self.engine.dims.con_dim,
             inputs=[
-                self.engine._constraint_body_idx,
-                self.engine._J_values,
+                self.engine.data.constraint_body_idx,
+                self.engine.data.J_values,
                 self._tmp_dyn_vec,
             ],
             outputs=[self._tmp_con_vec],
@@ -228,7 +224,7 @@ class MatrixFreeSystemOperator(LinearOperator):
             dim=self.engine.dims.con_dim,
             inputs=[
                 self._tmp_con_vec,  # This is J M⁻¹ Jᵀ @ x
-                self.engine._C_values,
+                self.engine.data.C_values,
                 x,  # original x vector
                 y,  # original y vector
                 alpha,  # alpha scalar

@@ -4,42 +4,6 @@ from warp.sim import Model
 from warp.sim import State
 
 
-def apply_control(
-    model: Model,
-    state_in: State,
-    state_out: State,
-    dt: float,
-    control: Control | None = None,
-):
-    # The main simulation loop logic remains unchanged
-    wp.sim.eval_ik(model, state_in, state_in.joint_q, state_in.joint_qd)
-    if control is not None:
-        wp.launch(
-            kernel=apply_joint_actions_kernel,
-            dim=(model.joint_count,),
-            inputs=[
-                state_in.body_q,
-                model.body_com,
-                state_in.joint_q,
-                state_in.joint_qd,
-                model.joint_target_ke,
-                model.joint_target_kd,
-                model.joint_type,
-                model.joint_enabled,
-                model.joint_parent,
-                model.joint_child,
-                model.joint_X_p,
-                model.joint_X_c,
-                model.joint_axis_start,
-                model.joint_axis_dim,
-                model.joint_axis,
-                model.joint_axis_mode,
-                control.joint_act,
-            ],
-            outputs=[state_in.body_f],
-        )
-
-
 @wp.kernel
 def apply_joint_actions_kernel(
     body_q: wp.array(dtype=wp.transform),  # [body_count]
@@ -98,3 +62,39 @@ def apply_joint_actions_kernel(
     if is_parent_dynamic:
         wp.atomic_sub(body_f, parent_idx, wp.spatial_vector(torque, wp.vec3()))
     wp.atomic_add(body_f, child_idx, wp.spatial_vector(torque, wp.vec3()))
+
+
+def apply_control(
+    model: Model,
+    state_in: State,
+    state_out: State,
+    dt: float,
+    control: Control | None = None,
+):
+    # The main simulation loop logic remains unchanged
+    wp.sim.eval_ik(model, state_in, state_in.joint_q, state_in.joint_qd)
+    if control is not None:
+        wp.launch(
+            kernel=apply_joint_actions_kernel,
+            dim=(model.joint_count,),
+            inputs=[
+                state_in.body_q,
+                model.body_com,
+                state_in.joint_q,
+                state_in.joint_qd,
+                model.joint_target_ke,
+                model.joint_target_kd,
+                model.joint_type,
+                model.joint_enabled,
+                model.joint_parent,
+                model.joint_child,
+                model.joint_X_p,
+                model.joint_X_c,
+                model.joint_axis_start,
+                model.joint_axis_dim,
+                model.joint_axis,
+                model.joint_axis_mode,
+                control.joint_act,
+            ],
+            outputs=[state_in.body_f],
+        )
