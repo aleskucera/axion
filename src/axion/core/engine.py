@@ -22,9 +22,10 @@ from warp.sim import Integrator
 from warp.sim import Model
 from warp.sim import State
 
-from .constraint_dimensions import ConstraintDimensions
 from .control import apply_control
 from .engine_config import EngineConfig
+from .engine_data import create_engine_arrays
+from .engine_dims import EngineDimensions
 from .logging_utils import LoggingMixin
 from .newton_solver import NewtonSolverMixin
 from .scipy_solver import ScipySolverMixin
@@ -39,20 +40,21 @@ class AxionEngine(Integrator, LoggingMixin, NewtonSolverMixin, ScipySolverMixin)
         logger: Optional[HDF5Logger] = None,
     ):
         super().__init__()
+        self.device = model.device
+
         self.model = model
+        self.logger = logger
         self.config = config if config is not None else EngineConfig()
 
-        self.logger = logger
-
-        # Basic model properties
-        self.device = model.device
-        self.N_alpha = len(self.config.linesearch_alphas)
-
-        self.dims = ConstraintDimensions(
+        self.dims = EngineDimensions(
             N_b=self.model.body_count,
             N_c=self.model.rigid_contact_max,
             N_j=self.model.joint_count,
+            N_alpha=self.config.linesearch_steps,
         )
+
+        alphas = self.config.linesearch_alphas
+        self.data = create_engine_arrays(self.dims, self.device, alphas)
 
         def _zeros(shape, dtype=wp.float32):
             return wp.zeros(shape, dtype=dtype)
@@ -105,9 +107,7 @@ class AxionEngine(Integrator, LoggingMixin, NewtonSolverMixin, ScipySolverMixin)
             self._lambda_j_prev, self._lambda_n_prev, self._lambda_f_prev = (
                 slice_if(self.dims.N_j > 0, self._lambda_prev, self.dims.joint_slice),
                 slice_if(self.dims.N_c > 0, self._lambda_prev, self.dims.normal_slice),
-                slice_if(
-                    self.dims.N_c > 0, self._lambda_prev, self.dims.friction_slice
-                ),
+                slice_if(self.dims.N_c > 0, self._lambda_prev, self.dims.friction_slice),
             )
 
             # --- Other working vectors ---
@@ -121,9 +121,7 @@ class AxionEngine(Integrator, LoggingMixin, NewtonSolverMixin, ScipySolverMixin)
             self._delta_lambda_j, self._delta_lambda_n, self._delta_lambda_f = (
                 slice_if(self.dims.N_j > 0, self._delta_lambda, self.dims.joint_slice),
                 slice_if(self.dims.N_c > 0, self._delta_lambda, self.dims.normal_slice),
-                slice_if(
-                    self.dims.N_c > 0, self._delta_lambda, self.dims.friction_slice
-                ),
+                slice_if(self.dims.N_c > 0, self._delta_lambda, self.dims.friction_slice),
             )
 
             self._b = _zeros(self.dims.con_dim)
@@ -153,9 +151,7 @@ class AxionEngine(Integrator, LoggingMixin, NewtonSolverMixin, ScipySolverMixin)
             )
 
             self._joint_interaction = wp.empty(self.dims.N_j, dtype=JointInteraction)
-            self._contact_interaction = wp.empty(
-                self.dims.N_c, dtype=ContactInteraction
-            )
+            self._contact_interaction = wp.empty(self.dims.N_c, dtype=ContactInteraction)
 
             # --- Dense matrices for logging (if enabled) ---
             if self.logger:
@@ -164,12 +160,12 @@ class AxionEngine(Integrator, LoggingMixin, NewtonSolverMixin, ScipySolverMixin)
                 self.C_dense = _zeros((self.dims.con_dim, self.dims.con_dim))
 
             self.alphas = wp.array(self.config.linesearch_alphas, dtype=wp.float32)
-            self._res_alpha = _zeros((self.N_alpha, self.dims.res_dim))
+            self._res_alpha = _zeros((self.dims.N_alpha, self.dims.res_dim))
 
             self._g_alpha = self._res_alpha[:, : self.dims.dyn_dim]
             self._g_alpha_v = wp.array(
                 self._g_alpha,
-                shape=(self.N_alpha, self.dims.N_b),
+                shape=(self.dims.N_alpha, self.dims.N_b),
                 dtype=wp.spatial_vector,
             )
             self._h_alpha = self._res_alpha[:, self.dims.dyn_dim :]
@@ -180,7 +176,7 @@ class AxionEngine(Integrator, LoggingMixin, NewtonSolverMixin, ScipySolverMixin)
                 slice_if_2D(self.dims.N_c > 0, self._h_alpha, self.dims.friction_slice),
             )
 
-            self._res_alpha_norm_sq = _zeros(self.N_alpha)
+            self._res_alpha_norm_sq = _zeros(self.dims.N_alpha)
             self._best_alpha_idx = _zeros(1, wp.uint32)
 
         if self.config.matrixfree_representation:
@@ -199,9 +195,7 @@ class AxionEngine(Integrator, LoggingMixin, NewtonSolverMixin, ScipySolverMixin)
 
         self._b.zero_()
 
-    def update_state_variables(
-        self, model: Model, state_in: State, state_out: State, dt: float
-    ):
+    def update_state_variables(self, model: Model, state_in: State, state_out: State, dt: float):
         self._dt = dt
         self._body_q = state_out.body_q
         self._body_qd = state_out.body_qd

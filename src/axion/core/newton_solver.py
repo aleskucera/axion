@@ -45,9 +45,7 @@ def compute_delta_body_qd_kernel(
     if body_idx >= gen_inv_mass.shape[0]:
         return
 
-    delta_body_qd[body_idx] = gen_inv_mass[body_idx] * (
-        JT_delta_lambda[body_idx] - g[body_idx]
-    )
+    delta_body_qd[body_idx] = gen_inv_mass[body_idx] * (JT_delta_lambda[body_idx] - g[body_idx])
 
 
 @wp.kernel
@@ -151,7 +149,7 @@ class NewtonSolverMixin:
     def fill_residual_buffer(self):
         wp.launch(
             kernel=linesearch_dynamics_residuals_kernel,
-            dim=(self.N_alpha, self.dims.N_b),
+            dim=(self.dims.N_alpha, self.dims.N_b),
             inputs=[
                 self.alphas,
                 self._delta_body_qd_v,
@@ -169,7 +167,7 @@ class NewtonSolverMixin:
 
         wp.launch(
             kernel=linesearch_joint_residuals_kernel,
-            dim=(self.N_alpha, 5, self.dims.N_j),
+            dim=(self.dims.N_alpha, 5, self.dims.N_j),
             inputs=[
                 self.alphas,
                 self._delta_body_qd_v,
@@ -188,7 +186,7 @@ class NewtonSolverMixin:
 
         wp.launch(
             kernel=linesearch_contact_residuals_kernel,
-            dim=(self.N_alpha, self.dims.N_c),
+            dim=(self.dims.N_alpha, self.dims.N_c),
             inputs=[
                 self.alphas,
                 self._delta_body_qd_v,
@@ -211,7 +209,7 @@ class NewtonSolverMixin:
 
         wp.launch(
             kernel=linesearch_friction_residuals_kernel,
-            dim=(self.N_alpha, self.dims.N_c),
+            dim=(self.dims.N_alpha, self.dims.N_c),
             inputs=[
                 self.alphas,
                 self._delta_body_qd_v,
@@ -234,7 +232,7 @@ class NewtonSolverMixin:
     def update_variables(self):
         wp.launch(
             kernel=update_sq_norm,
-            dim=self.N_alpha,
+            dim=self.dims.N_alpha,
             inputs=[self._res_alpha],
             outputs=[self._res_alpha_norm_sq],
             device=self.device,

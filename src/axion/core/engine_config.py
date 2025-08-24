@@ -1,5 +1,6 @@
 from dataclasses import dataclass
-from dataclasses import field
+from functools import cached_property
+from typing import Tuple
 
 
 @dataclass(frozen=True)
@@ -13,26 +14,70 @@ class EngineConfig:
     during a simulation run.
     """
 
-    # Solver iteration counts
     newton_iters: int = 8
     linear_iters: int = 4
 
-    # Stabilization and compliance
     joint_stabilization_factor: float = 0.01
     contact_stabilization_factor: float = 0.1
     contact_compliance: float = 1e-5
     friction_compliance: float = 1e-5
 
-    # Feedback (Baumgarte) terms
     contact_fb_alpha: float = 0.25
     contact_fb_beta: float = 0.25
     friction_fb_alpha: float = 0.25
     friction_fb_beta: float = 0.25
 
-    # Solver representation
+    linesearch_steps: int = 8
+
     matrixfree_representation: bool = True
 
-    # Linesearch parameters
-    linesearch_alphas: tuple[float, ...] = field(
-        default_factory=lambda: (4.0, 2.0, 1.0, 0.5, 0.25, 0.125, 0.05)
-    )
+    def __post_init__(self):
+        """Validate all configuration parameters."""
+
+        def _validate_positive_int(value: int, name: str, min_value: int = 1) -> None:
+            """Validate that a value is a positive integer >= min_value."""
+            if value < min_value:
+                raise ValueError(f"{name} must be >= {min_value}, got {value}")
+
+        def _validate_non_negative_float(value: float, name: str) -> None:
+            """Validate that a value is a non-negative float."""
+            if value < 0:
+                raise ValueError(f"{name} must be >= 0, got {value}")
+
+        def _validate_unit_interval(value: float, name: str) -> None:
+            """Validate that a value is in the unit interval [0, 1]."""
+            if not (0 <= value <= 1):
+                raise ValueError(f"{name} must be in [0, 1], got {value}")
+
+        def _validate_non_negative_int(value: int, name: str) -> None:
+            """Validate that a value is a non-negative integer."""
+            if value < 0:
+                raise ValueError(f"{name} must be >= 0, got {value}")
+
+        # Validate iteration counts
+        _validate_positive_int(self.newton_iters, "newton_iters")
+        _validate_positive_int(self.linear_iters, "linear_iters")
+
+        # Validate non-negative values
+        _validate_non_negative_float(self.joint_stabilization_factor, "joint_stabilization_factor")
+        _validate_non_negative_float(
+            self.contact_stabilization_factor, "contact_stabilization_factor"
+        )
+        _validate_non_negative_float(self.contact_compliance, "contact_compliance")
+        _validate_non_negative_float(self.friction_compliance, "friction_compliance")
+
+        # Validate feedback parameters (should be in [0, 1])
+        _validate_unit_interval(self.contact_fb_alpha, "contact_fb_alpha")
+        _validate_unit_interval(self.contact_fb_beta, "contact_fb_beta")
+        _validate_unit_interval(self.friction_fb_alpha, "friction_fb_alpha")
+        _validate_unit_interval(self.friction_fb_beta, "friction_fb_beta")
+
+        # Validate linesearch steps
+        _validate_non_negative_int(self.linesearch_steps, "linesearch_steps")
+
+    @cached_property
+    def linesearch_alphas(self) -> Tuple[float, ...]:
+        """Generate linesearch alpha values."""
+        if self.linesearch_steps <= 0:
+            return tuple()
+        return tuple(1.0 / (2**i) for i in range(self.linesearch_steps))
