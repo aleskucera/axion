@@ -1,11 +1,15 @@
+from __future__ import annotations
+
 from typing import Any
 from typing import Optional
+from typing import TYPE_CHECKING
 
 import warp as wp
-from axion.utils import HDF5Logger
 from warp.optim.linear import LinearOperator
 from warp.utils import array_inner
 
+if TYPE_CHECKING:
+    from axion import HDF5Logger
 # No need to auto-generate adjoint code for linear solvers
 wp.set_module_options({"enable_backward": False})
 

@@ -7,7 +7,6 @@ from axion.optim import cr_solver
 from axion.optim import JacobiPreconditioner
 from axion.optim import MatrixFreeSystemOperator
 from axion.optim import MatrixSystemOperator
-from axion.utils import HDF5Logger
 from warp.sim import Control
 from warp.sim import Integrator
 from warp.sim import Model
@@ -21,6 +20,7 @@ from .general_utils import update_variables
 from .linear_utils import compute_delta_body_qd_from_delta_lambda
 from .linear_utils import compute_linear_system
 from .linesearch_utils import perform_linesearch
+from .logging_utils import HDF5Logger
 
 
 class AxionEngine(Integrator):
