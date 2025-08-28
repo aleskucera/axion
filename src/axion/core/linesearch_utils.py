@@ -99,6 +99,7 @@ def perform_linesearch(data: EngineArrays, config: EngineConfig, dims: EngineDim
             data.body_qd_prev,
             data.lambda_n,
             data.contact_interaction,
+            data.gen_inv_mass,
             # Parameters
             dt,
             config.contact_stabilization_factor,

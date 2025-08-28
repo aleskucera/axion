@@ -5,7 +5,6 @@ import warp.sim.render
 from axion import AxionEngine
 from axion import EngineConfig
 from tqdm import tqdm
-from warp.sim import Mesh
 
 # wp.config.mode = "debug"
 # wp.config.verify_cuda = True
@@ -178,8 +177,8 @@ class BallBounceSim:
         self.model = ball_world_model(gravity=True)
         self.time = np.linspace(0, self.sim_duration, self.sim_steps)
 
-        config = EngineConfig(newton_iters=8, linear_iters=4, linesearch_steps=8)
-        self.integrator = AxionEngine(self.model)
+        config = EngineConfig(newton_iters=6, linear_iters=4, linesearch_steps=8)
+        self.integrator = AxionEngine(self.model, config=config)
         self.renderer = wp.sim.render.SimRenderer(self.model, USD_FILE, scaling=100.0)
 
         self.state_0 = self.model.state()

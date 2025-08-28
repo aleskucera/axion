@@ -24,6 +24,27 @@ def scaled_fisher_burmeister(
     return value, dvalue_da, dvalue_db
 
 
+@wp.func
+def scaled_fisher_burmeister_new(
+    a: wp.float32,
+    b: wp.float32,
+    r: wp.float32 = 1.0,
+):
+    scaled_b = r * b
+    norm = wp.sqrt(a**2.0 + scaled_b**2.0)
+
+    value = a + scaled_b - norm
+
+    # Avoid division by zero
+    if norm < 1e-6:
+        return value, 0.0, 1.0
+
+    dvalue_da = 1.0 - a / norm
+    dvalue_db = r * (1.0 - scaled_b / norm)
+
+    return value, dvalue_da, dvalue_db
+
+
 @wp.kernel
 def update_constraint_body_idx_kernel(
     shape_body: wp.array(dtype=wp.int32),

@@ -1,5 +1,6 @@
 from .contact_interaction import contact_interaction_kernel
 from .contact_interaction import ContactInteraction
+from .generalized_mass import add
 from .generalized_mass import generalized_mass_kernel
 from .generalized_mass import GeneralizedMass
 from .generalized_mass import mul
@@ -18,6 +19,7 @@ __all__ = [
     "JointAxisKinematics",
     "JointInteraction",
     "get_joint_axis_kinematics",
+    "add",
     "mul",
     "scale",
 ]

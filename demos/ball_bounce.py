@@ -3,7 +3,7 @@ import warp as wp
 import warp.sim.render
 from axion import AxionEngine
 from axion import EngineConfig
-from axion.utils import HDF5Logger
+from axion import HDF5Logger
 from tqdm import tqdm
 
 # Options
@@ -15,7 +15,7 @@ PROFILE_NVTX = False
 PROFILE_CUDA_TIMELINE = False
 
 FRICTION = 0.8
-RESTITUTION = 0.5
+RESTITUTION = 1.0
 
 # Optional micro-profiling visibility settings
 np.set_printoptions(suppress=False, precision=2)
@@ -44,67 +44,67 @@ def ball_world_model(gravity: bool = True) -> wp.sim.Model:
         thickness=0.0,
     )
 
-    ball2 = builder.add_body(origin=wp.transform((0.3, 0.0, 4.5), wp.quat_identity()), name="ball2")
-
-    builder.add_shape_sphere(
-        body=ball2,
-        radius=1.0,
-        density=10.0,
-        ke=2000.0,
-        kd=10.0,
-        kf=200.0,
-        mu=FRICTION,
-        restitution=RESTITUTION,
-        thickness=0.0,
-    )
-
-    ball3 = builder.add_body(
-        origin=wp.transform((-0.6, 0.0, 6.5), wp.quat_identity()), name="ball3"
-    )
-
-    builder.add_shape_sphere(
-        body=ball3,
-        radius=0.8,
-        density=10.0,
-        ke=2000.0,
-        kd=10.0,
-        kf=200.0,
-        mu=FRICTION,
-        restitution=RESTITUTION,
-        thickness=0.0,
-    )
-
-    ball4 = builder.add_body(
-        origin=wp.transform((-0.6, 0.0, 10.5), wp.quat_identity()), name="ball4"
-    )
-
-    builder.add_shape_sphere(
-        body=ball4,
-        radius=0.5,
-        density=10.0,
-        ke=2000.0,
-        kd=10.0,
-        kf=200.0,
-        mu=FRICTION,
-        restitution=RESTITUTION,
-        thickness=0.0,
-    )
-
-    box1 = builder.add_body(origin=wp.transform((0.0, 0.0, 9.0), wp.quat_identity()), name="box1")
-
-    builder.add_shape_box(
-        body=box1,
-        hx=0.8,
-        hy=0.8,
-        hz=0.8,
-        density=10.0,
-        ke=2000.0,
-        kd=10.0,
-        kf=200.0,
-        mu=FRICTION,
-        restitution=RESTITUTION,
-        thickness=0.0,
-    )
+    # ball2 = builder.add_body(origin=wp.transform((0.3, 0.0, 4.5), wp.quat_identity()), name="ball2")
+    #
+    # builder.add_shape_sphere(
+    #     body=ball2,
+    #     radius=1.0,
+    #     density=10.0,
+    #     ke=2000.0,
+    #     kd=10.0,
+    #     kf=200.0,
+    #     mu=FRICTION,
+    #     restitution=RESTITUTION,
+    #     thickness=0.0,
+    # )
+    #
+    # ball3 = builder.add_body(
+    #     origin=wp.transform((-0.6, 0.0, 6.5), wp.quat_identity()), name="ball3"
+    # )
+    #
+    # builder.add_shape_sphere(
+    #     body=ball3,
+    #     radius=0.8,
+    #     density=10.0,
+    #     ke=2000.0,
+    #     kd=10.0,
+    #     kf=200.0,
+    #     mu=FRICTION,
+    #     restitution=RESTITUTION,
+    #     thickness=0.0,
+    # )
+    #
+    # ball4 = builder.add_body(
+    #     origin=wp.transform((-0.6, 0.0, 10.5), wp.quat_identity()), name="ball4"
+    # )
+    #
+    # builder.add_shape_sphere(
+    #     body=ball4,
+    #     radius=0.5,
+    #     density=10.0,
+    #     ke=2000.0,
+    #     kd=10.0,
+    #     kf=200.0,
+    #     mu=FRICTION,
+    #     restitution=RESTITUTION,
+    #     thickness=0.0,
+    # )
+    #
+    # box1 = builder.add_body(origin=wp.transform((0.0, 0.0, 9.0), wp.quat_identity()), name="box1")
+    #
+    # builder.add_shape_box(
+    #     body=box1,
+    #     hx=0.8,
+    #     hy=0.8,
+    #     hz=0.8,
+    #     density=10.0,
+    #     ke=2000.0,
+    #     kd=10.0,
+    #     kf=200.0,
+    #     mu=FRICTION,
+    #     restitution=RESTITUTION,
+    #     thickness=0.0,
+    # )
 
     # box_2_rot = wp.quat_from_axis_angle(wp.vec3(0.0, 1.0, 0.0), wp.pi / 4.0)
     # box2 = builder.add_body(
@@ -159,7 +159,7 @@ class BallBounceSim:
 
         self.logger = HDF5Logger("ball_bounce_log.h5") if DEBUG else None
 
-        engine_config = EngineConfig(newton_iters=4, linear_iters=4, linesearch_steps=0)
+        engine_config = EngineConfig(newton_iters=16, linear_iters=4, linesearch_steps=8)
 
         self.integrator = AxionEngine(self.model, engine_config, logger=self.logger)
         self.renderer = wp.sim.render.SimRenderer(self.model, USD_FILE, scaling=100.0, fps=self.fps)

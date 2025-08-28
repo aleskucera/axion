@@ -131,6 +131,7 @@ def compute_linear_system(
             data.body_qd_prev,
             data.lambda_n,
             data.contact_interaction,
+            data.gen_inv_mass,
             dt,
             config.contact_stabilization_factor,
             config.contact_fb_alpha,

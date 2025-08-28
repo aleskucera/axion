@@ -1,7 +1,10 @@
 import warp as wp
+from axion.types import *
 from axion.types import ContactInteraction
+from axion.types import GeneralizedMass
 
 from .utils import scaled_fisher_burmeister
+from .utils import scaled_fisher_burmeister_new
 
 
 @wp.func
@@ -37,6 +40,8 @@ def compute_normal_constraint_term(
 
     # The final term for the complementarity function.
     # This represents the "effective" relative velocity after accounting for error correction and restitution.
+    result = relative_velocity_n + positional_correction_bias + restitution_bias
+    # wp.printf("Result: %f\n", result)
     return relative_velocity_n + positional_correction_bias + restitution_bias
 
 
@@ -47,6 +52,7 @@ def contact_constraint_kernel(
     body_qd_prev: wp.array(dtype=wp.spatial_vector),
     lambda_n: wp.array(dtype=wp.float32),
     interactions: wp.array(dtype=ContactInteraction),
+    gen_inv_mass: wp.array(dtype=GeneralizedMass),
     # --- Simulation & Solver Parameters ---
     dt: wp.float32,
     stabilization_factor: wp.float32,
@@ -93,7 +99,7 @@ def contact_constraint_kernel(
         body_qd_prev_b = body_qd_prev[body_b_idx]
 
     # Compute the velocity-level term for the complementarity function
-    constraint_term_b = compute_normal_constraint_term(
+    constraint_term_a = compute_normal_constraint_term(
         interaction,
         body_qd_a,
         body_qd_b,
@@ -103,10 +109,12 @@ def contact_constraint_kernel(
         stabilization_factor,
     )
 
-    # Evaluate the Fisher-Burmeister complementarity function φ(λ, b)
-    phi_n, dphi_dlambda, dphi_db = scaled_fisher_burmeister(
-        lambda_normal, constraint_term_b, fb_alpha, fb_beta
-    )
+    # TODO: Check if this is correct
+    Minv = gen_inv_mass[body_a_idx] + gen_inv_mass[body_b_idx]
+    r = wp.dot(J_n_a, Minv * J_n_a)
+
+    # Evaluate the Fisher-Burmeister complementarity function φ(a, λ)
+    phi_n, dphi_da, dphi_dlambda = scaled_fisher_burmeister_new(constraint_term_a, lambda_normal, r)
 
     # --- Update global system components ---
 
@@ -124,9 +132,9 @@ def contact_constraint_kernel(
 
     # 4. Update `J` (Jacobian block): J = ∂h/∂v = (∂φ/∂b * ∂b/∂v) = dphi_db * J_n
     if body_a_idx >= 0:
-        J_n_values[contact_idx, 0] = dphi_db * J_n_a
+        J_n_values[contact_idx, 0] = dphi_da * J_n_a
     if body_b_idx >= 0:
-        J_n_values[contact_idx, 1] = dphi_db * J_n_b
+        J_n_values[contact_idx, 1] = dphi_da * J_n_b
 
 
 @wp.kernel
@@ -139,6 +147,7 @@ def linesearch_contact_residuals_kernel(
     body_qd_prev: wp.array(dtype=wp.spatial_vector),
     lambda_n: wp.array(dtype=wp.float32),
     interactions: wp.array(dtype=ContactInteraction),
+    gen_inv_mass: wp.array(dtype=GeneralizedMass),
     # --- Simulation & Solver Parameters ---
     dt: wp.float32,
     stabilization_factor: wp.float32,
@@ -182,7 +191,7 @@ def linesearch_contact_residuals_kernel(
         body_qd_prev_b = body_qd_prev[body_b_idx]
 
     # Compute the velocity-level term for the complementarity function
-    constraint_term_b = compute_normal_constraint_term(
+    constraint_term_a = compute_normal_constraint_term(
         interaction,
         body_qd_a,
         body_qd_b,
@@ -192,10 +201,12 @@ def linesearch_contact_residuals_kernel(
         stabilization_factor,
     )
 
+    # TODO: Check if this is correct
+    Minv = gen_inv_mass[body_a_idx] + gen_inv_mass[body_b_idx]
+    r = wp.dot(J_n_a, Minv * J_n_a)
+
     # Evaluate the Fisher-Burmeister complementarity function φ(λ, b)
-    phi_n, dphi_dlambda, dphi_db = scaled_fisher_burmeister(
-        lambda_normal, constraint_term_b, fb_alpha, fb_beta
-    )
+    phi_n, _, _ = scaled_fisher_burmeister_new(constraint_term_a, lambda_normal, r)
 
     # --- Update global system components ---
 
