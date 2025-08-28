@@ -21,9 +21,7 @@ def compute_normal_constraint_term(
     relative_velocity_n = wp.dot(J_n_a, body_qd_a) + wp.dot(J_n_b, body_qd_b)
 
     # Relative normal velocity at the previous time step (for restitution).
-    relative_velocity_n_prev = wp.dot(J_n_a, body_qd_prev_a) + wp.dot(
-        J_n_b, body_qd_prev_b
-    )
+    relative_velocity_n_prev = wp.dot(J_n_a, body_qd_prev_a) + wp.dot(J_n_b, body_qd_prev_b)
 
     # --- Bias Terms ---
 
@@ -35,9 +33,7 @@ def compute_normal_constraint_term(
 
     # 2. Restitution bias based on pre-collision velocity.
     #    We only apply restitution if the pre-collision velocity is approaching (negative relative velocity).
-    restitution_bias = interaction.restitution_coeff * wp.min(
-        relative_velocity_n_prev, 0.0
-    )
+    restitution_bias = interaction.restitution_coeff * wp.min(relative_velocity_n_prev, 0.0)
 
     # The final term for the complementarity function.
     # This represents the "effective" relative velocity after accounting for error correction and restitution.
