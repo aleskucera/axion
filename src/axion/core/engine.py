@@ -131,7 +131,7 @@ class AxionEngine(Integrator):
                 self.data.body_qd.assign(body_qd_vals)
 
                 # Compute residuals (right hand side of the linear system)
-                compute_linear_system(self.data, self.config, self.dims, model.gravity, dt)
+                compute_linear_system(self.data, self.config, self.dims, dt)
 
                 # Residual is concatenation of g and h vector
                 return self.data.res.numpy()

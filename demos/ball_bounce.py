@@ -9,7 +9,7 @@ from tqdm import tqdm
 # Options
 RENDER = True
 USD_FILE = "ball_bounce.usd"
-DEBUG = True
+DEBUG = False
 PROFILE_SYNC = False
 PROFILE_NVTX = False
 PROFILE_CUDA_TIMELINE = False
@@ -159,7 +159,7 @@ class BallBounceSim:
 
         self.logger = HDF5Logger("ball_bounce_log.h5") if DEBUG else None
 
-        engine_config = EngineConfig(newton_iters=16, linear_iters=4, linesearch_steps=8)
+        engine_config = EngineConfig(newton_iters=8, linear_iters=4, linesearch_steps=2)
 
         self.integrator = AxionEngine(self.model, engine_config, logger=self.logger)
         self.renderer = wp.sim.render.SimRenderer(self.model, USD_FILE, scaling=100.0, fps=self.fps)
