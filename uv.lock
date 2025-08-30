@@ -10,6 +10,7 @@ dependencies = [
     { name = "h5py" },
     { name = "matplotlib" },
     { name = "nvtx" },
+    { name = "openmesh" },
     { name = "pandas" },
     { name = "pytest" },
     { name = "scipy" },
@@ -26,6 +27,7 @@ requires-dist = [
     { name = "h5py", specifier = ">=3.14.0" },
     { name = "matplotlib", specifier = ">=3.10.3" },
     { name = "nvtx", specifier = ">=0.2.12" },
+    { name = "openmesh", specifier = ">=1.2.1" },
     { name = "pandas", specifier = ">=2.3.1" },
     { name = "pytest", specifier = ">=8.4.0" },
     { name = "scipy", specifier = ">=1.16.1" },
@@ -542,6 +544,15 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/86/0c/62b1f76c84a8bed267421d11114953b5da631daeb0ec7894a91252f79b5d/nvtx-0.2.12-cp313-cp313-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:2b82ad84ac8d5408851947d1d2cef3e8e627627cc2290e5150c8af0dda1e3f63", size = 524516, upload-time = "2025-05-25T08:45:06.598Z" },
     { url = "https://files.pythonhosted.org/packages/eb/41/e74ec826e1585ad6d31f41de96f6faae8ffc712a45c2b880baca4ae87a64/nvtx-0.2.12-cp313-cp313-win_amd64.whl", hash = "sha256:a37e063c3c745a4c6b561993a2dae2f67fcc26f2a2c2653f24eeae5810a2180d", size = 97070, upload-time = "2025-05-25T08:43:41.323Z" },
 ]
+
+[[package]]
+name = "openmesh"
+version = "1.2.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/66/34/fd86bf3ca48d010f3a588fa997595c13162bc07563382f9a4d5ec8855dfb/openmesh-1.2.1.tar.gz", hash = "sha256:6fd3fa41a68148e4a7523f562426aa9758bf65ccc6642abcf79c37bae9c6af3c", size = 9255773, upload-time = "2022-03-08T12:04:04.792Z" }
 
 [[package]]
 name = "packaging"
