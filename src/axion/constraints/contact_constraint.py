@@ -109,7 +109,7 @@ def contact_constraint_kernel(
         stabilization_factor,
     )
 
-    # TODO: Check if this is correct
+    # TODO: Fix this
     Minv = gen_inv_mass[body_a_idx] + gen_inv_mass[body_b_idx]
     r = wp.dot(J_n_a, Minv * J_n_a)
 

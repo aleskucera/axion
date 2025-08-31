@@ -10,7 +10,7 @@ from tqdm import tqdm
 # Options
 RENDER = True
 USD_FILE = "mesh.usd"
-DEBUG = True
+DEBUG = False
 PROFILE_SYNC = False
 PROFILE_NVTX = False
 PROFILE_CUDA_TIMELINE = False
@@ -32,24 +32,66 @@ def ball_world_model(gravity: bool = True) -> wp.sim.Model:
     else:
         builder = wp.sim.ModelBuilder(gravity=0.0, up_vector=wp.vec3(0, 0, 1))
 
-    m = openmesh.read_trimesh("data/cylinder.obj")
-    mesh_points = np.array(m.points())
-    mesh_indices = np.array(m.face_vertex_indices(), dtype=np.int32).flatten()
-    mesh = wp.sim.Mesh(mesh_points, mesh_indices)
+    wheel_m = openmesh.read_trimesh("data/helhest/wheel2.obj")
+    mesh_points = np.array(wheel_m.points())
+    mesh_indices = np.array(wheel_m.face_vertex_indices(), dtype=np.int32).flatten()
+    wheel_mesh = wp.sim.Mesh(mesh_points, mesh_indices)
 
-    cube = builder.add_body(
+    wheel_m_col = openmesh.read_trimesh("data/helhest/wheel_collision.obj")
+    mesh_points = np.array(wheel_m_col.points())
+    mesh_indices = np.array(wheel_m_col.face_vertex_indices(), dtype=np.int32).flatten()
+    wheel_mesh_col = wp.sim.Mesh(mesh_points, mesh_indices)
+
+    wheel = builder.add_body(
         origin=wp.transform(
-            (0.0, 0.0, 2.0), wp.quat_from_axis_angle(wp.vec3(1.0, 0.0, 0.0), wp.radians(15.0))
+            (0.0, 0.0, 1.5), wp.quat_from_axis_angle(wp.vec3(1.0, 0.0, 0.0), wp.radians(15.0))
         ),
         name="cube",
     )
     builder.add_shape_mesh(
-        body=cube,
-        mesh=mesh,
+        body=wheel,
+        mesh=wheel_mesh,
         density=10.0,
         mu=FRICTION,
         restitution=RESTITUTION,
         thickness=0.0,
+        has_ground_collision=False,
+        has_shape_collision=False,
+    )
+    builder.add_shape_mesh(
+        body=wheel,
+        mesh=wheel_mesh_col,
+        density=10.0,
+        mu=FRICTION,
+        restitution=RESTITUTION,
+        thickness=0.0,
+        is_visible=False,
+    )
+
+    wheel2 = builder.add_body(
+        origin=wp.transform(
+            (0.0, 0.0, 3.0), wp.quat_from_axis_angle(wp.vec3(1.0, 0.0, 0.0), wp.radians(15.0))
+        ),
+        name="cube",
+    )
+    builder.add_shape_mesh(
+        body=wheel2,
+        mesh=wheel_mesh,
+        density=10.0,
+        mu=FRICTION,
+        restitution=RESTITUTION,
+        thickness=0.0,
+        has_ground_collision=False,
+        has_shape_collision=False,
+    )
+    builder.add_shape_mesh(
+        body=wheel2,
+        mesh=wheel_mesh_col,
+        density=10.0,
+        mu=FRICTION,
+        restitution=RESTITUTION,
+        thickness=0.0,
+        is_visible=False,
     )
 
     # ball1 = builder.add_body(origin=wp.transform((0.0, 0.0, 2.0), wp.quat_identity()), name="ball1")
@@ -67,7 +109,7 @@ def ball_world_model(gravity: bool = True) -> wp.sim.Model:
 
     builder.set_ground_plane(ke=10, kd=10, kf=0.0, mu=FRICTION, restitution=RESTITUTION)
     model = builder.finalize()
-    # model.max_rigid_contact_count = 100
+    # model.rigid_contact_max = 400
     return model
 
 
@@ -88,7 +130,7 @@ class BallBounceSim:
 
         self.logger = HDF5Logger("ball_bounce_log.h5") if DEBUG else None
 
-        engine_config = EngineConfig(newton_iters=8, linear_iters=4, linesearch_steps=2)
+        engine_config = EngineConfig(newton_iters=6, linear_iters=3, linesearch_steps=2)
 
         self.integrator = AxionEngine(self.model, engine_config, logger=self.logger)
         self.renderer = wp.sim.render.SimRenderer(self.model, USD_FILE, scaling=100.0, fps=self.fps)
@@ -104,38 +146,24 @@ class BallBounceSim:
                 self.step()
             self.step_graph = capture.graph
 
-    def log_model(self):
-        if self.logger:
-            with self.logger.scope("simulation_info"):
-                self.logger.log_scalar("fps", self.fps)
-                self.logger.log_scalar("num_frames", self.num_frames)
-                self.logger.log_scalar("sim_substeps", self.sim_substeps)
-                self.logger.log_scalar("frame_dt", self.frame_dt)
-                self.logger.log_scalar("sim_dt", self.sim_dt)
-                self.logger.log_scalar("sim_duration", self.sim_duration)
-
-            with self.logger.scope("model_info"):
-                m = self.model
-                self.logger.log_scalar("body_count", m.body_count)
-                self.logger.log_scalar("joint_count", m.joint_count)
-                self.logger.log_scalar("rigid_contact_max", m.rigid_contact_max)
-
     def step(self):
         with (
             self.logger.scope(f"timestep_{self._timestep:04d}")
             if self.logger
             else open("/dev/null")
         ) as _:
-            wp.sim.collide(self.model, self.state_0)
+            with wp.ScopedTimer("Collision Detection"):
+                wp.sim.collide(self.model, self.state_0)
             # if self.model.rigid_contact_count.numpy()[0] > 0:
             #     print(f"Contact at timestep {self._timestep}")
-            self.integrator.simulate_scipy(
-                self.model,
-                self.state_0,
-                self.state_1,
-                self.sim_dt,
-                self.control,
-            )
+            with wp.ScopedTimer("Simulation"):
+                self.integrator.simulate(
+                    self.model,
+                    self.state_0,
+                    self.state_1,
+                    self.sim_dt,
+                    self.control,
+                )
             wp.copy(dest=self.state_0.body_q, src=self.state_1.body_q)
             wp.copy(dest=self.state_0.body_qd, src=self.state_1.body_qd)
 
@@ -167,7 +195,6 @@ class BallBounceSim:
         last_rendered_time = 0.0
 
         with self.logger if self.logger else open("/dev/null") as _:
-            self.log_model()
 
             for i in tqdm(range(self.sim_steps), desc="Simulating", disable=DEBUG):
                 with wp.ScopedTimer(
