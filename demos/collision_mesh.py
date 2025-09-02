@@ -22,7 +22,7 @@ class BallBounceSimulator(BaseSimulator):
 
     def build_model(self) -> wp.sim.Model:
         FRICTION = 0.8
-        RESTITUTION = 1.0
+        RESTITUTION = 0.5
 
         builder = wp.sim.ModelBuilder(up_vector=wp.vec3(0, 0, 1))
 
@@ -32,6 +32,72 @@ class BallBounceSimulator(BaseSimulator):
         builder.add_shape_sphere(
             body=ball1,
             radius=1.0,
+            density=10.0,
+            ke=2000.0,
+            kd=10.0,
+            kf=200.0,
+            mu=FRICTION,
+            restitution=RESTITUTION,
+            thickness=0.0,
+        )
+
+        ball2 = builder.add_body(
+            origin=wp.transform((0.3, 0.0, 4.5), wp.quat_identity()), name="ball2"
+        )
+
+        builder.add_shape_sphere(
+            body=ball2,
+            radius=1.0,
+            density=10.0,
+            ke=2000.0,
+            kd=10.0,
+            kf=200.0,
+            mu=FRICTION,
+            restitution=RESTITUTION,
+            thickness=0.0,
+        )
+
+        ball3 = builder.add_body(
+            origin=wp.transform((-0.6, 0.0, 6.5), wp.quat_identity()), name="ball3"
+        )
+
+        builder.add_shape_sphere(
+            body=ball3,
+            radius=0.8,
+            density=10.0,
+            ke=2000.0,
+            kd=10.0,
+            kf=200.0,
+            mu=FRICTION,
+            restitution=RESTITUTION,
+            thickness=0.0,
+        )
+
+        ball4 = builder.add_body(
+            origin=wp.transform((-0.6, 0.0, 10.5), wp.quat_identity()), name="ball4"
+        )
+
+        builder.add_shape_sphere(
+            body=ball4,
+            radius=0.5,
+            density=10.0,
+            ke=2000.0,
+            kd=10.0,
+            kf=200.0,
+            mu=FRICTION,
+            restitution=RESTITUTION,
+            thickness=0.0,
+        )
+
+        box1 = builder.add_body(
+            origin=wp.transform((0.0, 0.0, 9.0), wp.quat_identity()), name="box1"
+        )
+
+        builder.add_shape_box(
+            body=box1,
+            hx=0.8,
+            hy=0.8,
+            hz=0.8,
             density=10.0,
             ke=2000.0,
             kd=10.0,
@@ -64,7 +130,7 @@ def main():
     parser.add_argument(
         "--outfile",
         type=str,
-        default="ball_bounce.usd",
+        default="collision_primitives.usd",
         help="Output file path for the USD render.",
     )
     parser.add_argument(

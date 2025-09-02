@@ -17,7 +17,7 @@ class EngineConfig:
 
     joint_stabilization_factor: float = 0.01
     contact_stabilization_factor: float = 0.1
-    contact_compliance: float = 1e-6
+    contact_compliance: float = 1e-4
     friction_compliance: float = 1e-6
 
     contact_fb_alpha: float = 0.25
