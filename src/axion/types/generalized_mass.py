@@ -16,29 +16,21 @@ def add(
 
 
 @wp.func
-def mul(
+def gm_add(
+    a: GeneralizedMass,
+    b: GeneralizedMass,
+) -> GeneralizedMass:
+    return GeneralizedMass(a.m + b.m, a.inertia + b.inertia)
+
+
+@wp.func
+def gm_mul(
     a: GeneralizedMass,
     b: wp.spatial_vector,
 ) -> wp.spatial_vector:
     top = a.inertia @ wp.spatial_top(b)
     bot = a.m * wp.spatial_bottom(b)
     return wp.spatial_vector(top, bot)
-
-
-@wp.func
-def mul(
-    a: wp.spatial_vector,
-    b: GeneralizedMass,
-) -> wp.spatial_vector:
-    top = wp.spatial_top(a) @ b.inertia
-    bot = wp.spatial_bottom(a) * b.m
-    return wp.spatial_vector(top, bot)
-
-
-@wp.func
-def scale(M: GeneralizedMass, s: wp.float32) -> GeneralizedMass:
-    """Scale generalized mass by scalar."""
-    return GeneralizedMass(M.m * s, M.inertia * s)
 
 
 @wp.kernel

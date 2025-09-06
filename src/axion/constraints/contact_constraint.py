@@ -1,7 +1,8 @@
 import warp as wp
-from axion.types import *
 from axion.types import ContactInteraction
 from axion.types import GeneralizedMass
+from axion.types import gm_add
+from axion.types import gm_mul
 
 from .utils import scaled_fisher_burmeister
 from .utils import scaled_fisher_burmeister_new
@@ -110,8 +111,8 @@ def contact_constraint_kernel(
     )
 
     # TODO: Fix this
-    Minv = gen_inv_mass[body_a_idx] + gen_inv_mass[body_b_idx]
-    r = wp.dot(J_n_a, Minv * J_n_a)
+    Minv = gm_add(gen_inv_mass[body_a_idx], gen_inv_mass[body_b_idx])
+    r = wp.dot(J_n_a, gm_mul(Minv, J_n_a))
 
     # Evaluate the Fisher-Burmeister complementarity function φ(a, λ)
     phi_n, dphi_da, dphi_dlambda = scaled_fisher_burmeister_new(constraint_term_a, lambda_normal, r)
@@ -202,8 +203,8 @@ def linesearch_contact_residuals_kernel(
     )
 
     # TODO: Check if this is correct
-    Minv = gen_inv_mass[body_a_idx] + gen_inv_mass[body_b_idx]
-    r = wp.dot(J_n_a, Minv * J_n_a)
+    Minv = gm_add(gen_inv_mass[body_a_idx], gen_inv_mass[body_b_idx])
+    r = wp.dot(J_n_a, gm_mul(Minv, J_n_a))
 
     # Evaluate the Fisher-Burmeister complementarity function φ(λ, b)
     phi_n, _, _ = scaled_fisher_burmeister_new(constraint_term_a, lambda_normal, r)

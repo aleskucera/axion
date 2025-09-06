@@ -1,6 +1,6 @@
 import warp as wp
-from axion.types import *
 from axion.types import GeneralizedMass
+from axion.types import gm_mul
 from warp.optim.linear import LinearOperator
 
 
@@ -26,11 +26,11 @@ def compute_inv_diag_kernel(
     if body_a >= 0:
         Minv_a = gen_inv_mass[body_a]
         J_ia = J_values[constraint_idx, 0]
-        result += wp.dot(J_ia, Minv_a * J_ia)
+        result += wp.dot(J_ia, gm_mul(Minv_a, J_ia))
     if body_b >= 0:
         Minv_b = gen_inv_mass[body_b]
         J_ib = J_values[constraint_idx, 1]
-        result += wp.dot(J_ib, Minv_b * J_ib)
+        result += wp.dot(J_ib, gm_mul(Minv_b, J_ib))
 
     # Add diagonal compliance term C[i,i]
     diag_A = result + C_values[constraint_idx]
