@@ -3,8 +3,8 @@ from axion.constraints import contact_constraint_kernel
 from axion.constraints import friction_constraint_kernel
 from axion.constraints import joint_constraint_kernel
 from axion.constraints import unconstrained_dynamics_kernel
-from axion.types import *
 from axion.types import GeneralizedMass
+from axion.types import gm_mul
 
 from .engine_config import EngineConfig
 from .engine_data import EngineArrays
@@ -29,8 +29,8 @@ def update_system_rhs_kernel(
     J_ib = J_values[constraint_idx, 1]
 
     # Calculate (J_i * H^-1 * g)
-    a_contrib = wp.dot(J_ia, Hinv[body_a] * g[body_a])
-    b_contrib = wp.dot(J_ib, Hinv[body_b] * g[body_b])
+    a_contrib = wp.dot(J_ia, gm_mul(Hinv[body_a], g[body_a]))
+    b_contrib = wp.dot(J_ib, gm_mul(Hinv[body_b], g[body_b]))
     JHinvg = a_contrib + b_contrib
 
     # b = J * H^-1 * g - h
@@ -73,7 +73,9 @@ def compute_delta_body_qd_kernel(
     if body_idx >= gen_inv_mass.shape[0]:
         return
 
-    delta_body_qd[body_idx] = gen_inv_mass[body_idx] * (JT_delta_lambda[body_idx] - g[body_idx])
+    delta_body_qd[body_idx] = gm_mul(
+        gen_inv_mass[body_idx], (JT_delta_lambda[body_idx] - g[body_idx])
+    )
 
 
 def compute_linear_system(

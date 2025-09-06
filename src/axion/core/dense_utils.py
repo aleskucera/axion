@@ -1,5 +1,4 @@
 import warp as wp
-from axion.types import *
 from axion.types import GeneralizedMass
 
 from .engine_config import EngineConfig

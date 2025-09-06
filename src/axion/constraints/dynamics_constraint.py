@@ -1,6 +1,6 @@
 import warp as wp
-from axion.types import *
 from axion.types import GeneralizedMass
+from axion.types import gm_mul
 
 
 @wp.kernel
@@ -26,9 +26,9 @@ def unconstrained_dynamics_kernel(
     u_prev = body_qd_prev[body_idx]
     f = body_f[body_idx]
 
-    f_g = M * wp.spatial_vector(wp.vec3(), g_accel)
+    f_g = gm_mul(M, wp.spatial_vector(wp.vec3(), g_accel))
 
-    g[body_idx] = M * (u - u_prev) - (f + f_g) * dt
+    g[body_idx] = gm_mul(M, u - u_prev) - (f + f_g) * dt
 
 
 @wp.kernel
@@ -56,6 +56,6 @@ def linesearch_dynamics_residuals_kernel(
     u_prev = body_qd_prev[body_idx]
     f = body_f[body_idx]
 
-    f_g = M * wp.spatial_vector(wp.vec3(), g_accel)
+    f_g = gm_mul(M, wp.spatial_vector(wp.vec3(), g_accel))
 
-    g_alpha[alpha_idx, body_idx] = M * (u - u_prev) - (f + f_g) * dt
+    g_alpha[alpha_idx, body_idx] = gm_mul(M, u - u_prev) - (f + f_g) * dt
