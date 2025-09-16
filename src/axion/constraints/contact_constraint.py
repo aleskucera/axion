@@ -1,8 +1,8 @@
 import warp as wp
+from axion.types import add_inertia
 from axion.types import ContactInteraction
-from axion.types import GeneralizedMass
-from axion.types import gm_add
-from axion.types import gm_mul
+from axion.types import SpatialInertia
+from axion.types import to_spatial_momentum
 
 from .utils import scaled_fisher_burmeister
 from .utils import scaled_fisher_burmeister_new
@@ -53,7 +53,7 @@ def contact_constraint_kernel(
     body_qd_prev: wp.array(dtype=wp.spatial_vector),
     lambda_n: wp.array(dtype=wp.float32),
     interactions: wp.array(dtype=ContactInteraction),
-    gen_inv_mass: wp.array(dtype=GeneralizedMass),
+    gen_inv_mass: wp.array(dtype=SpatialInertia),
     # --- Simulation & Solver Parameters ---
     dt: wp.float32,
     stabilization_factor: wp.float32,
@@ -111,8 +111,8 @@ def contact_constraint_kernel(
     )
 
     # TODO: Fix this
-    Minv = gm_add(gen_inv_mass[body_a_idx], gen_inv_mass[body_b_idx])
-    r = wp.dot(J_n_a, gm_mul(Minv, J_n_a))
+    Minv = add_inertia(gen_inv_mass[body_a_idx], gen_inv_mass[body_b_idx])
+    r = wp.dot(J_n_a, to_spatial_momentum(Minv, J_n_a))
 
     # Evaluate the Fisher-Burmeister complementarity function φ(a, λ)
     phi_n, dphi_da, dphi_dlambda = scaled_fisher_burmeister_new(constraint_term_a, lambda_normal, r)
@@ -148,7 +148,7 @@ def linesearch_contact_residuals_kernel(
     body_qd_prev: wp.array(dtype=wp.spatial_vector),
     lambda_n: wp.array(dtype=wp.float32),
     interactions: wp.array(dtype=ContactInteraction),
-    gen_inv_mass: wp.array(dtype=GeneralizedMass),
+    gen_inv_mass: wp.array(dtype=SpatialInertia),
     # --- Simulation & Solver Parameters ---
     dt: wp.float32,
     stabilization_factor: wp.float32,
@@ -203,8 +203,8 @@ def linesearch_contact_residuals_kernel(
     )
 
     # TODO: Check if this is correct
-    Minv = gm_add(gen_inv_mass[body_a_idx], gen_inv_mass[body_b_idx])
-    r = wp.dot(J_n_a, gm_mul(Minv, J_n_a))
+    Minv = add_inertia(gen_inv_mass[body_a_idx], gen_inv_mass[body_b_idx])
+    r = wp.dot(J_n_a, to_spatial_momentum(Minv, J_n_a))
 
     # Evaluate the Fisher-Burmeister complementarity function φ(λ, b)
     phi_n, _, _ = scaled_fisher_burmeister_new(constraint_term_a, lambda_normal, r)

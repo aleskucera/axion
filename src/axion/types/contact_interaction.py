@@ -179,9 +179,54 @@ def contact_interaction_kernel(
     interaction.restitution_coeff = compute_restitution_coefficient(
         shape_a, shape_b, shape_materials
     )
-    interaction.friction_coeff = compute_friction_coefficient(
-        shape_a, shape_b, shape_materials
-    )
+    interaction.friction_coeff = compute_friction_coefficient(shape_a, shape_b, shape_materials)
 
     # Write the complete struct to the output array
     interactions[tid] = interaction
+
+
+@wp.kernel
+def disassemble_contact_interaction_kernel(
+    # --- Input ---
+    interactions: wp.array(dtype=ContactInteraction),
+    # --- Outputs ---
+    # Top-level properties
+    is_active: wp.array(dtype=wp.bool),
+    body_a_idx: wp.array(dtype=wp.int32),
+    body_b_idx: wp.array(dtype=wp.int32),
+    penetration_depth: wp.array(dtype=wp.float32),
+    restitution_coeff: wp.array(dtype=wp.float32),
+    friction_coeff: wp.array(dtype=wp.float32),
+    # Disassembled basis for body A
+    basis_a_normal: wp.array(dtype=wp.spatial_vector),
+    basis_a_tangent1: wp.array(dtype=wp.spatial_vector),
+    basis_a_tangent2: wp.array(dtype=wp.spatial_vector),
+    # Disassembled basis for body B
+    basis_b_normal: wp.array(dtype=wp.spatial_vector),
+    basis_b_tangent1: wp.array(dtype=wp.spatial_vector),
+    basis_b_tangent2: wp.array(dtype=wp.spatial_vector),
+):
+    tid = wp.tid()
+
+    # Read the full struct for the current thread from the input array.
+    interaction = interactions[tid]
+
+    # --- Write to the individual output arrays ---
+
+    # Write top-level properties
+    is_active[tid] = interaction.is_active
+    body_a_idx[tid] = interaction.body_a_idx
+    body_b_idx[tid] = interaction.body_b_idx
+    penetration_depth[tid] = interaction.penetration_depth
+    restitution_coeff[tid] = interaction.restitution_coeff
+    friction_coeff[tid] = interaction.friction_coeff
+
+    # Unpack the nested ContactBasis struct for body A
+    basis_a_normal[tid] = interaction.basis_a.normal
+    basis_a_tangent1[tid] = interaction.basis_a.tangent1
+    basis_a_tangent2[tid] = interaction.basis_a.tangent2
+
+    # Unpack the nested ContactBasis struct for body B
+    basis_b_normal[tid] = interaction.basis_b.normal
+    basis_b_tangent1[tid] = interaction.basis_b.tangent1
+    basis_b_tangent2[tid] = interaction.basis_b.tangent2

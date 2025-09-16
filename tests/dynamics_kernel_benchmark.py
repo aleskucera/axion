@@ -3,8 +3,8 @@ import time
 import numpy as np
 import warp as wp
 from axion.constraints import unconstrained_dynamics_kernel
-from axion.types import generalized_mass_kernel
-from axion.types import GeneralizedMass
+from axion.types import assemble_spatial_inertia_kernel
+from axion.types import SpatialInertia
 
 
 def setup_data(num_bodies, device):
@@ -20,9 +20,7 @@ def setup_data(num_bodies, device):
     # Generate random inertia tensors that are symmetric positive-definite
     rand_mat = np.random.rand(B, 3, 3)
     inertia_tensors = (rand_mat + rand_mat.transpose((0, 2, 1))) / 2.0  # Make symmetric
-    inertia_tensors += np.expand_dims(
-        np.identity(3) * 0.1, axis=0
-    )  # Ensure positive-definite
+    inertia_tensors += np.expand_dims(np.identity(3) * 0.1, axis=0)  # Ensure positive-definite
 
     mass = np.random.rand(B).astype(np.float32) + 1.0
 
@@ -33,11 +31,11 @@ def setup_data(num_bodies, device):
     )
 
     # Create the output array for the structured generalized mass
-    gen_mass_wp = wp.zeros(B, dtype=GeneralizedMass, device=device)
+    gen_mass_wp = wp.zeros(B, dtype=SpatialInertia, device=device)
 
     # Launch kernel to populate the generalized mass array from the raw components
     wp.launch(
-        kernel=generalized_mass_kernel,
+        kernel=assemble_spatial_inertia_kernel,
         dim=B,
         inputs=[body_mass_wp, body_inertia_wp, gen_mass_wp],
         device=device,

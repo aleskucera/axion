@@ -3,8 +3,8 @@ from axion.constraints import contact_constraint_kernel
 from axion.constraints import friction_constraint_kernel
 from axion.constraints import joint_constraint_kernel
 from axion.constraints import unconstrained_dynamics_kernel
-from axion.types import GeneralizedMass
-from axion.types import gm_mul
+from axion.types import SpatialInertia
+from axion.types import to_spatial_momentum
 
 from .engine_config import EngineConfig
 from .engine_data import EngineArrays
@@ -13,7 +13,7 @@ from .engine_dims import EngineDimensions
 
 @wp.kernel
 def update_system_rhs_kernel(
-    Hinv: wp.array(dtype=GeneralizedMass),
+    Hinv: wp.array(dtype=SpatialInertia),
     constraint_body_idx: wp.array(dtype=wp.int32, ndim=2),
     J_values: wp.array(dtype=wp.spatial_vector, ndim=2),
     g: wp.array(dtype=wp.spatial_vector),
@@ -29,8 +29,8 @@ def update_system_rhs_kernel(
     J_ib = J_values[constraint_idx, 1]
 
     # Calculate (J_i * H^-1 * g)
-    a_contrib = wp.dot(J_ia, gm_mul(Hinv[body_a], g[body_a]))
-    b_contrib = wp.dot(J_ib, gm_mul(Hinv[body_b], g[body_b]))
+    a_contrib = wp.dot(J_ia, to_spatial_momentum(Hinv[body_a], g[body_a]))
+    b_contrib = wp.dot(J_ib, to_spatial_momentum(Hinv[body_b], g[body_b]))
     JHinvg = a_contrib + b_contrib
 
     # b = J * H^-1 * g - h
@@ -63,7 +63,7 @@ def compute_JT_delta_lambda_kernel(
 
 @wp.kernel
 def compute_delta_body_qd_kernel(
-    gen_inv_mass: wp.array(dtype=GeneralizedMass),
+    gen_inv_mass: wp.array(dtype=SpatialInertia),
     JT_delta_lambda: wp.array(dtype=wp.spatial_vector),
     g: wp.array(dtype=wp.spatial_vector),
     delta_body_qd: wp.array(dtype=wp.spatial_vector),
@@ -73,7 +73,7 @@ def compute_delta_body_qd_kernel(
     if body_idx >= gen_inv_mass.shape[0]:
         return
 
-    delta_body_qd[body_idx] = gm_mul(
+    delta_body_qd[body_idx] = to_spatial_momentum(
         gen_inv_mass[body_idx], (JT_delta_lambda[body_idx] - g[body_idx])
     )
 

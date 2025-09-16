@@ -4,20 +4,20 @@ import numpy as np
 import openmesh
 import warp as wp
 from axion import EngineConfig
-from base_simulator import BaseSimulator
-from base_simulator import ExecConfig
-from base_simulator import ProfileConfig
-from base_simulator import RenderConfig
-from base_simulator import SimConfig
+from base_simulator import AbstractSimulator
+from base_simulator import ExecutionConfig
+from base_simulator import ProfilingConfig
+from base_simulator import RenderingConfig
+from base_simulator import SimulationConfig
 
 
-class HelhestSimulator(BaseSimulator):
+class HelhestSimulator(AbstractSimulator):
     def __init__(
         self,
-        sim_config: SimConfig,
-        render_config: RenderConfig,
-        exec_config: ExecConfig,
-        profile_config: ProfileConfig,
+        sim_config: SimulationConfig,
+        render_config: RenderingConfig,
+        exec_config: ExecutionConfig,
+        profile_config: ProfilingConfig,
         engine_config: EngineConfig,
     ):
         super().__init__(sim_config, render_config, exec_config, profile_config, engine_config)
@@ -271,22 +271,22 @@ def main():
     args = parser.parse_args()
 
     # 1. Populate configuration dataclasses from parsed arguments
-    sim_config = SimConfig(
+    sim_config = SimulationConfig(
         sim_duration=args.duration,
         target_sim_dt=args.dt,
     )
 
-    render_config = RenderConfig(
+    render_config = RenderingConfig(
         enable=not args.headless,
         usd_file=args.outfile,
         fps=args.fps,
     )
 
-    exec_config = ExecConfig(
+    exec_config = ExecutionConfig(
         use_cuda_graph=not args.no_graph,
     )
 
-    profile_config = ProfileConfig(
+    profile_config = ProfilingConfig(
         debug=args.debug,
     )
 
@@ -306,7 +306,7 @@ def main():
     )
 
     # 3. Run the simulation.
-    simulator.simulate()
+    simulator.run()
 
 
 if __name__ == "__main__":

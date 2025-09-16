@@ -1,8 +1,13 @@
+from __future__ import annotations
+
 from typing import Optional
+from typing import TYPE_CHECKING
 
 import numpy as np
 import scipy
 import warp as wp
+from axion.logging import HDF5Logger
+from axion.logging import NullLogger
 from axion.optim import cr_solver
 from axion.optim import JacobiPreconditioner
 from axion.optim import MatrixFreeSystemOperator
@@ -20,22 +25,21 @@ from .general_utils import update_variables
 from .linear_utils import compute_delta_body_qd_from_delta_lambda
 from .linear_utils import compute_linear_system
 from .linesearch_utils import perform_linesearch
-from .logging_utils import HDF5Logger
 
 
 class AxionEngine(Integrator):
     def __init__(
         self,
         model: Model,
-        config: Optional[EngineConfig] = None,
-        logger: Optional[HDF5Logger] = None,
+        config: Optional[EngineConfig],
+        logger: Optional[HDF5Logger | NullLogger],
     ):
         super().__init__()
         self.device = model.device
 
         self.model = model
         self.logger = logger
-        self.config = config if config is not None else EngineConfig()
+        self.config = config
 
         self.dims = EngineDimensions(
             N_b=self.model.body_count,
@@ -56,6 +60,19 @@ class AxionEngine(Integrator):
         self.data.set_generalized_mass(model)
         self.data.set_gravitational_acceleration(model)
 
+    def _log_newton_iteration(self):
+        if isinstance(self.logger, NullLogger):
+            return
+
+        self.logger.log_scalar("something", 0)
+
+    def _log_static_data(self):
+        if isinstance(self.logger, NullLogger):
+            return
+
+        self.logger.log_wp_dataset("gen_mass", self.data.gen_mass)
+        self.logger.log_wp_dataset("gen_inv_mass", self.data.gen_inv_mass)
+
     def simulate(
         self,
         model: Model,
@@ -72,28 +89,32 @@ class AxionEngine(Integrator):
         # self._lambda.zero_()
 
         for i in range(self.config.newton_iters):
-            wp.copy(dest=self.data.lambda_prev, src=self.data._lambda)
-            compute_linear_system(self.data, self.config, self.dims, dt)
+            with self.logger.scope(f"newton_iteration_{i:02d}"):
+                wp.copy(dest=self.data.lambda_prev, src=self.data._lambda)
+                compute_linear_system(self.data, self.config, self.dims, dt)
 
-            if not self.config.matrixfree_representation:
-                self.A_op.update()
+                if not self.config.matrixfree_representation:
+                    self.A_op.update()
 
-            self.preconditioner.update()
+                self.preconditioner.update()
 
-            cr_solver(
-                A=self.A_op,
-                b=self.data.b,
-                x=self.data.delta_lambda,
-                iters=self.config.linear_iters,
-                preconditioner=self.preconditioner,
-            )
+                cr_solver(
+                    A=self.A_op,
+                    b=self.data.b,
+                    x=self.data.delta_lambda,
+                    iters=self.config.linear_iters,
+                    preconditioner=self.preconditioner,
+                    logger=self.logger,
+                )
 
-            compute_delta_body_qd_from_delta_lambda(self.data, self.config, self.dims)
+                compute_delta_body_qd_from_delta_lambda(self.data, self.config, self.dims)
 
-            if self.config.linesearch_steps > 0:
-                perform_linesearch(self.data, self.config, self.dims, dt)
+                if self.config.linesearch_steps > 0:
+                    perform_linesearch(self.data, self.config, self.dims, dt)
 
-            update_variables(self.data, self.config, self.dims)
+                update_variables(self.data, self.config, self.dims)
+
+                self._log_newton_iteration()
 
         wp.copy(dest=state_out.body_qd, src=self.data.body_qd)
         wp.copy(dest=state_out.body_q, src=self.data.body_q)

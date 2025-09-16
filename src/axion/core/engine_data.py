@@ -5,12 +5,12 @@ from typing import Optional
 import warp as wp
 import warp.context as wpc
 from axion.constraints import update_constraint_body_idx_kernel
+from axion.types import assemble_spatial_inertia_kernel
 from axion.types import contact_interaction_kernel
 from axion.types import ContactInteraction
-from axion.types import generalized_mass_kernel
-from axion.types import GeneralizedMass
 from axion.types import joint_interaction_kernel
 from axion.types import JointInteraction
+from axion.types import SpatialInertia
 from warp.sim import Model
 from warp.sim import State
 
@@ -226,7 +226,7 @@ class EngineArrays:
 
     def set_generalized_mass(self, model: Model):
         wp.launch(
-            kernel=generalized_mass_kernel,
+            kernel=assemble_spatial_inertia_kernel,
             dim=self.dims.N_b,
             inputs=[
                 model.body_mass,
@@ -236,7 +236,7 @@ class EngineArrays:
         )
 
         wp.launch(
-            kernel=generalized_mass_kernel,
+            kernel=assemble_spatial_inertia_kernel,
             dim=self.dims.N_b,
             inputs=[
                 model.body_inv_mass,
@@ -383,8 +383,8 @@ def create_engine_arrays(
     delta_lambda = _zeros(dims.con_dim)
     b = _zeros(dims.con_dim)
 
-    gen_mass = _empty(dims.N_b, GeneralizedMass)
-    gen_inv_mass = _empty(dims.N_b, GeneralizedMass)
+    gen_mass = _empty(dims.N_b, SpatialInertia)
+    gen_inv_mass = _empty(dims.N_b, SpatialInertia)
     joint_interaction = _empty(dims.N_j, JointInteraction)
     contact_interaction = _empty(dims.N_c, ContactInteraction)
 
