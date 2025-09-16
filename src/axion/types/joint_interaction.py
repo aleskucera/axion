@@ -29,7 +29,6 @@ class JointInteraction:
     axis5: JointAxisKinematics
 
 
-# Provided helper functions (unchanged)
 @wp.func
 def orthogonal_basis(axis: wp.vec3):
     if wp.abs(axis.x) <= wp.abs(axis.y) and wp.abs(axis.x) <= wp.abs(axis.z):

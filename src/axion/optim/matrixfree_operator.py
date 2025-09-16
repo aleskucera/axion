@@ -16,8 +16,8 @@ Residual (CR) or Conjugate Gradient (CG), allowing the system to be solved
 without ever forming the potentially very large and dense matrix A explicitly.
 """
 import warp as wp
-from axion.types import GeneralizedMass
-from axion.types import gm_mul
+from axion.types import SpatialInertia
+from axion.types import to_spatial_momentum
 from warp.optim.linear import LinearOperator
 
 
@@ -57,7 +57,7 @@ def kernel_J_transpose_matvec(
 
 @wp.kernel
 def kernel_inv_mass_matvec(
-    gen_inv_mass: wp.array(dtype=GeneralizedMass),
+    gen_inv_mass: wp.array(dtype=SpatialInertia),
     in_vec: wp.array(dtype=wp.spatial_vector),
     out_vec: wp.array(dtype=wp.spatial_vector),
 ):
@@ -73,7 +73,7 @@ def kernel_inv_mass_matvec(
     """
     body_idx = wp.tid()
 
-    out_vec[body_idx] = gm_mul(gen_inv_mass[body_idx], in_vec[body_idx])
+    out_vec[body_idx] = to_spatial_momentum(gen_inv_mass[body_idx], in_vec[body_idx])
 
 
 @wp.kernel

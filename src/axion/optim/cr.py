@@ -5,11 +5,11 @@ from typing import Optional
 from typing import TYPE_CHECKING
 
 import warp as wp
+from axion.logging import HDF5Logger
+from axion.logging import NullLogger
 from warp.optim.linear import LinearOperator
 from warp.utils import array_inner
 
-if TYPE_CHECKING:
-    from axion import HDF5Logger
 # No need to auto-generate adjoint code for linear solvers
 wp.set_module_options({"enable_backward": False})
 
@@ -65,7 +65,7 @@ def cr_solver(
     x: wp.array,
     iters: int,
     preconditioner: Optional[LinearOperator] = None,
-    logger: Optional[HDF5Logger] = None,
+    logger: Optional[HDF5Logger | NullLogger] = NullLogger,
 ) -> Optional[float]:
     """
     Computes an approximate solution to a symmetric, positive-definite linear system
@@ -152,7 +152,7 @@ def cr_solver(
             inputs=[zAz_old, zAz_new, z, p, Az, Ap],
         )
 
-        # if logger:
-        #     with logger.scope(f"linear_iter_{i:02d}"):
-        #         logger.log_dataset("x", x.numpy())
-        #         logger.log_dataset("residual", r.numpy())
+        if not isinstance(logger, NullLogger):
+            with logger.scope(f"linear_iter_{i:02d}"):
+                logger.log_wp_dataset("x", x)
+                logger.log_wp_dataset("residual", r)
