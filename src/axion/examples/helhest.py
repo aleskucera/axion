@@ -1,12 +1,16 @@
 import argparse
 
+import numpy as np
+import openmesh
 import warp as wp
+from axion import AbstractSimulator
 from axion import EngineConfig
-from base_simulator import AbstractSimulator
-from base_simulator import ExecutionConfig
-from base_simulator import ProfilingConfig
-from base_simulator import RenderingConfig
-from base_simulator import SimulationConfig
+from axion import ExecutionConfig
+from axion import ProfilingConfig
+from axion import RenderingConfig
+from axion import SimulationConfig
+
+from ._assets import ASSETS_DIR
 
 
 class HelhestSimulator(AbstractSimulator):
@@ -40,12 +44,26 @@ class HelhestSimulator(AbstractSimulator):
         )
 
     def build_model(self) -> wp.sim.Model:
-        FRICTION = 0.9
+        """
+        Implements the abstract method to define the physics objects in the scene.
+
+        This method constructs the three-wheeled vehicle, obstacles, and ground plane.
+        """
+        FRICTION = 1.0
         RESTITUTION = 0.0
 
         builder = wp.sim.ModelBuilder(up_vector=wp.vec3(0, 0, 1))
 
         # --- Build the Vehicle ---
+        wheel_m = openmesh.read_trimesh(f"{ASSETS_DIR}/helhest/wheel2.obj")
+        mesh_points = np.array(wheel_m.points())
+        mesh_indices = np.array(wheel_m.face_vertex_indices(), dtype=np.int32).flatten()
+        wheel_mesh_render = wp.sim.Mesh(mesh_points, mesh_indices)
+
+        wheel_m_col = openmesh.read_trimesh(f"{ASSETS_DIR}/helhest/wheel_collision.obj")
+        mesh_points = np.array(wheel_m_col.points())
+        mesh_indices = np.array(wheel_m_col.face_vertex_indices(), dtype=np.int32).flatten()
+        wheel_mesh_collision = wp.sim.Mesh(mesh_points, mesh_indices)
 
         # Create main body (chassis)
         chassis = builder.add_body(
@@ -65,37 +83,78 @@ class HelhestSimulator(AbstractSimulator):
         left_wheel = builder.add_body(
             origin=wp.transform((1.5, -1.5, 1.2), wp.quat_identity()), name="left_wheel"
         )
-        builder.add_shape_sphere(
+        builder.add_shape_mesh(
             body=left_wheel,
-            radius=1.0,
+            mesh=wheel_mesh_render,
+            scale=(2.0, 2.0, 2.0),
             density=10.0,
             mu=FRICTION,
             restitution=RESTITUTION,
-            thickness=0.1,  # Visual flair
+            thickness=0.0,
+            has_ground_collision=False,
+            has_shape_collision=False,
+        )
+        builder.add_shape_mesh(
+            body=left_wheel,
+            mesh=wheel_mesh_collision,
+            scale=(2.0, 2.0, 2.0),
+            density=10.0,
+            mu=FRICTION,
+            restitution=RESTITUTION,
+            thickness=0.0,
+            is_visible=False,
         )
 
         # Right Wheel
         right_wheel = builder.add_body(
             origin=wp.transform((1.5, 1.5, 1.2), wp.quat_identity()), name="right_wheel"
         )
-        builder.add_shape_sphere(
+        builder.add_shape_mesh(
             body=right_wheel,
-            radius=1.0,
+            mesh=wheel_mesh_render,
+            scale=(2.0, 2.0, 2.0),
             density=10.0,
             mu=FRICTION,
             restitution=RESTITUTION,
+            thickness=0.0,
+            has_ground_collision=False,
+            has_shape_collision=False,
+        )
+        builder.add_shape_mesh(
+            body=right_wheel,
+            mesh=wheel_mesh_collision,
+            scale=(2.0, 2.0, 2.0),
+            density=10.0,
+            mu=FRICTION,
+            restitution=RESTITUTION,
+            thickness=0.0,
+            is_visible=False,
         )
 
         # Back Wheel
         back_wheel = builder.add_body(
             origin=wp.transform((-2.5, 0.0, 1.2), wp.quat_identity()), name="back_wheel"
         )
-        builder.add_shape_sphere(
+        builder.add_shape_mesh(
             body=back_wheel,
-            radius=1.0,
+            mesh=wheel_mesh_render,
+            scale=(2.0, 2.0, 2.0),
             density=10.0,
             mu=FRICTION,
             restitution=RESTITUTION,
+            thickness=0.0,
+            has_ground_collision=False,
+            has_shape_collision=False,
+        )
+        builder.add_shape_mesh(
+            body=back_wheel,
+            mesh=wheel_mesh_collision,
+            scale=(2.0, 2.0, 2.0),
+            density=10.0,
+            mu=FRICTION,
+            restitution=RESTITUTION,
+            thickness=0.0,
+            is_visible=False,
         )
 
         # --- Define Joints ---
@@ -147,15 +206,16 @@ class HelhestSimulator(AbstractSimulator):
         )
 
         model = builder.finalize()
+        model.ground = True
         return model
 
 
-def main():
-    parser = argparse.ArgumentParser(description="Run the Helhest physics simulation.")
+def helhest_example():
+    parser = argparse.ArgumentParser(description="Run the Ball Bounce physics simulation.")
 
     # SimConfig Arguments
     parser.add_argument(
-        "--duration", type=float, default=3.0, help="Total simulation time in seconds."
+        "--duration", type=float, default=4.0, help="Total simulation time in seconds."
     )
     parser.add_argument(
         "--dt", type=float, default=5e-3, help="Target physics timestep (dt) in seconds."
@@ -168,7 +228,7 @@ def main():
     parser.add_argument(
         "--outfile",
         type=str,
-        default="helhest_simple.usd",
+        default="helhest.usd",
         help="Output file path for the USD render.",
     )
     parser.add_argument(
@@ -181,32 +241,46 @@ def main():
     )
 
     # ProfileConfig Arguments
-    parser.add_argument(
-        "--debug", action="store_true", help="Enable debug mode (disables optimizations)."
-    )
+    parser.add_argument("--timing", action="store_true", help="Run timing.")
 
     # EngineConfig Arguments
     parser.add_argument(
-        "--newton-iters", type=int, default=6, help="Number of Newton iterations for the solver."
+        "--newton-iters", type=int, default=8, help="Number of Newton iterations for the solver."
     )
     parser.add_argument(
         "--linear-iters", type=int, default=4, help="Number of linear solver iterations."
     )
     parser.add_argument(
-        "--linesearch-steps", type=int, default=2, help="Number of linesearch steps in the solver."
+        "--linesearch-steps", type=int, default=0, help="Number of linesearch steps in the solver."
+    )
+    parser.add_argument(
+        "--log",
+        action="store_true",
+        help="Log the simulation data into log file.",
+    )
+    parser.add_argument(
+        "--logfile",
+        type=str,
+        default="helhest.h5",
+        help="Log file.",
+    )
+    parser.add_argument(
+        "--debug-cuda",
+        action="store_true",
+        help="Log the simulation data into log file.",
     )
 
     args = parser.parse_args()
 
     sim_config = SimulationConfig(
-        sim_duration=args.duration,
-        target_sim_dt=args.dt,
+        duration_seconds=args.duration,
+        target_timestep_seconds=args.dt,
     )
 
     render_config = RenderingConfig(
         enable=not args.headless,
-        usd_file=args.outfile,
         fps=args.fps,
+        usd_file=args.outfile,
     )
 
     exec_config = ExecutionConfig(
@@ -214,7 +288,9 @@ def main():
     )
 
     profile_config = ProfilingConfig(
-        debug=args.debug,
+        enable_timing=args.timing,
+        enable_hdf5_logging=args.log,
+        hdf5_log_file=args.logfile,
     )
 
     engine_config = EngineConfig(
@@ -235,4 +311,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    helhest_example()

@@ -1,15 +1,15 @@
 import argparse
 
 import warp as wp
+from axion import AbstractSimulator
 from axion import EngineConfig
-from base_simulator import AbstractSimulator
-from base_simulator import ExecutionConfig
-from base_simulator import ProfilingConfig
-from base_simulator import RenderingConfig
-from base_simulator import SimulationConfig
+from axion import ExecutionConfig
+from axion import ProfilingConfig
+from axion import RenderingConfig
+from axion import SimulationConfig
 
 
-class BallBounceSimulator(AbstractSimulator):
+class CollisionSimulator(AbstractSimulator):
     def __init__(
         self,
         sim_config: SimulationConfig,
@@ -21,7 +21,7 @@ class BallBounceSimulator(AbstractSimulator):
         super().__init__(sim_config, render_config, exec_config, profile_config, engine_config)
 
     def build_model(self) -> wp.sim.Model:
-        FRICTION = 0.8
+        FRICTION = 0.7
         RESTITUTION = 0.5
 
         builder = wp.sim.ModelBuilder(up_vector=wp.vec3(0, 0, 1))
@@ -112,7 +112,7 @@ class BallBounceSimulator(AbstractSimulator):
         return model
 
 
-def main():
+def collision_primitives_example():
     parser = argparse.ArgumentParser(description="Run the Ball Bounce physics simulation.")
 
     # SimConfig Arguments
@@ -143,9 +143,7 @@ def main():
     )
 
     # ProfileConfig Arguments
-    parser.add_argument(
-        "--debug", action="store_true", help="Enable debug mode (disables optimizations)."
-    )
+    parser.add_argument("--timing", action="store_true", help="Run timing.")
 
     # EngineConfig Arguments
     parser.add_argument(
@@ -157,18 +155,34 @@ def main():
     parser.add_argument(
         "--linesearch-steps", type=int, default=2, help="Number of linesearch steps in the solver."
     )
+    parser.add_argument(
+        "--log",
+        action="store_true",
+        help="Log the simulation data into log file.",
+    )
+    parser.add_argument(
+        "--logfile",
+        type=str,
+        default="collision_primitives.h5",
+        help="Log file.",
+    )
+    parser.add_argument(
+        "--debug-cuda",
+        action="store_true",
+        help="Log the simulation data into log file.",
+    )
 
     args = parser.parse_args()
 
     sim_config = SimulationConfig(
-        sim_duration=args.duration,
-        target_sim_dt=args.dt,
+        duration_seconds=args.duration,
+        target_timestep_seconds=args.dt,
     )
 
     render_config = RenderingConfig(
         enable=not args.headless,
-        usd_file=args.outfile,
         fps=args.fps,
+        usd_file=args.outfile,
     )
 
     exec_config = ExecutionConfig(
@@ -176,7 +190,9 @@ def main():
     )
 
     profile_config = ProfilingConfig(
-        debug=args.debug,
+        enable_timing=args.timing,
+        enable_hdf5_logging=args.log,
+        hdf5_log_file=args.logfile,
     )
 
     engine_config = EngineConfig(
@@ -185,7 +201,7 @@ def main():
         linesearch_steps=args.linesearch_steps,
     )
 
-    simulator = BallBounceSimulator(
+    simulator = CollisionSimulator(
         sim_config=sim_config,
         render_config=render_config,
         exec_config=exec_config,
@@ -197,4 +213,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    collision_primitives_example()
