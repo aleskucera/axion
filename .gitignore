@@ -183,3 +183,5 @@ pyrightconfig.json
 *.h5
 *.png
 *.csv
+
+outputs/

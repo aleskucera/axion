@@ -9,6 +9,7 @@ authors = [
 requires-python = ">=3.12"
 dependencies = [
     "h5py>=3.14.0",
+    "hydra-core>=1.3.2",
     "matplotlib>=3.10.3",
     "nvtx>=0.2.12",
     "openmesh>=1.2.1",
@@ -24,7 +25,11 @@ dependencies = [
 ]
 
 [project.scripts]
-axion = "axion:main"
+ball_bounce_example = "axion.examples:ball_bounce_example"
+collision_mesh_example = "axion.examples:collision_mesh_example"
+collision_primitives_example = "axion.examples:collision_primitives_example"
+helhest_example = "axion.examples:helhest_example"
+helhest_simple_example = "axion.examples:helhest_simple_example"
 
 [build-system]
 requires = ["hatchling"]

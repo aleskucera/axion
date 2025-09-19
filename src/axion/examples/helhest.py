@@ -1,5 +1,6 @@
-import argparse
+from importlib.resources import files
 
+import hydra
 import numpy as np
 import openmesh
 import warp as wp
@@ -9,11 +10,14 @@ from axion import ExecutionConfig
 from axion import ProfilingConfig
 from axion import RenderingConfig
 from axion import SimulationConfig
+from omegaconf import DictConfig
 
 from ._assets import ASSETS_DIR
 
+CONFIG_PATH = files("axion").joinpath("examples").joinpath("conf")
 
-class HelhestSimulator(AbstractSimulator):
+
+class Simulator(AbstractSimulator):
     def __init__(
         self,
         sim_config: SimulationConfig,
@@ -210,96 +214,15 @@ class HelhestSimulator(AbstractSimulator):
         return model
 
 
-def helhest_example():
-    parser = argparse.ArgumentParser(description="Run the Ball Bounce physics simulation.")
+@hydra.main(config_path=str(CONFIG_PATH), config_name="helhest", version_base=None)
+def helhest_example(cfg: DictConfig):
+    sim_config: SimulationConfig = hydra.utils.instantiate(cfg.simulation)
+    render_config: RenderingConfig = hydra.utils.instantiate(cfg.rendering)
+    exec_config: ExecutionConfig = hydra.utils.instantiate(cfg.execution)
+    profile_config: ProfilingConfig = hydra.utils.instantiate(cfg.profiling)
+    engine_config: EngineConfig = hydra.utils.instantiate(cfg.engine)
 
-    # SimConfig Arguments
-    parser.add_argument(
-        "--duration", type=float, default=4.0, help="Total simulation time in seconds."
-    )
-    parser.add_argument(
-        "--dt", type=float, default=5e-3, help="Target physics timestep (dt) in seconds."
-    )
-
-    # RenderConfig Arguments
-    parser.add_argument(
-        "--headless", action="store_true", help="Disable rendering and run in headless mode."
-    )
-    parser.add_argument(
-        "--outfile",
-        type=str,
-        default="helhest.usd",
-        help="Output file path for the USD render.",
-    )
-    parser.add_argument(
-        "--fps", type=int, default=30, help="Frames per second for the rendered output."
-    )
-
-    # ExecConfig Arguments
-    parser.add_argument(
-        "--no-graph", action="store_true", help="Disable the use of CUDA graphs for execution."
-    )
-
-    # ProfileConfig Arguments
-    parser.add_argument("--timing", action="store_true", help="Run timing.")
-
-    # EngineConfig Arguments
-    parser.add_argument(
-        "--newton-iters", type=int, default=8, help="Number of Newton iterations for the solver."
-    )
-    parser.add_argument(
-        "--linear-iters", type=int, default=4, help="Number of linear solver iterations."
-    )
-    parser.add_argument(
-        "--linesearch-steps", type=int, default=0, help="Number of linesearch steps in the solver."
-    )
-    parser.add_argument(
-        "--log",
-        action="store_true",
-        help="Log the simulation data into log file.",
-    )
-    parser.add_argument(
-        "--logfile",
-        type=str,
-        default="helhest.h5",
-        help="Log file.",
-    )
-    parser.add_argument(
-        "--debug-cuda",
-        action="store_true",
-        help="Log the simulation data into log file.",
-    )
-
-    args = parser.parse_args()
-
-    sim_config = SimulationConfig(
-        duration_seconds=args.duration,
-        target_timestep_seconds=args.dt,
-    )
-
-    render_config = RenderingConfig(
-        enable=not args.headless,
-        fps=args.fps,
-        usd_file=args.outfile,
-    )
-
-    exec_config = ExecutionConfig(
-        use_cuda_graph=not args.no_graph,
-    )
-
-    profile_config = ProfilingConfig(
-        enable_timing=args.timing,
-        enable_hdf5_logging=args.log,
-        hdf5_log_file=args.logfile,
-    )
-
-    engine_config = EngineConfig(
-        newton_iters=args.newton_iters,
-        linear_iters=args.linear_iters,
-        linesearch_steps=args.linesearch_steps,
-    )
-
-    simulator = HelhestSimulator(
+    simulator = Simulator(
         sim_config=sim_config,
         render_config=render_config,
         exec_config=exec_config,
