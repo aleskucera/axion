@@ -76,4 +76,3 @@ Axion is open-source software licensed under the MIT License. See the LICENSE fi
     <p><strong>Ready to start simulating?</strong></p>
     <a href="getting-started/installation/" class="md-button md-button--primary">Get Started →</a>
 </div>
-

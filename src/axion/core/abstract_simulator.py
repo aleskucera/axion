@@ -51,7 +51,7 @@ class ProfilingConfig:
 
     # Enables HDF5 logging (disables CUDA graph optimization).
     enable_hdf5_logging: bool = False
-    hdf5_log_file: str = "simulation.log"
+    hdf5_log_file: str = "simulation.h5"
 
 
 # --- Timing Calculation Helpers ---
