@@ -1,7 +1,41 @@
 site_name: Axion Simulator
+site_description: High-performance differentiable physics simulator for robotics and machine learning
 repo_url: https://github.com/aleskucera/axion.git
+repo_name: aleskucera/axion
+
+nav:
+  - Home: index.md
+  - Getting Started:
+    - Installation: getting-started/installation.md
+    - Quick Start: getting-started/quickstart.md
+    - First Simulation: getting-started/first-simulation.md
+  - User Guide:
+    - Basic Concepts: user-guide/concepts.md
+    - Configuration System: user-guide/configuration.md
+    - Running Simulations: user-guide/simulations.md
+    - Working with Constraints: user-guide/constraints.md
+    - Logging & Analysis: user-guide/logging.md
+  - Tutorials:
+    - Ball Bounce Example: tutorials/ball-bounce.md
+    - Robot Simulation: tutorials/helhest.md
+    - Custom Simulations: tutorials/custom-sim.md
+  - API Reference:
+    - Core Engine: api/engine.md
+    - Constraints: api/constraints.md
+    - Optimization: api/optimization.md
+    - Logging: api/logging.md
+  - Advanced Topics:
+    - Performance Tuning: advanced/performance.md
+    - GPU Optimization: advanced/gpu.md
+    - Differentiable Physics: advanced/differentiable.md
+  - Developer Guide:
+    - Architecture: developer/architecture.md
+    - Contributing: developer/contributing.md
+    - Testing: developer/testing.md
+
 plugins:
   - search
+  
 theme:
   name: material
   features:
@@ -9,6 +43,11 @@ theme:
     - search.highlight
     - content.code.copy
     - content.code.select
+    - navigation.tabs
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - toc.follow
   font: 
     text: Merriweather Sans
     code: Red Hat Mono
@@ -35,4 +74,14 @@ markdown_extensions:
   - pymdownx.inlinehilite
   - pymdownx.snippets
   - pymdownx.superfences
-    
+  - admonition
+  - pymdownx.details
+  - pymdownx.tabbed:
+      alternate_style: true
+  - attr_list
+  - md_in_html
+  - toc:
+      permalink: true
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg   
