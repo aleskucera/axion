@@ -1,7 +1,4 @@
-from __future__ import annotations
-
 from typing import Optional
-from typing import TYPE_CHECKING
 
 import numpy as np
 import scipy
@@ -60,6 +57,16 @@ class AxionEngine(Integrator):
         self.data.set_generalized_mass(model)
         self.data.set_gravitational_acceleration(model)
 
+        self.events = [
+            {
+                "iter_start": wp.Event(enable_timing=True),
+                "linearize": wp.Event(enable_timing=True),
+                "lin_solve": wp.Event(enable_timing=True),
+                "linesearch": wp.Event(enable_timing=True),
+            }
+            for _ in range(self.config.newton_iters)
+        ]
+
     def _log_newton_iteration(self):
         if isinstance(self.logger, NullLogger):
             return
@@ -89,15 +96,20 @@ class AxionEngine(Integrator):
         # self._lambda.zero_()
 
         for i in range(self.config.newton_iters):
+            wp.record_event(self.events[i]["iter_start"])
+
             with self.logger.scope(f"newton_iteration_{i:02d}"):
                 wp.copy(dest=self.data.lambda_prev, src=self.data._lambda)
+
+                # --- Linearize the system of equations ---
                 compute_linear_system(self.data, self.config, self.dims, dt)
+                wp.record_event(self.events[i]["linearize"])
 
                 if not self.config.matrixfree_representation:
                     self.A_op.update()
-
                 self.preconditioner.update()
 
+                # --- Solve linear system of equations ---
                 cr_solver(
                     A=self.A_op,
                     b=self.data.b,
@@ -106,11 +118,12 @@ class AxionEngine(Integrator):
                     preconditioner=self.preconditioner,
                     logger=self.logger,
                 )
-
                 compute_delta_body_qd_from_delta_lambda(self.data, self.config, self.dims)
+                wp.record_event(self.events[i]["lin_solve"])
 
                 if self.config.linesearch_steps > 0:
                     perform_linesearch(self.data, self.config, self.dims, dt)
+                wp.record_event(self.events[i]["linesearch"])
 
                 update_variables(self.data, self.config, self.dims)
 
@@ -118,6 +131,8 @@ class AxionEngine(Integrator):
 
         wp.copy(dest=state_out.body_qd, src=self.data.body_qd)
         wp.copy(dest=state_out.body_q, src=self.data.body_q)
+
+        return self.events
 
     def simulate_scipy(
         self,

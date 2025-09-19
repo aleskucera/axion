@@ -1,12 +1,12 @@
 import argparse
 
 import warp as wp
+from axion import AbstractSimulator
 from axion import EngineConfig
-from base_simulator import AbstractSimulator
-from base_simulator import ExecutionConfig
-from base_simulator import ProfilingConfig
-from base_simulator import RenderingConfig
-from base_simulator import SimulationConfig
+from axion import ExecutionConfig
+from axion import ProfilingConfig
+from axion import RenderingConfig
+from axion import SimulationConfig
 
 
 class BallBounceSimulator(AbstractSimulator):
@@ -22,7 +22,7 @@ class BallBounceSimulator(AbstractSimulator):
 
     def build_model(self) -> wp.sim.Model:
         FRICTION = 0.8
-        RESTITUTION = 0.5
+        RESTITUTION = 1.0
 
         builder = wp.sim.ModelBuilder(up_vector=wp.vec3(0, 0, 1))
 
@@ -41,78 +41,12 @@ class BallBounceSimulator(AbstractSimulator):
             thickness=0.0,
         )
 
-        ball2 = builder.add_body(
-            origin=wp.transform((0.3, 0.0, 4.5), wp.quat_identity()), name="ball2"
-        )
-
-        builder.add_shape_sphere(
-            body=ball2,
-            radius=1.0,
-            density=10.0,
-            ke=2000.0,
-            kd=10.0,
-            kf=200.0,
-            mu=FRICTION,
-            restitution=RESTITUTION,
-            thickness=0.0,
-        )
-
-        ball3 = builder.add_body(
-            origin=wp.transform((-0.6, 0.0, 6.5), wp.quat_identity()), name="ball3"
-        )
-
-        builder.add_shape_sphere(
-            body=ball3,
-            radius=0.8,
-            density=10.0,
-            ke=2000.0,
-            kd=10.0,
-            kf=200.0,
-            mu=FRICTION,
-            restitution=RESTITUTION,
-            thickness=0.0,
-        )
-
-        ball4 = builder.add_body(
-            origin=wp.transform((-0.6, 0.0, 10.5), wp.quat_identity()), name="ball4"
-        )
-
-        builder.add_shape_sphere(
-            body=ball4,
-            radius=0.5,
-            density=10.0,
-            ke=2000.0,
-            kd=10.0,
-            kf=200.0,
-            mu=FRICTION,
-            restitution=RESTITUTION,
-            thickness=0.0,
-        )
-
-        box1 = builder.add_body(
-            origin=wp.transform((0.0, 0.0, 9.0), wp.quat_identity()), name="box1"
-        )
-
-        builder.add_shape_box(
-            body=box1,
-            hx=0.8,
-            hy=0.8,
-            hz=0.8,
-            density=10.0,
-            ke=2000.0,
-            kd=10.0,
-            kf=200.0,
-            mu=FRICTION,
-            restitution=RESTITUTION,
-            thickness=0.0,
-        )
-
         builder.set_ground_plane(ke=10, kd=10, kf=0.0, mu=FRICTION, restitution=RESTITUTION)
         model = builder.finalize()
         return model
 
 
-def main():
+def ball_bounce_example():
     parser = argparse.ArgumentParser(description="Run the Ball Bounce physics simulation.")
 
     # SimConfig Arguments
@@ -130,7 +64,7 @@ def main():
     parser.add_argument(
         "--outfile",
         type=str,
-        default="collision_primitives.usd",
+        default="ball_bounce.usd",
         help="Output file path for the USD render.",
     )
     parser.add_argument(
@@ -143,9 +77,7 @@ def main():
     )
 
     # ProfileConfig Arguments
-    parser.add_argument(
-        "--debug", action="store_true", help="Enable debug mode (disables optimizations)."
-    )
+    parser.add_argument("--timing", action="store_true", help="Run timing.")
 
     # EngineConfig Arguments
     parser.add_argument(
@@ -157,18 +89,34 @@ def main():
     parser.add_argument(
         "--linesearch-steps", type=int, default=2, help="Number of linesearch steps in the solver."
     )
+    parser.add_argument(
+        "--log",
+        action="store_true",
+        help="Log the simulation data into log file.",
+    )
+    parser.add_argument(
+        "--logfile",
+        type=str,
+        default="ball_bounce.h5",
+        help="Log file.",
+    )
+    parser.add_argument(
+        "--debug-cuda",
+        action="store_true",
+        help="Log the simulation data into log file.",
+    )
 
     args = parser.parse_args()
 
     sim_config = SimulationConfig(
-        sim_duration=args.duration,
-        target_sim_dt=args.dt,
+        duration_seconds=args.duration,
+        target_timestep_seconds=args.dt,
     )
 
     render_config = RenderingConfig(
         enable=not args.headless,
-        usd_file=args.outfile,
         fps=args.fps,
+        usd_file=args.outfile,
     )
 
     exec_config = ExecutionConfig(
@@ -176,7 +124,9 @@ def main():
     )
 
     profile_config = ProfilingConfig(
-        debug=args.debug,
+        enable_timing=args.timing,
+        enable_hdf5_logging=args.log,
+        hdf5_log_file=args.logfile,
     )
 
     engine_config = EngineConfig(
@@ -197,4 +147,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    ball_bounce_example()

@@ -6,11 +6,12 @@ from typing import Optional
 
 import warp as wp
 import warp.sim.render
-from axion import AxionEngine
-from axion import EngineConfig
-from axion import HDF5Logger
-from axion import NullLogger
+from axion.logging import HDF5Logger
+from axion.logging import NullLogger
 from tqdm import tqdm
+
+from .engine import AxionEngine
+from .engine_config import EngineConfig
 
 
 # --- Configuration Data Classes ---
@@ -46,20 +47,10 @@ class ExecutionConfig:
 class ProfilingConfig:
     """Parameters for debugging, timing, and logging."""
 
-    debug: bool = False
-    log_step_timing: bool = False
-
-    # Forces CPU-GPU synchronization, useful for accurate timing.
-    sync_for_timing: bool = False
-
-    # Enables NVTX markers for profiling with tools like NVIDIA Nsight.
-    enable_nvtx: bool = False
-
-    # Enables CUDA timeline activity collection in Warp timers.
-    enable_cuda_timeline: bool = False
+    enable_timing: bool = False
 
     # Enables HDF5 logging (disables CUDA graph optimization).
-    enable_hdf5_logging: bool = True
+    enable_hdf5_logging: bool = False
     hdf5_log_file: str = "simulation.log"
 
 
@@ -140,7 +131,7 @@ class AbstractSimulator(ABC):
 
         self.current_state = self.model.state()
         self.next_state = self.model.state()
-        self.control_inputs = self.model.control()
+        self.control = self.model.control()
 
         self.renderer: Optional[wp.sim.render.SimRenderer] = None
         if self.rendering_config.enable:
@@ -153,15 +144,33 @@ class AbstractSimulator(ABC):
 
         self.cuda_graph: Optional[wp.Graph] = None
 
+        num_substeps = self.steps_per_segment
+        self.start_events = [wp.Event(enable_timing=True) for _ in range(num_substeps)]
+        self.collision_events = [wp.Event(enable_timing=True) for _ in range(num_substeps)]
+        self.integration_events = [wp.Event(enable_timing=True) for _ in range(num_substeps)]
+
+        self.events = [
+            {
+                "step_start": wp.Event(enable_timing=True),
+                "collision": wp.Event(enable_timing=True),
+                "integration": wp.Event(enable_timing=True),
+                "integration_parts": None,
+            }
+            for _ in range(num_substeps)
+        ]
+
+        self.simulation_events = [[] for _ in range(num_substeps)]
+
     def run(self):
         """Main entry point to start the simulation."""
+        disable_progress = self.profiling_config.enable_timing
         with self.logger:
             for i in tqdm(
                 range(self.num_segments),
                 desc="Simulating",
-                disable=self.profiling_config.log_step_timing,
+                disable=disable_progress,
             ):
-                self._run_simulation_segment()
+                self._run_simulation_segment(i)
 
                 if self.rendering_config.enable:
                     wp.synchronize()
@@ -177,57 +186,118 @@ class AbstractSimulator(ABC):
             wp.synchronize()
             print("Headless simulation complete.")
 
-    def _run_simulation_segment(self):
+    def _run_simulation_segment(self, segment_num: int):
         """Executes a single simulation segment, using the chosen execution path."""
         if self.use_cuda_graph:
-            self._run_segment_with_graph()
+            self._run_segment_with_graph(segment_num)
         else:
-            self._run_segment_without_graph()
+            self._run_segment_without_graph(segment_num)
 
-    def _run_segment_without_graph(self):
+    def _run_segment_without_graph(self, segment_num: int):
         """Runs a segment by iterating and launching each step's kernels individually."""
         n_steps = self.steps_per_segment
-        timer_msg = f"Simulation of {n_steps} time steps"
-        with wp.ScopedTimer(timer_msg, active=self.profiling_config.log_step_timing):
-            for _ in range(n_steps):
-                self._single_physics_step()
+        timer_msg = f"SEGMENT {segment_num}/{self.num_segments}: Simulation of {n_steps} time steps"
+        with wp.ScopedTimer(
+            timer_msg,
+            active=self.profiling_config.enable_timing,
+            synchronize=True,
+        ):
+            for step in range(n_steps):
+                self._single_physics_step(step)
+
+                # Update attributes for logging
                 self._current_step += 1
                 self._current_time += self.effective_timestep
 
-    def _run_segment_with_graph(self):
+        if self.profiling_config.enable_timing:
+            self._log_segment_timings()
+
+    def _run_segment_with_graph(self, segment_num: int):
         """Runs a segment by launching a pre-captured CUDA graph."""
         if self.cuda_graph is None:
             self._capture_cuda_graph()
 
         n_steps = self.steps_per_segment
-        timer_msg = f"Simulation of {n_steps} time steps (with CUDA graph)"
-        with wp.ScopedTimer(timer_msg, active=self.profiling_config.log_step_timing):
+        timer_msg = f"SEGMENT {segment_num}/{self.num_segments}: Simulation of {n_steps} time steps (with CUDA graph)"
+        with wp.ScopedTimer(
+            timer_msg,
+            active=self.profiling_config.enable_timing,
+            synchronize=True,
+        ):
             wp.capture_launch(self.cuda_graph)
+
+        if self.profiling_config.enable_timing:
+            self._log_segment_timings()
+
+    def _log_segment_timings(self):
+        """Logs the detailed timing information for the most recent segment."""
+        for step in range(self.steps_per_segment):
+            collision_time = wp.get_event_elapsed_time(
+                self.events[step]["step_start"],
+                self.events[step]["collision"],
+            )
+            integration_time = wp.get_event_elapsed_time(
+                self.events[step]["collision"],
+                self.events[step]["integration"],
+            )
+
+            print(
+                f"\t- SUBSTEP {step}: collision detection took {collision_time:.03f} ms "
+                f"and simulation step took {integration_time:0.3f} ms."
+            )
+
+            # Check if detailed integrator events were captured
+            if self.events[step]["integration_parts"] is None:
+                continue
+
+            for newton_iter in range(self.engine_config.newton_iters):
+                events = self.events[step]["integration_parts"][newton_iter]
+                linearize_time = wp.get_event_elapsed_time(
+                    events["iter_start"], events["linearize"]
+                )
+                lin_solve_time = wp.get_event_elapsed_time(events["linearize"], events["lin_solve"])
+                linesearch_time = wp.get_event_elapsed_time(
+                    events["lin_solve"], events["linesearch"]
+                )
+
+                print(
+                    f"\t\t- NEWTON ITERATION {newton_iter}: Linearization took {linearize_time:.03f} ms, "
+                    f"solving of linear system took {lin_solve_time:.03f} ms and linesearch took {linesearch_time:.03f} ms."
+                )
 
     def _capture_cuda_graph(self):
         """Records the sequence of operations for one segment into a CUDA graph."""
         n_steps = self.steps_per_segment
-        timer_msg = f"Initial CUDA graph capture of {n_steps} time steps"
-        with wp.ScopedTimer(timer_msg, active=self.profiling_config.log_step_timing):
-            with wp.ScopedCapture() as capture:
-                for _ in range(n_steps):
-                    self._single_physics_step()
-            self.cuda_graph = capture.graph
+        with wp.ScopedCapture() as capture:
+            for i in range(n_steps):
+                self._single_physics_step(i)
+        self.cuda_graph = capture.graph
 
-    def _single_physics_step(self):
+    def _single_physics_step(self, step_num: int):
         """Performs one fundamental integration step of the simulation."""
         with self.logger.scope(f"timestep_{self._current_step:04d}"):
+            # Record that step started
+            wp.record_event(self.events[step_num]["step_start"])
+
+            # Detect collisions
             wp.sim.collide(self.model, self.current_state)
+
+            # Record that collision detection finished
+            wp.record_event(self.events[step_num]["collision"])
 
             self.logger.log_scalar("time", self._current_time)
 
-            self.integrator.simulate(
+            # Compute simulation step
+            self.events[step_num]["integration_parts"] = self.integrator.simulate(
                 model=self.model,
                 state_in=self.current_state,
                 state_out=self.next_state,
                 dt=self.effective_timestep,
-                control=self.control_inputs,
+                control=self.control,
             )
+
+            # Record that simulation step finished
+            wp.record_event(self.events[step_num]["integration"])
 
             wp.copy(dest=self.current_state.body_q, src=self.next_state.body_q)
             wp.copy(dest=self.current_state.body_qd, src=self.next_state.body_qd)
