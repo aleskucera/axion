@@ -1,0 +1,6 @@
+# @package profiling
+_target_: axion.ProfilingConfig
+enable_timing: False
+enable_hdf5_logging: True
+hdf5_log_file: "${project_name}.h5"
+

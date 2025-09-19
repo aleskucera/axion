@@ -1,0 +1,10 @@
+defaults:
+  - simulation: helhest
+  - rendering: 30_fps 
+  - execution: cuda_graph
+  - profiling: disabled
+  - engine: helhest
+  - _self_
+
+# Use the recommended hybrid approach for project names
+project_name: ${hydra:job.name}
