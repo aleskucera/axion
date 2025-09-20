@@ -12,13 +12,7 @@ nav:
   - User Guide:
     - Basic Concepts: user-guide/concepts.md
     - Configuration System: user-guide/configuration.md
-    - Running Simulations: user-guide/simulations.md
-    - Working with Constraints: user-guide/constraints.md
     - Logging & Analysis: user-guide/logging.md
-  - Tutorials:
-    - Ball Bounce Example: tutorials/ball-bounce.md
-    - Robot Simulation: tutorials/helhest.md
-    - Custom Simulations: tutorials/custom-sim.md
   - API Reference:
     - Core Engine: api/engine.md
     - Constraints: api/constraints.md
@@ -84,4 +78,10 @@ markdown_extensions:
       permalink: true
   - pymdownx.emoji:
       emoji_index: !!python/name:material.extensions.emoji.twemoji
-      emoji_generator: !!python/name:material.extensions.emoji.to_svg   
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg  
+  - pymdownx.arithmatex:
+      generic: true
+
+extra_javascript:
+  - javascripts/mathjax.js
+  - https://unpkg.com/mathjax@3/es5/tex-mml-chtml.js
