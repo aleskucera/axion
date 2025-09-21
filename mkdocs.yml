@@ -16,8 +16,6 @@ nav:
   - API Reference:
     - Core Engine: api/engine.md
     - Constraints: api/constraints.md
-    - Optimization: api/optimization.md
-    - Logging: api/logging.md
   - Advanced Topics:
     - Performance Tuning: advanced/performance.md
     - GPU Optimization: advanced/gpu.md
