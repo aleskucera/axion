@@ -11,6 +11,7 @@ dependencies = [
     "h5py>=3.14.0",
     "hydra-core>=1.3.2",
     "matplotlib>=3.10.3",
+    "mkdocs-material>=9.6.20",
     "nvtx>=0.2.12",
     "openmesh>=1.2.1",
     "pandas>=2.3.1",
