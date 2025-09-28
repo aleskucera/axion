@@ -23,6 +23,8 @@ from .linear_utils import compute_delta_body_qd_from_delta_lambda
 from .linear_utils import compute_linear_system
 from .linesearch_utils import perform_linesearch
 
+# from .general_utils import integrate_velocity
+
 
 class AxionEngine(Integrator):
     def __init__(
@@ -102,7 +104,7 @@ class AxionEngine(Integrator):
                 wp.copy(dest=self.data.lambda_prev, src=self.data._lambda)
 
                 # --- Linearize the system of equations ---
-                compute_linear_system(self.data, self.config, self.dims, dt)
+                compute_linear_system(self.model, self.data, self.config, self.dims, dt)
                 wp.record_event(self.events[i]["linearize"])
 
                 if not self.config.matrixfree_representation:
@@ -125,7 +127,7 @@ class AxionEngine(Integrator):
                     perform_linesearch(self.data, self.config, self.dims, dt)
                 wp.record_event(self.events[i]["linesearch"])
 
-                update_variables(self.data, self.config, self.dims)
+                update_variables(self.model, self.data, self.config, self.dims, dt)
 
                 self._log_newton_iteration()
 

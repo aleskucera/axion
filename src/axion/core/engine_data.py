@@ -38,6 +38,7 @@ class EngineArrays:
 
     body_f: wp.array  # External forces
     body_q: wp.array  # Positions
+    body_q_prev: wp.array  # Positions at previous time step
     body_qd: wp.array  # Velocities
     body_qd_prev: wp.array  # Velocities at previous time step
 
@@ -269,6 +270,7 @@ class EngineArrays:
     def update_state_data(self, model: Model, state_in: State, state_out: State):
         wp.copy(dest=self.body_f, src=state_in.body_f)
         wp.copy(dest=self.body_q, src=state_out.body_q)
+        wp.copy(dest=self.body_q_prev, src=state_in.body_q)
         wp.copy(dest=self.body_qd, src=state_out.body_qd)
         wp.copy(dest=self.body_qd_prev, src=state_in.body_qd)
 
@@ -294,28 +296,28 @@ class EngineArrays:
             device=self.device,
         )
 
-        wp.launch(
-            kernel=joint_interaction_kernel,
-            dim=self.dims.N_j,
-            inputs=[
-                self.body_q,
-                model.body_com,
-                model.joint_type,
-                model.joint_enabled,
-                model.joint_parent,
-                model.joint_child,
-                model.joint_X_p,
-                model.joint_X_c,
-                model.joint_axis_start,
-                model.joint_axis,
-                model.joint_linear_compliance,
-                model.joint_angular_compliance,
-            ],
-            outputs=[
-                self.joint_interaction,
-            ],
-            device=self.device,
-        )
+        # wp.launch(
+        #     kernel=joint_interaction_kernel,
+        #     dim=self.dims.N_j,
+        #     inputs=[
+        #         self.body_q,
+        #         model.body_com,
+        #         model.joint_type,
+        #         model.joint_enabled,
+        #         model.joint_parent,
+        #         model.joint_child,
+        #         model.joint_X_p,
+        #         model.joint_X_c,
+        #         model.joint_axis_start,
+        #         model.joint_axis,
+        #         model.joint_linear_compliance,
+        #         model.joint_angular_compliance,
+        #     ],
+        #     outputs=[
+        #         self.joint_interaction,
+        #     ],
+        #     device=self.device,
+        # )
 
         wp.launch(
             kernel=update_constraint_body_idx_kernel,
@@ -370,6 +372,7 @@ def create_engine_arrays(
 
     body_f = _zeros(dims.N_b, wp.spatial_vector)
     body_q = _zeros(dims.N_b, wp.transform)
+    body_q_prev = _zeros(dims.N_b, wp.transform)
     body_qd = _zeros(dims.N_b, wp.spatial_vector)
     body_qd_prev = _zeros(dims.N_b, wp.spatial_vector)
 
@@ -419,6 +422,7 @@ def create_engine_arrays(
         C_values=C_values,
         body_f=body_f,
         body_q=body_q,
+        body_q_prev=body_q_prev,
         body_qd=body_qd,
         body_qd_prev=body_qd_prev,
         _lambda=_lambda,

@@ -3,8 +3,10 @@ from axion.constraints import contact_constraint_kernel
 from axion.constraints import friction_constraint_kernel
 from axion.constraints import joint_constraint_kernel
 from axion.constraints import unconstrained_dynamics_kernel
+from axion.types import joint_interaction_kernel
 from axion.types import SpatialInertia
 from axion.types import to_spatial_momentum
+from warp.sim import Model
 
 from .engine_config import EngineConfig
 from .engine_data import EngineArrays
@@ -79,7 +81,7 @@ def compute_delta_body_qd_kernel(
 
 
 def compute_linear_system(
-    data: EngineArrays, config: EngineConfig, dims: EngineDimensions, dt: float
+    model: Model, data: EngineArrays, config: EngineConfig, dims: EngineDimensions, dt: float
 ):
     device = data.device
 
@@ -91,6 +93,29 @@ def compute_linear_system(
 
     data.b.zero_()
 
+    # wp.launch(
+    #     kernel=joint_interaction_kernel,
+    #     dim=dims.N_j,
+    #     inputs=[
+    #         data.body_q,
+    #         model.body_com,
+    #         model.joint_type,
+    #         model.joint_enabled,
+    #         model.joint_parent,
+    #         model.joint_child,
+    #         model.joint_X_p,
+    #         model.joint_X_c,
+    #         model.joint_axis_start,
+    #         model.joint_axis,
+    #         model.joint_linear_compliance,
+    #         model.joint_angular_compliance,
+    #     ],
+    #     outputs=[
+    #         data.joint_interaction,
+    #     ],
+    #     device=device,
+    # )
+    #
     wp.launch(
         kernel=unconstrained_dynamics_kernel,
         dim=dims.N_b,
