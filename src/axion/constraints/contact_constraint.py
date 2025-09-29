@@ -41,8 +41,6 @@ def compute_normal_constraint_term(
 
     # The final term for the complementarity function.
     # This represents the "effective" relative velocity after accounting for error correction and restitution.
-    result = relative_velocity_n + positional_correction_bias + restitution_bias
-    # wp.printf("Result: %f\n", result)
     return relative_velocity_n + positional_correction_bias + restitution_bias
 
 

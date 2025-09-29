@@ -67,11 +67,44 @@ class AxionEngine(Integrator):
             for _ in range(self.config.newton_iters)
         ]
 
-    def _log_newton_iteration(self):
+    def _log_step_data(self):
         if isinstance(self.logger, NullLogger):
             return
 
-        self.logger.log_scalar("something", 0)
+        pass
+
+    def _log_newton_iteration_data(self):
+        if isinstance(self.logger, NullLogger):
+            return
+
+        self.logger.log_wp_dataset("res", self.data.res)
+        self.logger.log_wp_dataset("J_values", self.data.J_values)
+        self.logger.log_wp_dataset("C_values", self.data.C_values)
+        self.logger.log_wp_dataset("constraint_body_idx", self.data.constraint_body_idx)
+
+        self.logger.log_wp_dataset("body_f", self.data.body_f)
+        self.logger.log_wp_dataset("body_q", self.data.body_q)
+        self.logger.log_wp_dataset("body_qd", self.data.body_qd)
+        self.logger.log_wp_dataset("body_qd_prev", self.data.body_qd_prev)
+
+        self.logger.log_wp_dataset("lambda", self.data._lambda)
+        self.logger.log_wp_dataset("lambda_prev", self.data.lambda_prev)
+
+        self.logger.log_wp_dataset("delta_body_qd", self.data.delta_body_qd)
+        self.logger.log_wp_dataset("delta_lambda", self.data.delta_lambda)
+
+        self.logger.log_wp_dataset("b", self.data.b)
+
+        self.logger.log_struct_array("gen_mass", self.data.gen_mass)
+        self.logger.log_struct_array("gen_inv_mass", self.data.gen_inv_mass)
+
+        self.logger.log_struct_array("joint_interaction", self.data.joint_interaction)
+        self.logger.log_struct_array("contact_interaction", self.data.contact_interaction)
+
+        self.logger.log_wp_dataset("alpha", self.data.alpha)
+        self.logger.log_wp_dataset("alphas", self.data.alphas)
+        self.logger.log_wp_dataset("res_alpha", self.data.res_alpha)
+        self.logger.log_wp_dataset("res_alpha_norm_sq", self.data.res_alpha_norm_sq)
 
     def _log_static_data(self):
         if isinstance(self.logger, NullLogger):
@@ -127,7 +160,7 @@ class AxionEngine(Integrator):
 
                 update_variables(self.data, self.config, self.dims)
 
-                self._log_newton_iteration()
+                self._log_newton_iteration_data()
 
         wp.copy(dest=state_out.body_qd, src=self.data.body_qd)
         wp.copy(dest=state_out.body_q, src=self.data.body_q)
