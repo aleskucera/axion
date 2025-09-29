@@ -67,8 +67,8 @@ def update_body_q_kernel(
     w = wp.spatial_top(body_qd[body_idx])
     v = wp.spatial_bottom(body_qd[body_idx])
 
-    x_prev = wp.transform_get_translation(body_q[body_idx])
-    r_prev = wp.transform_get_rotation(body_q[body_idx])
+    x_prev = wp.transform_get_translation(body_q_prev[body_idx])
+    r_prev = wp.transform_get_rotation(body_q_prev[body_idx])
 
     com = body_com[body_idx]
     x_com = x_prev + wp.quat_rotate(r_prev, com)
