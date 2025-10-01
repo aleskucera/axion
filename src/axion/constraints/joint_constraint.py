@@ -36,19 +36,17 @@ def joint_constraint_kernel(
     if parent_idx >= 0:
         body_qd_p = body_qd[parent_idx]
 
-    grad_c = wp.dot(axis_data.J_child, body_qd_c) + wp.dot(
-        axis_data.J_parent, body_qd_p
-    )
+    grad_c = wp.dot(axis_data.J_child, body_qd_c) + wp.dot(axis_data.J_parent, body_qd_p)
     bias = joint_stabilization_factor / dt * axis_data.error
 
     global_constraint_idx = joint_idx * 5 + constraint_axis_idx
+    lambda_current = lambda_j[global_constraint_idx]
 
     h_j[global_constraint_idx] = grad_c + bias
     J_j_values[global_constraint_idx, 0] = axis_data.J_parent
     J_j_values[global_constraint_idx, 1] = axis_data.J_child
     C_j_values[global_constraint_idx] = axis_data.compliance
 
-    lambda_current = lambda_j[global_constraint_idx]
     wp.atomic_add(g, child_idx, -axis_data.J_child * lambda_current)
     if parent_idx >= 0:
         wp.atomic_add(g, parent_idx, -axis_data.J_parent * lambda_current)
@@ -91,16 +89,12 @@ def linesearch_joint_residuals_kernel(
     if parent_idx >= 0:
         body_qd_p = body_qd[parent_idx] + alpha * delta_body_qd[parent_idx]
 
-    grad_c = wp.dot(axis_data.J_child, body_qd_c) + wp.dot(
-        axis_data.J_parent, body_qd_p
-    )
+    grad_c = wp.dot(axis_data.J_child, body_qd_c) + wp.dot(axis_data.J_parent, body_qd_p)
     bias = joint_stabilization_factor / dt * axis_data.error
 
     h_alpha_j[alpha_idx, global_constraint_idx] = grad_c + bias
 
-    lambda_current = (
-        lambda_j[global_constraint_idx] + alpha * delta_lambda_j[global_constraint_idx]
-    )
+    lambda_current = lambda_j[global_constraint_idx] + alpha * delta_lambda_j[global_constraint_idx]
 
     g_alpha[alpha_idx, child_idx] += -axis_data.J_child * lambda_current
     if parent_idx >= 0:

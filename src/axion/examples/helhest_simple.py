@@ -111,6 +111,8 @@ class Simulator(AbstractSimulator):
             parent_xform=wp.transform((1.5, -1.5, 0.0), wp.quat_identity()),
             axis=(0.0, 1.0, 0.0),
             mode=wp.sim.JOINT_MODE_TARGET_VELOCITY,
+            linear_compliance=1e-3,
+            angular_compliance=1e-4,
         )
         # Right wheel revolute joint (velocity control)
         builder.add_joint_revolute(
@@ -119,6 +121,8 @@ class Simulator(AbstractSimulator):
             parent_xform=wp.transform((1.5, 1.5, 0.0), wp.quat_identity()),
             axis=(0.0, 1.0, 0.0),
             mode=wp.sim.JOINT_MODE_TARGET_VELOCITY,
+            linear_compliance=1e-3,
+            angular_compliance=1e-4,
         )
         # Back wheel revolute joint (force control - not actively driven)
         builder.add_joint_revolute(
@@ -127,6 +131,8 @@ class Simulator(AbstractSimulator):
             parent_xform=wp.transform((-2.5, 0.0, 0.0), wp.quat_identity()),
             axis=(0.0, 1.0, 0.0),
             mode=wp.sim.JOINT_MODE_FORCE,
+            linear_compliance=1e-3,
+            angular_compliance=1e-4,
         )
 
         # --- Add Static Obstacles and Ground ---
@@ -134,13 +140,31 @@ class Simulator(AbstractSimulator):
         # Add a static box obstacle (body=-1 means it's fixed to the world)
         builder.add_shape_box(
             body=-1,
-            pos=wp.vec3(4.5, 0.0, 0.0),
-            hx=1.5,
-            hy=2.5,
+            pos=wp.vec3(5.0, 0.0, 0.0),
+            hx=2.5,
+            hy=3.0,
             hz=0.3,
             mu=FRICTION,
             restitution=RESTITUTION,
         )
+        builder.add_shape_box(
+            body=-1,
+            pos=wp.vec3(5.0, 0.0, 0.0),
+            hx=1.5,
+            hy=2.5,
+            hz=0.5,
+            mu=FRICTION,
+            restitution=RESTITUTION,
+        )
+        # builder.add_shape_box(
+        #     body=-1,
+        #     pos=wp.vec3(5.0, 1.0, 0.0),
+        #     hx=1.0,
+        #     hy=1.0,
+        #     hz=0.75,
+        #     mu=FRICTION,
+        #     restitution=RESTITUTION,
+        # )
 
         builder.set_ground_plane(
             ke=10.0,

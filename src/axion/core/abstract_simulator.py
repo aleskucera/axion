@@ -276,6 +276,8 @@ class AbstractSimulator(ABC):
     def _single_physics_step(self, step_num: int):
         """Performs one fundamental integration step of the simulation."""
         with self.logger.scope(f"timestep_{self._current_step:04d}"):
+            self.logger.log_scalar("time", self._current_time)
+
             # Record that step started
             wp.record_event(self.events[step_num]["step_start"])
 
@@ -284,8 +286,7 @@ class AbstractSimulator(ABC):
 
             # Record that collision detection finished
             wp.record_event(self.events[step_num]["collision"])
-
-            self.logger.log_scalar("time", self._current_time)
+            self.logger.log_wp_dataset("rigid_contact_count", self.model.rigid_contact_count)
 
             # Compute simulation step
             self.events[step_num]["integration_parts"] = self.integrator.simulate(

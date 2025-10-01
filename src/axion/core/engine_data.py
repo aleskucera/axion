@@ -296,28 +296,28 @@ class EngineArrays:
             device=self.device,
         )
 
-        # wp.launch(
-        #     kernel=joint_interaction_kernel,
-        #     dim=self.dims.N_j,
-        #     inputs=[
-        #         self.body_q,
-        #         model.body_com,
-        #         model.joint_type,
-        #         model.joint_enabled,
-        #         model.joint_parent,
-        #         model.joint_child,
-        #         model.joint_X_p,
-        #         model.joint_X_c,
-        #         model.joint_axis_start,
-        #         model.joint_axis,
-        #         model.joint_linear_compliance,
-        #         model.joint_angular_compliance,
-        #     ],
-        #     outputs=[
-        #         self.joint_interaction,
-        #     ],
-        #     device=self.device,
-        # )
+        wp.launch(
+            kernel=joint_interaction_kernel,
+            dim=self.dims.N_j,
+            inputs=[
+                self.body_q,
+                model.body_com,
+                model.joint_type,
+                model.joint_enabled,
+                model.joint_parent,
+                model.joint_child,
+                model.joint_X_p,
+                model.joint_X_c,
+                model.joint_axis_start,
+                model.joint_axis,
+                model.joint_linear_compliance,
+                model.joint_angular_compliance,
+            ],
+            outputs=[
+                self.joint_interaction,
+            ],
+            device=self.device,
+        )
 
         wp.launch(
             kernel=update_constraint_body_idx_kernel,

@@ -110,6 +110,16 @@ def update_variables(
         device=device,
     )
 
+
+def update_body_q(
+    model: Model,
+    data: EngineArrays,
+    config: EngineConfig,
+    dims: EngineDimensions,
+    dt: float,
+):
+    device = data.device
+
     wp.launch(
         kernel=update_body_q_kernel,
         dim=dims.N_b,
