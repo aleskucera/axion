@@ -171,4 +171,3 @@ The `simulate()` method orchestrates a multi-stage process for each time step, e
     d. **Update (`update_variables`)**: The body velocities (`body_qd`) and constraint forces (`_lambda`) are updated.
 
 3. **Finalize State**: After the Newton loop completes, the final velocities and integrated positions (`body_q`) are copied to the `state_out` object.
-
