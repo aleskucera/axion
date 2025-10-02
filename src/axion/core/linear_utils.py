@@ -5,6 +5,7 @@ from axion.constraints import joint_constraint_kernel
 from axion.constraints import unconstrained_dynamics_kernel
 from axion.types import SpatialInertia
 from axion.types import to_spatial_momentum
+from warp.sim import Model
 
 from .engine_config import EngineConfig
 from .engine_data import EngineArrays
@@ -79,7 +80,7 @@ def compute_delta_body_qd_kernel(
 
 
 def compute_linear_system(
-    data: EngineArrays, config: EngineConfig, dims: EngineDimensions, dt: float
+    model: Model, data: EngineArrays, config: EngineConfig, dims: EngineDimensions, dt: float
 ):
     device = data.device
 

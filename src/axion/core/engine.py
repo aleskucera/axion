@@ -18,6 +18,7 @@ from .control_utils import apply_control
 from .engine_config import EngineConfig
 from .engine_data import create_engine_arrays
 from .engine_dims import EngineDimensions
+from .general_utils import update_body_q
 from .general_utils import update_variables
 from .linear_utils import compute_delta_body_qd_from_delta_lambda
 from .linear_utils import compute_linear_system
@@ -67,11 +68,33 @@ class AxionEngine(Integrator):
             for _ in range(self.config.newton_iters)
         ]
 
-    def _log_newton_iteration(self):
+    def _log_newton_iteration_data(self):
         if isinstance(self.logger, NullLogger):
             return
 
-        self.logger.log_scalar("something", 0)
+        self.logger.log_wp_dataset("res", self.data.res)
+        self.logger.log_wp_dataset("J_values", self.data.J_values)
+        self.logger.log_wp_dataset("C_values", self.data.C_values)
+        self.logger.log_wp_dataset("constraint_body_idx", self.data.constraint_body_idx)
+
+        self.logger.log_wp_dataset("body_f", self.data.body_f)
+        self.logger.log_wp_dataset("body_q", self.data.body_q)
+        self.logger.log_wp_dataset("body_qd", self.data.body_qd)
+        self.logger.log_wp_dataset("body_qd_prev", self.data.body_qd_prev)
+
+        self.logger.log_wp_dataset("lambda", self.data._lambda)
+        self.logger.log_wp_dataset("lambda_prev", self.data.lambda_prev)
+
+        self.logger.log_wp_dataset("delta_body_qd", self.data.delta_body_qd)
+        self.logger.log_wp_dataset("delta_lambda", self.data.delta_lambda)
+
+        self.logger.log_wp_dataset("b", self.data.b)
+
+        self.logger.log_struct_array("gen_mass", self.data.gen_mass)
+        self.logger.log_struct_array("gen_inv_mass", self.data.gen_inv_mass)
+
+        self.logger.log_struct_array("joint_interaction", self.data.joint_interaction)
+        self.logger.log_struct_array("contact_interaction", self.data.contact_interaction)
 
     def _log_static_data(self):
         if isinstance(self.logger, NullLogger):
@@ -102,7 +125,7 @@ class AxionEngine(Integrator):
                 wp.copy(dest=self.data.lambda_prev, src=self.data._lambda)
 
                 # --- Linearize the system of equations ---
-                compute_linear_system(self.data, self.config, self.dims, dt)
+                compute_linear_system(self.model, self.data, self.config, self.dims, dt)
                 wp.record_event(self.events[i]["linearize"])
 
                 if not self.config.matrixfree_representation:
@@ -125,10 +148,11 @@ class AxionEngine(Integrator):
                     perform_linesearch(self.data, self.config, self.dims, dt)
                 wp.record_event(self.events[i]["linesearch"])
 
-                update_variables(self.data, self.config, self.dims)
+                update_variables(self.model, self.data, self.config, self.dims, dt)
 
-                self._log_newton_iteration()
+                self._log_newton_iteration_data()
 
+        update_body_q(self.model, self.data, self.config, self.dims, dt)
         wp.copy(dest=state_out.body_qd, src=self.data.body_qd)
         wp.copy(dest=state_out.body_q, src=self.data.body_q)
 
