@@ -63,7 +63,7 @@ class EngineArrays:
     res_alpha: wp.array = None  # Residuals for different alphas
     res_alpha_norm_sq: wp.array = None  # Squared norms of linesearch residuals
 
-    Hinv_dense: wp.array = None
+    Minv_dense: wp.array = None
     J_dense: wp.array = None
     C_dense: wp.array = None
 
@@ -406,11 +406,11 @@ def create_engine_arrays(
         alphas_array = wp.array(alphas, dtype=wp.float32, device=device)
 
     # --- Dense representation of the arrays---
-    Hinv_dense = None
+    Minv_dense = None
     J_dense = None
     C_dense = None
     if allocate_dense:
-        Hinv_dense = _zeros((dims.dyn_dim, dims.dyn_dim))
+        Minv_dense = _zeros((dims.dyn_dim, dims.dyn_dim))
         J_dense = _zeros((dims.con_dim, dims.dyn_dim))
         C_dense = _zeros((dims.con_dim, dims.con_dim))
 
@@ -440,7 +440,7 @@ def create_engine_arrays(
         alphas=alphas_array,
         res_alpha=res_alpha,
         res_alpha_norm_sq=res_alpha_norm_sq,
-        Hinv_dense=Hinv_dense,
+        Minv_dense=Minv_dense,
         J_dense=J_dense,
         C_dense=C_dense,
     )
