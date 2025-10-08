@@ -1,6 +1,8 @@
 # Configurable Parameters
 The physics engine exposes a variety of parameters that allow you to configure the simulation, solver, rendering and logging. How to work with these parameters was described in the [Configuration System](../getting-started/configuration.md) guide. Here, we provide a detailed explanation of the parameters. 
 
+---
+
 ## `EngineConfig`: Tuning the Solver
 
 The `EngineConfig` dataclass centralizes all parameters that control the solver's behavior. Below is a breakdown of these parameters, grouped by their function.
@@ -88,6 +90,7 @@ Compliance is the inverse of stiffness. These parameters introduce a controlled 
 | :--- | :--- | :--- |
 | `matrixfree_representation` | `True` | If `True`, the solver uses matrix-free linear operators (memory-efficient). If `False`, it builds an explicit system matrix (can be faster for small systems). |
 
+---
 
 ## `SimulationConfig`: General Simulation Parameters
 
@@ -128,6 +131,8 @@ class RenderingConfig:
 | `scaling` | 100.0 | Scaling factor for the object meshes to convert from simulation units to meters. |
 | `usd_file` | "sim.usd" | The filename where the USD scene is saved, relative to the working directory. |
 
+---
+
 ## `ExecutionConfig`: Execution Settings
 The `ExecutionConfig` dataclass holds parameters for controlling the performance and execution strategy of the simulation.
 
@@ -144,6 +149,8 @@ class ExecutionConfig:
 | :--- | :--- | :--- |
 | `use_cuda_graph` | `True` | If `True`, enables CUDA Graphs to minimize kernel launch overhead and improve performance. |
 | `headless_steps_per_segment` | 10 | Number of simulation steps to run in each headless segment when rendering is disabled. |
+
+---
 
 ## `ProfilingConfig`: Profiling and Logging Settings
 The `ProfilingConfig` dataclass holds parameters for controlling the profiling, timing and logging of the simulation. The logging is done using an [HDF5](https://www.hdfgroup.org/solutions/hdf5/)-based logger, which records detailed simulation data for later analysis, for example using [myHDF5](https://myhdf5.hdfgroup.org/).
