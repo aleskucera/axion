@@ -11,7 +11,7 @@ nav:
     - First Simulation: getting-started/first-simulation.md
   - Theory:
     - Core Concepts: theory/core-concepts.md
-    - Newton's Law of Least Constraint: theory/newton-least-constraint.md
+    - Gauss's Principle of Least Constraint: theory/gauss-least-constraint.md
     - Constraints Formulation: theory/constraints.md
     - Non-Linear System of Equations: theory/non-linear-system.md
     - Linear system: theory/linear-system.md
