@@ -1,7 +1,3 @@
-# TBD
-
-- From constraints, how do we actually create the non-linear system of equations (in paper from 3.5 Governing Equations to equations 46.-50.)
-
 # Nonlinear system
 This section describes how the continuous system of nonlinear equations with bilateral and unilateral constraints is transformed into a discretized system, which can be fed into the numerical solver.
 
@@ -78,9 +74,9 @@ Here, \( \mathbf{u^+, \lambda^+} \) are the unknown velocities and multipliers a
 - mass matrix and Jacobians are scaled with respect to the kinematic mapping, \( \mathbf{\tilde{M} = G^T MG},\;\mathbf{J_b = \nabla c_b G} \), ... 
 - constant \( \mathbf{\tilde{u} = u^-} + h\mathbf{G^T f(q^-,\dot{q}^-)}  \) is the unconstrained velocity.
 
-Each symbol is discussed more in depth in [Macklin et al. 2019](https://arxiv.org/abs/1907.04587v1). This discretized system is handed to the non-smooth Newton solver, which linearizes it in each of its iteration, read [Assembly of the linear system](./linear-system.md). 
+Each symbol is discussed more in depth in [Macklin et al. 2019](https://arxiv.org/abs/1907.04587v1). This discretized system is handed to the non-smooth Newton solver, which linearizes it in each of its iteration, read [Linear system](./linear-system.md). 
 
 
 ## Further reading
 - Continue by reading about the underlying linear system assembled during the step of the Newton's method in [Linear system](./linear-system.md).
-- More about specific constraints and their realization can be found in [Constraints](./constraints.md).
+- More about specific constraints and their realization can be found in [Constraints Formulation](./constraints.md).

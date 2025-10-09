@@ -1,8 +1,3 @@
-# TBD
-
-- essentially system assembly system 6.1
-
-
 # Linear system assembly and computation
 
 ## Newton's method

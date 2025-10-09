@@ -1,7 +1,3 @@
-# TBD
-
-- Summarize the section from my thesis
-
 # Gauss's Principle of Least Constraint
 
 ## Overview

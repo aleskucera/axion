@@ -13,7 +13,7 @@ nav:
     - Core Concepts: theory/core-concepts.md
     - Gauss's Principle of Least Constraint: theory/gauss-least-constraint.md
     - Constraints Formulation: theory/constraints.md
-    - Non-Linear System of Equations: theory/non-linear-system.md
+    - Nonlinear System of Equations: theory/non-linear-system.md
     - Linear system: theory/linear-system.md
   - Implementation:
     - Simulator Architecture: implementation/simulator.md
