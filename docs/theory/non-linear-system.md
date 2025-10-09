@@ -28,7 +28,7 @@ Axion uses the **Fischer-Burmeister function** NCP-function:
 \phi_{FB}(a,b) = a + b - \sqrt{a^2 + b^2} = 0 \;,
 \]
 
-implemented in [`scaled_fisher_burmeister_new`](/src/axion/constraints/utils.py) in `utils.py`.
+implemented in [`scaled_fisher_burmeister_new`](https://github.com/aleskucera/axion/blob/main/src/axion/constraints/utils.py#L27-L45).
 
 Specifically, the constraints that need reformulation via the \( \phi_{FB} \) function are:
 
@@ -82,5 +82,5 @@ Each symbol is discussed more in depth in [Macklin et al. 2019](https://arxiv.or
 
 
 ## Further reading
+- Continue by reading about the underlying linear system assembled during the step of the Newton's method in [Linear system](./linear-system.md).
 - More about specific constraints and their realization can be found in [Constraints](./constraints.md).
-- More about one step of the Newton method and the system linearization can be found in [Assembly of the linear system](./linear-system.md).
