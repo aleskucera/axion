@@ -20,9 +20,17 @@ nav:
     - Engine Overview: implementation/engine.md
     - Configurable Parameters: implementation/parameters.md
     - Logging System: implementation/logging.md
+  - Code Reference: reference/
 
 plugins:
   - search
+  - gen-files:
+      scripts:
+      - docs/gen_ref_pages.py
+  - literate-nav:
+      nav_file: SUMMARY.md
+  - section-index
+  - mkdocstrings
   
 theme:
   name: material

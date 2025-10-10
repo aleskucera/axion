@@ -26,12 +26,29 @@ from .linesearch_utils import perform_linesearch
 
 
 class AxionEngine(Integrator):
+    """
+    The class implements a low-level physics solver.
+    The engine implements a Non-Smooth Newton Method to solve 
+    the entire physics state—including dynamics, contacts, 
+    and joints—as a single, unified problem at each time step. 
+    This monolithic approach provides exceptional stability, 
+    especially for complex, highly-constrained systems like 
+    articulated robots.
+    """
     def __init__(
         self,
         model: Model,
         config: Optional[EngineConfig],
         logger: Optional[HDF5Logger | NullLogger],
     ):
+        """
+        Initialize the physics engine for the given model and configuration.
+        
+        Args:
+            model: The warp.sim.Model physics model containing bodies, joints, and other physics properties.
+            config: Configuration parameters for the engine of type EngineConfig.
+            logger: Optional HDF5Logger or NullLogger for recording simulation data.
+        """
         super().__init__()
         self.device = model.device
 
@@ -111,6 +128,17 @@ class AxionEngine(Integrator):
         dt: float,
         control: Control | None = None,
     ):
+        """
+        The primary method for running the physics simulation for a single time step.
+        This method is an implementation of the abstract method from the base `Integrator` class in Warp.
+
+        Args:
+            model: The physics model containing bodies, joints, and other physics properties.
+            state_in: The input state at the beginning of the time step.
+            state_out: The output state at the end of the time step. This will be modified by the engine.
+            dt: The time step duration.
+            control: Optional control inputs to be applied during the simulation step.
+        """
         apply_control(model, state_in, state_out, dt, control)
         self.integrate_bodies(model, state_in, state_out, dt)
         self.data.update_state_data(model, state_in, state_out)
@@ -169,6 +197,19 @@ class AxionEngine(Integrator):
         tolerance: float = 1e-10,
         max_iterations: int = 5000,
     ):
+        """
+        Apply the SciPy root-finding algorithm to the simulation.
+
+        Args:
+            model: The physics model containing bodies, joints, and other physics properties.
+            state_in: The input state at the beginning of the time step.
+            state_out: The output state at the end of the time step. This will be modified by the engine.
+            dt: The time step duration.
+            control: Optional control inputs to be applied during the simulation step.
+            method: The scipy root-finding method to use (default is 'hybr').
+            tolerance: The tolerance for convergence (default is 1e-10).
+            max_iterations: The maximum number of iterations for the solver (default is 5000).
+        """
         apply_control(model, state_in, state_out, dt, control)
         self.integrate_bodies(model, state_in, state_out, dt)
         self.data.update_state_data(model, state_in, state_out)
