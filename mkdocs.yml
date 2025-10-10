@@ -11,10 +11,10 @@ nav:
     - First Simulation: getting-started/first-simulation.md
   - Theory:
     - Core Concepts: theory/core-concepts.md
-    - Gauss's Principle of Least Constraint: theory/gauss-least-constraint.md
     - Constraints Formulation: theory/constraints.md
+    - Gauss's Principle of Least Constraint: theory/gauss-least-constraint.md
     - Nonlinear System of Equations: theory/non-linear-system.md
-    - Linear system: theory/linear-system.md
+    - Numerical Solution: theory/numerical-solution.md
   - Implementation:
     - Simulator Architecture: implementation/simulator.md
     - Engine Overview: implementation/engine.md

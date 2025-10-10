@@ -1,7 +1,10 @@
 # Gauss's Principle of Least Constraint
 
-## Overview
-The principle of least constraint describes how the acceleration of a physical system bounded by constraints relates to an unconstrained system. It frames the constraint enforcement as an **optimization problem** - it states that at any given time, the true accelerations \( \mathbf{a} \) of a constrained system are those that minimize the "constraint effort," measured as the mass-weighted squared deviation from the accelerations \( \mathbf{a}_{\text{unconstrained}} \) the system would experience if no constraints were present:
+This section explains how Axion determines the constraint impulses \(\boldsymbol{\lambda}\) introduced in the [Constraints Formulation](./constraints.md). The key insight is to use **Gauss's Principle of Least Constraint**, which provides a principled optimization framework for enforcing constraints while respecting the system dynamics.
+
+## The Principle
+
+Gauss's principle describes how a physical system bounded by constraints should evolve. It frames constraint enforcement as an **optimization problem**: at any given time, the true accelerations \(\mathbf{a}\) of a constrained system are those that minimize the "constraint effort," measured as the mass-weighted squared deviation from the accelerations \(\mathbf{a}_{\text{unconstrained}}\) the system would experience if no constraints were present:
 
 \[
     Z_{\text{accel}}(\mathbf{a}) = \frac{1}{2} \| \mathbf{a} - \mathbf{a}_{\text{unconstrained}} \|^2_{\mathbf{\tilde{M}}},\quad (1)
@@ -63,7 +66,7 @@ Utilizing the steps in the previous section, the full optimization problem (2) i
     \end{align}
 \]
 
-Here, \( \mathbf{J}_b^- \mathbf{u}^{+} = \mathbf{0} \) and \( \mathbf{J}_u^- \mathbf{u}^{+} \geq \mathbf{0} \) are the [bilateral and unilateral constraints](./constraints.md#unilateral-and-bilateral-constraints) respectively. Interestingly, if we focus on the simpler case involving only bilateral type constraints, it becomes a quadratic programme with equality constraints. Such a problem can be solved efficiently using **the method of Lagrange multipliers**. The method yields
+Here, \(\mathbf{J}_b^- \mathbf{u}^{+} = \mathbf{0}\) and \(\mathbf{J}_u^- \mathbf{u}^{+} \geq \mathbf{0}\) are the bilateral and unilateral constraints respectively, as defined in [Constraints Formulation](./constraints.md). Interestingly, if we focus on the simpler case involving only bilateral type constraints, it becomes a quadratic programme with equality constraints. Such a problem can be solved efficiently using **the method of Lagrange multipliers**. The method yields
 
 \[
     \begin{align}
@@ -72,9 +75,18 @@ Here, \( \mathbf{J}_b^- \mathbf{u}^{+} = \mathbf{0} \) and \( \mathbf{J}_u^- \ma
     \end{align}
 \]
 
-where \( \lambda^+ \) are the Lagrange multipliers. Equations (8) and (9) together create a coupled system of linear equations for the unknowns
-\( \mathbf{u}^+ \) and \( \lambda^+ \). Equations (8) and (9) form a baseline of the complete nonlinear system of equations described in [Nonlinear system](./non-linear-system.md).
+where **λ**⁺ are the Lagrange multipliers, which correspond to the **constraint impulses** that enforce the constraints. Equations (8) and (9) together create a coupled system of linear equations for the unknowns **u**⁺ and **λ**⁺. 
 
-## Further Reading
-- Continue by reading about specific constraints in [Constraints Formulation](./constraints.md).
-- Read about how Axion further treats the underlying nonlinear system in [Nonlinear system](./non-linear-system.md).
+For systems with only bilateral constraints, this gives us the constraint impulses directly. However, when unilateral constraints (contacts, friction) are present, the problem becomes more complex, leading to the full nonlinear system described in [Nonlinear System](./non-linear-system.md).
+
+## From Optimization to Nonlinear System
+
+The optimization problem in equation (7) with its constraint conditions forms the foundation for Axion's simulation approach. However, this optimization problem cannot be solved directly in its current form due to several challenges:
+
+1. **Mixed constraint types**: The problem contains both bilateral (equality) and unilateral (inequality) constraints
+2. **Nonlinear constraints**: Position-level constraints **c**(**q**) are generally nonlinear functions
+3. **Complementarity conditions**: Contact and friction constraints involve complex complementarity relationships
+
+To make this system suitable for numerical solution, Axion transforms it into a **nonlinear system of equations** that can be solved using specialized Newton-type methods. This transformation process and the resulting system are covered in the next section.
+
+→ **Next**: [Nonlinear System](./non-linear-system.md)

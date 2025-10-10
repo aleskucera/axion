@@ -1,22 +1,26 @@
-# Nonlinear system
-This section describes how the continuous system of nonlinear equations with bilateral and unilateral constraints is transformed into a discretized system, which can be fed into the numerical solver.
+# Nonlinear System
 
-## Need for reformulation
-The combination of differential equation governing the [dynamics](./constraints.md#the-unified-dynamics-equation) together with equality and complementarity conditions arising from the [constraints](./constraints.md#1-the-unified-constraint-formulation) creates a problem that is in general:
-- non-convex,
-- in a form not suitable for a numerical solver,
-- not discretized.
+This section describes how the optimization problem from [Gauss's Principle of Least Constraint](./gauss-least-constraint.md) is transformed into a discretized nonlinear system of equations that can be solved numerically. This transformation is necessary to handle the complex mix of bilateral and unilateral constraints in a unified framework.
 
-The following steps address these issues.
+## From Optimization to Root-Finding
+
+The optimization problem presented in Gauss's principle, combined with the various constraint types from [Constraints Formulation](./constraints.md), creates a system that is:
+
+- **Non-convex** due to complementarity conditions
+- **Mixed equality/inequality** constraints requiring special treatment  
+- **Continuous-time** requiring discretization for numerical solution
+
+The following reformulations transform this into a tractable nonlinear system.
 
 ## Nonlinear complementarity
+
 The complementarity conditions in the form \( 0 \le a \perp b \ge 0\) can be reformulated using a NCP-function \(\phi(a,b)\) whose roots satisfy the original complementarity conditions, i.e.:
 
 \[
     \phi(a,b) \iff 0 \le a \perp b \ge 0 \;.
 \]
 
-This reformulation turns the original problem with inequality-type constraints into a root-finding one. 
+This reformulation turns the original problem with inequality-type constraints into a root-finding one.
 
 Axion uses the **Fischer-Burmeister function** NCP-function:
 
@@ -34,15 +38,17 @@ Specifically, the constraints that need reformulation via the \( \phi_{FB} \) fu
 The reformulation is described in depth in [Macklin et al. 2019](https://arxiv.org/abs/1907.04587v1).
 
 ## Kinematic mapping
+
 In order to support quaternion-based description of rotation (common for rigid body calculations), a kinematic mapping \( \mathbf{G} \) has to be defined. This mapping transforms the generalized velocity \(\mathbf{u}\) into \(\mathbf{\dot{q}}\) via:
 
 \[
 \mathbf{\dot{q}} = \mathbf{G(q)u} \;.
 \]
 
-If \(\mathbf{q} = [\; \mathbf{x} \; \mathbf{\theta} \; ]^T \) is a 7-element vector where \( \mathbf{\theta} \) is the 4-tuple of quaternions, and \(\mathbf{u} = [\; \mathbf{\dot{x} \; \mathbf{\omega} \;}]^T \) is the 6-element vector of generalized velocity, then \(\mathbf{G} \) has to be a 7-by-6 matrix. 
+If \(\mathbf{q} = [\; \mathbf{x} \; \mathbf{\theta} \; ]^T \) is a 7-element vector where \( \mathbf{\theta} \) is the 4-tuple of quaternions, and \(\mathbf{u} = [\; \mathbf{\dot{x} \; \mathbf{\omega} \;}]^T \) is the 6-element vector of generalized velocity, then \(\mathbf{G} \) has to be a 7-by-6 matrix.
 
 ## Time discretization
+
 Taking into account the kinematic mapping, the simulation update for the generalized coordinates in terms of generalized velocities is:
 
 \[
@@ -56,7 +62,7 @@ By applying the previous reformulations one gets non-smooth the discrete-time no
 \[
 \begin{align}
     \nonumber
-    {\mathbf{\tilde{M}}\left( \frac{\mathbf{u}^+-\mathbf{\tilde{u}}}{h}  \right) - \mathbf{J^T_b(q^+) - J^T_n(q^+)\lambda^+_n - J^T_f(q^+)\lambda^+_f = 0} } \\ 
+    {\mathbf{\tilde{M}}\left( \frac{\mathbf{u}^+-\mathbf{\tilde{u}}}{h}  \right) - \mathbf{J^T_b(q^+) - J^T_n(q^+)\lambda^+_n - J^T_f(q^+)\lambda^+_f = 0} } \\
     \nonumber
     \mathbf{c_b(q^+) + E(q^+)\lambda^+_b = 0} \\
     \nonumber
@@ -68,15 +74,28 @@ By applying the previous reformulations one gets non-smooth the discrete-time no
 \end{align}
 \]
 
-Here, \( \mathbf{u^+, \lambda^+} \) are the unknown velocities and multipliers at the end of the time step. Description of the symbols:
+Here, \(\mathbf{u}^+\) and \(\boldsymbol{\lambda}^+\) are the unknown velocities and constraint impulses at the end of the time step. Description of the symbols:
 
-- normal  and friction NCP-functions for all contacts are grouped into the 2 vectors, i.e. \( \mathbf{\phi_n = [ \phi_{n,1}, ... , \phi_{n,nc}} ]^T \) 
-- mass matrix and Jacobians are scaled with respect to the kinematic mapping, \( \mathbf{\tilde{M} = G^T MG},\;\mathbf{J_b = \nabla c_b G} \), ... 
-- constant \( \mathbf{\tilde{u} = u^-} + h\mathbf{G^T f(q^-,\dot{q}^-)}  \) is the unconstrained velocity.
+- Normal and friction NCP-functions for all contacts are grouped into vectors: \( \mathbf{\phi_n = [ \phi_{n,1}, ..., \phi_{n,nc}} ]^T \)
+- Mass matrix and Jacobians are scaled with respect to the kinematic mapping: \( \mathbf{\tilde{M} = G^T MG} \), \( \mathbf{J_b = \nabla c_b G} \), etc.
+- Constant \( \mathbf{\tilde{u} = u^- + h G^T f(q^-,\dot{q}^-)} \) is the unconstrained velocity
 
-Each symbol is discussed more in depth in [Macklin et al. 2019](https://arxiv.org/abs/1907.04587v1). This discretized system is handed to the non-smooth Newton solver, which linearizes it in each of its iteration, read [Linear system](./linear-system.md). 
+Each symbol is discussed more in depth in [Macklin et al. 2019](https://arxiv.org/abs/1907.04587v1). This discretized system represents the complete nonlinear equations that must be solved at each time step to advance the simulation.
 
+## The Complete Nonlinear System
 
-## Further reading
-- Continue by reading about the underlying linear system assembled during the step of the Newton's method in [Linear system](./linear-system.md).
-- More about specific constraints and their realization can be found in [Constraints Formulation](./constraints.md).
+After applying all the reformulations above, we obtain the complete discrete-time nonlinear system that Axion solves at each time step. This system combines:
+
+- **Dynamics**: The impulse-momentum equation from Gauss's principle
+- **Constraints**: Position-level bilateral and unilateral constraints  
+- **Complementarity**: NCP reformulations of contact and friction
+- **Kinematics**: Implicit integration through the kinematic mapping
+
+The resulting system is a large, coupled set of nonlinear equations in the unknowns \(\mathbf{u}^+\) and \(\boldsymbol{\lambda}^+\). While complex, this unified formulation allows Axion to solve all physical phenomena simultaneously, ensuring stability and eliminating drift.
+
+## Numerical Solution
+
+This nonlinear system cannot be solved analytically and requires iterative numerical methods. Axion employs a specialized Newton-type approach designed to handle the non-smooth nature of contact and friction constraints.
+
+→ **Next**: [Numerical Solution](./linear-system.md)
+
