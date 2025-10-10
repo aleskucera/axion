@@ -1,6 +1,6 @@
 # Engine API
 
-The `AxionEngine` is the low-level physics solver at the heart of the simulation. Most users will interact with it indirectly through the `AbstractSimulator` class, but understanding its API and configuration is key to tuning performance and achieving specific physical behaviors.
+The `AxionEngine` is the low-level physics solver at the core of the simulation. Most users will interact with it indirectly through the `AbstractSimulator` class, but understanding its API and configuration is key to tuning performance and achieving specific physical behaviors.
 
 The engine implements a **Non-Smooth Newton Method** to solve the entire physics state—including dynamics, contacts, and joints—as a single, unified problem at each time step. This monolithic approach provides exceptional stability, especially for complex, highly-constrained systems like articulated robots.
 
@@ -8,7 +8,7 @@ The engine implements a **Non-Smooth Newton Method** to solve the entire physics
 
 ## The `AxionEngine` Class
 
-This is the main class that takes a physics `Model` and advances it through time.
+This is the main backend simulation class. It takes a static `warp.sim.Model`, configuration parameters, and an optional logger. The engine creates and manages all necessary GPU data structures and executes the simulation loop. The data are then outputted via the `state_out` argument in the `simulate` and `simulate_scipy` methods.
 
 ```python
 from axion.core import AxionEngine
@@ -30,13 +30,12 @@ class AxionEngine(Integrator):
 
 ### Key Methods
 
-#### `simulate()`
+#### [`simulate()`](https://github.com/aleskucera/axion/blob/main/src/axion/core/engine.py#L123-L176){:target="_blank"}
 
 The primary method for running the physics simulation for a single time step.
 
 ```python
 def simulate(
-    self,
     model: Model,
     state_in: State,
     state_out: State, 
@@ -45,19 +44,21 @@ def simulate(
 ) -> List[Dict[str, Event]]
 ```
 
-This method executes the core solver loop on the GPU, applying control inputs and calculating the resulting state after `dt` seconds.
+This method executes the core solver loop on the GPU, applying control inputs and calculating the resulting state after `dt` seconds. The method returns a list of events used for logging and analysis. The main output of the method is the updated `state_out` object, which contains the new positions and velocities of all bodies.
+More details on the solving process are provided in the [next section](#the-solving-process).
 
-#### `simulate_scipy()`
+#### [`simulate_scipy()`](https://github.com/aleskucera/axion/blob/main/src/axion/core/engine.py#L178-L238){:target="_blank"}
 
 An alternative solver implementation that uses SciPy's numerical root-finding algorithms.
 
 ```python
 def simulate_scipy(
-    self, 
-    model: Model, 
-    # ...
-    method: str = "hybr",
-)
+    model: Model,
+    state_in: State,
+    state_out: State,
+    dt: float,
+    control: Optional[Control] = None,
+) -> List[Dict[str, Event]]
 ```
 
 !!! warning "For Debugging and Validation Only"
@@ -65,109 +66,94 @@ def simulate_scipy(
 
 ---
 
-## `EngineConfig`: Tuning the Solver
+# The Solving Process
 
-The `EngineConfig` dataclass centralizes all parameters that control the solver's behavior. Below is a breakdown of these parameters, grouped by their function.
+The `AxionEngine.simulate` method orchestrates a multi-stage process for each time step, executed entirely either on the GPU (for `simulate`) or CPU (for `simulate_scipy`). Below is a high-level overview of the key stages in the simulation loop.
 
+## 1. Apply Controls & Integrate
 ```python
-from axion.core import EngineConfig
-
-@dataclass(frozen=True)
-class EngineConfig:
-    # Solver iterations
-    newton_iters: int = 8
-    linear_iters: int = 4
-    linesearch_steps: int = 2
-    
-    # Baumgarte stabilization
-    joint_stabilization_factor: float = 0.01
-    contact_stabilization_factor: float = 0.1
-    
-    # Fischer-Burmeister scaling
-    contact_fb_alpha: float = 0.25
-    contact_fb_beta: float = 0.25
-    friction_fb_alpha: float = 0.25
-    friction_fb_beta: float = 0.25
-
-    # Constraint compliance (softness)
-    contact_compliance: float = 1e-4
-    friction_compliance: float = 1e-6
-    
-    # Performance
-    matrixfree_representation: bool = True
+def apply_control(
+    model: Model,
+    state_in: State,
+    state_out: State,
+    dt: float,
+    control: Control | None = None,
+)
 ```
 
-!!! success "Built-in Validation"
-    `EngineConfig` includes a `__post_init__` method that validates your settings. If you provide an invalid value (e.g., a negative number of iterations), it will immediately raise a `ValueError`, preventing hard-to-debug issues later.
+External forces and torques from the `warp.sim.Control` object are applied to the bodies in the `state_in.body_f` argument via the [`apply_control`](https://github.com/aleskucera/axion/blob/main/src/axion/core/control_utils.py#L67-L100){:target="_blank"} method.
 
-### Group 1: Solver Iterations
+```python
+def integrate_bodies(
+    model: Model,
+    state_in: State,
+    state_out: State,
+    dt: float,
+    angular_damping: float = 0.0,
+)
+```
 
-These parameters control the computational "effort" the solver expends at each time step.
+An initial "guess" for the next state's velocity (`state_out.body_qd`) and position (`state_out.body_q`) is calculated using semi-implicit Euler integration in the `warp.sim.Integrator.integrate_bodies` function.
 
-| Parameter | Default | Description |
-| :--- | :--- | :--- |
-| `newton_iters` | 8 | **Newton Iterations.** The number of "outer loop" iterations for the nonlinear solver. More iterations lead to better constraint satisfaction (less penetration, stiffer joints). |
-| `linear_iters` | 4 | **Linear Solver Iterations.** The number of "inner loop" iterations for the Conjugate Residual solver, which solves the linearized system at each Newton step. |
-| `linesearch_steps` | 2 | Number of steps in the linesearch to find an optimal step size for each Newton update. Set to `0` to disable and take the full step. |
+## 2. The Non-Smooth Newton Loop
+The engine then enters the main Newton iteration loop for `EngineConfig.newton_iters` iterations. Each iteration aims to refine the solution.
 
-### Group 2: Baumgarte Stabilization
+### a) Linearize
+```python
+def compute_linear_system(
+    model: Model,
+    data: EngineArrays,
+    config: EngineConfig,
+    dims: EngineDimensions,
+    dt: float
+)
+```
+The engine evaluates all constraints and linearizes them, forming a large linear system of equations as described in the [theory section](../theory/linear-system.md). Since we know the structure of the system, we can construct the system efficiently without explicitly forming large matrices, which would consist of many zero elements. This is done in [`compute_linear_system`](https://github.com/aleskucera/axion/blob/main/src/axion/core/linear_utils.py#L82-L186){:target="_blank"} method, which updates the `self.data` attribute, resulting in the following simplified matrix-free representation:
 
-These parameters help the solver correct for positional drift from constraints over time.
+- **Dynamic Matrix (H)** is a block diagonal matrix. It can be represented via one float for mass and 3x3 matrix for inertia per body.
+- **Compliance (C)** is a diagonal matrix, represented as a vector of its diagonal elements.
+- **Jacobian (J)** is a matrix representing constraint between two bodies. Each constraint can be represented as two integer indices of the two bodies and two Nx6 matrices, where 6 is DoF of a spatial body and N is the number of constraint equations. Rotational joint constraints are represented by 5 equations, contact constraint by 1 equation, and friction by 2 equations.
 
-| Parameter | Default | Description |
-| :--- | :--- | :--- |
-| `joint_stabilization_factor` | 0.01 | **Joint Drift Correction.** Controls how aggressively the solver corrects positional errors in joints. |
-| `contact_stabilization_factor` | 0.1 | **Contact Penetration Correction.** Controls how aggressively the solver pushes penetrating objects apart. |
+### b) Solve and Compute Velocities
+```python
+def cr_solver(
+    A: LinearOperator,
+    b: wp.array,
+    x: wp.array,
+    iters: int,
+    preconditioner: Optional[LinearOperator] = None,
+    logger: Optional[HDF5Logger | NullLogger] = NullLogger,
+)
+```
+The [`cr_solver`](https://github.com/aleskucera/axion/blob/main/src/axion/optim/cr.py#L62-L158){:target="_blank"} method is the core of the iteration. It solves the linear system and updates the `self.data.delta_lambda` (the change in constraint impulses) using a **Conjugate Residual (CR)** iterative solver. This step runs for `linear_iters`. Since the system is represented in a matrix-free form, the solver uses matrix-free operator to compute required quantities efficiently.
 
-### Group 3: Fischer-Burmeister (FB) Scaling
 
-These parameters are scaling factors for the Fischer-Burmeister function, which transforms a complementarity problem (like contact) into a root-finding problem that the Newton solver can handle.
+```python
+def compute_delta_body_qd_from_delta_lambda(
+    data: EngineArrays,
+    config: EngineConfig,
+    dims: EngineDimensions,
+)
+```
+Given the change in constraint impulses `Δλ`, the corresponding change in body velocities `Δu` is computed using the [`compute_delta_body_qd_from_delta_lambda`](https://github.com/aleskucera/axion/blob/main/src/axion/core/linear_utils.py#L189-L218){:target="_blank"} method.
 
-| Parameter | Default | Description |
-| :--- | :--- | :--- |
-| `contact_fb_alpha` | 0.25 | Scales the *primal* variable (e.g., gap distance) of the contact complementarity problem. |
-| `contact_fb_beta` | 0.25 | Scales the *dual* variable (e.g., contact force λ) of the contact complementarity problem. |
-| `friction_fb_alpha` | 0.25 | Scales the *primal* variable (e.g., relative velocity) of the friction complementarity problem. |
-| `friction_fb_beta` | 0.25 | Scales the *dual* variable (e.g., friction force λ) of the friction complementarity problem. |
+### d) Update
+```python
+def update_variables(
+    model: Model,
+    data: EngineArrays,
+    config: EngineConfig,
+    dims: EngineDimensions,
+    dt: float,
+)
+```
+The body velocities (`self.data.body_qd`) and constraint impulses (`self.data._lambda`) are updated with [`update_variables`](https://github.com/aleskucera/axion/blob/main/src/axion/core/general_utils.py#L82-L111){:target="_blank"}.
 
-!!! info "What is Fischer-Burmeister Scaling?"
-    A contact constraint follows the rule `0 ≤ distance ⊥ force ≥ 0`. The FB function turns this into an equation `phi(distance, force) = 0`.
-
-    However, `distance` (in meters) and `force` (in Newtons) can have vastly different numerical magnitudes. This imbalance can make the problem numerically difficult for the solver. The scaling factors `alpha` and `beta` are used to precondition the problem by solving a scaled version: `phi(alpha * distance, beta * force) = 0`.
-    
-    This brings the two arguments into a similar numerical range, improving the solver's stability and convergence speed.
-
-### Group 4: Constraint Compliance (Softness)
-
-Compliance is the inverse of stiffness. These parameters introduce a controlled amount of "softness," which can improve stability and simulate non-rigid behaviors.
-
-| Parameter | Default | Description |
-| :--- | :--- | :--- |
-| `contact_compliance` | 1e-4 | Adds softness to contact constraints. `0.0` represents a perfectly hard contact. Larger values (e.g., `1e-2`) simulate softer materials. |
-| `friction_compliance`| 1e-6 | Adds softness to the friction model. This is typically kept very low to simulate rigid friction. |
-
-### Group 5: Performance
-
-| Parameter | Default | Description |
-| :--- | :--- | :--- |
-| `matrixfree_representation` | `True` | If `True`, the solver uses matrix-free linear operators (memory-efficient). If `False`, it builds an explicit system matrix (can be faster for small systems). |
+## 3. Finalize State
+After the Newton loop completes, the final velocities (`self.data.body_qd`) and integrated positions (`self.data.body_q`) are copied to the `state_out`.
 
 ---
 
-## The Solving Process
+## GPU Acceleration with Warp Kernels
 
-The `simulate()` method orchestrates a multi-stage process for each time step, executed entirely on the GPU.
-
-1. **Apply Controls & Integrate:** External forces and torques from the `control` object are applied, and an initial "guess" for the next state's velocity is calculated.
-
-2. **The Non-Smooth Newton Loop:** The engine then enters the main iterative loop (`newton_iters`). Each iteration aims to refine the solution.
-
-    a. **Linearize (`compute_linear_system`)**: The engine evaluates all constraints and linearizes them, forming a large linear system of equations `Ax = b`.
-
-    b. **Solve (`cr_solver`)**: The core of the iteration. It solves the linear system for `Δλ` (the change in constraint forces) using a **Conjugate Residual (CR)** iterative solver. This step runs for `linear_iters`.
-
-    c. **Linesearch (`perform_linesearch`)**: The solver may optionally perform a linesearch to find an optimal fraction of the calculated update to apply.
-
-    d. **Update (`update_variables`)**: The body velocities (`body_qd`) and constraint forces (`_lambda`) are updated.
-
-3. **Finalize State**: After the Newton loop completes, the final velocities and integrated positions (`body_q`) are copied to the `state_out` object.
+All major computations in the `AxionEngine`, including constraint evaluation, system linearization, and iterative solving, are implemented as custom GPU kernels using the `wp.launch` from the [Warp](https://github.com/NVIDIA/warp) framework. Warp kernels enable highly parallel execution of physics operations, allowing the engine to efficiently process thousands of bodies and constraints in real time. Each stage of the simulation loop, from applying controls to solving the linear system and updating state variables, is mapped to specialized GPU kernels. This approach ensures that even complex, highly-constrained systems can be simulated with high performance and scalability.

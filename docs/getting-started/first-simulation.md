@@ -348,4 +348,4 @@ The `__main__` block in the script passes several configuration objects to the s
 
 - Explore the [User Guide](../user-guide/concepts.md) to understand core physics concepts in more depth.
 - Learn about other [constraints](../user-guide/constraints.md) like prismatic (slider) or ball joints.
-- See all available [configuration options](../user-guide/configuration.md) for fine-tuning your simulation.
+- See all available [configuration options](../getting-started/configuration.md) for fine-tuning your simulation.
