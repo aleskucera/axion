@@ -91,7 +91,7 @@ At the current state \(\mathbf{x_k}\), the solver evaluates all required terms: 
 
 ---
 **Step 2: Solve for Impulse Update (\(\Delta\boldsymbol{\lambda}\))**
-This is the core of the computation. The Schur complement system is formed and solved for the first part of our update vector, \(\Delta\boldsymbol{\lambda}\). This is done using a Preconditioned Conjugate Residual solver ([`cr_solver`](https://github.com/aleskucera/axion/blob/main/src/axion/optim/cr.py#L62-L158){:target="_blank"}) accelerated by a `JacobiPreconditioner`.
+This is the core of the computation. The Schur complement system is formed and solved for the first part of our update vector, \(\Delta\boldsymbol{\lambda}\). This is done using a Preconditioned Conjugate Residual solver with a Jacobi Preconditioner.
 
 ---
 **Step 3: Back-substitute for Velocity Update (\(\Delta\mathbf{u}\))**
@@ -100,8 +100,6 @@ With \(\Delta\boldsymbol{\lambda}\) known, the velocity update component, \(\Del
 \[
 \Delta\mathbf{u} = \mathbf{\tilde{M}}^{-1} \left( \hat{\mathbf{J}}^\top \Delta\boldsymbol{\lambda} - \mathbf{h_\text{dyn}} \right)
 \]
-
-This is performed by the [`compute_delta_body_qd_from_delta_lambda`](https://github.com/aleskucera/axion/blob/main/src/axion/core/linear_utils.py#L189-L218){:target="_blank"} function.
 
 ---
 **Step 4: Recover the Full Update Vector (\(\Delta\mathbf{x}\))**
@@ -121,7 +119,7 @@ This vector represents the complete, linearized search direction for the entire 
 
 ---
 **Step 5: Perform Line Search**
-To ensure robust convergence, a line search ([`perform_linesearch`](https://github.com/aleskucera/axion/blob/main/src/axion/core/linesearch_utils.py#L48-L151){:target="*blank"}) is performed. This process seeks an optimal step size \(\alpha \in (0, 1]\) by testing trial states of the form \(\mathbf{x*\text{trial}} = \mathbf{x_k} + \alpha \Delta\mathbf{x}\). The goal is to find an \(\alpha\) that guarantees a sufficient decrease in the overall system error, measured by the norm of the full residual vector, \(\|\mathbf{h}(\mathbf{x_\text{trial}})\|\).
+To ensure robust convergence, a line search is performed. This process seeks an optimal step size \(\alpha \in (0, 1]\) by testing trial states of the form \(\mathbf{x_\text{trial}} = \mathbf{x_k} + \alpha \Delta\mathbf{x}\). The goal is to find an \(\alpha\) that guarantees a sufficient decrease in the overall system error, measured by the norm of the full residual vector, \(\|\mathbf{h}(\mathbf{x_\text{trial}})\|\).
 
 ---
 **Step 6: Update the Full State Vector**
