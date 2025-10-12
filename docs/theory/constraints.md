@@ -30,18 +30,21 @@ Solving constraints at this level guarantees zero positional error, but it requi
 
 ### Velocity-Level Formulation (Differential Form)
 
-This common alternative is derived by taking the time derivative of the position-level constraints. Using the chain rule, we get
+This common alternative is derived by taking the time derivative of the position-level constraints. Using the chain rule and the kinematic mapping \(\dot{\mathbf{q}} = \mathbf{G}(\mathbf{q}) \cdot \mathbf{u}\), we get
 
 \[
-\dot{\mathbf{c}} = \frac{\partial \mathbf{c}}{\partial q} \frac{dq}{dt} = \mathbf{J}\mathbf{u},
+\dot{\mathbf{c}} = \frac{\partial \mathbf{c}}{\partial \mathbf{q}} \cdot \frac{d\mathbf{q}}{dt} = \frac{\partial \mathbf{c}}{\partial \mathbf{q}} \cdot \mathbf{G}(\mathbf{q}) \cdot \mathbf{u} = \mathbf{J} \cdot \mathbf{u},
 \]
 
-where **J** is the constraint Jacobian and **u** is the generalized velocity vector.
+where \(\mathbf{J} = \frac{\partial \mathbf{c}}{\partial \mathbf{q}} \cdot \mathbf{G}(\mathbf{q})\) is the velocity Jacobian that maps generalized velocities \(\mathbf{u}\) to constraint derivatives.
+
+!!! note "Mathematical Notation"
+    For detailed definitions of \(\mathbf{J}\), \(\mathbf{G}\), and other symbols, see the [Notation](./notation.md) page.
 
 * **Bilateral Constraint:** The velocity constraint becomes
 
 \[
-\mathbf{J}\mathbf{u} = \mathbf{0},
+\mathbf{J} \cdot \mathbf{u} = \mathbf{0},
 \]
 
 enforcing that the relative velocity in the constrained directions is zero.
@@ -49,7 +52,7 @@ enforcing that the relative velocity in the constrained directions is zero.
 * **Unilateral Constraint:** The non-penetration condition becomes a complementarity problem on velocities: when a contact is active (\(c(q) = 0\)), the relative normal velocity must be non-negative
 
 \[
-\dot{c} = J \mathbf{u} \ge 0.
+\dot{c} = \mathbf{J} \cdot \mathbf{u} \ge 0.
 \]
 
 This forms the basis of many **Linear Complementarity Problem (LCP)** solvers.
@@ -63,7 +66,7 @@ To combat this, velocity-based solvers must add a **feedback rule** to push the 
 Conceptually, the constraint force **λ** is modeled as an implicit Hookean spring that acts to close any existing positional error **c**(**q**):
 
 \[
-\boldsymbol{\lambda} = -k \mathbf{c}(\mathbf{q}) - b \mathbf{v}_{rel}
+\boldsymbol{\lambda} = -k \cdot \mathbf{c}(\mathbf{q}) - b \cdot \mathbf{v}_{rel}
 \]
 
 Here, \(\mathbf{c}(\mathbf{q})\) is the position error (e.g., penetration depth), \(\mathbf{v}_{\text{rel}}\) is the relative velocity, \(k\) is a spring stiffness, and \(b\) is a damping coefficient. This force pulls the bodies back into alignment.
@@ -109,7 +112,7 @@ By solving this position-level problem directly, Axion finds the exact impulses 
 
 ### Velocity-Level Formulation (Alternative)
 
-For contrast, contacts can also be formulated at the velocity level. Taking the time derivative of the position constraint, we get a condition on the relative normal velocity \(\mathbf{v}_n = \mathbf{J}_n\mathbf{u}\):
+For contrast, contacts can also be formulated at the velocity level. Taking the time derivative of the position constraint, we get a condition on the relative normal velocity \(\mathbf{v}_n = \mathbf{J}_n \cdot \mathbf{u}\):
 
 \[
 0 \leq \lambda_n \perp \mathbf{v}_n \geq 0
@@ -167,7 +170,7 @@ The solver finds the joint impulses \(\boldsymbol{\lambda}_j\) required to enfor
 In contrast, many simulators formulate joints at the velocity level by taking the time derivative of the position constraint:
 
 \[
-\dot{\mathbf{c}}(q) = \mathbf{J}\mathbf{u} = \mathbf{0}
+\dot{\mathbf{c}}(\mathbf{q}) = \mathbf{J} \cdot \mathbf{u} = \mathbf{0}
 \]
 
 Here, the solver finds impulses that force the relative velocity **u** along the constrained degrees of freedom to be zero. As discussed in Section 1, this approach suffers from numerical drift, where integration errors cause the positional error **c**(**q**) to grow over time, making the joint appear to pull apart. This necessitates corrective measures like **Baumgarte stabilization**, which can be difficult to tune.

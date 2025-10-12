@@ -1,293 +1,153 @@
-# Nonlinear System
+# The Nonlinear System
 
-This section describes how the optimization problem from [Gauss's Principle of Least Constraint](./gauss-least-constraint.md) is transformed into a discretized nonlinear system of equations that can be solved numerically. This transformation is necessary to handle the complex mix of bilateral and unilateral constraints in a unified framework.
+This section details how the optimization problem from [Gauss's Principle of Least Constraint](./gauss-least-constraint.md), combined with the constraint laws from [Constraints Formulation](./constraints.md), is formally expressed as a large, simultaneous system of nonlinear equations. The goal is to find the root of this system, which represents the physically correct state of all bodies at the next time step.
 
-## From Constraints to Nonlinear Equations
+This transformation from a constrained optimization problem to a root-finding problem is achieved by applying the Karush-Kuhn-Tucker (KKT) conditions. The resulting system can be expressed as a single function \(\mathbf{h}(\mathbf{x}^+) = \mathbf{0}\), where the unknown vector \(\mathbf{x}^+ = [\mathbf{q}^+, \mathbf{u}^+, \boldsymbol{\lambda}^+]\) contains the final configurations, velocities, and constraint impulses.
 
-The optimization problem from Gauss's principle must be combined with the specific constraint formulations from [Constraints Formulation](./constraints.md). Each constraint type requires transformation into a form suitable for numerical solution. This section shows how each constraint becomes part of the final nonlinear system.
+The following sections will deconstruct the residual vector \(\mathbf{h}\) piece by piece, explaining the physical meaning and mathematical formulation of each component before assembling them into the final system.
 
-We examine each constraint type and show how it contributes to the nonlinear system, considering both position-level and velocity-level formulations where applicable.
+---
 
-## Bilateral Constraints (Joints)
+## **Residual Functions**
 
-Bilateral constraints enforce exact geometric relationships between bodies, such as revolute joints that connect two bodies at a specific point and orientation. Axion can formulate these constraints at either the position or velocity level.
+### Dynamics: The Equations of Motion (\(\mathbf{h_\text{dyn}}\))
 
-### Position-Level Formulation
+This residual represents the core equations of motion, a discrete-time-step version of Newton's second law expressed in generalized coordinates. It stems directly from Gauss's Principle and dictates how constraint impulses alter the system's velocity.
 
-From [Constraints Formulation](./constraints.md), bilateral constraints are defined as:
-
-\[
-\mathbf{c}_b(\mathbf{q}) = \mathbf{0}
-\]
-
-In the nonlinear system, this becomes:
+The equation is:
 
 \[
-\mathbf{c}_b(\mathbf{q}^+) + \boldsymbol{\Sigma} \cdot \boldsymbol{\lambda}_b^+ = \mathbf{0}
+\mathbf{h_\text{dyn}} = \mathbf{\tilde{M}} \cdot (\mathbf{u}^+ - \tilde{\mathbf{u}}) - h \left( \mathbf{J}_b^T \boldsymbol{\lambda}_b^+ + \mathbf{J}_n^T \boldsymbol{\lambda}_n^+ + \mathbf{J}_f^T \boldsymbol{\lambda}_f^+ \right) = \mathbf{0}
 \]
 
-where:
+Breaking this down:
 
-- \(\mathbf{q}^+\) is the configuration at the end of the time step
-- \(\boldsymbol{\lambda}_b^+\) are the bilateral constraint impulses
-- \(\boldsymbol{\Sigma}\) is the compliance matrix (typically zero for rigid constraints)
+- \(\mathbf{\tilde{M}} \cdot (\mathbf{u}^+ - \tilde{\mathbf{u}})\) is the change in the system's generalized momentum caused by constraints. The term \(\tilde{\mathbf{u}} = \mathbf{u}^- + h \mathbf{\tilde{M}}^{-1} \mathbf{f}_{\text{ext}}\) represents the predicted "unconstrained" velocity—what the velocity *would be* if only external forces like gravity were applied.
+- \(h \left( \dots \right)\) is the total impulse applied over the time step \(h\) by all constraints (bilateral, normal contact, and friction). The Jacobians \(\mathbf{J}^T\) serve to map these impulses from the constraint space back into forces and torques in the generalized coordinate space.
 
-The compliance matrix is introduced for numerical stability and can model slight flexibility in otherwise rigid constraints.
+In essence, this equation states: "The change in momentum from the unconstrained state to the final state must be exactly equal to the total impulse applied by all constraints."
 
-### Velocity-Level Formulation (Alternative)
+### Kinematics: Time Integration (\(\mathbf{h_\text{kin}}\))
 
-Alternatively, bilateral constraints can be enforced at the velocity level. The basic velocity constraint is:
+This residual connects the system's final configuration \(\mathbf{q}^+\) to its final velocity \(\mathbf{u}^+\) through a time integration rule. Axion uses an implicit integration scheme for superior stability.
+
+The equation is:
 
 \[
-\mathbf{J}_b(\mathbf{q}) \cdot \mathbf{u} = \mathbf{0}
+\mathbf{h_\text{kin}} = \mathbf{q}^+ - \mathbf{q}^- - h \cdot \mathbf{G}(\mathbf{q}^+) \cdot \mathbf{u}^+ = \mathbf{0}
 \]
 
-However, this suffers from drift. To address this, Axion can use **Baumgarte stabilization**, which modifies the constraint to:
+Here:
+
+- This is a **Backward Euler** integration step. It defines the final position \(\mathbf{q}^+\) based on the final velocity \(\mathbf{u}^+\). Because the quantity we are solving for (\(\mathbf{u}^+\)) is used to compute the final state, the method is *implicit*. This is crucial for stability in stiff systems, like those with many contacts and joints.
+- The matrix \(\mathbf{G}(\mathbf{q}^+)\) is the **kinematic mapping** that transforms generalized velocities (which have \(n_u\) dimensions, e.g., 6 for a rigid body) into configuration derivatives (which have \(n_q\) dimensions, e.g., 7 for a position+quaternion rigid body).
+
+This equation ensures that the final configuration and velocity are mutually consistent according to the laws of motion over the discrete time step \(h\).
+
+### Bilateral Constraints (Joints)
+
+Bilateral constraints enforce an exact geometric relationship (\(\mathbf{c}_b(\mathbf{q}) = \mathbf{0}\)). Axion can enforce this at either the position or velocity level.
+
+- **Position-Level Formulation:** This is Axion's preferred method as it completely eliminates numerical drift. The constraint is enforced directly on the final configuration \(\mathbf{q}^+\). A compliance matrix \(\boldsymbol{\Sigma}\) can be introduced to model "soft" joints or improve numerical conditioning. The resulting residual equation is:
 
 \[
-\mathbf{J}_b \cdot \mathbf{u}^+ + \boldsymbol{\Upsilon} \cdot \frac{\mathbf{c}_b(\mathbf{q}^-)}{h} + \boldsymbol{\Sigma} \cdot \boldsymbol{\lambda}_b^+ = \mathbf{0}
+\mathbf{h_b}^{(\text{pos})} = \mathbf{c}_b(\mathbf{q}^+) + \boldsymbol{\Sigma} \cdot \boldsymbol{\lambda}_b^+ = \mathbf{0}
 \]
 
-where:
-
-- \(\mathbf{J}_b(\mathbf{q}) = \frac{\partial \mathbf{c}_b}{\partial \mathbf{q}}\) is the constraint Jacobian
-- \(\boldsymbol{\Upsilon}\) is the matrix of error correction coefficients (values between 0 and 1)
-- \(h\) is the time step
-- \(\mathbf{c}_b(\mathbf{q}^-)\) is the current constraint violation
-- \(\boldsymbol{\Sigma}\) is the compliance matrix
-
-The correction term \(\boldsymbol{\Upsilon} \cdot \frac{\mathbf{c}_b(\mathbf{q}^-)}{h}\) attempts to eliminate a fraction of the existing position error over the current time step.
-
-### Contribution to Nonlinear System
-
-The bilateral constraints contribute to the final nonlinear system as \(\mathbf{R}_b^{(\text{pos/vel})}(\mathbf{q}^+, \mathbf{u}^+, \boldsymbol{\lambda}_b^+) = \mathbf{0}\), where the root-finding function \(\mathbf{R}_b\) can be formulated as:
-
-- **Position-level**: \(\mathbf{R}_b^{(\text{pos})} = \mathbf{c}_b(\mathbf{q}^+) + \boldsymbol{\Sigma} \cdot \boldsymbol{\lambda}_b^+\)
-- **Velocity-level**: \(\mathbf{R}_b^{(\text{vel})} = \mathbf{J}_b \cdot \mathbf{u}^+ + \boldsymbol{\Upsilon} \cdot \frac{\mathbf{c}_b(\mathbf{q}^-)}{h} + \boldsymbol{\Sigma} \cdot \boldsymbol{\lambda}_b^+\)
-
-Axion defaults to the position-level formulation to eliminate drift.
-
-## Unilateral Constraints (Contacts)
-
-Contact constraints prevent bodies from interpenetrating and are fundamentally different from bilateral constraints due to their unilateral (inequality) nature. These constraints involve complementarity conditions that require special treatment.
-
-### Position-Level Formulation (Axion's Default)
-
-From [Constraints Formulation](./constraints.md), contact constraints are defined as complementarity conditions:
+- **Velocity-Level Formulation (Alternative):** This alternative enforces the constraint on velocities (\(\mathbf{J}_b \cdot \mathbf{u} = \mathbf{0}\)). To counteract the inevitable positional drift from numerical integration, **Baumgarte stabilization** adds a correction term that pushes the system back toward the valid configuration. The residual equation becomes:
 
 \[
-0 \leq \lambda_n \perp \mathbf{c}_{\text{contact}}(\mathbf{q}) \geq 0
+\mathbf{h_b}^{(\text{vel})} = \mathbf{J}_b \cdot \mathbf{u}^+ + \boldsymbol{\Upsilon} \cdot \frac{\mathbf{c}_b(\mathbf{q}^-)}{h} + \boldsymbol{\Sigma} \cdot \boldsymbol{\lambda}_b^+ = \mathbf{0}
 \]
 
-where \(\lambda_n\) is the normal contact impulse and \(\mathbf{c}_{\text{contact}}(\mathbf{q})\) is the gap function.
+   where the term \(\boldsymbol{\Upsilon} \cdot \frac{\mathbf{c}_b(\mathbf{q}^-)}{h}\) introduces a velocity goal that attempts to correct a fraction of the existing position error \(\mathbf{c}_b(\mathbf{q}^-)\) over the current time step.
 
-However, complementarity conditions cannot be directly solved by standard numerical methods. To convert this into a root-finding problem suitable for Newton's method, we use the **Fischer-Burmeister NCP-function**:
+### Unilateral Constraints (Contacts)
+
+Contact non-penetration (\(\mathbf{c_n}(\mathbf{q}) \geq 0\)) is governed by a complementarity condition: a repulsive impulse (\(\lambda_n \geq 0\)) can only exist upon contact (\(\mathbf{c_n}(\mathbf{q}) = 0\)).
+
+- **Position-Level Formulation:** The core physical principle is the Nonlinear Complementarity Problem (NCP):
 
 \[
-\boldsymbol{\phi}_n(\mathbf{q}^+, \boldsymbol{\lambda}_n^+) = \boldsymbol{\lambda}_n^+ + \mathbf{c}_{\text{contact}}(\mathbf{q}^+) - \sqrt{(\boldsymbol{\lambda}_n^+)^2 + (\mathbf{c}_{\text{contact}}(\mathbf{q}^+))^2} = \mathbf{0}
+0 \leq \lambda_n \perp \mathbf{c}_{n}(\mathbf{q}) \geq 0
 \]
 
-This reformulation turns the complementarity condition into a nonlinear equation that can be solved by Newton's method. The contact constraint equation in the nonlinear system becomes:
+To integrate this into a Newton-based solver, we convert this non-smooth condition into a smooth equation using the **Fischer-Burmeister NCP-function**, \(\boldsymbol{\phi}\). The residual equation becomes:
 
 \[
-\boldsymbol{\phi}_n(\mathbf{q}^+, \boldsymbol{\lambda}_n^+) = \mathbf{0}
+\mathbf{h_n}^{(\text{pos})} = \boldsymbol{\phi}(\mathbf{c_n}(\mathbf{q}^+), \boldsymbol{\lambda_n}^+) = \mathbf{c_n}(\mathbf{q}^+) + \boldsymbol{\lambda_n}^+ - \sqrt{(\mathbf{c_n}(\mathbf{q}^+))^2 + (\boldsymbol{\lambda}_n^+)^2} = \mathbf{0}
 \]
 
-### Velocity-Level Formulation (Alternative)
-
-Alternatively, contacts can be formulated at the velocity level. The basic velocity complementarity condition is:
+- **Velocity-Level Formulation (Alternative):** At the velocity level, the complementarity applies to the post-collision relative normal velocity. To model bounce (restitution \(e\)) and combat drift (Baumgarte stabilization), we define a target velocity:
 
 \[
-0 \leq \lambda_n \perp \mathbf{v}_n = \mathbf{J}_n \cdot \mathbf{u} \geq 0
+\mathbf{v_{n, \text{target}}}^+ = \mathbf{J_n} \cdot (\mathbf{u}^+ + e \cdot \mathbf{u}^- ) + \boldsymbol{\Upsilon} \cdot \frac{\mathbf{c_n}(\mathbf{q}^-)}{h}
 \]
 
-where \(\mathbf{v}_n\) is the relative normal velocity and \(\mathbf{J}_n = \frac{\partial \mathbf{c}_{\text{contact}}}{\partial \mathbf{q}}\) is the contact Jacobian.
-
-To address drift, Axion can use **Baumgarte stabilization**. Additionally, **restitution** can be incorporated to model bouncing behavior:
+The complementarity problem is now \(0 \leq \lambda_n \perp \mathbf{v_{n, \text{target}}}^+ \geq 0\). Applying the Fischer-Burmeister function gives the final residual:
 
 \[
-\mathbf{v}_n^+ = \mathbf{J}_n \cdot (\mathbf{u}^+ + e \cdot \mathbf{u}^- ) + \boldsymbol{\Upsilon} \cdot \frac{\mathbf{c}_{\text{contact}}(\mathbf{q}^-)}{h}
+\mathbf{h_n}^{(\text{vel})} = \boldsymbol{\phi}(\mathbf{v_{n, \text{target}}}^+, \boldsymbol{\lambda_n}^+) = \mathbf{v_{n, \text{target}}}^+ + \boldsymbol{\lambda_n}^+ - \sqrt{(\mathbf{v_{n, \text{target}}}^+)^2 + (\boldsymbol{\lambda}_n^+)^2} = \mathbf{0}
 \]
 
-where:
+### Friction Constraints
 
-- \(e\) is the coefficient of restitution (0 ≤ e ≤ 1)
-
-The restitution term ensures that separating contacts have the appropriate outgoing velocity based on the coefficient of restitution. When \(e = 0\) (perfectly inelastic), contacts stick; when \(e = 1\) (perfectly elastic), contacts bounce with no energy loss.
-
-This modified velocity incorporates both position error correction and restitution effects. The complementarity condition becomes:
-
-\[
-0 \leq \lambda_n \perp \mathbf{v}_n^+ \geq 0
-\]
-
-Using the Fischer-Burmeister function:
-
-\[
-\boldsymbol{\phi}_n(\mathbf{u}^+, \boldsymbol{\lambda}_n^+) = \boldsymbol{\lambda}_n^+ + \mathbf{v}_n^+ - \sqrt{(\boldsymbol{\lambda}_n^+)^2 + (\mathbf{v}_n^+)^2} = \mathbf{0}
-\]
-
-### Contribution to Nonlinear System
-
-The contact constraints contribute to the final nonlinear system as \(\mathbf{R}_n^{(\text{pos/vel})}(\mathbf{q}^+, \mathbf{u}^+, \boldsymbol{\lambda}_n^+) = \mathbf{0}\), where the root-finding function \(\mathbf{R}_n\) can be formulated as:
-
-- **Position-level**: \(\mathbf{R}_n^{(\text{pos})} = \boldsymbol{\phi}_n(\mathbf{q}^+, \boldsymbol{\lambda}_n^+)\)
-- **Velocity-level**: \(\mathbf{R}_n^{(\text{vel})} = \boldsymbol{\phi}_n(\mathbf{u}^+, \boldsymbol{\lambda}_n^+)\)
-
-where \(\boldsymbol{\phi}_n\) is the Fischer-Burmeister transformation of the complementarity conditions, ensuring they are satisfied while making the system amenable to Newton-type solution methods.
-
-## Friction Constraints
-
-Friction constraints apply tangential forces that resist sliding motion between contacting bodies. Unlike bilateral and contact constraints, friction is formulated only at the velocity level using the **principle of maximal dissipation**.
-
-### Velocity-Level Formulation (Only)
-
-From [Constraints Formulation](./constraints.md), friction constraints are derived from the principle of maximal dissipation. The friction impulse \(\boldsymbol{\lambda}_t\) is constrained by the Coulomb friction law:
+Friction resists tangential motion and is formulated at the velocity level using the **principle of maximal dissipation**, subject to the Coulomb friction law:
 
 \[
 \|\boldsymbol{\lambda}_t\| \leq \mu \cdot \lambda_n
 \]
 
-where \(\mu\) is the coefficient of friction and \(\lambda_n\) is the normal contact impulse.
+The resulting Karush-Kuhn-Tucker (KKT) conditions mathematically express the stick-slip behavior:
 
-The principle of maximal dissipation determines the friction impulse by solving an optimization problem that removes the maximum amount of kinetic energy from the system, subject to the Coulomb constraint. This leads to complementarity conditions that govern stick-slip behavior:
-
-### Maximal Dissipation and KKT Conditions
-
-The optimization problem results in Karush-Kuhn-Tucker (KKT) conditions that precisely define stick-slip behavior:
-
-1. **Sliding**: If there is tangential velocity (\(|\mathbf{J}_f^T \cdot \mathbf{u}| > 0\)), the friction impulse opposes it at maximum magnitude (\(\|\boldsymbol{\lambda}_f\| = \mu \cdot \lambda_n\))
-2. **Sticking**: If there is no tangential velocity (\(|\mathbf{J}_f^T \cdot \mathbf{u}| = 0\)), the friction impulse is whatever is needed to prevent motion, up to its maximum magnitude (\(\|\boldsymbol{\lambda}_f\| \leq \mu \cdot \lambda_n\))
-
-The complete KKT conditions consist of both an equation and a complementarity condition:
-
-**KKT Equation:**
+1. **Directional Constraint:** The friction impulse must oppose the direction of slip.
 
 \[
 \mathbf{J}_f^T \cdot \mathbf{u} + \frac{|\mathbf{J}_f^T \cdot \mathbf{u}|}{|\boldsymbol{\lambda}_f|} \cdot \boldsymbol{\lambda}_f = \mathbf{0}
 \]
 
-**KKT Complementarity:**
+2. **Stick-Slip Switching (Complementarity):** Either the bodies are slipping and friction is maximal, or they are sticking and friction is sub-maximal.
 
 \[
 0 \leq |\mathbf{J}_f^T \cdot \mathbf{u}| \perp \mu \cdot \lambda_n - \|\boldsymbol{\lambda}_f\| \geq 0
 \]
 
-However, this system cannot be directly inserted into a standard root-finding solver, as it involves inequalities and non-smooth functions.
-
-### Transformation to Solvable System
-
-Axion achieves this transformation through a two-step process:
-
-**Step 1: Convert Complementarity to Root-Finding**  
-The complementarity condition is converted into a nonlinear equation using an **NCP-function** \(\psi_f\) (Fischer-Burmeister):
+To make this complex system solvable and efficient, Axion employs a two-step transformation. First, the complementarity condition is turned into a root-finding problem with an NCP function, \(\phi_f\). Second, a **fixed-point iteration** is introduced via a carefully constructed scalar compliance term \(W\):
 
 \[
-\psi_f(|\mathbf{J}_f^T \cdot \mathbf{u}|, \mu \cdot \lambda_n - \|\boldsymbol{\lambda}_f\|) = 0
+W = \frac{|\mathbf{J}_f^T \cdot \mathbf{u}| - \phi_f(|\mathbf{J}_f^T \cdot \mathbf{u}|, \mu \cdot \lambda_n - \|\boldsymbol{\lambda}_f\|)}{\|\boldsymbol{\lambda}_f\| + \phi_f(|\mathbf{J}_f^T \cdot \mathbf{u}|, \mu \cdot \lambda_n - \|\boldsymbol{\lambda_f}\|)}
 \]
 
-This equation is mathematically equivalent to the original complementarity problem.
-
-**Step 2: Create Symmetric System via Fixed-Point Iteration**  
-A direct linearization would result in an asymmetric system matrix, which is inefficient to solve. To avoid this, a **fixed-point iteration** introduces a scalar "friction compliance" term \(W\) that is updated at each Newton iteration:
+This allows the entire friction model to be distilled into a single, elegant residual equation that crucially leads to a symmetric system matrix:
 
 \[
-W = \frac{|\mathbf{J}_f^T \cdot \mathbf{u}| - \psi_f(|\mathbf{J}_f^T \cdot \mathbf{u}|, \mu \cdot \lambda_n - \|\boldsymbol{\lambda}_f\|)}{\|\boldsymbol{\lambda}_f\| + \psi_f(|\mathbf{J}_f^T \cdot \mathbf{u}|, \mu \cdot \lambda_n - \|\boldsymbol{\lambda}_f\|)}
+\mathbf{h_f} = \mathbf{J}_f^T \cdot \mathbf{u}^+ + \mathbf{W} \cdot \boldsymbol{\lambda}_f^+ = \mathbf{0}
 \]
 
-This term is constructed so that when the Newton method converges, the original complementarity conditions are satisfied. The friction constraint for each contact simplifies to:
+---
+
+## **The Complete Nonlinear System**
+
+Assembling all the individual residual blocks yields the complete nonlinear system that Axion must solve at every time step.
+
+The full residual vector is stacked as follows:
 
 \[
-\boldsymbol{\phi}_f(\mathbf{u}^+, \boldsymbol{\lambda}_f^+) = \mathbf{J}_f^T \cdot \mathbf{u}^+ + \mathbf{W} \cdot \boldsymbol{\lambda}_f^+ = \mathbf{0}
+\mathbf{h}(\mathbf{x}^+) = \begin{bmatrix} \mathbf{h_\text{dyn}} \\ \mathbf{h_\text{kin}} \\ \mathbf{h_b} \\ \mathbf{h_n} \\ \mathbf{h_f} \end{bmatrix} = \mathbf{0}
 \]
 
-where \(\mathbf{W}\) is a diagonal matrix containing the scalar \(W\) values for each contact, treated as constant during linearization within a single Newton step.
-
-### Benefits of This Formulation
-
-This elegant approach provides two major advantages:
-
-- **Accurate modeling**: Correctly represents the smooth, isotropic Coulomb friction cone without approximation
-- **Computational efficiency**: Results in a **symmetric system of equations**, enabling the use of highly efficient iterative solvers like Preconditioned Conjugate Residual on the Schur complement
-
-### Contribution to Nonlinear System
-
-The friction constraints contribute to the final nonlinear system as \(\mathbf{R}_f^{(\text{vel})}(\mathbf{u}^+, \boldsymbol{\lambda}_f^+) = \mathbf{0}\), where the root-finding function is:
+Explicitly, the full system of equations is:
 
 \[
-\mathbf{R}_f^{(\text{vel})} = \boldsymbol{\phi}_f(\mathbf{u}^+, \boldsymbol{\lambda}_f^+) = \mathbf{J}_f^T \cdot \mathbf{u}^+ + \mathbf{W} \cdot \boldsymbol{\lambda}_f^+
+\begin{align*}
+\text{Dynamics:} \quad & \mathbf{\tilde{M}} \cdot (\mathbf{u}^+ - \tilde{\mathbf{u}}) - h \left( \mathbf{J}_b^T \boldsymbol{\lambda}_b^+ + \mathbf{J}_n^T \boldsymbol{\lambda}_n^+ + \mathbf{J}_f^T \boldsymbol{\lambda}_f^+ \right) = \mathbf{0} \\
+\text{Kinematics:} \quad & \mathbf{q}^+ - \mathbf{q}^- - h \cdot \mathbf{G}(\mathbf{q}^+) \cdot \mathbf{u}^+ = \mathbf{0} \\
+\text{Bilateral:} \quad & \mathbf{h_b}^{(\text{pos})} \quad \text{or} \quad \mathbf{h_b}^{(\text{vel})} = \mathbf{0} \\
+\text{Contact:} \quad & \mathbf{h_n}^{(\text{pos})} \quad \text{or} \quad \mathbf{h_n}^{(\text{vel})} = \mathbf{0} \\
+\text{Friction:} \quad & \mathbf{J}_f^T \cdot \mathbf{u}^+ + \mathbf{W} \cdot \boldsymbol{\lambda}_f^+ = \mathbf{0}
+\end{align*}
 \]
 
-Here \(\boldsymbol{\phi}_f\) incorporates the Fischer-Burmeister function and fixed-point iteration to ensure the friction complementarity conditions are satisfied while maintaining the solvable form for Newton-type methods.
+This unified system represents all physical laws acting simultaneously. At each iteration of the numerical solver, all matrices (\(\mathbf{J}\), \(\mathbf{G}\), \(\mathbf{W}\), etc.) are evaluated. The solution to \(\mathbf{h}(\mathbf{x}^+) = \mathbf{0}\) is a state vector \(\mathbf{x}^+\) that satisfies dynamics, kinematics, and all physical constraints to a high degree of precision, ready for the next simulation frame.
 
-## System Assembly Components
-
-Now that we have established how each constraint type contributes to the nonlinear system, we need two additional components to complete the formulation: kinematic mapping for quaternion-based rotations and time discretization for numerical integration.
-
-### Kinematic Mapping
-
-To support quaternion-based rotation representation, a kinematic mapping \(\mathbf{G}\) transforms generalized velocities \(\mathbf{u}\) into configuration derivatives:
-
-\[
-\mathbf{\dot{q}} = \mathbf{G}(\mathbf{q}) \cdot \mathbf{u}
-\]
-
-For rigid bodies with position \(\mathbf{x}\) and quaternion orientation \(\boldsymbol{\theta}\), this maps 6-DOF velocities (3 translational, 3 angular) to 7-element configuration derivatives.
-
-### Time Discretization
-
-The kinematic mapping enables implicit time integration:
-
-\[
-\mathbf{q}^+ = \mathbf{q}^- + h \cdot \mathbf{G} \cdot \mathbf{u}^+
-\]
-
-where \(h\) is the time step. The kinematic equation becomes another constraint in our system:
-
-\[
-\mathbf{q}^+ - \mathbf{q}^- - h \cdot \mathbf{G} \cdot \mathbf{u}^+ = \mathbf{0}
-\]
-
-## Complete Nonlinear System
-
-Combining all constraint types and system components, we obtain the complete discrete-time nonlinear system:
-
-\[
-\begin{align}
-\text{Dynamics:} \quad & \mathbf{\tilde{M}} \cdot \frac{\mathbf{u}^+ - \mathbf{\tilde{u}}}{h} - \mathbf{J}_b^T \cdot \boldsymbol{\lambda}_b^+ - \mathbf{J}_n^T \cdot \boldsymbol{\lambda}_n^+ - \mathbf{J}_f^T \cdot \boldsymbol{\lambda}_f^+ = \mathbf{0} \\
-\text{Bilateral:} \quad & \mathbf{R}_b^{(\text{pos/vel})}(\mathbf{q}^+, \mathbf{u}^+, \boldsymbol{\lambda}_b^+) = \mathbf{0} \\
-\text{Contacts:} \quad & \mathbf{R}_n^{(\text{pos/vel})}(\mathbf{q}^+, \mathbf{u}^+, \boldsymbol{\lambda}_n^+) = \mathbf{0} \\
-\text{Friction:} \quad & \mathbf{R}_f^{(\text{vel})}(\mathbf{u}^+, \boldsymbol{\lambda}_f^+) = \mathbf{0} \\
-\text{Kinematics:} \quad & \mathbf{q}^+ - \mathbf{q}^- - h \cdot \mathbf{G} \cdot \mathbf{u}^+ = \mathbf{0}
-\end{align}
-\]
-
-### System Components
-
-- **Unknowns**: Positions \(\mathbf{q}^+\), velocities \(\mathbf{u}^+\) and constraint impulses \(\boldsymbol{\lambda}^+ = [\boldsymbol{\lambda}_b^+, \boldsymbol{\lambda}_n^+, \boldsymbol{\lambda}_f^+]\)
-- **Scaled quantities**:
-
-\[
-\mathbf{\tilde{M}} = \mathbf{G}^T \cdot \mathbf{M} \cdot \mathbf{G},
-\]
-
-\[
-\mathbf{\tilde{u}} = \mathbf{u}^- + h \cdot \mathbf{G}^T \mathbf{f}(\mathbf{q}^-, \mathbf{u}^-)
-\]
-
-- **Root-finding functions**: \(\mathbf{R}_b\), \(\mathbf{R}_n\), \(\mathbf{R}_f\) represent the constraint enforcement equations, formulated at position level (pos) or velocity level (vel) as described in previous sections
-- **Matrix evaluation**: All system matrices (\(\mathbf{J}_b\), \(\mathbf{J}_n\), \(\mathbf{J}_f\), \(\boldsymbol{\Sigma}\), etc.) are evaluated using the configuration \(\mathbf{q}^-\) from the previous time step
-
-This system represents all physical laws simultaneously:
-
-- **Gauss's principle** (dynamics equation)
-- **Constraint enforcement** (bilateral, contact, friction)  
-- **Implicit time integration** (kinematics)
-
-The unified formulation ensures that all constraints are satisfied exactly while maintaining numerical stability and eliminating drift.
-
-## Numerical Solution
-
-This nonlinear system cannot be solved analytically and requires iterative numerical methods. Axion employs a specialized Newton-type approach designed to handle the non-smooth nature of contact and friction constraints.
-
-→ **Next**: [Numerical Solution](./linear-system.md)
+→ **Next**: [Numerical Solution](./numerical-solution.md)

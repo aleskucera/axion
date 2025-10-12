@@ -10,27 +10,26 @@ Axion's physics engine is built on a unified mathematical framework that treats 
 
 ### Articulated Bodies
 
-Mathematically, an articulated body system consists of:
-
-* **Configuration Space**: The system's state is described by generalized coordinates \(\mathbf{q} \in \mathbb{R}^n\), where each rigid body has position and orientation parameters
-* **Velocity Space**: Generalized velocities \(\mathbf{u} \in \mathbb{R}^m\) represent the system's motion, typically with 6 degrees of freedom per rigid body (3 translational, 3 rotational)
-* **Dynamics**: The equations of motion are governed by:
+Axion represents articulated body systems using generalized coordinates and velocities that describe the system's configuration and motion. The dynamics are governed by:
 
 \[
-\mathbf{M}(\mathbf{q}) \Delta\mathbf{u} = \mathbf{f}_{\text{ext}} h + \mathbf{J}^T(\mathbf{q}) \boldsymbol{\lambda}
+\mathbf{\tilde{M}}(\mathbf{q}) \Delta\mathbf{u} = \mathbf{f}_{\text{ext}} h + \mathbf{J}^T(\mathbf{q}) \boldsymbol{\lambda}
 \]
 
-where \(\mathbf{M}\) is the mass matrix, \(\Delta\mathbf{u} = \mathbf{u}^+ - \mathbf{u}^-\) is the velocity change over timestep \(h\), \(\mathbf{f}_{\text{ext}} h\) represents external impulses, \(\mathbf{J}\) is the constraint Jacobian, and \(\boldsymbol{\lambda}\) are constraint impulses. The meaning and derivation of these constraint impulses will be explained in [Gauss's Principle of Least Constraint](./gauss-least-constraint.md).
+This captures how velocity changes result from external forces and constraint impulses. The meaning and derivation of these constraint impulses will be explained in [Gauss's Principle of Least Constraint](./gauss-least-constraint.md).
+
+!!! note "Mathematical Notation"
+    For detailed definitions of all symbols (\(\mathbf{q}\), \(\mathbf{u}\), \(\mathbf{\tilde{M}}\), \(\mathbf{J}\), \(\boldsymbol{\lambda}\), etc.), see the [Notation](./notation.md) page.
 
 ### Contact and Constraint Formulation
 
 Physical interactions are mathematically encoded as constraints:
 
-* **Joint Constraints** (bilateral): \(\mathbf{c}_{\text{joint}}(\mathbf{q}) = \mathbf{0}\) — joints enforce exact geometric relationships between bodies
-* **Contact Constraints** (unilateral): \(\mathbf{c}_{\text{contact}}(\mathbf{q}) \geq 0\) — bodies cannot interpenetrate
-* **Friction Constraints**: Complex complementarity conditions that model stick-slip behavior
+* **Joint Constraints** (bilateral): Enforce exact geometric relationships between bodies
+* **Contact Constraints** (unilateral): Prevent body interpenetration  
+* **Friction Constraints**: Model stick-slip behavior through complementarity conditions
 
-These constraints create a system mixing equalities and inequalities, requiring specialized mathematical treatment.
+These constraints create a system mixing equalities and inequalities, requiring specialized mathematical treatment to solve simultaneously.
 
 ---
 

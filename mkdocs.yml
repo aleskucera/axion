@@ -11,6 +11,7 @@ nav:
     - First Simulation: getting-started/first-simulation.md
   - Theory:
     - Core Concepts: theory/core-concepts.md
+    - Notation: theory/notation.md
     - Constraints Formulation: theory/constraints.md
     - Gauss's Principle of Least Constraint: theory/gauss-least-constraint.md
     - Nonlinear System of Equations: theory/non-linear-system.md
