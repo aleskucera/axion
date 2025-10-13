@@ -39,7 +39,7 @@ The difference between the true acceleration and the free acceleration is caused
 If we substitute this back into the objective function (1), we find something remarkable:
 
 \[
-Z \propto \mathbf{f}_c^\top \mathbf{\tilde{M}}^{-1} \mathbf{f}_c
+Z \propto \mathbf{f_c}^\top \mathbf{\tilde{M}}^{-1} \mathbf{f_c}
 \]
 
 This reveals the powerful physical intuition of the principle: **Minimizing the Gauss function is equivalent to finding the constraint forces of minimum magnitude.** The system doesn't "work" any harder than it has to.
@@ -63,8 +63,31 @@ By substituting this and similar terms into the objective function and re-arrang
 Where:
 
 * \(\mathbf{u}^+\) is the **generalized velocity we are solving for**. *([See Notation](./notation.md#state-vectors-and-their-components))*
-* \(\tilde{\mathbf{u}}\) is the predicted unconstrained velocity: \(\tilde{\mathbf{u}} = \mathbf{u}^- + h \mathbf{\tilde{M}}^{-1} \mathbf{f}_{\text{ext}}\). This is where the system "wants" to go.
+* \(\tilde{\mathbf{u}}\) is the predicted unconstrained velocity: \(\tilde{\mathbf{u}} = \mathbf{u}^- + h \mathbf{\tilde{M}}^{-1} \mathbf{f_\text{ext}}\). This is where the system "wants" to go.
 * \(\mathbf{\tilde{M}}\) is the **Generalized Mass Matrix**.
+
+### Solving with Lagrange Multipliers
+
+The objective function (2) tells us *what* we want to minimize, but it must be solved *subject to* the system's constraints. These constraints dictate that the final velocity \(\mathbf{u}^+\) must be physically valid (e.g., no penetration, joints stay connected).
+
+For a simplified case with only linear equality constraints (like a perfect hinge joint), we can write these constraints as:
+
+\[
+\mathbf{J} \mathbf{u}^{+} = \mathbf{0}
+\]
+
+where \(\mathbf{J}\) is the constraint Jacobian. The optimization problem is now a classic Constrained Quadratic Program. A standard technique to solve this is the **method of Lagrange multipliers**. We introduce a vector of Lagrange multipliers, \(\boldsymbol{\lambda}\), one for each constraint equation. Physically, these multipliers represent the magnitude of the **constraint impulses** needed to enforce the constraints.
+
+Solving this constrained problem yields a coupled system of linear equations for the unknowns \(\mathbf{u}^+\) and \(\boldsymbol{\lambda}\):
+
+\[
+\begin{align}
+\mathbf{\tilde{M}} \mathbf{u}^{+} + \mathbf{J}^\top \boldsymbol{\lambda} &= \mathbf{\tilde{M}} \mathbf{u}^- + h \mathbf{f_\text{ext}} \quad &(3)\\
+\mathbf{J} \mathbf{u}^{+} &= \mathbf{0} \quad\quad\quad\quad\quad\;\;\; &(4)
+\end{align}
+\]
+
+This system is fundamental. Equation (3) is the discretized equation of motion including the constraint impulses (\(\mathbf{J}^\top \boldsymbol{\lambda}\)), and equation (4) is the constraint condition itself. Together, they allow us to solve for the physically correct motion of the system.
 
 ### Summary and Next Steps
 

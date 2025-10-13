@@ -17,7 +17,7 @@ This residual represents the core equations of motion, a discrete-time-step vers
 The equation is:
 
 \[
-\mathbf{h_\text{dyn}} = \mathbf{\tilde{M}} \cdot (\mathbf{u}^+ - \tilde{\mathbf{u}}) - h \left( \mathbf{J}_b^T \boldsymbol{\lambda}_b^+ + \mathbf{J}_n^T \boldsymbol{\lambda}_n^+ + \mathbf{J}_f^T \boldsymbol{\lambda}_f^+ \right) = \mathbf{0}
+\mathbf{h_\text{dyn}} = \mathbf{\tilde{M}} \cdot (\mathbf{u}^+ - \tilde{\mathbf{u}}) - \mathbf{J}_b^T \boldsymbol{\lambda}_b^+ - \mathbf{J}_n^T \boldsymbol{\lambda}_n^+ - \mathbf{J}_f^T \boldsymbol{\lambda}_f^+ = \mathbf{0}
 \]
 
 Breaking this down:
@@ -140,7 +140,7 @@ Explicitly, the full system of equations is:
 
 \[
 \begin{align*}
-\text{Dynamics:} \quad & \mathbf{\tilde{M}} \cdot (\mathbf{u}^+ - \tilde{\mathbf{u}}) - h \left( \mathbf{J}_b^T \boldsymbol{\lambda}_b^+ + \mathbf{J}_n^T \boldsymbol{\lambda}_n^+ + \mathbf{J}_f^T \boldsymbol{\lambda}_f^+ \right) = \mathbf{0} \\
+\text{Dynamics:} \quad & \mathbf{\tilde{M}} \cdot (\mathbf{u}^+ - \tilde{\mathbf{u}}) - \mathbf{J}_b^T \boldsymbol{\lambda}_b^+ - \mathbf{J}_n^T \boldsymbol{\lambda}_n^+ - \mathbf{J}_f^T \boldsymbol{\lambda}_f^+ = \mathbf{0} \\
 \text{Kinematics:} \quad & \mathbf{q}^+ - \mathbf{q}^- - h \cdot \mathbf{G}(\mathbf{q}^+) \cdot \mathbf{u}^+ = \mathbf{0} \\
 \text{Bilateral:} \quad & \mathbf{h_b}^{(\text{pos})} \quad \text{or} \quad \mathbf{h_b}^{(\text{vel})} = \mathbf{0} \\
 \text{Contact:} \quad & \mathbf{h_n}^{(\text{pos})} \quad \text{or} \quad \mathbf{h_n}^{(\text{vel})} = \mathbf{0} \\
