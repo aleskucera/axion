@@ -1,13 +1,14 @@
 """Generate the code reference pages and navigation."""
 
 from importlib.resources import files
-
+import ast
 import mkdocs_gen_files
 
 nav = mkdocs_gen_files.Nav()
 
 src = files("axion").parent
 root = src.parent.parent
+members = []
 
 for path in sorted(src.rglob("*.py")):
     module_path = path.relative_to(src).with_suffix("")
@@ -17,19 +18,31 @@ for path in sorted(src.rglob("*.py")):
     parts = tuple(module_path.parts)
 
     if parts[-1] == "__init__":
-        parts = parts[:-1]
-        doc_path = doc_path.with_name("index.md")
-        full_doc_path = full_doc_path.with_name("index.md")
+        continue
     elif parts[-1] == "__main__":
         continue
+    else:
+        with open(src / ("/".join(parts) + ".py"), "r") as f:
+            tree = ast.parse(f.read())
+            if ast.get_docstring(tree) is None:
+                continue
 
     nav[parts] = doc_path.as_posix()
 
     with mkdocs_gen_files.open(full_doc_path, "w") as fd:
         ident = ".".join(parts)
-        fd.write(f"::: {ident}")
+        members.append(ident)
+        fd.write(f"::: {ident}\n\toptions:\n\t\tshow_signature: false")
 
     mkdocs_gen_files.set_edit_path(full_doc_path, path.relative_to(root))
+
+doc_path = "axion/index.md"
+full_doc_path = "reference" + "/" + doc_path
+nav["axion"] = doc_path
+with mkdocs_gen_files.open(full_doc_path, "w") as fd:
+    for member in members:
+        fd.write(f"::: {member}\n\toptions:\n\t\tshow_signature: false\n\n")
+mkdocs_gen_files.set_edit_path(full_doc_path, path.relative_to(root))
 
 with mkdocs_gen_files.open("reference/SUMMARY.md", "w") as nav_file:
     nav_file.writelines(nav.build_literate_nav())
