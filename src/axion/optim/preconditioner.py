@@ -1,3 +1,7 @@
+"""
+Jacobi preconditioner for the system matrix A = J M⁻¹ Jᵀ + C.
+"""
+
 import warp as wp
 from axion.types import SpatialInertia
 from axion.types import to_spatial_momentum

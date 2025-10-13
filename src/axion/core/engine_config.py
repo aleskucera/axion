@@ -1,3 +1,7 @@
+"""
+Axion engine configuration parameters.
+"""
+
 from dataclasses import dataclass
 
 

@@ -1,3 +1,9 @@
+"""
+Manages all Warp arrays (vectors and matrices) used by the AxionEngine.
+This includes allocation, initialization, and providing convenient views
+for the various components of the simulation state and constraint system.
+"""
+
 from dataclasses import dataclass
 from functools import cached_property
 from typing import Optional

@@ -1,3 +1,7 @@
+"""
+Friction constraint kernels for Axion physics engine.
+"""
+
 import warp as wp
 from axion.types import ContactInteraction
 

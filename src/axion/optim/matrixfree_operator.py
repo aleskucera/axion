@@ -15,6 +15,7 @@ This operator is designed to be used with iterative linear solvers like Conjugat
 Residual (CR) or Conjugate Gradient (CG), allowing the system to be solved
 without ever forming the potentially very large and dense matrix A explicitly.
 """
+
 import warp as wp
 from axion.types import SpatialInertia
 from axion.types import to_spatial_momentum

@@ -1,3 +1,7 @@
+"""
+Axion physics engine implementation using Warp.
+"""
+
 from typing import Optional
 
 import numpy as np
