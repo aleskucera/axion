@@ -22,7 +22,7 @@ The key lies in the linearization of the **kinematic equation**, \(\mathbf{h_\te
 \Delta\mathbf{q} - h\mathbf{G}\Delta\mathbf{u} = \mathbf{0} \quad \implies \quad \Delta\mathbf{q} = h\mathbf{G}\Delta\mathbf{u}
 \]
 
-This powerful relationship tells us that the change in configuration is determined by the change in velocity. We can now use this to eliminate \(\Delta\mathbf{q}\) from the entire system *for the purpose of the solve*.
+This powerful relationship tells us that the change in configuration is determined by the change in velocity. We can now use this to eliminate \(\Delta\mathbf{q}\) from the entire system *for the purpose of solving the problem*.
 
 Consider the linearization of a general constraint residual \(\mathbf{h_c}\), which depends on \(\mathbf{q}\), \(\mathbf{u}\), and \(\boldsymbol{\lambda}\):
 

@@ -4,7 +4,7 @@ At the core of Axion's dynamics engine is a beautifully simple and powerful idea
 
 ### The Core Idea in Simple Terms
 
-> Imagine a bead sliding along a frictionless wire (the constraint). If you flick the bead, it will try to move in a straight line (unconstrained motion). However, the wire forces it to follow a curve. Gauss's Principle states that at every single moment, the wire will exert the *absolute minimum force necessary* to keep the bead on its path.
+> Imagine a bead sliding along a bent frictionless wire (the constraint). If you flick the bead, it will try to move in a straight line (unconstrained motion). However, the wire forces it to follow a curve. Gauss's Principle states that at every single moment, the wire will exert the *absolute minimum force necessary* to keep the bead on its path.
 
 In essence, a constrained system will always accelerate in a way that is "as close as possible" to how it would accelerate if the constraints were not there. This deviation caused by the constraints is what Gauss called the "constraint" and stated that the system moves to make this value as small as possible.
 
@@ -42,7 +42,7 @@ If we substitute this back into the objective function (1), we find something re
 Z \propto \mathbf{f_c}^\top \mathbf{\tilde{M}}^{-1} \mathbf{f_c}
 \]
 
-This reveals the powerful physical intuition of the principle: **Minimizing the Gauss function is equivalent to finding the constraint forces of minimum magnitude.** The system doesn't "work" any harder than it has to.
+This reveals the powerful physical intuition of the principle: **Minimizing the objective function \(Z\) is equivalent to finding the constraint forces of minimum magnitude.** The system doesn't "work" any harder than it has to.
 
 **2. Formulating for the Next Velocity State**
 
@@ -91,7 +91,7 @@ This system is fundamental. Equation (3) is the discretized equation of motion i
 
 ### Summary and Next Steps
 
-Gauss's Principle of Least Constraint provides a powerful and robust foundation for our simulator. It transforms the complex problem of constrained dynamics into a standard problem that optimization experts know how to solve: a **Constrained Quadratic Program (CQP)**.
+Gauss's Principle of Least Constraint provides a powerful and robust foundation for our simulator. It transforms the complex problem of constrained dynamics into a standard mathematical optimization problem with a known solution: a **Constrained Quadratic Program (CQP)**.
 
 Our task is now clear:
 

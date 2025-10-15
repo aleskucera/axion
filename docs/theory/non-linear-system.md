@@ -23,7 +23,7 @@ The equation is:
 Breaking this down:
 
 - \(\mathbf{\tilde{M}} \cdot (\mathbf{u}^+ - \tilde{\mathbf{u}})\) is the change in the system's generalized momentum caused by constraints. The term \(\tilde{\mathbf{u}} = \mathbf{u}^- + h \mathbf{\tilde{M}}^{-1} \mathbf{f}_{\text{ext}}\) represents the predicted "unconstrained" velocity—what the velocity *would be* if only external forces like gravity were applied.
-- \(h \left( \dots \right)\) is the total impulse applied over the time step \(h\) by all constraints (bilateral, normal contact, and friction). The Jacobians \(\mathbf{J}^T\) serve to map these impulses from the constraint space back into forces and torques in the generalized coordinate space.
+- \(\mathbf{J}_b^T \boldsymbol{\lambda}_b^+ + \mathbf{J}_n^T \boldsymbol{\lambda}_n^+ + \mathbf{J}_f^T \boldsymbol{\lambda}_f^+\) is the total impulse applied over the time step \(h\) by all constraints (bilateral, normal contact, and friction). The Jacobians \(\mathbf{J}^T\) serve to map these impulses from the constraint space back into forces and torques in the generalized coordinate space.
 
 In essence, this equation states: "The change in momentum from the unconstrained state to the final state must be exactly equal to the total impulse applied by all constraints."
 
@@ -40,7 +40,7 @@ The equation is:
 Here:
 
 - This is a **Backward Euler** integration step. It defines the final position \(\mathbf{q}^+\) based on the final velocity \(\mathbf{u}^+\). Because the quantity we are solving for (\(\mathbf{u}^+\)) is used to compute the final state, the method is *implicit*. This is crucial for stability in stiff systems, like those with many contacts and joints.
-- The matrix \(\mathbf{G}(\mathbf{q}^+)\) is the **kinematic mapping** that transforms generalized velocities (which have \(n_u\) dimensions, e.g., 6 for a rigid body) into configuration derivatives (which have \(n_q\) dimensions, e.g., 7 for a position+quaternion rigid body).
+- The matrix \(\mathbf{G}(\mathbf{q}^+)\) is the **kinematic mapping** that transforms generalized velocities (which have \(n_u\) dimensions, e.g., 6 for a rigid body) into configuration derivatives (which have \(n_q\) dimensions, e.g., 7 for a position +quaternion-based orientation of a  rigid body).
 
 This equation ensures that the final configuration and velocity are mutually consistent according to the laws of motion over the discrete time step \(h\).
 
@@ -78,7 +78,7 @@ To integrate this into a Newton-based solver, we convert this non-smooth conditi
 \mathbf{h_n}^{(\text{pos})} = \boldsymbol{\phi}(\mathbf{c_n}(\mathbf{q}^+), \boldsymbol{\lambda_n}^+) = \mathbf{c_n}(\mathbf{q}^+) + \boldsymbol{\lambda_n}^+ - \sqrt{(\mathbf{c_n}(\mathbf{q}^+))^2 + (\boldsymbol{\lambda}_n^+)^2} = \mathbf{0}
 \]
 
-- **Velocity-Level Formulation (Alternative):** At the velocity level, the complementarity applies to the post-collision relative normal velocity. To model bounce (restitution \(e\)) and combat drift (Baumgarte stabilization), we define a target velocity:
+- **Velocity-Level Formulation (Alternative):** At the velocity level, the complementarity applies to the post-collision relative normal velocity. To model bounce (via restitution \(e \in [0, 1] \)) and combat drift (Baumgarte stabilization), we define a target velocity:
 
 \[
 \mathbf{v_{n, \text{target}}}^+ = \mathbf{J_n} \cdot (\mathbf{u}^+ + e \cdot \mathbf{u}^- ) + \boldsymbol{\Upsilon} \cdot \frac{\mathbf{c_n}(\mathbf{q}^-)}{h}
