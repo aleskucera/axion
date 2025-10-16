@@ -6,8 +6,6 @@ from .utils import scaled_fisher_burmeister
 
 @wp.struct
 class FrictionModelResult:
-    """Holds the computed results from the friction model needed by the solver."""
-
     slip_velocity: wp.vec2
     slip_coupling_factor: wp.float32
 
@@ -22,12 +20,6 @@ def compute_friction_model(
     fb_alpha: wp.float32,
     fb_beta: wp.float32,
 ) -> FrictionModelResult:
-    """
-    Computes the core terms for the friction constraint model.
-
-    This function calculates the relative slip velocity and the coupling factor 'w'
-    that relates slip to the friction impulse, based on a complementarity condition.
-    """
     # Unpack Jacobian basis vectors
     J_t1_a, J_t2_a = interaction.basis_a.tangent1, interaction.basis_a.tangent2
     J_t1_b, J_t2_b = interaction.basis_b.tangent1, interaction.basis_b.tangent2

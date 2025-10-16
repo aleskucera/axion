@@ -9,6 +9,7 @@ nav:
     - Installation: getting-started/installation.md
     - Quick Start: getting-started/quickstart.md
     - First Simulation: getting-started/first-simulation.md
+    - Configuration System: getting-started/configuration.md
   - Theory:
     - Core Concepts: theory/core-concepts.md
     - Notation: theory/notation.md
@@ -17,12 +18,28 @@ nav:
     - Nonlinear System of Equations: theory/non-linear-system.md
     - Numerical Solution: theory/numerical-solution.md
   - Implementation:
-    - Simulator Architecture: implementation/simulator.md
     - Engine Overview: implementation/engine.md
+    - Configurable Parameters: implementation/parameters.md
     - Logging System: implementation/logging.md
+  - Code Reference: reference/
 
 plugins:
   - search
+  - gen-files:
+      scripts:
+      - docs/gen_ref_pages.py
+  - literate-nav:
+      nav_file: SUMMARY.md
+  - section-index
+  - mkdocstrings:
+      handlers:
+        python:
+          options:
+            # summary: true
+            group_by_category: true
+            filters:
+            - "!^_[^_]"
+
   
 theme:
   name: material
