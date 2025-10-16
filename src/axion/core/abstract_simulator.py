@@ -12,9 +12,10 @@ from tqdm import tqdm
 
 from .engine import AxionEngine
 from .engine_config import EngineConfig
-
-
-# --- Configuration Data Classes ---
+from .engine_config import AxionEngineConfig
+from .engine_config import FeatherstoneEngineConfig
+from .engine_config import SemiImplicitEngineConfig
+from .engine_config import XPBDEngineConfig
 
 
 @dataclass
@@ -127,11 +128,24 @@ class AbstractSimulator(ABC):
         self._resolve_timing_parameters()
 
         self.model = self.build_model()
-        self.integrator = AxionEngine(self.model, self.engine_config, self.logger)
 
         self.current_state = self.model.state()
         self.next_state = self.model.state()
         self.control = self.model.control()
+
+        if isinstance(self.engine_config, AxionEngineConfig):
+            self.integrator = AxionEngine(self.model, self.engine_config, self.logger)
+        elif isinstance(self.engine_config, FeatherstoneEngineConfig):
+            self.integrator = wp.sim.FeatherstoneIntegrator(self.model, **vars(self.engine_config))
+            wp.sim.eval_fk(
+                self.model, self.model.joint_q, self.model.joint_qd, None, self.current_state
+            )
+        elif isinstance(self.engine_config, SemiImplicitEngineConfig):
+            self.integrator = wp.sim.SemiImplicitIntegrator(**vars(self.engine_config))
+        elif isinstance(self.engine_config, XPBDEngineConfig):
+            self.integrator = wp.sim.XPBDIntegrator(**vars(self.engine_config))
+        else:
+            raise ValueError(f"Unsupported engine configuration type: {type(self.engine_config)}")
 
         self.renderer: Optional[wp.sim.render.SimRenderer] = None
         if self.rendering_config.enable:

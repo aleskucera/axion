@@ -1,0 +1,7 @@
+# @package engine
+_target_: axion.FeatherstoneEngineConfig
+angular_damping: 0.06
+update_mass_matrix_every: 1
+friction_smoothing: 1.5
+use_tile_gemm: False
+fuse_cholesky: True

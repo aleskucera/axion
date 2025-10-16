@@ -15,7 +15,7 @@ from warp.sim import Model
 from warp.sim import State
 
 from .control_utils import apply_control
-from .engine_config import EngineConfig
+from .engine_config import AxionEngineConfig
 from .engine_data import create_engine_arrays
 from .engine_dims import EngineDimensions
 from .general_utils import update_body_q
@@ -29,7 +29,7 @@ class AxionEngine(Integrator):
     def __init__(
         self,
         model: Model,
-        config: Optional[EngineConfig],
+        config: Optional[AxionEngineConfig],
         logger: Optional[HDF5Logger | NullLogger],
     ):
         super().__init__()
