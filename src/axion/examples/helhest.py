@@ -30,8 +30,8 @@ class Simulator(AbstractSimulator):
 
         self.control.joint_act = wp.array(
             [
-                3.0,  # left wheel target velocity
-                3.0,  # right wheel target velocity
+                2.0,  # left wheel target velocity
+                2.0,  # right wheel target velocity
                 0.0,  # back wheel (force control, so velocity is 0)
             ],
             dtype=wp.float32,
@@ -170,8 +170,8 @@ class Simulator(AbstractSimulator):
             parent_xform=wp.transform((1.5, -1.5, 0.0), wp.quat_identity()),
             axis=(0.0, 1.0, 0.0),
             mode=wp.sim.JOINT_MODE_TARGET_VELOCITY,
-            linear_compliance=1e-3,
-            angular_compliance=1e-4,
+            linear_compliance=5e-1,
+            angular_compliance=5e-1,
         )
         # Right wheel revolute joint (velocity control)
         builder.add_joint_revolute(
@@ -180,8 +180,8 @@ class Simulator(AbstractSimulator):
             parent_xform=wp.transform((1.5, 1.5, 0.0), wp.quat_identity()),
             axis=(0.0, 1.0, 0.0),
             mode=wp.sim.JOINT_MODE_TARGET_VELOCITY,
-            linear_compliance=1e-3,
-            angular_compliance=1e-4,
+            linear_compliance=5e-1,
+            angular_compliance=5e-1,
         )
         # Back wheel revolute joint (force control - not actively driven)
         builder.add_joint_revolute(
@@ -190,8 +190,8 @@ class Simulator(AbstractSimulator):
             parent_xform=wp.transform((-2.5, 0.0, 0.0), wp.quat_identity()),
             axis=(0.0, 1.0, 0.0),
             mode=wp.sim.JOINT_MODE_FORCE,
-            linear_compliance=1e-3,
-            angular_compliance=1e-4,
+            linear_compliance=5e-1,
+            angular_compliance=5e-1,
         )
 
         # --- Add Static Obstacles and Ground ---

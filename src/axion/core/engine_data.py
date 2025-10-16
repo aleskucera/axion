@@ -44,6 +44,8 @@ class EngineArrays:
 
     _lambda: wp.array  # Constraint impulses
     lambda_prev: wp.array  # Constraint impulses at previous newton step
+    lambda_n_scale: wp.array  # Scale for normal impulse
+    lambda_n_scale_prev: wp.array  # Scale for normal impulse at previous newton step
 
     constraint_body_idx: wp.array  # Indices of bodies involved in constraints
 
@@ -378,6 +380,8 @@ def create_engine_arrays(
 
     _lambda = _zeros(dims.con_dim)
     lambda_prev = _zeros(dims.con_dim)
+    lambda_n_scale = _zeros(dims.N_c)
+    lambda_n_scale_prev = _zeros(dims.N_c)
 
     constraint_body_idx = _zeros((dims.con_dim, 2), wp.int32)
 
@@ -427,6 +431,8 @@ def create_engine_arrays(
         body_qd_prev=body_qd_prev,
         _lambda=_lambda,
         lambda_prev=lambda_prev,
+        lambda_n_scale=lambda_n_scale,
+        lambda_n_scale_prev=lambda_n_scale_prev,
         constraint_body_idx=constraint_body_idx,
         JT_delta_lambda=JT_delta_lambda,
         delta_body_qd=delta_body_qd,

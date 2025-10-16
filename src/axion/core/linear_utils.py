@@ -142,6 +142,7 @@ def compute_linear_system(
             config.contact_compliance,
         ],
         outputs=[
+            data.lambda_n_scale,
             data.g_v,
             data.h_n,
             data.J_n_values,
@@ -156,7 +157,9 @@ def compute_linear_system(
         inputs=[
             data.body_qd,
             data.lambda_f,
+            data.lambda_f_prev,
             data.lambda_n_prev,
+            data.lambda_n_scale_prev,
             data.contact_interaction,
             config.friction_fb_alpha,
             config.friction_fb_beta,
