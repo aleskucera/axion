@@ -1,5 +1,5 @@
 # @package engine
-_target_: axion.EngineConfig
+_target_: axion.AxionEngineConfig
 newton_iters: 6
 linear_iters: 4
 linesearch_steps: 0

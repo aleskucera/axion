@@ -1,6 +1,10 @@
 from .core import AbstractSimulator
 from .core import AxionEngine
 from .core import EngineConfig
+from .core import AxionEngineConfig
+from .core import FeatherstoneEngineConfig
+from .core import SemiImplicitEngineConfig
+from .core import XPBDEngineConfig
 from .core import ExecutionConfig
 from .core import ProfilingConfig
 from .core import RenderingConfig
@@ -13,6 +17,10 @@ __all__ = [
     "AbstractSimulator",
     "AxionEngine",
     "EngineConfig",
+    "AxionEngineConfig",
+    "FeatherstoneEngineConfig",
+    "SemiImplicitEngineConfig",
+    "XPBDEngineConfig",
     "ExecutionConfig",
     "ProfilingConfig",
     "RenderingConfig",

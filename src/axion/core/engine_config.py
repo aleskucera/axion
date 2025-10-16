@@ -3,6 +3,11 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class EngineConfig:
+    pass
+
+
+@dataclass(frozen=True)
+class AxionEngineConfig(EngineConfig):
     """
     Configuration parameters for the AxionEngine solver.
 
@@ -72,3 +77,31 @@ class EngineConfig:
 
         # Validate linesearch steps
         _validate_non_negative_int(self.linesearch_steps, "linesearch_steps")
+
+
+@dataclass(frozen=True)
+class FeatherstoneEngineConfig(EngineConfig):
+    angular_damping: float = 0.05
+    update_mass_matrix_every: int = 1
+    friction_smoothing: float = 1.0
+    use_tile_gemm: bool = False
+    fuse_cholesky: bool = True
+
+
+@dataclass(frozen=True)
+class SemiImplicitEngineConfig(EngineConfig):
+    angular_damping: float = 0.05
+    friction_smoothing: float = 1.0
+
+
+@dataclass(frozen=True)
+class XPBDEngineConfig(EngineConfig):
+    iterations: int = 2
+    soft_body_relaxation: float = 0.9
+    soft_contact_relaxation: float = 0.9
+    joint_linear_relaxation: float = 0.7
+    joint_angular_relaxation: float = 0.4
+    rigid_contact_relaxation: float = 0.8
+    rigid_contact_con_weighting: bool = True
+    angular_damping: float = 0.0
+    enable_restitution: bool = False
