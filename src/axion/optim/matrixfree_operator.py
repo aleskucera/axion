@@ -1,29 +1,19 @@
 """
-This module provides a matrix-free linear operator for the Axion physics engine.
+This module provides a matrix-free linear operator for solving the mixed-integer
+system of equations that arises in velocity-based physics simulation.
 
-The core of many modern physics simulators involves solving a large linear system of equations
-at each step of a Newton iteration. This system can be represented as `Ax = b`, where the
-matrix `A` is the system matrix, often a Schur complement of the form:
+The core component is the SystemOperator class, which implements the matrix-vector
+product for the system matrix A, where:
 
-\[
-    A = J M^{-1} J^T + C
-\]
+    A = (J M⁻¹ Jᵀ + C)
 
-Where:
+- J: The constraint Jacobian matrix.
+- M: The block-diagonal mass matrix (inverse is M⁻¹).
+- C: A diagonal compliance/regularization matrix.
 
-- `J` is the constraint Jacobian, which maps generalized body velocities to relative velocities at the constraints.
-- `M` is the block-diagonal generalized mass matrix.
-- `C` is a diagonal matrix representing compliance and regularization terms.
-
-For complex scenes, the matrix `A` can become very large and dense, making its explicit
-construction and storage computationally expensive and memory-intensive.
-
-Matrix-free methods avoid this problem by never forming `A`. Instead, they provide a function
-that directly computes the matrix-vector product `A @ x`. This is sufficient for iterative linear
-solvers (like Conjugate Gradient or Conjugate Residual), which only need this product to find a solution.
-
-This module implements `MatrixFreeSystemOperator`, which computes `A @ x` through a sequence
-of kernel calls that apply `J^T`, `M^{-1}`, and `J` in succession.
+This operator is designed to be used with iterative linear solvers like Conjugate
+Residual (CR) or Conjugate Gradient (CG), allowing the system to be solved
+without ever forming the potentially very large and dense matrix A explicitly.
 """
 import warp as wp
 from axion.types import SpatialInertia
@@ -40,21 +30,15 @@ def kernel_J_transpose_matvec(
     out_vec: wp.array(dtype=wp.spatial_vector),
 ):
     """
-    Computes the matrix-vector product `out_vec = Jᵀ @ vec_x` (scatter).
+    Computes the matrix-vector product: out_vec = Jᵀ @ vec_x.
 
-    This kernel performs the action of the Jacobian transpose. It takes a vector `vec_x`
-    from constraint-space (e.g., constraint impulses `λ`) and "scatters" its effects
-    into `out_vec` in generalized-coordinate-space (e.g., generalized forces on bodies).
-
-    Each thread corresponds to a single constraint `i`. It multiplies the scalar `x_i` by the
-    corresponding Jacobian columns (`J_ia`, `J_ib`) and atomically adds the results to the
-    output vectors for the affected bodies (`body_a`, `body_b`).
+    This kernel iterates over each constraint (the dimension of vec_x) and
+    scatters the results into the dynamics-space vector (out_vec) using atomic adds.
 
     Args:
-        constraint_body_idx: A `(num_constraints, 2)` array mapping each constraint to the indices of the two bodies it connects.
-        J_values: A `(num_constraints, 2)` array of `wp.spatial_vector` holding the Jacobian blocks for each constraint.
-        vec_x: An input vector in constraint-space, with size `num_constraints`.
-        out_vec: The output vector in generalized-coordinate-space, with size `num_bodies`. This vector MUST be zero-initialized before calling.
+        vec_x: A vector in constraint space (e.g., delta_lambda).
+        out_vec: A vector in dynamics space (size num_bodies * 6) to store the result.
+                 This vector MUST be zero-initialized before calling this kernel.
     """
     constraint_idx = wp.tid()
 
@@ -66,9 +50,9 @@ def kernel_J_transpose_matvec(
     x_i = vec_x[constraint_idx]
 
     if body_a >= 0:
-        wp.atomic_add(out_vec, body_a, x_i * J_ia)
+        out_vec[body_a] += x_i * J_ia
     if body_b >= 0:
-        wp.atomic_add(out_vec, body_b, x_i * J_ib)
+        out_vec[body_b] += x_i * J_ib
 
 
 @wp.kernel
@@ -78,17 +62,14 @@ def kernel_inv_mass_matvec(
     out_vec: wp.array(dtype=wp.spatial_vector),
 ):
     """
-    Computes the matrix-vector product `out_vec = M⁻¹ @ in_vec`.
+    Computes the matrix-vector product: out_vec = M⁻¹ @ in_vec.
 
-    This kernel applies the inverse generalized mass matrix `M⁻¹` to a vector. Since `M⁻¹`
-    is block-diagonal (one `6x6` block per body), this operation is highly parallel. Each
-    thread handles one body, applying its inverse mass and inverse inertia tensor to the
-    corresponding part of `in_vec`.
+    M⁻¹ is the block-diagonal inverse mass matrix, composed of a 3x3 inverse
+    inertia tensor and a scalar inverse mass for each body.
 
     Args:
-        gen_inv_mass: An array of `SpatialInertia` structs, one for each body, containing its inverse mass and inverse inertia tensor.
-        in_vec: A vector in generalized-coordinate-space (e.g., generalized forces).
-        out_vec: The resulting vector in generalized-coordinate-space (e.g., generalized accelerations).
+        in_vec: A vector in dynamics space (e.g., the result of Jᵀ @ x).
+        out_vec: The resulting vector in dynamics space.
     """
     body_idx = wp.tid()
 
@@ -104,21 +85,14 @@ def kernel_J_matvec(
     out_vec: wp.array(dtype=wp.float32),
 ):
     """
-    Computes the matrix-vector product `out_vec = J @ in_vec` (gather).
+    Computes the matrix-vector product: out_vec = J @ in_vec.
 
-    This kernel performs the action of the Jacobian matrix. It takes a vector `in_vec`
-    from generalized-coordinate-space (e.g., generalized velocities) and "gathers"
-    values to compute `out_vec` in constraint-space (e.g., relative velocities at constraints).
-
-    Each thread corresponds to a single constraint `i`. It reads the generalized vectors
-    for the two bodies involved and computes the dot product with the corresponding Jacobian
-    rows to produce a single scalar value in `out_vec`.
+    This kernel iterates over each constraint and gathers values from the
+    dynamics-space vector (in_vec) to produce the constraint-space vector (out_vec).
 
     Args:
-        constraint_body_idx: A `(num_constraints, 2)` array mapping each constraint to the indices of the two bodies it connects.
-        J_values: A `(num_constraints, 2)` array of `wp.spatial_vector` holding the Jacobian blocks for each constraint.
-        in_vec: An input vector in generalized-coordinate-space, with size `num_bodies`.
-        out_vec: The output vector in constraint-space, with size `num_constraints`.
+        in_vec: A vector in dynamics space (e.g., M⁻¹ @ Jᵀ @ x).
+        out_vec: The resulting vector in constraint space.
     """
     constraint_idx = wp.tid()
 
@@ -148,29 +122,23 @@ def kernel_finalize_matvec(
     out_vec_z: wp.array(dtype=wp.float32),
 ):
     """
-    Performs the final generalized matrix-vector product (GEMV) update.
-
-    This kernel computes the final result `z` of the linear operator:
-    `z = β*y + α*A*x`, where `A*x = (J*M⁻¹*Jᵀ*x) + (C*x)`.
-
-    It combines the result of the `J M⁻¹ Jᵀ @ x` computation with the diagonal
-    compliance term `C @ x` and scales the result by `alpha`, finally adding
-    the scaled `y` term. This `alpha` and `beta` structure is standard for
-    BLAS routines and iterative solvers.
+    Performs the final step of the matvec computation:
+    z = beta * y + alpha * ( (J M⁻¹ Jᵀ @ x) + (C @ x) )
 
     Args:
-        J_M_inv_Jt_x: The result of `J @ M⁻¹ @ Jᵀ @ vec_x`.
-        C_values: The diagonal entries of the compliance/regularization matrix `C`.
+        J_M_inv_Jt_x: The result of J @ M⁻¹ @ Jᵀ @ x.
+        C_values: The diagonal entries of the compliance matrix C.
         vec_x: The original input vector 'x' to the matvec operation.
-        vec_y: The input vector 'y' to be accumulated.
-        alpha: Scalar multiplier for the `A@x` term.
-        beta: Scalar multiplier for the `y` term.
-        out_vec_z: The final output vector `z`.
+        vec_y: The input vector 'y'.
+        alpha: Scalar multiplier for the A@x term.
+        beta: Scalar multiplier for the y term.
+        out_vec_z: The final output vector z.
     """
     i = wp.tid()
     c_times_x = C_values[i] * vec_x[i]
     a_times_x = J_M_inv_Jt_x[i] + c_times_x
 
+    # The crucial change is here: including beta * y
     if beta == 0.0:
         out_vec_z[i] = alpha * a_times_x
     else:
@@ -179,17 +147,11 @@ def kernel_finalize_matvec(
 
 class MatrixFreeSystemOperator(LinearOperator):
     """
-    A matrix-free `LinearOperator` for the system matrix `A = J M⁻¹ Jᵀ + C`.
+    A matrix-free linear operator for the system A = J M⁻¹ Jᵀ + C.
 
-    This class adheres to the `warp.optim.linear.LinearOperator` interface, allowing it
-    to be used seamlessly with iterative solvers like `cr_solver` or `cg_solver`. Instead of
-    building the large, dense system matrix `A` in memory, it provides a `matvec` method
-    that computes the product `A @ x` by applying the constituent matrices (`J`, `M⁻¹`, `Jᵀ`, `C`)
-    as a sequence of efficient GPU kernel calls.
-
-    Attributes:
-        engine: A reference to the main Axion engine instance which holds all the live
-            simulation data (Jacobians, masses, etc.).
+    This class provides a .matvec() method that computes the matrix-vector
+    product A @ x without explicitly constructing the matrix A. It is intended
+    to be used with iterative linear solvers like `cr_solver`.
     """
 
     def __init__(self, engine):
@@ -197,43 +159,25 @@ class MatrixFreeSystemOperator(LinearOperator):
         Initializes the operator with data from the main physics engine.
 
         Args:
-            engine: An instance of `AxionEngine` that holds the system data like
-                    Jacobians, masses, and dimension information.
+            engine: An instance of the main physics engine (e.g., NSNEngine)
+                    that holds all the necessary system data (Jacobians,
+                    masses, constraint info, etc.).
         """
         super().__init__(
             shape=(engine.dims.con_dim, engine.dims.con_dim),
             dtype=wp.float32,
             device=engine.device,
-            matvec=self.matvec,  # Hook up our matvec implementation
-        )
+            matvec=None,
+        ),
         self.engine = engine
 
-        # Pre-allocate temporary buffers for intermediate matvec calculations to avoid
-        # re-allocation inside the solver loop.
-        self._tmp_dyn_vec = wp.zeros(
-            shape=engine.dims.N_b, dtype=wp.spatial_vector, device=engine.device
-        )
-        self._tmp_con_vec = wp.zeros(
-            shape=engine.dims.con_dim, dtype=wp.float32, device=engine.device
-        )
+        # Pre-allocate temporary buffers for intermediate calculations.
+        self._tmp_dyn_vec = wp.zeros(engine.dims.N_b, dtype=wp.spatial_vector, device=engine.device)
+        self._tmp_con_vec = wp.zeros(engine.dims.con_dim, dtype=wp.float32, device=engine.device)
 
-    def matvec(self, x: wp.array, y: wp.array, z: wp.array, alpha: float, beta: float):
+    def matvec(self, x, y, z, alpha, beta):
         """
-        Computes the matrix-vector product `z = β*y + α*(A @ x)`.
-
-        This method implements the core logic of the matrix-free operator. It calculates
-        the product `A @ x` where `A = J M⁻¹ Jᵀ + C` through a four-step process:
-        1.  `v₁ = Jᵀ @ x`: Scatter from constraint-space to generalized-space.
-        2.  `v₂ = M⁻¹ @ v₁`: Apply inverse mass per body.
-        3.  `v₃ = J @ v₂`: Gather from generalized-space back to constraint-space.
-        4.  `z = β*y + α*(v₃ + C@x)`: Final combination and scaling.
-
-        Args:
-            x: The input vector for the matrix-vector product.
-            y: The vector to be accumulated.
-            z: The output vector to store the result.
-            alpha: The scaling factor for the `A@x` term.
-            beta: The scaling factor for the `y` term.
+        Computes the matrix-vector product: z = beta * y + alpha * (A @ x).
         """
         # --- Step 1: Compute v₁ = Jᵀ @ x ---
         self._tmp_dyn_vec.zero_()
@@ -274,18 +218,18 @@ class MatrixFreeSystemOperator(LinearOperator):
             device=self.device,
         )
 
-        # --- Step 4: Compute z = β*y + α*(v₃ + C@x) ---
+        # --- Step 4: Compute z = beta * y + alpha * (v₃ + C @ x) ---
         wp.launch(
             kernel=kernel_finalize_matvec,
             dim=self.engine.dims.con_dim,
             inputs=[
                 self._tmp_con_vec,  # This is J M⁻¹ Jᵀ @ x
-                self.engine.data.C_values,  # Diagonal of C
-                x,  # The original input vector 'x'
-                y,  # The vector 'y' to add
-                alpha,  # Scalar alpha
-                beta,  # Scalar beta
+                self.engine.data.C_values,
+                x,  # original x vector
+                y,  # original y vector
+                alpha,  # alpha scalar
+                beta,  # beta scalar
+                z,  # The final output vector
             ],
-            outputs=[z],  # The final output vector z
             device=self.device,
         )
