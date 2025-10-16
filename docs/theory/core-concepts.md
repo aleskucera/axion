@@ -1,37 +1,80 @@
 # Core Concepts
 
-This guide explains the fundamental physics and computational models that drive Axion. Understanding these concepts will help you build more complex, stable, and efficient simulations.
-
-The simulation framework is heavily inspired by the "Non-Smooth Newton" methods used in advanced robotics, where all physical laws (motion, contact, friction, joints) are solved simultaneously in a unified, implicit system.
+This section provides a high-level mathematical overview of how Axion formulates and solves the physics simulation problem. Understanding these concepts is essential for grasping the theoretical foundation underlying the simulator's robust and unified approach.
 
 ---
 
-## 1. The Governing Equations: A Unified Approach
+## Mathematical Foundation
 
-At its heart, Axion's physics engine represents the entire state of the world as a large system of equations and inequalities that must be solved at every time step. This is known as a **monolithic** or **all-at-once** approach.
+Axion's physics engine is built on a unified mathematical framework that treats all physical phenomena—articulated body dynamics, contact interactions, and joint constraints—as a single, coupled system of equations. This approach provides superior stability and accuracy compared to traditional methods that handle these phenomena separately.
 
-Instead of handling collisions, then joint forces, then dynamics in separate stages, Axion formulates everything as a single **Nonlinear Complementarity Problem (NCP)**. The core task at each discrete time step is to find a state that satisfies all of the following simultaneously:
+### Articulated Bodies
 
-* **Equations of Motion**: How bodies accelerate under forces.
-* **Joint Constraints**: How bodies are connected (e.g., a hinge must stay on its axle).
-* **Contact Constraints**: How bodies avoid interpenetration and respond to collision.
+Axion represents articulated body systems using generalized coordinates and velocities that describe the system's configuration and motion. The dynamics are governed by:
 
-This unified system is then solved using a **Non-Smooth Newton Method**.
+\[
+\mathbf{\tilde{M}}(\mathbf{q}) \Delta\mathbf{u} = \mathbf{f}_{\text{ext}} h + \mathbf{J}^T(\mathbf{q}) \boldsymbol{\lambda}
+\]
 
-!!! success "Why This Matters"
-    This approach allows for robust and stable simulation of complex, highly-coupled systems like articulated robots making contact with deformable objects—scenarios where simpler, staged methods often fail or become unstable.
+This captures how velocity changes result from external forces and constraint impulses. The meaning and derivation of these constraint impulses will be explained in [Gauss's Principle of Least Constraint](./gauss-least-constraint.md).
+
+!!! note "Mathematical Notation"
+    For detailed definitions of all symbols (\(\mathbf{q}\), \(\mathbf{u}\), \(\mathbf{\tilde{M}}\), \(\mathbf{J}\), \(\boldsymbol{\lambda}\), etc.), see the [Notation](./notation.md) page.
+
+### Contact and Constraint Formulation
+
+Physical interactions are mathematically encoded as constraints:
+
+* **Joint Constraints** (bilateral): Enforce exact geometric relationships between bodies
+* **Contact Constraints** (unilateral): Prevent body interpenetration  
+* **Friction Constraints**: Model stick-slip behavior through complementarity conditions
+
+These constraints create a system mixing equalities and inequalities, requiring specialized mathematical treatment to solve simultaneously.
 
 ---
 
-## 2. The Solver: A Non-Smooth Newton Method
+## Solution Approach
 
-The collection of all dynamics equations, joint constraints, and contact complementarity conditions forms one large, non-smooth system of equations. To solve this system at each time step, Axion uses an iterative **Non-Smooth Newton Method**.
+Axion's approach follows a four-step mathematical progression:
 
-This method is powerful because it can handle the instantaneous, non-smooth events inherent in physics simulation, such as a body making initial contact or transitioning from static to kinetic friction.
+### 1. Constraint Formulation
 
-!!! info "Solver Iterations (`newton_iters`)"
-    The `newton_iters` parameter in the `EngineConfig` controls how many iterations this solver performs per time step.
-    **More iterations** lead to a more accurate solution of the constraints, resulting in less drift, less penetration, and more rigid-feeling joints.
-    **Fewer iterations** are faster but may introduce visible errors, especially in complex scenes.
+First, we mathematically formulate how articulated bodies and their interactions are represented as constraint equations. This establishes the mathematical foundation for describing joints, contacts, and friction.
 
-    *After a certain point (e.g., 8-20 iterations), the visible improvement is minimal.*
+→ **Next**: [Constraints Formulation](./constraints.md)
+
+### 2. Optimization Principle  
+
+We apply **Gauss's Principle of Least Constraint**, which provides a principled way to determine how the system should evolve when subject to constraints. This principle frames constraint enforcement as an optimization problem.
+
+→ **Next**: [Gauss's Principle of Least Constraint](./gauss-least-constraint.md)
+
+### 3. Nonlinear System
+
+The optimization principle, combined with time discretization, leads to a large nonlinear system of equations that must be solved at each time step. This system encodes all physical laws simultaneously.
+
+→ **Next**: [Nonlinear System](./non-linear-system.md)
+
+### 4. Numerical Solution
+
+Finally, we numerically solve this nonlinear system using a specialized Newton-type method designed to handle the non-smooth nature of contact and friction.
+
+→ **Next**: [Numerical Solution](./linear-system.md)
+
+---
+
+## Why This Unified Approach?
+
+Traditional physics engines handle dynamics, contacts, and joints in separate phases, leading to:
+
+* **Instability** in tightly coupled systems
+* **Drift** and constraint violation accumulation  
+* **Artificial softness** in joints and contacts
+
+Axion's unified mathematical formulation addresses these issues by:
+
+* **Solving everything simultaneously** — no artificial sequencing
+* **Position-level constraint enforcement** — eliminates drift by design
+* **Principled optimization framework** — mathematically grounded decisions
+
+This mathematical rigor enables stable simulation of complex scenarios like articulated robots making contact with the environment, which often challenge traditional approaches.

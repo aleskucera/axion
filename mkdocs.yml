@@ -12,10 +12,11 @@ nav:
     - Configuration System: getting-started/configuration.md
   - Theory:
     - Core Concepts: theory/core-concepts.md
-    - Newton's Law of Least Constraint: theory/newton-least-constraint.md
+    - Notation: theory/notation.md
     - Constraints Formulation: theory/constraints.md
-    - Non-Linear System of Equations: theory/newton-least-constraint.md
-    - Linearization and Solving Linear System: theory/non-linear-system.md
+    - Gauss's Principle of Least Constraint: theory/gauss-least-constraint.md
+    - Nonlinear System of Equations: theory/non-linear-system.md
+    - Numerical Solution: theory/numerical-solution.md
   - Implementation:
     - Engine Overview: implementation/engine.md
     - Configurable Parameters: implementation/parameters.md

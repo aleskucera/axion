@@ -35,13 +35,13 @@ def update_J_dense(
 
 
 @wp.kernel
-def update_Hinv_dense_kernel(
-    gen_inv_mass: wp.array(dtype=SpatialInertia),
-    H_dense: wp.array(dtype=wp.float32, ndim=2),
+def update_Minv_dense_kernel(
+    M_inv: wp.array(dtype=SpatialInertia),
+    Minv_dense: wp.array(dtype=wp.float32, ndim=2),
 ):
     body_idx = wp.tid()
 
-    if body_idx >= gen_inv_mass.shape[0]:
+    if body_idx >= M_inv.shape[0]:
         return
 
     # Angular part, write the tensor of inertia inverse
@@ -51,15 +51,15 @@ def update_Hinv_dense_kernel(
             st_j = wp.static(j)
             h_row = body_idx * 6 + st_i
             h_col = body_idx * 6 + st_j
-            body_I_inv = gen_inv_mass.inertia[body_idx]
-            H_dense[h_row, h_col] = body_I_inv[st_i, st_j]
+            body_I_inv = M_inv[body_idx].inertia
+            Minv_dense[h_row, h_col] = body_I_inv[st_i, st_j]
 
     # Linear part, write the mass inverse
     for i in range(wp.static(3)):
         st_i = wp.static(i)
         h_row = body_idx * 6 + 3 + st_i
         h_col = body_idx * 6 + 3 + st_i
-        H_dense[h_row, h_col] = gen_inv_mass.m[body_idx]
+        Minv_dense[h_row, h_col] = M_inv[body_idx].m
 
 
 @wp.kernel
@@ -84,16 +84,16 @@ def update_dense_matrices(
     device = data.device
 
     # Clear matrices
-    data.Hinv_dense.zero_()
+    data.Minv_dense.zero_()
     data.J_dense.zero_()
     data.C_dense.zero_()
 
     # Update H^-1 (inverse mass matrix)
     wp.launch(
-        kernel=update_Hinv_dense_kernel,
+        kernel=update_Minv_dense_kernel,
         dim=dims.N_b,
         inputs=[data.gen_inv_mass],
-        outputs=[data.Hinv_dense],
+        outputs=[data.Minv_dense],
         device=device,
     )
 
@@ -124,13 +124,10 @@ def get_system_matrix_numpy(
     config: EngineConfig,
     dims: EngineDimensions,
 ):
-    Hinv_np = (data.Hinv_dense.numpy(),)
-    J_np = (data.J_dense.numpy(),)
-    C_np = (data.C_dense.numpy(),)
-    g_np = (data.g.numpy(),)
-    h_np = (data.h.numpy(),)
+    Minv_np = data.Minv_dense.numpy()
+    J_np = data.J_dense.numpy()
+    C_np = data.C_dense.numpy()
 
-    A = J_np @ Hinv_np @ J_np.T + C_np
-    b = J_np @ Hinv_np @ g_np - h_np
+    A = J_np @ Minv_np @ J_np.T + C_np
 
-    return A, b
+    return A
