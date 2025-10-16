@@ -28,6 +28,8 @@ from warp.sim import Model
 from warp.sim import State
 
 from .control_utils import apply_control
+from .dense_utils import get_system_matrix_numpy
+from .dense_utils import update_dense_matrices
 from .engine_config import EngineConfig
 from .engine_data import create_engine_arrays
 from .engine_dims import EngineDimensions
@@ -94,7 +96,8 @@ class AxionEngine(Integrator):
             N_alpha=self.config.linesearch_steps,
         )
 
-        self.data = create_engine_arrays(self.dims, self.device)
+        allocate_dense_matrices = isinstance(self.logger, HDF5Logger)
+        self.data = create_engine_arrays(self.dims, self.device, allocate_dense_matrices)
 
         if self.config.matrixfree_representation:
             self.A_op = MatrixFreeSystemOperator(self)
@@ -150,6 +153,20 @@ class AxionEngine(Integrator):
 
         self.logger.log_struct_array("joint_interaction", self.data.joint_interaction)
         self.logger.log_struct_array("contact_interaction", self.data.contact_interaction)
+
+        update_dense_matrices(self.data, self.config, self.dims)
+
+        self.logger.log_wp_dataset("Minv_dense", self.data.Minv_dense)
+        self.logger.log_wp_dataset("J_dense", self.data.J_dense)
+        self.logger.log_wp_dataset("C_dense", self.data.C_dense)
+
+        if not self.config.matrixfree_representation:
+            self.logger.log_wp_dataset("A_dense", self.A_op._A)
+        else:
+            A_np = get_system_matrix_numpy(self.data, self.config, self.dims)
+            cond_number = np.linalg.cond(A_np)
+            self.logger.log_np_dataset("A_np", A_np)
+            self.logger.log_scalar("cond_number", cond_number)
 
     def _log_static_data(self):
         """
@@ -215,6 +232,7 @@ class AxionEngine(Integrator):
 
             with self.logger.scope(f"newton_iteration_{i:02d}"):
                 wp.copy(dest=self.data.lambda_prev, src=self.data._lambda)
+                wp.copy(dest=self.data.lambda_n_scale_prev, src=self.data.lambda_n_scale)
 
                 # --- 1. Linearize the non-smooth system of equations ---
                 compute_linear_system(self.model, self.data, self.config, self.dims, dt)
@@ -234,6 +252,7 @@ class AxionEngine(Integrator):
                     preconditioner=self.preconditioner,
                     logger=self.logger,
                 )
+
                 compute_delta_body_qd_from_delta_lambda(self.data, self.config, self.dims)
                 wp.record_event(self.events[i]["lin_solve"])
 

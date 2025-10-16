@@ -5,7 +5,6 @@ from axion.types import SpatialInertia
 from axion.types import to_spatial_momentum
 
 from .utils import scaled_fisher_burmeister
-from .utils import scaled_fisher_burmeister_new
 
 
 @wp.func
@@ -59,6 +58,7 @@ def contact_constraint_kernel(
     fb_beta: wp.float32,
     compliance: wp.float32,
     # --- Outputs (contributions to the linear system) ---
+    lambda_n_scale: wp.array(dtype=wp.float32),
     g: wp.array(dtype=wp.spatial_vector),
     h_n: wp.array(dtype=wp.float32),
     J_n_values: wp.array(dtype=wp.spatial_vector, ndim=2),
@@ -108,26 +108,38 @@ def contact_constraint_kernel(
         stabilization_factor,
     )
 
-    # TODO: Fix this
-    Minv = add_inertia(gen_inv_mass[body_a_idx], gen_inv_mass[body_b_idx])
-    r = wp.dot(J_n_a, to_spatial_momentum(Minv, J_n_a))
+    # r = 0.0
+    # if body_a_idx >= 0:
+    #     Minv_a = gen_inv_mass[body_a_idx]
+    #     r += wp.dot(J_n_a, to_spatial_momentum(Minv_a, J_n_a))
+    # if body_b_idx >= 0:
+    #     Minv_b = gen_inv_mass[body_b_idx]
+    #     r += wp.dot(J_n_b, to_spatial_momentum(Minv_b, J_n_b))
+    r = 1.0
 
     # Evaluate the Fisher-Burmeister complementarity function φ(a, λ)
-    phi_n, dphi_da, dphi_dlambda = scaled_fisher_burmeister_new(constraint_term_a, lambda_normal, r)
+    phi_n, dphi_da, dphi_dlambda = scaled_fisher_burmeister(
+        constraint_term_a,
+        lambda_normal,
+        fb_alpha,
+        r * fb_beta,
+    )
 
     # --- Update global system components ---
 
+    lambda_n_scale[contact_idx] = dphi_da
+
     # 1. Update `g` (momentum balance residual): g -= J^T * λ
     if body_a_idx >= 0:
-        g[body_a_idx] -= J_n_a * lambda_normal
+        g[body_a_idx] -= dphi_da * J_n_a * lambda_normal
     if body_b_idx >= 0:
-        g[body_b_idx] -= J_n_b * lambda_normal
+        g[body_b_idx] -= dphi_da * J_n_b * lambda_normal
 
     # 2. Update `h` (constraint violation residual): h_n = φ(λ, b)
     h_n[contact_idx] = phi_n
 
     # 3. Update `C` (Compliance block): C = ∂h/∂λ = ∂φ/∂λ
-    C_n_values[contact_idx] = dphi_dlambda + compliance
+    C_n_values[contact_idx] = dphi_dlambda
 
     # 4. Update `J` (Jacobian block): J = ∂h/∂v = (∂φ/∂b * ∂b/∂v) = dphi_db * J_n
     if body_a_idx >= 0:
@@ -200,12 +212,15 @@ def linesearch_contact_residuals_kernel(
         stabilization_factor,
     )
 
-    # TODO: Check if this is correct
-    Minv = add_inertia(gen_inv_mass[body_a_idx], gen_inv_mass[body_b_idx])
-    r = wp.dot(J_n_a, to_spatial_momentum(Minv, J_n_a))
+    r = 1.0
 
     # Evaluate the Fisher-Burmeister complementarity function φ(λ, b)
-    phi_n, _, _ = scaled_fisher_burmeister_new(constraint_term_a, lambda_normal, r)
+    phi_n, _, _ = scaled_fisher_burmeister(
+        constraint_term_a,
+        lambda_normal,
+        fb_alpha,
+        r * fb_beta,
+    )
 
     # --- Update global system components ---
 

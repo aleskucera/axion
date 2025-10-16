@@ -36,7 +36,10 @@ def compute_friction_model(
 
     # --- Evaluate Friction Cone Complementarity ---
     complementarity_gap, _, _ = scaled_fisher_burmeister(
-        slip_speed, friction_cone_limit - friction_impulse_magnitude, fb_alpha, fb_beta
+        slip_speed,
+        friction_cone_limit - friction_impulse_magnitude,
+        fb_alpha,
+        fb_beta,
     )
 
     # --- Compute the Slip Coupling Factor 'w' ---
@@ -56,7 +59,9 @@ def friction_constraint_kernel(
     # --- Body State Inputs ---
     body_qd: wp.array(dtype=wp.spatial_vector),
     lambda_f: wp.array(dtype=wp.float32),
+    lambda_f_prev: wp.array(dtype=wp.float32),
     lambda_n_prev: wp.array(dtype=wp.float32),
+    lambda_n_scale_prev: wp.array(dtype=wp.float32),
     interactions: wp.array(dtype=ContactInteraction),
     # --- Simulation & Solver Parameters ---
     fb_alpha: wp.float32,
@@ -75,7 +80,8 @@ def friction_constraint_kernel(
     interaction = interactions[contact_idx]
 
     # --- 1. Handle Early Exit for Inactive/Non-Frictional Contacts ---
-    normal_impulse = lambda_n_prev[contact_idx]
+    normal_impulse = lambda_n_prev[contact_idx] / (lambda_n_scale_prev[contact_idx] + 1e-3)
+    # normal_impulse = 100.0
     friction_cone_limit = interaction.friction_coeff * normal_impulse
 
     if not interaction.is_active or friction_cone_limit <= 1e-4:
@@ -99,7 +105,9 @@ def friction_constraint_kernel(
 
     lambda_t1 = lambda_f[constr1_idx]
     lambda_t2 = lambda_f[constr2_idx]
-    friction_impulse = wp.vec2(lambda_t1, lambda_t2)
+    lambda_t1_prev = lambda_f[constr1_idx]
+    lambda_t2_prev = lambda_f_prev[constr2_idx]
+    friction_impulse = wp.vec2(lambda_t1_prev, lambda_t2_prev)
 
     # --- 3. Compute Friction Terms by Calling the Model ---
     model_result = compute_friction_model(
@@ -120,17 +128,17 @@ def friction_constraint_kernel(
 
     # Update g (forces): g -= J^T * λ
     if body_a_idx >= 0:
-        g[body_a_idx] -= J_t1_a * lambda_t1 + J_t2_a * lambda_t2
+        wp.atomic_add(g, body_a_idx, -J_t1_a * lambda_t1 - J_t2_a * lambda_t2)
     if body_b_idx >= 0:
-        g[body_b_idx] -= J_t1_b * lambda_t1 + J_t2_b * lambda_t2
+        wp.atomic_add(g, body_b_idx, -J_t1_b * lambda_t1 - J_t2_b * lambda_t2)
 
     # Update h (constraint violation): h_t = v_t + w * λ_t
     h_f[constr1_idx] = v_t1 + w * lambda_t1
     h_f[constr2_idx] = v_t2 + w * lambda_t2
 
-    # Update C (compliance): C_ff = (w + compliance) * I
-    C_f_values[constr1_idx] = w + compliance
-    C_f_values[constr2_idx] = w + compliance
+    # Update C (compliance): C_ff
+    C_f_values[constr1_idx] = w
+    C_f_values[constr2_idx] = w
 
     # Update J (Jacobian): J_f = [J_t1; J_t2]
     if body_a_idx >= 0:
@@ -211,11 +219,10 @@ def linesearch_friction_residuals_kernel(
 
     # Update g (forces): g -= J^T * λ
     if body_a_idx >= 0:
-        g_alpha[alpha_idx, body_a_idx] -= J_t1_a * lambda_t1 + J_t2_a * lambda_t2
+        wp.atomic_add(g_alpha, alpha_idx, body_a_idx, -J_t1_a * lambda_t1 - J_t2_a * lambda_t2)
     if body_b_idx >= 0:
-        g_alpha[alpha_idx, body_b_idx] -= J_t1_b * lambda_t1 + J_t2_b * lambda_t2
+        wp.atomic_add(g_alpha, alpha_idx, body_b_idx, -J_t1_b * lambda_t1 - J_t2_b * lambda_t2)
 
     # Update h (constraint violation): h_t = v_t + w * λ_t
-    # TODO: Check this
     h_alpha_f[alpha_idx, constr1_idx] = v_t1 + w * lambda_t1
     h_alpha_f[alpha_idx, constr2_idx] = v_t2 + w * lambda_t2
