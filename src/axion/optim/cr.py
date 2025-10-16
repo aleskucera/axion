@@ -1,12 +1,5 @@
-"""
-Conjugate Residual (CR) linear solver implementation.
-"""
-
-from __future__ import annotations
-
 from typing import Any
 from typing import Optional
-from typing import TYPE_CHECKING
 
 import warp as wp
 from axion.logging import HDF5Logger
