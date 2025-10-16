@@ -1,3 +1,6 @@
+"""
+An abstract base class for running a Warp-based physics simulation.
+"""
 import math
 from abc import ABC
 from abc import abstractmethod

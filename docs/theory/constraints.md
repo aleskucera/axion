@@ -1,157 +1,188 @@
-# Constraints
+# Constraints Formulation
 
-In the Axion physics engine, constraints are the set of mathematical rules that govern how rigid and deformable bodies interact. The engine is a direct implementation of the unified constraint framework presented in "Non-Smooth Newton Methods for Deformable Multi-Body Dynamics" ([Macklin et al. 2019](https://arxiv.org/abs/1907.04587v1)). This approach formulates all physical laws—including collision response, joints, and friction—as a single large-scale **Differential Variational Inequality (DVI)**. After time discretization, this DVI becomes a root-finding problem that is solved directly with a non-smooth Newton method, which is the key to the engine's stability, accuracy, and performance.
+This section establishes the mathematical foundation for representing articulated bodies and their interactions as constraint equations. Understanding these constraint formulations is essential before exploring how they are enforced through optimization principles and numerical methods.
+
+In Axion, all physical interactions—joints, contacts, and friction—are unified under a single mathematical framework of constraint equations. This creates a large-scale system that captures the essential physics while enabling robust numerical solution.
 
 ---
 
-## 1. The Unified Constraint Formulation
+## 1. Constraint Formulations: Position and Velocity
 
-At its core, the framework presented by [Macklin et al. 2019](https://arxiv.org/abs/1907.04587v1) formulates the entire dynamics problem as a single system of non-smooth equations. At each time step, the solver's primary task is to find a set of constraint impulses (forces), denoted by the vector \( \boldsymbol{\lambda} \), that satisfy the dynamics of all interacting bodies simultaneously.
+In computational mechanics, constraint equations can be enforced at the level of position or velocity. The choice of which level to use has profound implications for the simulator's stability and accuracy.
 
-### Unilateral and Bilateral Constraints
+### Position-Level Formulation (Integral Form)
 
-Constraints in Axion are primarily of two types:
+This formulation defines constraints using the geometric configuration of the bodies, \(q\). It is the most direct and robust method as it targets the "ground truth" of the physical system.
 
-1. **Unilateral (Inequality) Constraints:** These are one-sided conditions, such as the non-penetration rule for contacts. They are modeled using a **Nonlinear Complementarity Problem (NCP)**. For a single contact, this is written as:
-
-    \[
-    0 \le \lambda_n \perp c_n(q) \ge 0 \quad \quad (1)
-    \]
-
-    This elegant expression captures two fundamental rules:
-
-    - The quantities must be non-negative: The contact impulse \( \lambda_n \) must be repulsive (or zero), and the gap distance \( c_n(q) \) must be non-negative (no penetration).
-    - They are complementary: If there is a gap (\( c_n(q) > 0 \)), the contact impulse must be zero (\( \lambda_n = 0 \)). Conversely, if there is a contact impulse (\( \lambda_n > 0 \)), there must be no gap (\( c_n(q) = 0 \)).
-
-2. **Bilateral (Equality) Constraints:** These are conditions that must be met exactly, such as maintaining a specific distance between two points in a joint. They are written as an equation:
-
-    \[
-    \mathbf{g}(q) = \mathbf{0} \quad \quad (2)
-    \]
-
-To solve this mixed system of equalities and inequalities, Axion transforms the complementarity conditions into a set of non-smooth equations using the **Fischer-Burmeister function**, as detailed in the paper. This allows the entire problem to be solved robustly using a Non-Smooth Newton method.
-
-### The Unified Dynamics Equation
-
-All constraint forces are aggregated and integrated into the main equations of motion. For the entire system, this can be expressed as:
+* **Unilateral (Inequality) Constraints:** For non-penetration, the gap distance function **c**(**q**) must be non-negative:
 
 \[
-\mathbf{M} \frac{d\mathbf{u}}{dt} = \mathbf{f}_{\text{ext}} + \mathbf{J}^T \boldsymbol{\lambda} \quad \quad (3)
+\mathbf{c}(\mathbf{q}) \geq \mathbf{0}
 \]
 
-Where:
+* **Bilateral (Equality) Constraints:** For a joint, a constraint function **c**(**q**) must be exactly zero:
 
-- \( \mathbf{M} \) is the system's generalized mass matrix.
-- \( \mathbf{u} \) is the vector of generalized velocities.
-- \( \mathbf{f}_{\text{ext}} \) represents all external forces (e.g., gravity, control inputs).
-- \( \mathbf{J} \) is the constraint Jacobian, a matrix that maps body velocities to constraint-relative velocities.
-- \( \boldsymbol{\lambda} \) is the composite vector of all constraint impulses (contact, friction, joint) that we are solving for.
+\[
+\mathbf{c}(\mathbf{q}) = \mathbf{0}
+\]
+
+Solving constraints at this level guarantees zero positional error, but it requires more advanced non-linear solvers.
+
+### Velocity-Level Formulation (Differential Form)
+
+This common alternative is derived by taking the time derivative of the position-level constraints. Using the chain rule and the kinematic mapping \(\dot{\mathbf{q}} = \mathbf{G}(\mathbf{q}) \cdot \mathbf{u}\), we get
+
+\[
+\dot{\mathbf{c}} = \frac{\partial \mathbf{c}}{\partial \mathbf{q}} \cdot \frac{d\mathbf{q}}{dt} = \frac{\partial \mathbf{c}}{\partial \mathbf{q}} \cdot \mathbf{G}(\mathbf{q}) \cdot \mathbf{u} = \mathbf{J} \cdot \mathbf{u},
+\]
+
+where \(\mathbf{J} = \frac{\partial \mathbf{c}}{\partial \mathbf{q}} \cdot \mathbf{G}(\mathbf{q})\) is the velocity Jacobian that maps generalized velocities \(\mathbf{u}\) to constraint derivatives.
+
+!!! note "Mathematical Notation"
+    For detailed definitions of \(\mathbf{J}\), \(\mathbf{G}\), and other symbols, see the [Notation](./notation.md) page.
+
+* **Bilateral Constraint:** The velocity constraint becomes
+
+\[
+\mathbf{J} \cdot \mathbf{u} = \mathbf{0},
+\]
+
+enforcing that the relative velocity in the constrained directions is zero.
+
+* **Unilateral Constraint:** The non-penetration condition becomes a complementarity problem on velocities: when a contact is active (\(c(q) = 0\)), the relative normal velocity must be non-negative
+
+\[
+\dot{c} = \mathbf{J} \cdot \mathbf{u} \ge 0.
+\]
+
+This forms the basis of many **Linear Complementarity Problem (LCP)** solvers.
+
+### The Problem of "Drift" and Stabilization
+
+While computationally simpler, velocity-level solvers suffer from a critical flaw: **numerical drift**. Enforcing \(\mathbf{J}\mathbf{u} = \mathbf{0}\) only ensures the velocity is correct at a given instant. Due to numerical integration errors accumulating over many time steps, the underlying position constraint \(\mathbf{c}(q)\) will inevitably "drift" away from zero. This manifests as joints slowly pulling apart or objects gradually sinking into one another.
+
+To combat this, velocity-based solvers must add a **feedback rule** to push the system back toward a valid state. The most common method is **Baumgarte Stabilization**, which re-frames the constraint force as a physical spring-damper.
+
+Conceptually, the constraint force **λ** is modeled as an implicit Hookean spring that acts to close any existing positional error **c**(**q**):
+
+\[
+\boldsymbol{\lambda} = -k \cdot \mathbf{c}(\mathbf{q}) - b \cdot \mathbf{v}_{rel}
+\]
+
+Here, \(\mathbf{c}(\mathbf{q})\) is the position error (e.g., penetration depth), \(\mathbf{v}_{\text{rel}}\) is the relative velocity, \(k\) is a spring stiffness, and \(b\) is a damping coefficient. This force pulls the bodies back into alignment.
+
+To be used in a velocity-level solver, this is rearranged into a modified velocity constraint. The result is a velocity goal that not only enforces the constraint but also tries to correct a fraction of the position error over the next time step \(h\). This introduces two user-facing parameters:
+
+1. **Error Reduction Parameter (ERP):** A factor, typically between 0 and 1, that specifies what fraction of the positional error to correct in the next time step. It is often calculated as \(\text{ERP} = \frac{h k}{h k + b}\). An ERP of 0.2 means the system will attempt to resolve 20% of the penetration depth in the current step.
+
+2. **Constraint Force Mixing (CFM):** A small, soft parameter, proportional to \(\frac{1}{h k + b}\), that is added to the diagonal of the constraint matrix. It makes the constraint "softer," allowing for a small amount of violation in exchange for a much more stable and well-conditioned numerical system. This is especially useful when dealing with redundant contacts.
+
+While this spring-based stabilization is more physically intuitive, tuning ERP and CFM values is notoriously difficult. Poor tuning can lead to spongy, oscillating joints or bouncy contacts.
+
+Axion's direct, position-level DVI formulation elegantly sidesteps this entire problem. By solving for the position constraints directly, it eliminates drift by design, removing the need for fragile stabilization hacks and ensuring superior long-term stability.
 
 ---
 
 ## 2. Contact Constraints
 
-Contact constraints are unilateral constraints that prevent bodies from interpenetrating. The key advantage of the method described by [Macklin et al. 2019](https://arxiv.org/abs/1907.04587v1) is its ability to solve for these constraints without drift or the need for artificial stabilization.
+Contact constraints prevent bodies from interpenetrating, representing one of the most challenging aspects of physics simulation due to their unilateral (inequality) nature.
 
-#### Mathematical Model
+### Position-Level Formulation
 
-The primary contact constraint enforces the complementarity condition from Eq. (1). Unlike traditional methods that can accumulate positional errors over time (drift), Axion uses an implicit time-stepping scheme that solves the position-level constraints directly. This completely avoids the need for ad-hoc stabilization techniques like Baumgarte stabilization. The non-smooth Newton solver finds the exact impulses required to prevent penetration at the end of the time step, resulting in a visually stable and robust simulation.
+For each potential contact point, we define a **gap function** \(\mathbf{c}_{\text{contact}}(\mathbf{q})\) that measures the signed distance between bodies:
 
-Though the core model handles inelastic impacts, material properties like "bounciness" can be modeled by setting a `restitution` coefficient.
+\[
+c_{\text{contact}}(\mathbf{q}) \geq 0
+\]
 
-#### Code Representation
+When \(c_{\text{contact}} > 0\), bodies are separated; when \(c_{\text{contact}} = 0\), bodies are just touching.
 
-These constraints are generated by the collision detection system and stored in the `ContactInteraction` struct.
+The contact constraint is formulated as a **Nonlinear Complementarity Problem (NCP)**:
 
-```python
-@wp.struct
-class ContactInteraction:
-    body_a_idx: int           # Index of the first body
-    body_b_idx: int           # Index of the second body
-    penetration_depth: float  # Overlap distance (positive if penetrating)
-    restitution_coeff: float  # Bounciness (0..1)
-    basis_a: ContactBasis     # Contact frame (normal/tangents) for body A
-    basis_b: ContactBasis     # Contact frame for body B
-    is_active: bool           # Whether contact is being processed this step
-```
+\[
+0 \leq \lambda_n \perp \mathbf{c}_{\text{contact}}(\mathbf{q}) \geq 0
+\]
+
+This mathematical relationship captures the essential physics:
+
+* **Non-negativity**: Contact impulses are repulsive (\(\lambda_n \geq 0\)) and no penetration occurs (\(\mathbf{c}(\mathbf{q}) \geq 0\))  
+* **Complementarity**: Either bodies are separated (\(\mathbf{c}(\mathbf{q}) > 0\), \(\lambda_n = 0\)) or in contact (\(\mathbf{c}(\mathbf{q}) = 0\), \(\lambda_n \geq 0\))
+
+By solving this position-level problem directly, Axion finds the exact impulses required to satisfy the non-penetration constraint, resulting in stable simulation without drift.
+
+### Velocity-Level Formulation (Alternative)
+
+For contrast, contacts can also be formulated at the velocity level. Taking the time derivative of the position constraint, we get a condition on the relative normal velocity \(\mathbf{v}_n = \mathbf{J}_n \cdot \mathbf{u}\):
+
+\[
+0 \leq \lambda_n \perp \mathbf{v}_n \geq 0
+\]
+
+This forms a **Linear Complementarity Problem (LCP)** that ensures bodies don't move further into each other when in contact. However, this approach requires additional stabilization mechanisms to prevent drift, as discussed in Section 1.
 
 ---
 
 ## 3. Friction Constraints
 
-Friction constraints apply tangential forces that resist sliding motion. The engine uses the smooth, isotropic Coulomb friction model derived from the **principle of maximal dissipation**, a cornerstone of the [Macklin et al. 2019](https://arxiv.org/abs/1907.04587v1) paper.
+Friction constraints apply tangential impulses that resist sliding motion between contacting bodies. Axion uses the smooth, isotropic Coulomb friction model derived from the **principle of maximal dissipation**.
 
-#### Mathematical Model
+### Mathematical Formulation
 
-The principle of maximal dissipation states that the friction force \( \boldsymbol{\lambda}_t \) will remove the maximum amount of kinetic energy from the system, subject to the Coulomb constraint that its magnitude is limited by the normal force \( \lambda_n \) and the coefficient of friction \( \mu \):
+The principle of maximal dissipation states that the friction impulse **λ**<sub>t</sub> will remove the maximum amount of kinetic energy from the system, subject to the Coulomb constraint that its magnitude is limited by the normal impulse **λ**<sub>n</sub> and the coefficient of friction **μ**:
 
 \[
-\| \boldsymbol{\lambda}_t \| \le \mu \cdot \lambda_n
+\|\boldsymbol{\lambda}_t\| \leq \mu \cdot \lambda_n
 \]
 
-The Karush-Kuhn-Tucker (KKT) conditions for this model precisely describe the stick-slip behavior:
+The Karush-Kuhn-Tucker (KKT) conditions for this model precisely describe the friction behavior:
 
-1. **Sliding:** If there is relative tangential velocity (\( \mathbf{v}_t \neq \mathbf{0} \)), the friction force opposes it at maximum magnitude: \( \boldsymbol{\lambda}_t = -\mu \lambda_n \frac{\mathbf{v}_t}{\|\mathbf{v}_t\|} \).
-2. **Sticking:** If there is no relative tangential velocity (\( \mathbf{v}_t = \mathbf{0} \)), the friction force is whatever is necessary to prevent motion, up to the maximum limit: \( \| \boldsymbol{\lambda}_t \| \le \mu \lambda_n \).
+1. **Sliding**: If there is relative tangential velocity (\(\mathbf{v}_t \neq \mathbf{0}\)), the friction impulse opposes it at maximum magnitude: \(\boldsymbol{\lambda}_t = -\mu\lambda_n \mathbf{v}_t/\|\mathbf{v}_t\|\)
+2. **Sticking**: If there is no relative tangential velocity (\(\mathbf{v}_t = \mathbf{0}\)), the friction impulse is whatever is necessary to prevent motion, up to the maximum limit: \(\|\boldsymbol{\lambda}_t\| \leq \mu\lambda_n\)
 
-The paper shows how to formulate these conditions using an NCP-function and a fixed-point iteration, which recasts the friction model into a symmetric system that fits seamlessly into the non-smooth Newton solver.
-
-#### Code Implementation
-
-The friction forces are computed in the 2D tangent plane defined by the contact normal. This plane is constructed using the `ContactBasis` struct, which corresponds to the basis `D` in the paper's maximal dissipation formulation.
-
-```python
-@wp.struct
-class ContactBasis:
-    normal: wp.spatial_vector      # Direction of the contact force
-    tangent1: wp.spatial_vector    # First direction for friction force
-    tangent2: wp.spatial_vector    # Second direction for friction force
-```
+This principle-based formulation is implemented using an NCP-function and a fixed-point iteration, which recasts the friction model into a symmetric system that fits seamlessly into the non-smooth Newton solver covered in [Nonlinear System](./non-linear-system.md).
 
 ---
 
 ## 4. Joint Constraints
 
-Joints connect bodies and restrict their relative motion. In Axion, joints are implemented using the same unified constraint framework as contacts and friction, as described in "Non-Smooth Newton Methods for Deformable Multi-Body Dynamics" ([Macklin et al. 2019](https://arxiv.org/abs/1907.04587v1)). The engine employs a **constraints-based** (or **full-coordinate**) approach, where each rigid body retains its full 6 degrees of freedom (DOFs), and the solver computes the exact joint impulses required to enforce the desired motion restriction.
+Joints connect bodies and restrict their relative motion. In Axion, joints are implemented using the same unified constraint framework as contacts and friction. The engine employs a **constraints-based** (or **full-coordinate**) approach, where each rigid body retains its full 6 degrees of freedom (DOFs), and the solver computes the exact joint impulses required to enforce the desired motion restriction.
 
 Currently, the primary joint type implemented in Axion is the **Revolute Joint**.
 
 #### Mathematical Model
 
-A revolute joint, or hinge, constrains two bodies to rotate around a single common axis, removing five of the six relative DOFs. These restrictions are modeled as a set of five simultaneous **bilateral (equality) constraints**.
+Like contacts, joint constraints can be defined at either the position or velocity level. A revolute joint (or hinge) is modeled as a set of five simultaneous **bilateral (equality) constraints**. Axion solves these directly at the position level to ensure maximum stability.
 
-Specifically, the constraints ensure that:
+The constraint functions \(\mathbf{c}(q)\) are defined to be zero when the joint is perfectly aligned:
 
-1. **The anchor points on both bodies coincide.** This removes all three translational DOFs and can be expressed as a vector equation where the world-space positions of the parent's anchor point $\mathbf{p}_{\text{parent}}$ and the child's anchor point $\mathbf{p}_{\text{child}}$ must be equal:
+1. **Anchor Points Coincide (3 DOFs):** The world-space positions of the anchor points on each body must be equal.
 
-    $$
-    \mathbf{g}_{\text{trans}}(q) = \mathbf{p}_{\text{child}} - \mathbf{p}_{\text{parent}} = \mathbf{0}
-    $$
+\[
+\mathbf{c_\text{trans}}(q) = \mathbf{p_\text{child}} - \mathbf{p_\text{parent}} = \mathbf{0}
+\]
 
-2. **The hinge axes on both bodies remain collinear.** This removes two rotational DOFs, leaving only the single, free rotation around the designated axis.
+2. **Hinge Axes Collinear (2 DOFs):** The designated axes on each body must remain aligned.
 
-The solver finds the joint impulses $\boldsymbol{\lambda}_j$ required to enforce these five conditions. A key benefit of the implicit formulation used in Axion is that any numerical drift that might cause the joint to separate or misalign is corrected automatically by the non-smooth Newton solver. This provides excellent stability without the need for ad-hoc stabilization terms (like Baumgarte stabilization).
+The solver finds the joint impulses \(\boldsymbol{\lambda}_j\) required to enforce \(\mathbf{c}(q) = \mathbf{0}\). Because Axion solves the position-level equation directly via its non-smooth Newton method, any numerical error that would cause the joint to separate is corrected automatically.
 
-#### Code Representation
+**Alternative: Velocity-Level Formulation**
 
-The `Revolute` joint is the primary articulation model available. It constrains relative motion as follows:
+In contrast, many simulators formulate joints at the velocity level by taking the time derivative of the position constraint:
 
-- **Joint Type:** `Revolute` (Hinge)
-- **Free DOFs:** 1 (Rotation around the specified joint axis)
-- **Constrained DOFs:** 5 (3 translational, 2 rotational)
+\[
+\dot{\mathbf{c}}(\mathbf{q}) = \mathbf{J} \cdot \mathbf{u} = \mathbf{0}
+\]
 
-### Tuning Constraint Behavior
+Here, the solver finds impulses that force the relative velocity **u** along the constrained degrees of freedom to be zero. As discussed in Section 1, this approach suffers from numerical drift, where integration errors cause the positional error **c**(**q**) to grow over time, making the joint appear to pull apart. This necessitates corrective measures like **Baumgarte stabilization**, which can be difficult to tune.
 
-Fine-grained control over the constraint solver is available in the `EngineConfig`.
+---
 
-```python
-from axion.core import EngineConfig
+## Conclusion: From Constraints to Optimization
 
-config = EngineConfig(
-    # Make contacts harder (closer to rigid)
-    contact_compliance=1e-5,
-    # Adjust FB scaling for stability
-    contact_fb_alpha=0.5,
-)
-```
+The constraint formulations presented in this section—position/velocity-level approaches, contact complementarity, friction stick-slip behavior, and joint restrictions—create a complex system mixing equalities and inequalities that must be satisfied simultaneously.
 
+The key question becomes: **How do we determine the constraint impulses λ that enforce all these constraints while respecting the system dynamics?**
+
+This challenge is addressed through **Gauss's Principle of Least Constraint**, which provides a principled optimization framework for determining these impulses. The principle transforms the constraint enforcement problem into an optimization problem that can be solved numerically.
+
+→ **Next**: [Gauss's Principle of Least Constraint](./gauss-least-constraint.md)

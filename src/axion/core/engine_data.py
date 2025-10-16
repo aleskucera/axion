@@ -44,6 +44,8 @@ class EngineArrays:
 
     _lambda: wp.array  # Constraint impulses
     lambda_prev: wp.array  # Constraint impulses at previous newton step
+    lambda_n_scale: wp.array  # Scale for normal impulse
+    lambda_n_scale_prev: wp.array  # Scale for normal impulse at previous newton step
 
     constraint_body_idx: wp.array  # Indices of bodies involved in constraints
 
@@ -63,7 +65,7 @@ class EngineArrays:
     res_alpha: wp.array = None  # Residuals for different alphas
     res_alpha_norm_sq: wp.array = None  # Squared norms of linesearch residuals
 
-    Hinv_dense: wp.array = None
+    Minv_dense: wp.array = None
     J_dense: wp.array = None
     C_dense: wp.array = None
 
@@ -378,6 +380,8 @@ def create_engine_arrays(
 
     _lambda = _zeros(dims.con_dim)
     lambda_prev = _zeros(dims.con_dim)
+    lambda_n_scale = _zeros(dims.N_c)
+    lambda_n_scale_prev = _zeros(dims.N_c)
 
     constraint_body_idx = _zeros((dims.con_dim, 2), wp.int32)
 
@@ -406,11 +410,11 @@ def create_engine_arrays(
         alphas_array = wp.array(alphas, dtype=wp.float32, device=device)
 
     # --- Dense representation of the arrays---
-    Hinv_dense = None
+    Minv_dense = None
     J_dense = None
     C_dense = None
     if allocate_dense:
-        Hinv_dense = _zeros((dims.dyn_dim, dims.dyn_dim))
+        Minv_dense = _zeros((dims.dyn_dim, dims.dyn_dim))
         J_dense = _zeros((dims.con_dim, dims.dyn_dim))
         C_dense = _zeros((dims.con_dim, dims.con_dim))
 
@@ -427,6 +431,8 @@ def create_engine_arrays(
         body_qd_prev=body_qd_prev,
         _lambda=_lambda,
         lambda_prev=lambda_prev,
+        lambda_n_scale=lambda_n_scale,
+        lambda_n_scale_prev=lambda_n_scale_prev,
         constraint_body_idx=constraint_body_idx,
         JT_delta_lambda=JT_delta_lambda,
         delta_body_qd=delta_body_qd,
@@ -440,7 +446,7 @@ def create_engine_arrays(
         alphas=alphas_array,
         res_alpha=res_alpha,
         res_alpha_norm_sq=res_alpha_norm_sq,
-        Hinv_dense=Hinv_dense,
+        Minv_dense=Minv_dense,
         J_dense=J_dense,
         C_dense=C_dense,
     )
