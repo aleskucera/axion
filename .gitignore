@@ -185,3 +185,6 @@ pyrightconfig.json
 *.csv
 
 outputs/
+
+# Cursor editor instructions
+.cursorrules
