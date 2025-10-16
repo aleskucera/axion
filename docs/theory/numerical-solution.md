@@ -42,7 +42,7 @@ Grouping the \(\Delta\mathbf{u}\) terms gives:
 \left( h \frac{\partial \mathbf{h_c}}{\partial \mathbf{q}}\mathbf{G} + \frac{\partial \mathbf{h_c}}{\partial \mathbf{u}} \right) \Delta\mathbf{u} + \frac{\partial \mathbf{h_c}}{\partial \boldsymbol{\lambda}} \Delta\boldsymbol{\lambda} = -\mathbf{h_c}
 \]
 
-This defines the matrices for our reduced system. The term in parenthesis is precisely the **System Jacobian**, \(\hat{\mathbf{J}}\), and the multiplier of \(\Delta\boldsymbol{\lambda}\) is the **Compliance Matrix**, \(\mathbf{C}\).
+This defines the matrices for our reduced system. The term in parenthesis is precisely the **System Jacobian** (\(\hat{\mathbf{J}}\)), and the multiplier of \(\Delta\boldsymbol{\lambda}\) is the **Compliance Matrix** (\(\mathbf{C}\)).
 
 By applying this substitution to the whole system, we eliminate \(\Delta\mathbf{q}\) entirely, arriving at the final 2x2 block KKT system that is actually solved in practice:
 
@@ -140,4 +140,3 @@ This single vector update is equivalent to updating each component individually:
 \]
 
 This brings us to the end of one Newton iteration. The process repeats from Step 1 with the new state \(\mathbf{x_{k+1}}\) until the norm of the residual vector \(\|\mathbf{h}(\mathbf{x_{k+1}})\|\) falls below a specified tolerance, indicating that a valid physical state has been found.
-
