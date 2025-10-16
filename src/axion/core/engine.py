@@ -123,6 +123,7 @@ class AxionEngine(Integrator):
 
             with self.logger.scope(f"newton_iteration_{i:02d}"):
                 wp.copy(dest=self.data.lambda_prev, src=self.data._lambda)
+                wp.copy(dest=self.data.lambda_n_scale_prev, src=self.data.lambda_n_scale)
 
                 # --- Linearize the system of equations ---
                 compute_linear_system(self.model, self.data, self.config, self.dims, dt)
@@ -141,6 +142,7 @@ class AxionEngine(Integrator):
                     preconditioner=self.preconditioner,
                     logger=self.logger,
                 )
+
                 compute_delta_body_qd_from_delta_lambda(self.data, self.config, self.dims)
                 wp.record_event(self.events[i]["lin_solve"])
 
