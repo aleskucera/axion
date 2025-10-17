@@ -43,13 +43,15 @@ def joint_constraint_kernel(
     lambda_current = lambda_j[global_constraint_idx]
 
     h_j[global_constraint_idx] = grad_c + bias
-    J_j_values[global_constraint_idx, 0] = axis_data.J_parent
-    J_j_values[global_constraint_idx, 1] = axis_data.J_child
     C_j_values[global_constraint_idx] = axis_data.compliance
 
     wp.atomic_add(g, child_idx, -axis_data.J_child * lambda_current)
+    J_j_values[global_constraint_idx, 1] = axis_data.J_child
     if parent_idx >= 0:
         wp.atomic_add(g, parent_idx, -axis_data.J_parent * lambda_current)
+        J_j_values[global_constraint_idx, 0] = axis_data.J_parent
+    else:
+        J_j_values[global_constraint_idx, 0] = wp.spatial_vector()
 
 
 @wp.kernel

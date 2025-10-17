@@ -5,7 +5,7 @@ from axion.constraints import joint_constraint_kernel
 from axion.constraints import unconstrained_dynamics_kernel
 from axion.types import SpatialInertia
 from axion.types import to_spatial_momentum
-from warp.sim import Model
+from newton import Model
 
 from .engine_config import EngineConfig
 from .engine_data import EngineArrays

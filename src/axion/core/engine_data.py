@@ -11,8 +11,9 @@ from axion.types import ContactInteraction
 from axion.types import joint_interaction_kernel
 from axion.types import JointInteraction
 from axion.types import SpatialInertia
-from warp.sim import Model
-from warp.sim import State
+from newton import Contacts
+from newton import Model
+from newton import State
 
 from .engine_dims import EngineDimensions
 
@@ -69,7 +70,7 @@ class EngineArrays:
     J_dense: wp.array = None
     C_dense: wp.array = None
 
-    g_accel: wp.types.vector = None
+    g_accel: wp.array = None
 
     # --- Core views ---
     @cached_property
@@ -269,7 +270,9 @@ class EngineArrays:
             self.res_alpha_norm_sq.zero_()
             self.best_alpha_idx.zero_()
 
-    def update_state_data(self, model: Model, state_in: State, state_out: State):
+    def update_state_data(
+        self, model: Model, state_in: State, state_out: State, contacts: Contacts
+    ):
         wp.copy(dest=self.body_f, src=state_in.body_f)
         wp.copy(dest=self.body_q, src=state_out.body_q)
         wp.copy(dest=self.body_q_prev, src=state_in.body_q)
@@ -283,14 +286,17 @@ class EngineArrays:
                 self.body_q,
                 model.body_com,
                 model.shape_body,
-                model.shape_geo,
-                model.shape_materials,
-                model.rigid_contact_count,
-                model.rigid_contact_point0,
-                model.rigid_contact_point1,
-                model.rigid_contact_normal,
-                model.rigid_contact_shape0,
-                model.rigid_contact_shape1,
+                model.shape_thickness,
+                model.shape_material_mu,
+                model.shape_material_restitution,
+                contacts.rigid_contact_count,
+                contacts.rigid_contact_point0,
+                contacts.rigid_contact_point1,
+                contacts.rigid_contact_normal,
+                contacts.rigid_contact_shape0,
+                contacts.rigid_contact_shape1,
+                contacts.rigid_contact_thickness0,
+                contacts.rigid_contact_thickness1,
             ],
             outputs=[
                 self.contact_interaction,
@@ -310,10 +316,8 @@ class EngineArrays:
                 model.joint_child,
                 model.joint_X_p,
                 model.joint_X_c,
-                model.joint_axis_start,
+                model.joint_qd_start,
                 model.joint_axis,
-                model.joint_linear_compliance,
-                model.joint_angular_compliance,
             ],
             outputs=[
                 self.joint_interaction,
@@ -326,8 +330,8 @@ class EngineArrays:
             dim=self.dims.con_dim,
             inputs=[
                 model.shape_body,
-                model.rigid_contact_shape0,
-                model.rigid_contact_shape1,
+                contacts.rigid_contact_shape0,
+                contacts.rigid_contact_shape1,
                 model.joint_parent,
                 model.joint_child,
                 self.dims.N_j,

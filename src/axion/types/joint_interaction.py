@@ -1,3 +1,4 @@
+import newton
 import warp as wp
 
 
@@ -82,10 +83,8 @@ def joint_interaction_kernel(
     joint_child: wp.array(dtype=wp.int32),
     joint_X_p: wp.array(dtype=wp.transform),
     joint_X_c: wp.array(dtype=wp.transform),
-    joint_axis_start: wp.array(dtype=wp.int32),
+    joint_qd_start: wp.array(dtype=wp.int32),
     joint_axis: wp.array(dtype=wp.vec3),
-    joint_linear_compliance: wp.array(dtype=wp.float32),
-    joint_angular_compliance: wp.array(dtype=wp.float32),
     # --- Output ---
     interactions: wp.array(dtype=JointInteraction),
 ):
@@ -98,12 +97,10 @@ def joint_interaction_kernel(
     parent_idx = joint_parent[joint_idx]
     child_idx = joint_child[joint_idx]
 
-    # Early exit for disabled or invalid joints
     if (
         joint_enabled[joint_idx] == 0
-        or j_type != wp.sim.JOINT_REVOLUTE
-        or parent_idx < 0
-        or child_idx < 0
+        or j_type != newton.JointType.REVOLUTE
+        or child_idx < 0  # A joint must have a child body
     ):
         interactions[joint_idx] = interaction
         return
@@ -112,69 +109,82 @@ def joint_interaction_kernel(
     interaction.parent_idx = parent_idx
     interaction.child_idx = child_idx
 
-    # --- Common Kinematics (depend on body_q) ---
+    # --- BEGIN KINEMATICS ---
     body_q_c = body_q[child_idx]
-    body_q_p = body_q[parent_idx]
 
-    r_c = compute_joint_kinematics(body_q_c, joint_X_c[joint_idx], body_com[child_idx])
-    r_p = compute_joint_kinematics(body_q_p, joint_X_p[joint_idx], body_com[parent_idx])
+    body_q_p = wp.transform_identity()
+    if parent_idx >= 0:
+        body_q_p = body_q[parent_idx]
+
+    child_com = body_com[child_idx]
+    parent_com = wp.vec3()  # Default to origin (0,0,0) for world
+    if parent_idx >= 0:
+        parent_com = body_com[parent_idx]
+
+    r_c = compute_joint_kinematics(body_q_c, joint_X_c[joint_idx], child_com)
+    r_p = compute_joint_kinematics(body_q_p, joint_X_p[joint_idx], parent_com)
 
     joint_pos_c = wp.transform_get_translation(body_q_c * joint_X_c[joint_idx])
     joint_pos_p = wp.transform_get_translation(body_q_p * joint_X_p[joint_idx])
     c_pos = joint_pos_c - joint_pos_p
 
-    q_c_rot = wp.transform_get_rotation(body_q_c)
-    q_p_rot = wp.transform_get_rotation(body_q_p)
-
     # Create a single temporary struct to build each axis
     axis_kin = JointAxisKinematics()
 
     # --- Positional Constraints (Axes 0, 1, 2) | Translation ---
-    lin_compliance = joint_linear_compliance[joint_idx]
+    lin_compliance = 0.1  # TODO: Fix the compliances
 
     # Axis 0: X translation
-    axis_kin.J_child = wp.spatial_vector(0.0, r_c[2], -r_c[1], 1.0, 0.0, 0.0)
-    axis_kin.J_parent = wp.spatial_vector(0.0, -r_p[2], r_p[1], -1.0, 0.0, 0.0)
+    axis_kin.J_child = wp.spatial_vector(1.0, 0.0, 0.0, 0.0, r_c[2], -r_c[1])
+    axis_kin.J_parent = wp.spatial_vector(-1.0, 0.0, 0.0, 0.0, -r_p[2], r_p[1])
     axis_kin.error = c_pos.x
     axis_kin.compliance = lin_compliance
     interaction.axis0 = axis_kin
 
     # Axis 1: Y translation
-    axis_kin.J_child = wp.spatial_vector(-r_c[2], 0.0, r_c[0], 0.0, 1.0, 0.0)
-    axis_kin.J_parent = wp.spatial_vector(r_p[2], 0.0, -r_p[0], 0.0, -1.0, 0.0)
+    axis_kin.J_child = wp.spatial_vector(0.0, 1.0, 0.0, -r_c[2], 0.0, r_c[0])
+    axis_kin.J_parent = wp.spatial_vector(0.0, -1.0, 0.0, r_p[2], 0.0, -r_p[0])
     axis_kin.error = c_pos.y
     interaction.axis1 = axis_kin
 
     # Axis 2: Z translation
-    axis_kin.J_child = wp.spatial_vector(r_c[1], -r_c[0], 0.0, 0.0, 0.0, 1.0)
-    axis_kin.J_parent = wp.spatial_vector(-r_p[1], r_p[0], 0.0, 0.0, 0.0, -1.0)
+    axis_kin.J_child = wp.spatial_vector(0.0, 0.0, 1.0, r_c[1], -r_c[0], 0.0)
+    axis_kin.J_parent = wp.spatial_vector(0.0, 0.0, -1.0, -r_p[1], r_p[0], 0.0)
     axis_kin.error = c_pos.z
     interaction.axis2 = axis_kin
 
     # --- Rotational Constraints (Axes 3, 4) | Swing ---
-    ang_compliance = joint_angular_compliance[joint_idx]
+    ang_compliance = 0.1
 
-    axis_start_idx = joint_axis_start[joint_idx]
+    axis_start_idx = joint_qd_start[joint_idx]
     axis = joint_axis[axis_start_idx]
-    axis_p_w = wp.quat_rotate(q_p_rot, axis)
-    b1_c, b2_c = orthogonal_basis(axis)
+
+    X_wp = body_q_p * joint_X_p[joint_idx]
+    X_wc = body_q_c * joint_X_c[joint_idx]
+
+    # Get the rotational part of those full transforms
+    q_wp_rot = wp.transform_get_rotation(X_wp)
+    q_wc_rot = wp.transform_get_rotation(X_wc)
+
+    axis_p_w = wp.quat_rotate(q_wp_rot, axis)
+
+    b1_local, b2_local = orthogonal_basis(axis)
 
     # Axis 3: First rotational constraint
-    b1_c_w = wp.quat_rotate(q_c_rot, b1_c)
-    b1_x_axis = wp.cross(axis_p_w, b1_c_w)
-    axis_kin.J_child = wp.spatial_vector(-b1_x_axis, wp.vec3())
-    axis_kin.J_parent = wp.spatial_vector(b1_x_axis, wp.vec3())
+    b1_c_w = wp.quat_rotate(q_wc_rot, b1_local)
     axis_kin.error = wp.dot(axis_p_w, b1_c_w)
+    b1_x_axis = wp.cross(axis_p_w, b1_c_w)
+    axis_kin.J_child = wp.spatial_vector(wp.vec3(), -b1_x_axis)
+    axis_kin.J_parent = wp.spatial_vector(wp.vec3(), b1_x_axis)
     axis_kin.compliance = ang_compliance
     interaction.axis3 = axis_kin
 
     # Axis 4: Second rotational constraint
-    b2_c_w = wp.quat_rotate(q_c_rot, b2_c)
-    b2_x_axis = wp.cross(axis_p_w, b2_c_w)
-    axis_kin.J_child = wp.spatial_vector(-b2_x_axis, wp.vec3())
-    axis_kin.J_parent = wp.spatial_vector(b2_x_axis, wp.vec3())
+    b2_c_w = wp.quat_rotate(q_wc_rot, b2_local)
     axis_kin.error = wp.dot(axis_p_w, b2_c_w)
+    b2_x_axis = wp.cross(axis_p_w, b2_c_w)
+    axis_kin.J_child = wp.spatial_vector(wp.vec3(), -b2_x_axis)
+    axis_kin.J_parent = wp.spatial_vector(wp.vec3(), b2_x_axis)
     interaction.axis4 = axis_kin
 
-    # Write the fully populated interaction data to global memory
     interactions[joint_idx] = interaction

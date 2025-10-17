@@ -1,6 +1,4 @@
 import warp as wp
-from warp.sim import ModelShapeGeometry
-from warp.sim import ModelShapeMaterials
 
 
 @wp.struct
@@ -51,57 +49,23 @@ def orthogonal_basis(axis: wp.vec3):
     return b1, b2
 
 
-@wp.func
-def compute_restitution_coefficient(
-    shape_a: wp.int32,
-    shape_b: wp.int32,
-    shape_materials: ModelShapeMaterials,
-) -> wp.float32:
-    """Computes the average coefficient of restitution for a contact pair."""
-    e = 0.0
-    if shape_a >= 0 and shape_b >= 0:
-        e_a = shape_materials.restitution[shape_a]
-        e_b = shape_materials.restitution[shape_b]
-        e = (e_a + e_b) * 0.5
-    elif shape_a >= 0:
-        e = shape_materials.restitution[shape_a]
-    elif shape_b >= 0:
-        e = shape_materials.restitution[shape_b]
-    return e
-
-
-@wp.func
-def compute_friction_coefficient(
-    shape_a: wp.int32,
-    shape_b: wp.int32,
-    shape_materials: ModelShapeMaterials,
-) -> wp.float32:
-    mu = 0.0
-    if shape_a >= 0 and shape_b >= 0:
-        mu_a = shape_materials.mu[shape_a]
-        mu_b = shape_materials.mu[shape_b]
-        mu = (mu_a + mu_b) * 0.5
-    elif shape_a >= 0:
-        mu = shape_materials.mu[shape_a]
-    elif shape_b >= 0:
-        mu = shape_materials.mu[shape_b]
-    return mu
-
-
 @wp.kernel
 def contact_interaction_kernel(
     # --- Inputs ---
     body_q: wp.array(dtype=wp.transform),
     body_com: wp.array(dtype=wp.vec3),
     shape_body: wp.array(dtype=wp.int32),
-    shape_geo: ModelShapeGeometry,
-    shape_materials: ModelShapeMaterials,
+    shape_thickness: wp.array(dtype=wp.float32),
+    shape_material_mu: wp.array(dtype=wp.float32),
+    shape_material_restitution: wp.array(dtype=wp.float32),
     contact_count: wp.array(dtype=wp.int32),
     contact_point0: wp.array(dtype=wp.vec3),
     contact_point1: wp.array(dtype=wp.vec3),
     contact_normal: wp.array(dtype=wp.vec3),
     contact_shape0: wp.array(dtype=wp.int32),
     contact_shape1: wp.array(dtype=wp.int32),
+    contact_thickness0: wp.array(dtype=wp.float32),
+    contact_thickness1: wp.array(dtype=wp.float32),
     # --- Single Output ---
     interactions: wp.array(dtype=ContactInteraction),
 ):
@@ -120,17 +84,11 @@ def contact_interaction_kernel(
     body_a = -1
     body_b = -1
 
-    # Contact thickness (default to 0.0)
-    thickness_a = 0.0
-    thickness_b = 0.0
-
     # Get body indices and thickness
     if shape_a >= 0:
         body_a = shape_body[shape_a]
-        thickness_a = shape_geo.thickness[shape_a]
     if shape_b >= 0:
         body_b = shape_body[shape_b]
-        thickness_b = shape_geo.thickness[shape_b]
 
     # Contact normal in world space
     n = contact_normal[tid]
@@ -146,12 +104,12 @@ def contact_interaction_kernel(
     # Get world-space contact points and lever arms (r_a, r_b)
     if body_a >= 0:
         X_wb_a = body_q[body_a]
-        offset_a = -thickness_a * n
+        offset_a = -contact_thickness0[tid] * n
         p_a = wp.transform_point(X_wb_a, contact_point0[tid]) + offset_a
         r_a = p_a - wp.transform_point(X_wb_a, body_com[body_a])
     if body_b >= 0:
         X_wb_b = body_q[body_b]
-        offset_b = thickness_b * n
+        offset_b = contact_thickness1[tid] * n
         p_b = wp.transform_point(X_wb_b, contact_point1[tid]) + offset_b
         r_b = p_b - wp.transform_point(X_wb_b, body_com[body_b])
 
@@ -163,70 +121,27 @@ def contact_interaction_kernel(
     interaction.body_a_idx = body_a
     interaction.body_b_idx = body_b
 
+    # interaction.penetration_depth = d
     interaction.penetration_depth = wp.dot(n, p_b - p_a)
 
     if interaction.penetration_depth <= 0:
         interaction.is_active = False
 
-    interaction.basis_a.normal = wp.spatial_vector(wp.cross(r_a, n), n)
-    interaction.basis_a.tangent1 = wp.spatial_vector(wp.cross(r_a, t1), t1)
-    interaction.basis_a.tangent2 = wp.spatial_vector(wp.cross(r_a, t2), t2)
+    interaction.basis_a.normal = wp.spatial_vector(n, wp.cross(r_a, n))
+    interaction.basis_a.tangent1 = wp.spatial_vector(t1, wp.cross(r_a, t1))
+    interaction.basis_a.tangent2 = wp.spatial_vector(t2, wp.cross(r_a, t2))
 
-    interaction.basis_b.normal = wp.spatial_vector(-wp.cross(r_b, n), -n)
-    interaction.basis_b.tangent1 = wp.spatial_vector(-wp.cross(r_b, t1), -t1)
-    interaction.basis_b.tangent2 = wp.spatial_vector(-wp.cross(r_b, t2), -t2)
+    interaction.basis_b.normal = wp.spatial_vector(-n, -wp.cross(r_b, n))
+    interaction.basis_b.tangent1 = wp.spatial_vector(-t1, -wp.cross(r_b, t1))
+    interaction.basis_b.tangent2 = wp.spatial_vector(-t2, -wp.cross(r_b, t2))
 
-    interaction.restitution_coeff = compute_restitution_coefficient(
-        shape_a, shape_b, shape_materials
-    )
-    interaction.friction_coeff = compute_friction_coefficient(shape_a, shape_b, shape_materials)
+    mu_a = shape_material_mu[shape_a]
+    mu_b = shape_material_mu[shape_b]
+    interaction.friction_coeff = (mu_a + mu_b) * 0.5
+
+    e_a = shape_material_restitution[shape_a]
+    e_b = shape_material_restitution[shape_b]
+    interaction.restitution_coeff = (e_a + e_b) * 0.5
 
     # Write the complete struct to the output array
     interactions[tid] = interaction
-
-
-@wp.kernel
-def disassemble_contact_interaction_kernel(
-    # --- Input ---
-    interactions: wp.array(dtype=ContactInteraction),
-    # --- Outputs ---
-    # Top-level properties
-    is_active: wp.array(dtype=wp.bool),
-    body_a_idx: wp.array(dtype=wp.int32),
-    body_b_idx: wp.array(dtype=wp.int32),
-    penetration_depth: wp.array(dtype=wp.float32),
-    restitution_coeff: wp.array(dtype=wp.float32),
-    friction_coeff: wp.array(dtype=wp.float32),
-    # Disassembled basis for body A
-    basis_a_normal: wp.array(dtype=wp.spatial_vector),
-    basis_a_tangent1: wp.array(dtype=wp.spatial_vector),
-    basis_a_tangent2: wp.array(dtype=wp.spatial_vector),
-    # Disassembled basis for body B
-    basis_b_normal: wp.array(dtype=wp.spatial_vector),
-    basis_b_tangent1: wp.array(dtype=wp.spatial_vector),
-    basis_b_tangent2: wp.array(dtype=wp.spatial_vector),
-):
-    tid = wp.tid()
-
-    # Read the full struct for the current thread from the input array.
-    interaction = interactions[tid]
-
-    # --- Write to the individual output arrays ---
-
-    # Write top-level properties
-    is_active[tid] = interaction.is_active
-    body_a_idx[tid] = interaction.body_a_idx
-    body_b_idx[tid] = interaction.body_b_idx
-    penetration_depth[tid] = interaction.penetration_depth
-    restitution_coeff[tid] = interaction.restitution_coeff
-    friction_coeff[tid] = interaction.friction_coeff
-
-    # Unpack the nested ContactBasis struct for body A
-    basis_a_normal[tid] = interaction.basis_a.normal
-    basis_a_tangent1[tid] = interaction.basis_a.tangent1
-    basis_a_tangent2[tid] = interaction.basis_a.tangent2
-
-    # Unpack the nested ContactBasis struct for body B
-    basis_b_normal[tid] = interaction.basis_b.normal
-    basis_b_tangent1[tid] = interaction.basis_b.tangent1
-    basis_b_tangent2[tid] = interaction.basis_b.tangent2

@@ -3,6 +3,7 @@ Axion physics engine implementation using Warp.
 """
 from typing import Optional
 
+import newton
 import numpy as np
 import scipy
 import warp as wp
@@ -12,10 +13,10 @@ from axion.optim import cr_solver
 from axion.optim import JacobiPreconditioner
 from axion.optim import MatrixFreeSystemOperator
 from axion.optim import MatrixSystemOperator
-from warp.sim import Control
-from warp.sim import Integrator
-from warp.sim import Model
-from warp.sim import State
+from newton import Control
+from newton import Model
+from newton import State
+from newton.solvers import SolverBase
 
 from .control_utils import apply_control
 from .dense_utils import get_system_matrix_numpy
@@ -30,7 +31,7 @@ from .linear_utils import compute_linear_system
 from .linesearch_utils import perform_linesearch
 
 
-class AxionEngine(Integrator):
+class AxionEngine(SolverBase):
     """
     The class implements a low-level physics solver.
     The engine implements a Non-Smooth Newton Method to solve
@@ -44,8 +45,8 @@ class AxionEngine(Integrator):
     def __init__(
         self,
         model: Model,
-        config: Optional[AxionEngineConfig],
-        logger: Optional[HDF5Logger | NullLogger],
+        config: Optional[AxionEngineConfig] = AxionEngineConfig(),
+        logger: Optional[HDF5Logger | NullLogger] = NullLogger(),
     ):
         """
         Initialize the physics engine for the given model and configuration.
@@ -55,10 +56,10 @@ class AxionEngine(Integrator):
             config: Configuration parameters for the engine of type EngineConfig.
             logger: Optional HDF5Logger or NullLogger for recording simulation data.
         """
-        super().__init__()
-        self.device = model.device
+        super().__init__(model)
+        # self.device = model.device
 
-        self.model = model
+        # self.model = model
         self.logger = logger
         self.config = config
 
@@ -141,13 +142,13 @@ class AxionEngine(Integrator):
         self.logger.log_wp_dataset("gen_mass", self.data.gen_mass)
         self.logger.log_wp_dataset("gen_inv_mass", self.data.gen_inv_mass)
 
-    def simulate(
+    def step(
         self,
-        model: Model,
-        state_in: State,
-        state_out: State,
+        state_in: newton.State,
+        state_out: newton.State,
+        control: newton.Control,
+        contacts: newton.Contacts,
         dt: float,
-        control: Control | None = None,
     ):
         """
         The primary method for running the physics simulation for a single time step.
@@ -160,9 +161,9 @@ class AxionEngine(Integrator):
             dt: The time step duration.
             control: Optional control inputs to be applied during the simulation step.
         """
-        apply_control(model, state_in, state_out, dt, control)
-        self.integrate_bodies(model, state_in, state_out, dt)
-        self.data.update_state_data(model, state_in, state_out)
+        apply_control(self.model, state_in, state_out, dt, control)
+        self.integrate_bodies(self.model, state_in, state_out, dt)
+        self.data.update_state_data(self.model, state_in, state_out, contacts)
 
         # TODO: Check the warm startup
         # self._lambda.zero_()

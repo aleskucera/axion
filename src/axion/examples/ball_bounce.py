@@ -1,6 +1,7 @@
 from importlib.resources import files
 
 import hydra
+import newton
 import warp as wp
 from axion import AbstractSimulator
 from axion import EngineConfig
@@ -24,11 +25,11 @@ class Simulator(AbstractSimulator):
     ):
         super().__init__(sim_config, render_config, exec_config, profile_config, engine_config)
 
-    def build_model(self) -> wp.sim.Model:
+    def build_model(self) -> newton.Model:
         FRICTION = 0.8
         RESTITUTION = 1.0
 
-        builder = wp.sim.ModelBuilder(up_vector=wp.vec3(0, 0, 1))
+        builder = newton.ModelBuilder(up_vector=wp.vec3(0, 0, 1))
 
         ball1 = builder.add_body(
             origin=wp.transform((0.0, 0.0, 2.0), wp.quat_identity()), name="ball1"
@@ -47,6 +48,7 @@ class Simulator(AbstractSimulator):
 
         builder.set_ground_plane(ke=10, kd=10, kf=0.0, mu=FRICTION, restitution=RESTITUTION)
         model = builder.finalize()
+        exit()
         return model
 
 
