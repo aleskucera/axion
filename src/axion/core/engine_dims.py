@@ -14,12 +14,14 @@ class EngineDimensions:
     # --- Primary Inputs ---
     N_b: int  # Number of bodies
     N_c: int  # Number of potential contacts
-    N_j: int  # Number of joints
+    N_rj: int  # Number of joints
+    N_sj: int   # Number of spherical joints
     N_alpha: int  # Number of linesearch steps
 
     # --- Constants ---
     DOF_PER_BODY: ClassVar[int] = 6
-    CON_PER_JOINT: ClassVar[int] = 5
+    CON_PER_REV_JOINT: ClassVar[int] = 5
+    CON_PER_SPH_JOINT: ClassVar[int] = 3
     CON_PER_FRICTION: ClassVar[int] = 2
 
     # --- Derived Total Dimensions ---
@@ -42,7 +44,7 @@ class EngineDimensions:
     @cached_property
     def joint_dim(self) -> int:
         """Dimension of joint constraints."""
-        return self.CON_PER_JOINT * self.N_j
+        return self.CON_PER_REV_JOINT * self.N_rj + self.CON_PER_SPH_JOINT * self.N_sj
 
     @cached_property
     def normal_dim(self) -> int:
