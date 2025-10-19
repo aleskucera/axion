@@ -53,26 +53,33 @@ def update_constraint_body_idx_kernel(
     joint_parent: wp.array(dtype=wp.int32),
     joint_child: wp.array(dtype=wp.int32),
     # --- Parameters ---
-    joint_count: wp.uint32,
+    n_rj: wp.int32,
+    n_sj: wp.int32,
     max_contact_count: wp.uint32,
     # --- Outputs ---
     constraint_body_idx: wp.array(dtype=wp.int32, ndim=2),
 ):
     constraint_idx = wp.tid()
-    nj = wp.int32(joint_count)
+    nj = n_rj + n_sj       # number of ALL joint constrains
     nc = wp.int32(max_contact_count)
 
     body_a = -1
     body_b = -1
 
-    # joint constraints part:
-    if constraint_idx < 5 * nj:
+    # revolute joint constraints part:
+    if constraint_idx < n_rj:
         joint_index = constraint_idx // 5
         body_a = joint_parent[joint_index]
         body_b = joint_child[joint_index]
+    # spherical joint constraints part:
+    elif constraint_idx < nj:
+        offset = n_rj * 5
+        joint_index = (constraint_idx - offset) // 3
+        body_a = joint_parent[joint_index]
+        body_b = joint_child[joint_index]
     # contact constraints part:
-    elif constraint_idx < 5 * nj + nc:
-        offset = 5 * nj
+    elif constraint_idx < nj + nc:
+        offset = nj
         contact_index = (constraint_idx - offset) // 1
 
         shape_a = contact_shape0[contact_index]
@@ -85,7 +92,7 @@ def update_constraint_body_idx_kernel(
                 body_b = shape_body[shape_b]
     # friction constraints part:
     else:
-        offset = 5 * nj + nc
+        offset = nj + nc
         contact_index = (constraint_idx - offset) // 2
         shape_a = contact_shape0[contact_index]
         shape_b = contact_shape1[contact_index]

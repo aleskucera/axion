@@ -1,7 +1,8 @@
 import warp as wp
 from axion.constraints import contact_constraint_kernel
 from axion.constraints import friction_constraint_kernel
-from axion.constraints import joint_constraint_kernel
+from axion.constraints import revolute_joint_constraint_kernel
+from axion.constraints import spherical_joint_constraint_kernel
 from axion.constraints import unconstrained_dynamics_kernel
 from axion.types import SpatialInertia
 from axion.types import to_spatial_momentum
@@ -108,20 +109,39 @@ def compute_linear_system(
     )
 
     wp.launch(
-        kernel=joint_constraint_kernel,
-        dim=(dims.joint_dim, dims.N_j),
+        kernel=revolute_joint_constraint_kernel,
+        dim=(dims.CON_PER_REV_JOINT, dims.N_rj),
         inputs=[
             data.body_qd,
-            data.lambda_j,
-            data.joint_interaction,
+            data.lambda_rj,
+            data.revolute_joint_interaction,
             dt,
             config.joint_stabilization_factor,
         ],
         outputs=[
             data.g_v,
-            data.h_j,
-            data.J_j_values,
-            data.C_j_values,
+            data.h_rj,
+            data.J_rj_values,
+            data.C_rj_values,
+        ],
+        device=device,
+    )
+
+    wp.launch(
+        kernel=spherical_joint_constraint_kernel,
+        dim=(dims.CON_PER_SPH_JOINT, dims.N_sj),
+        inputs=[
+            data.body_qd,
+            data.lambda_sj,
+            data.spherical_joint_interaction,
+            dt,
+            config.joint_stabilization_factor,
+        ],
+        outputs=[
+            data.g_v,
+            data.h_sj,
+            data.J_sj_values,
+            data.C_sj_values,
         ],
         device=device,
     )

@@ -2,25 +2,28 @@ import warp as wp
 from axion.types import get_joint_axis_kinematics
 from axion.types import JointInteraction
 
-
-@wp.kernel
-def joint_constraint_kernel(
+@wp.func
+def joint_constraints(
     # --- Iterative Inputs ---
     body_qd: wp.array(dtype=wp.spatial_vector),
     lambda_j: wp.array(dtype=wp.float32),
     interactions: wp.array(dtype=JointInteraction),
-    # --- Parameters ---
     dt: wp.float32,
     joint_stabilization_factor: wp.float32,
+    constraint_axis_idx: wp.int32,
+    joint_idx: wp.int32,
+    con_per_joint: wp.uint32,
     # --- Outputs ---
     g: wp.array(dtype=wp.spatial_vector),
     h_j: wp.array(dtype=wp.float32),
     J_j_values: wp.array(dtype=wp.spatial_vector, ndim=2),
     C_j_values: wp.array(dtype=wp.float32),
 ):
-    # Each thread processes one constraint axis for one joint
-    constraint_axis_idx, joint_idx = wp.tid()
-
+    """ 
+    Helper function to compute the joint constraint residuals, Jacobians
+    and compliances for ANY of the supported joint types.
+    """
+    
     interaction = interactions[joint_idx]
 
     if not interaction.is_active:
@@ -39,7 +42,7 @@ def joint_constraint_kernel(
     grad_c = wp.dot(axis_data.J_child, body_qd_c) + wp.dot(axis_data.J_parent, body_qd_p)
     bias = joint_stabilization_factor / dt * axis_data.error
 
-    global_constraint_idx = interaction.joint_constraints_offset + constraint_axis_idx
+    global_constraint_idx = joint_idx * con_per_joint + constraint_axis_idx
     lambda_current = lambda_j[global_constraint_idx]
 
     h_j[global_constraint_idx] = grad_c + bias
@@ -52,6 +55,69 @@ def joint_constraint_kernel(
         wp.atomic_add(g, parent_idx, -axis_data.J_parent * lambda_current)
 
 
+@wp.kernel
+def revolute_joint_constraint_kernel(
+    # --- Iterative Inputs ---
+    body_qd: wp.array(dtype=wp.spatial_vector),
+    lambda_j: wp.array(dtype=wp.float32),
+    revolute_interactions: wp.array(dtype=JointInteraction),
+    # --- Parameters ---
+    dt: wp.float32,
+    joint_stabilization_factor: wp.float32,
+    # --- Outputs ---
+    g: wp.array(dtype=wp.spatial_vector),
+    h_rj: wp.array(dtype=wp.float32),
+    J_rj_values: wp.array(dtype=wp.spatial_vector, ndim=2),
+    C_rj_values: wp.array(dtype=wp.float32),
+):
+    # Each thread processes one constraint axis for one joint
+    constraint_axis_idx, joint_idx = wp.tid()
+
+    joint_constraints(body_qd,
+                    lambda_j,
+                    revolute_interactions,
+                    dt,
+                    joint_stabilization_factor,
+                    constraint_axis_idx,
+                    joint_idx,
+                    5,      # Constraints per revolute joint
+                    g,
+                    h_rj,
+                    J_rj_values,
+                    C_rj_values)
+
+@wp.kernel
+def spherical_joint_constraint_kernel(
+    # --- Iterative Inputs ---
+    body_qd: wp.array(dtype=wp.spatial_vector),
+    lambda_j: wp.array(dtype=wp.float32),
+    spherical_interactions: wp.array(dtype=JointInteraction),
+    # --- Parameters ---
+    dt: wp.float32,
+    joint_stabilization_factor: wp.float32,
+    # --- Outputs ---
+    g: wp.array(dtype=wp.spatial_vector),
+    h_sj: wp.array(dtype=wp.float32),
+    J_sj_values: wp.array(dtype=wp.spatial_vector, ndim=2),
+    C_sj_values: wp.array(dtype=wp.float32),
+):
+    # Each thread processes one constraint axis for one joint
+    constraint_axis_idx, joint_idx = wp.tid()
+
+    joint_constraints(body_qd,
+                lambda_j,
+                spherical_interactions,
+                dt,
+                joint_stabilization_factor,
+                constraint_axis_idx,
+                joint_idx,
+                3,    # Constraints per spherical joint
+                g,
+                h_sj,
+                J_sj_values,
+                C_sj_values)
+
+#TODO: generalize for spherical joints as well
 @wp.kernel
 def linesearch_joint_residuals_kernel(
     alphas: wp.array(dtype=wp.float32),

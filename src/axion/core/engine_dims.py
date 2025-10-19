@@ -59,9 +59,14 @@ class EngineDimensions:
 
     # --- Per-Constraint-Type Offsets ---
     @cached_property
-    def joint_offset(self) -> int:
-        """Start offset of joint constraints block."""
+    def revolute_joint_offset(self) -> int:
+        """Start offset of revolute joint constraints block."""
         return 0
+
+    @cached_property
+    def spherical_joint_offset(self) -> int:
+        """Start offset of revolute joint constraints block."""
+        return self.CON_PER_REV_JOINT * self.N_rj
 
     @cached_property
     def normal_offset(self) -> int:
@@ -75,9 +80,14 @@ class EngineDimensions:
 
     # --- Slicing Helper Properties ---
     @cached_property
-    def joint_slice(self) -> slice:
+    def revolute_joint_slice(self) -> slice:
         """Returns a slice object for the joint-constraint block."""
-        return slice(self.joint_offset, self.normal_offset)
+        return slice(self.revolute_joint_offset, self.spherical_joint_offset)
+    
+    @cached_property
+    def spherical_joint_slice(self) -> slice:
+        """Returns a slice object for the joint-constraint block."""
+        return slice(self.spherical_joint_offset, self.normal_offset)
 
     @cached_property
     def normal_slice(self) -> slice:

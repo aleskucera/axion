@@ -2,7 +2,7 @@ import numpy as np
 import warp as wp
 from axion.logging import HDF5Logger
 from axion.logging import HDF5Reader
-from axion.types import joint_interaction_kernel
+from axion.types import joint_interaction_kernel    #TODO
 from axion.types import JointInteraction
 
 # --- Setup ---

@@ -21,9 +21,8 @@ class JointInteraction:
     parent_idx: wp.int32
     child_idx: wp.int32
 
-    joint_idx: wp.int32          # Index of the joint in the global engine array
-    num_constraints: wp.int32       # Number of DOFs, that are constrained
-    joint_constraints_offset: wp.int32 # Offset in the global constraint array
+    # Number of DOFs, that are constrained by this joint
+    num_constraints: wp.int32       
 
     axis0: JointAxisKinematics
     axis1: JointAxisKinematics
@@ -189,23 +188,8 @@ def set_spherical_interaction_constraints(
 
     return interaction
 
-@wp.func
-def compute_joint_constraints_offset(
-    interactions: wp.array(dtype=JointInteraction),
-    joint_idx: wp.int32,
-) -> wp.int32:
-    """Computes the starting offset of the joint constraints in the global constraint array"""
-    if joint_idx == 0:
-        offset = 0
-    else:
-        offset = interactions[joint_idx-1].joint_constraints_offset
-        if interactions[joint_idx-1].is_active:
-            offset += interactions[joint_idx-1].num_constraints
-    return offset
-
-
 @wp.kernel
-def joint_interaction_kernel(
+def revolute_joint_interaction_kernel(
     # --- Inputs (same as before) ---
     body_q: wp.array(dtype=wp.transform),
     body_com: wp.array(dtype=wp.vec3),
@@ -220,30 +204,28 @@ def joint_interaction_kernel(
     joint_linear_compliance: wp.array(dtype=wp.float32),
     joint_angular_compliance: wp.array(dtype=wp.float32),
     # --- Output ---
-    interactions: wp.array(dtype=JointInteraction),
+    revolute_interactions: wp.array(dtype=JointInteraction),
 ):
     joint_idx = wp.tid()
     j_type = joint_type[joint_idx]
     parent_idx = joint_parent[joint_idx]
     child_idx = joint_child[joint_idx]
 
+    #Early exit for joints of different type:
+    if j_type != wp.sim.JOINT_REVOLUTE:
+        # skip with no JointInteraction created
+        return  
+
     # Early exit for disabled or invalid joints
-    if (
-        joint_enabled[joint_idx] == 0
-        or (j_type != wp.sim.JOINT_REVOLUTE and j_type != wp.sim.JOINT_BALL)
-        or parent_idx < 0
-        or child_idx < 0
-    ):
+    if (joint_enabled[joint_idx] == 0 or parent_idx < 0 or child_idx < 0):
         # return an inactive interaction
         interaction = JointInteraction()
-        interaction.joint_idx = joint_idx
         interaction.is_active = False
-        interaction.joint_constraints_offset = compute_joint_constraints_offset(interactions, joint_idx)
-        interactions[joint_idx] = interaction
+        revolute_interactions[joint_idx] = interaction
         return
 
+    # Continue with eligible revolute joint
     interaction = JointInteraction()
-    interaction.joint_idx = joint_idx
     interaction.is_active = True
     interaction.parent_idx = parent_idx
     interaction.child_idx = child_idx
@@ -267,37 +249,100 @@ def joint_interaction_kernel(
     q_p_rot = wp.transform_get_rotation(body_q_p)  # parent's rotation (quaternions)
 
     # Call appropriate functions for the joint type
-    if j_type == wp.sim.JOINT_REVOLUTE:
-        interaction = set_revolute_interaction_constraints(
-            interaction,
-            joint_idx,
-            joint_axis_start,
-            joint_axis,
-            c_pos,
-            r_c,
-            r_p,
-            q_c_rot,
-            q_p_rot,
-            joint_linear_compliance,
-            joint_angular_compliance,
-        )
-    elif j_type == wp.sim.JOINT_BALL:
-        interaction = set_spherical_interaction_constraints(
-            interaction,
-            joint_idx,
-            joint_axis_start,
-            joint_axis,
-            c_pos,
-            r_c,
-            r_p,
-            q_c_rot,
-            q_p_rot,
-            joint_linear_compliance,
-            joint_angular_compliance,
-        )
-
-    # Compute the offset in the global constraint array
-    interaction.joint_constraints_offset = compute_joint_constraints_offset(interactions, joint_idx)
+    interaction = set_revolute_interaction_constraints(
+        interaction,
+        joint_idx,
+        joint_axis_start,
+        joint_axis,
+        c_pos,
+        r_c,
+        r_p,
+        q_c_rot,
+        q_p_rot,
+        joint_linear_compliance,
+        joint_angular_compliance,
+    )
 
     # Write the fully populated interaction data to global memory
-    interactions[joint_idx] = interaction
+    revolute_interactions[joint_idx] = interaction
+
+
+@wp.kernel
+def spherical_joint_interaction_kernel(
+    # --- Inputs (same as before) ---
+    body_q: wp.array(dtype=wp.transform),
+    body_com: wp.array(dtype=wp.vec3),
+    joint_type: wp.array(dtype=wp.int32),
+    joint_enabled: wp.array(dtype=wp.int32),
+    joint_parent: wp.array(dtype=wp.int32),
+    joint_child: wp.array(dtype=wp.int32),
+    joint_X_p: wp.array(dtype=wp.transform),
+    joint_X_c: wp.array(dtype=wp.transform),
+    joint_axis_start: wp.array(dtype=wp.int32),
+    joint_axis: wp.array(dtype=wp.vec3),
+    joint_linear_compliance: wp.array(dtype=wp.float32),
+    joint_angular_compliance: wp.array(dtype=wp.float32),
+    # --- Output ---
+    spherical_interactions: wp.array(dtype=JointInteraction),
+):
+    joint_idx = wp.tid()
+    j_type = joint_type[joint_idx]
+    parent_idx = joint_parent[joint_idx]
+    child_idx = joint_child[joint_idx]
+
+    #Early exit for joints of different type:
+    if j_type != wp.sim.JOINT_BALL:
+        # skip with no JointInteraction created
+        return  
+
+    # Early exit for disabled or invalid joints
+    if (joint_enabled[joint_idx] == 0 or parent_idx < 0 or child_idx < 0):
+        # return an inactive interaction
+        interaction = JointInteraction()
+        interaction.is_active = False
+        spherical_interactions[joint_idx] = interaction
+        return
+
+    # Continue with eligible revolute joint
+    interaction = JointInteraction()
+    interaction.is_active = True
+    interaction.parent_idx = parent_idx
+    interaction.child_idx = child_idx
+
+    # --- Common Kinematics (depend on body_q) ---
+    body_q_c = body_q[child_idx]  # child's transformation
+    body_q_p = body_q[parent_idx]  # parent's transformation
+
+    r_c = compute_joint_kinematics(
+        body_q_c, joint_X_c[joint_idx], body_com[child_idx]
+    )  # child link's center of mass position vector
+    r_p = compute_joint_kinematics(
+        body_q_p, joint_X_p[joint_idx], body_com[parent_idx]
+    )  # parent link's center of mass position vector
+
+    joint_pos_c = wp.transform_get_translation(body_q_c * joint_X_c[joint_idx])
+    joint_pos_p = wp.transform_get_translation(body_q_p * joint_X_p[joint_idx])
+    c_pos = joint_pos_c - joint_pos_p  # joint position
+
+    q_c_rot = wp.transform_get_rotation(body_q_c)  # child's rotation (quaternions)
+    q_p_rot = wp.transform_get_rotation(body_q_p)  # parent's rotation (quaternions)
+
+    # Call appropriate functions for the joint type
+    interaction = set_spherical_interaction_constraints(
+        interaction,
+        joint_idx,
+        joint_axis_start,
+        joint_axis,
+        c_pos,
+        r_c,
+        r_p,
+        q_c_rot,
+        q_p_rot,
+        joint_linear_compliance,
+        joint_angular_compliance,
+    )
+
+    # Write the fully populated interaction data to global memory
+    spherical_interactions[joint_idx] = interaction
+
+#TODO: there is some duplication between the two joint interaction kernels above. Consider refactoring later.

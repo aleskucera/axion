@@ -8,7 +8,8 @@ from axion.constraints import update_constraint_body_idx_kernel
 from axion.types import assemble_spatial_inertia_kernel
 from axion.types import contact_interaction_kernel
 from axion.types import ContactInteraction
-from axion.types import joint_interaction_kernel
+from axion.types import revolute_joint_interaction_kernel
+from axion.types import spherical_joint_interaction_kernel
 from axion.types import JointInteraction
 from axion.types import SpatialInertia
 from warp.sim import Model
@@ -54,7 +55,8 @@ class EngineArrays:
 
     gen_mass: wp.array  # Generalized mass properties
     gen_inv_mass: wp.array  # Inverse generalized mass properties
-    joint_interaction: wp.array  # Joint interaction data
+    revolute_joint_interaction: wp.array  # Joint interaction data
+    spherical_joint_interaction: wp.array  # Joint interaction data
     contact_interaction: wp.array  # Contact interaction data
 
     # --- Linesearch specific arrays (always allocated, may be empty) ---
@@ -92,9 +94,14 @@ class EngineArrays:
 
     # --- Constraint-specific views ---
     @cached_property
-    def h_j(self) -> Optional[wp.array]:
-        """Joint constraint residuals."""
-        return self.h[self.dims.joint_slice] if self.dims.N_j > 0 else None
+    def h_rj(self) -> Optional[wp.array]:
+        """Revolute Joint constraint residuals."""
+        return self.h[self.dims.revolute_joint_slice] if self.dims.N_rj > 0 else None
+    
+    @cached_property
+    def h_sj(self) -> Optional[wp.array]:
+        """Spherical Joint constraint residuals."""
+        return self.h[self.dims.spherical_joint_slice] if self.dims.N_sj > 0 else None
 
     @cached_property
     def h_n(self) -> Optional[wp.array]:
@@ -107,9 +114,14 @@ class EngineArrays:
         return self.h[self.dims.friction_slice] if self.dims.N_c > 0 else None
 
     @cached_property
-    def J_j_values(self) -> Optional[wp.array]:
-        """Joint Jacobian values."""
-        return self.J_values[self.dims.joint_slice] if self.dims.N_j > 0 else None
+    def J_rj_values(self) -> Optional[wp.array]:
+        """Revolute Joint Jacobian values."""
+        return self.J_values[self.dims.revolute_joint_slice] if self.dims.N_rj > 0 else None
+    
+    @cached_property
+    def J_sj_values(self) -> Optional[wp.array]:
+        """Spherical Joint Jacobian values."""
+        return self.J_values[self.dims.spherical_joint_slice] if self.dims.N_sj > 0 else None
 
     @cached_property
     def J_n_values(self) -> Optional[wp.array]:
@@ -122,9 +134,14 @@ class EngineArrays:
         return self.J_values[self.dims.friction_slice] if self.dims.N_c > 0 else None
 
     @cached_property
-    def C_j_values(self) -> Optional[wp.array]:
-        """Joint compliance values."""
-        return self.C_values[self.dims.joint_slice] if self.dims.N_j > 0 else None
+    def C_rj_values(self) -> Optional[wp.array]:
+        """Revolute joint compliance values."""
+        return self.C_values[self.dims.revolute_joint_slice] if self.dims.N_rj > 0 else None
+    
+    @cached_property
+    def C_sj_values(self) -> Optional[wp.array]:
+        """Spherical Joint compliance values."""
+        return self.C_values[self.dims.spherical_joint_slice] if self.dims.N_sj > 0 else None
 
     @cached_property
     def C_n_values(self) -> Optional[wp.array]:
@@ -137,9 +154,14 @@ class EngineArrays:
         return self.C_values[self.dims.friction_slice] if self.dims.N_c > 0 else None
 
     @cached_property
-    def lambda_j(self) -> Optional[wp.array]:
-        """Joint constraint impulses."""
-        return self._lambda[self.dims.joint_slice] if self.dims.N_j > 0 else None
+    def lambda_rj(self) -> Optional[wp.array]:
+        """Revolute joint constraint impulses."""
+        return self._lambda[self.dims.revolute_joint_slice] if self.dims.N_rj > 0 else None
+    
+    @cached_property
+    def lambda_sj(self) -> Optional[wp.array]:
+        """Spherical joint constraint impulses."""
+        return self._lambda[self.dims.spherical_joint_slice] if self.dims.N_sj > 0 else None
 
     @cached_property
     def lambda_n(self) -> Optional[wp.array]:
@@ -152,9 +174,14 @@ class EngineArrays:
         return self._lambda[self.dims.friction_slice] if self.dims.N_c > 0 else None
 
     @cached_property
-    def lambda_j_prev(self) -> Optional[wp.array]:
-        """Previous joint constraint impulses."""
-        return self.lambda_prev[self.dims.joint_slice] if self.dims.N_j > 0 else None
+    def lambda_rj_prev(self) -> Optional[wp.array]:
+        """Previous revolute joint constraint impulses."""
+        return self.lambda_prev[self.dims.revolute_joint_slice] if self.dims.N_rj > 0 else None
+    
+    @cached_property
+    def lambda_sj_prev(self) -> Optional[wp.array]:
+        """Previous spherical joint constraint impulses."""
+        return self.lambda_prev[self.dims.spherical_joint_slice] if self.dims.N_sj > 0 else None
 
     @cached_property
     def lambda_n_prev(self) -> Optional[wp.array]:
@@ -167,9 +194,14 @@ class EngineArrays:
         return self.lambda_prev[self.dims.friction_slice] if self.dims.N_c > 0 else None
 
     @cached_property
-    def delta_lambda_j(self) -> Optional[wp.array]:
-        """Change in joint impulses."""
-        return self.delta_lambda[self.dims.joint_slice] if self.dims.N_j > 0 else None
+    def delta_lambda_rj(self) -> Optional[wp.array]:
+        """Change in revolute joint impulses."""
+        return self.delta_lambda[self.dims.revolute_joint_slice] if self.dims.N_rj > 0 else None
+    
+    @cached_property
+    def delta_lambda_sj(self) -> Optional[wp.array]:
+        """Change in spherical joint impulses."""
+        return self.delta_lambda[self.dims.spherical_joint_slice] if self.dims.N_sj > 0 else None
 
     @cached_property
     def delta_lambda_n(self) -> Optional[wp.array]:
@@ -203,10 +235,16 @@ class EngineArrays:
             return self.res_alpha[:, self.dims.dyn_dim :]
 
     @cached_property
-    def h_alpha_j(self) -> Optional[wp.array]:
-        """Linesearch joint constraint residuals."""
+    def h_alpha_rj(self) -> Optional[wp.array]:
+        """Linesearch revolute joint constraint residuals."""
         if self.has_linesearch:
-            return self.h_alpha[:, self.dims.joint_slice] if self.dims.N_j > 0 else None
+            return self.h_alpha[:, self.dims.revolute_joint_slice] if self.dims.N_rj > 0 else None
+        
+    @cached_property
+    def h_alpha_sj(self) -> Optional[wp.array]:
+        """Linesearch spherical joint constraint residuals."""
+        if self.has_linesearch:
+            return self.h_alpha[:, self.dims.spherical_joint_slice] if self.dims.N_sj > 0 else None
 
     @cached_property
     def h_alpha_n(self) -> Optional[wp.array]:
@@ -297,8 +335,8 @@ class EngineArrays:
         )
 
         wp.launch(
-            kernel=joint_interaction_kernel,
-            dim=self.dims.N_j,
+            kernel=revolute_joint_interaction_kernel,
+            dim=self.dims.N_j,      # <-- yes this is correct, kernel internally processes revolute joints only
             inputs=[
                 self.body_q,
                 model.body_com,
@@ -314,10 +352,34 @@ class EngineArrays:
                 model.joint_angular_compliance,
             ],
             outputs=[
-                self.joint_interaction,
+                self.revolute_joint_interaction,
             ],
             device=self.device,
         )
+
+        wp.launch(
+            kernel=spherical_joint_interaction_kernel,
+            dim=self.dims.N_j,  # <-- yes this is correct, kernel internally processes spherical joints only
+            inputs=[
+                self.body_q,
+                model.body_com,
+                model.joint_type,
+                model.joint_enabled,
+                model.joint_parent,
+                model.joint_child,
+                model.joint_X_p,
+                model.joint_X_c,
+                model.joint_axis_start,
+                model.joint_axis,
+                model.joint_linear_compliance,
+                model.joint_angular_compliance,
+            ],
+            outputs=[
+                self.spherical_joint_interaction,
+            ],
+            device=self.device,
+        )
+
 
         wp.launch(
             kernel=update_constraint_body_idx_kernel,
@@ -328,7 +390,8 @@ class EngineArrays:
                 model.rigid_contact_shape1,
                 model.joint_parent,
                 model.joint_child,
-                self.dims.N_j,
+                self.dims.N_rj,
+                self.dims.N_sj,
                 self.dims.N_c,
             ],
             outputs=[
@@ -388,7 +451,8 @@ def create_engine_arrays(
 
     gen_mass = _empty(dims.N_b, SpatialInertia)
     gen_inv_mass = _empty(dims.N_b, SpatialInertia)
-    joint_interaction = _empty(dims.N_j, JointInteraction)
+    revolute_joint_interaction = _empty(dims.N_rj, JointInteraction)
+    spherical_joint_interaction = _empty(dims.N_sj, JointInteraction)
     contact_interaction = _empty(dims.N_c, ContactInteraction)
 
     # --- Arrays for linesearch ---
@@ -434,7 +498,8 @@ def create_engine_arrays(
         b=b,
         gen_mass=gen_mass,
         gen_inv_mass=gen_inv_mass,
-        joint_interaction=joint_interaction,
+        revolute_joint_interaction=revolute_joint_interaction,
+        spherical_joint_interaction=spherical_joint_interaction,
         contact_interaction=contact_interaction,
         alpha=alpha,
         alphas=alphas_array,
