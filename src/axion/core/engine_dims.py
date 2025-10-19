@@ -14,8 +14,9 @@ class EngineDimensions:
     # --- Primary Inputs ---
     N_b: int  # Number of bodies
     N_c: int  # Number of potential contacts
-    N_rj: int  # Number of joints
+    N_rj: int  # Number of revolute joints
     N_sj: int   # Number of spherical joints
+    N_j: int  # Total number of joints
     N_alpha: int  # Number of linesearch steps
 
     # --- Constants ---

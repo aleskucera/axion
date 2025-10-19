@@ -65,10 +65,12 @@ def update_constraint_body_idx_kernel(
     body_a = -1
     body_b = -1
 
+    # joint constraints part:
     if constraint_idx < 5 * nj:
         joint_index = constraint_idx // 5
         body_a = joint_parent[joint_index]
         body_b = joint_child[joint_index]
+    # contact constraints part:
     elif constraint_idx < 5 * nj + nc:
         offset = 5 * nj
         contact_index = (constraint_idx - offset) // 1
@@ -81,7 +83,7 @@ def update_constraint_body_idx_kernel(
                 body_a = shape_body[shape_a]
             if shape_b >= 0:
                 body_b = shape_body[shape_b]
-
+    # friction constraints part:
     else:
         offset = 5 * nj + nc
         contact_index = (constraint_idx - offset) // 2

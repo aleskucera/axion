@@ -39,7 +39,7 @@ def joint_constraint_kernel(
     grad_c = wp.dot(axis_data.J_child, body_qd_c) + wp.dot(axis_data.J_parent, body_qd_p)
     bias = joint_stabilization_factor / dt * axis_data.error
 
-    global_constraint_idx = joint_idx * 5 + constraint_axis_idx
+    global_constraint_idx = interaction.joint_constraints_offset + constraint_axis_idx
     lambda_current = lambda_j[global_constraint_idx]
 
     h_j[global_constraint_idx] = grad_c + bias
@@ -70,9 +70,10 @@ def linesearch_joint_residuals_kernel(
 ):
     # Each thread processes one constraint axis for one joint
     alpha_idx, constraint_axis_idx, joint_idx = wp.tid()
-    global_constraint_idx = joint_idx * 5 + constraint_axis_idx
 
     interaction = interactions[joint_idx]
+    global_constraint_idx = joint_idx * interaction.num_constraints + constraint_axis_idx
+
     alpha = alphas[alpha_idx]
 
     if not interaction.is_active:

@@ -44,6 +44,8 @@ class AxionEngine(Integrator):
         self.dims = EngineDimensions(
             N_b=self.model.body_count,
             N_c=self.model.rigid_contact_max,
+            N_rj=(self.model.joint_type.numpy() == wp.sim.JOINT_REVOLUTE).sum(),
+            N_sj=(self.model.joint_type.numpy() == wp.sim.JOINT_BALL).sum(),
             N_j=self.model.joint_count,
             N_alpha=self.config.linesearch_steps,
         )

@@ -109,7 +109,7 @@ def compute_linear_system(
 
     wp.launch(
         kernel=joint_constraint_kernel,
-        dim=(5, dims.N_j),
+        dim=(dims.joint_dim, dims.N_j),
         inputs=[
             data.body_qd,
             data.lambda_j,

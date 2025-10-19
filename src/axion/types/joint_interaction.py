@@ -21,8 +21,9 @@ class JointInteraction:
     parent_idx: wp.int32
     child_idx: wp.int32
 
-    # Number of DOFs, that are constrained
-    num_constraints: wp.int32
+    joint_idx: wp.int32          # Index of the joint in the global engine array
+    num_constraints: wp.int32       # Number of DOFs, that are constrained
+    joint_constraints_offset: wp.int32 # Offset in the global constraint array
 
     axis0: JointAxisKinematics
     axis1: JointAxisKinematics
@@ -188,6 +189,20 @@ def set_spherical_interaction_constraints(
 
     return interaction
 
+@wp.func
+def compute_joint_constraints_offset(
+    interactions: wp.array(dtype=JointInteraction),
+    joint_idx: wp.int32,
+) -> wp.int32:
+    """Computes the starting offset of the joint constraints in the global constraint array"""
+    if joint_idx == 0:
+        offset = 0
+    else:
+        offset = interactions[joint_idx-1].joint_constraints_offset
+        if interactions[joint_idx-1].is_active:
+            offset += interactions[joint_idx-1].num_constraints
+    return offset
+
 
 @wp.kernel
 def joint_interaction_kernel(
@@ -221,11 +236,14 @@ def joint_interaction_kernel(
     ):
         # return an inactive interaction
         interaction = JointInteraction()
+        interaction.joint_idx = joint_idx
         interaction.is_active = False
+        interaction.joint_constraints_offset = compute_joint_constraints_offset(interactions, joint_idx)
         interactions[joint_idx] = interaction
         return
 
     interaction = JointInteraction()
+    interaction.joint_idx = joint_idx
     interaction.is_active = True
     interaction.parent_idx = parent_idx
     interaction.child_idx = child_idx
@@ -247,7 +265,6 @@ def joint_interaction_kernel(
 
     q_c_rot = wp.transform_get_rotation(body_q_c)  # child's rotation (quaternions)
     q_p_rot = wp.transform_get_rotation(body_q_p)  # parent's rotation (quaternions)
-    # print(type(q_c_rot))
 
     # Call appropriate functions for the joint type
     if j_type == wp.sim.JOINT_REVOLUTE:
@@ -278,6 +295,9 @@ def joint_interaction_kernel(
             joint_linear_compliance,
             joint_angular_compliance,
         )
+
+    # Compute the offset in the global constraint array
+    interaction.joint_constraints_offset = compute_joint_constraints_offset(interactions, joint_idx)
 
     # Write the fully populated interaction data to global memory
     interactions[joint_idx] = interaction
