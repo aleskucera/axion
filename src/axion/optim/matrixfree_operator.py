@@ -57,7 +57,7 @@ def kernel_J_transpose_matvec(
 
 @wp.kernel
 def kernel_inv_mass_matvec(
-    gen_inv_mass: wp.array(dtype=SpatialInertia),
+    inv_sp_inertia: wp.array(dtype=SpatialInertia),
     in_vec: wp.array(dtype=wp.spatial_vector),
     out_vec: wp.array(dtype=wp.spatial_vector),
 ):
@@ -73,7 +73,7 @@ def kernel_inv_mass_matvec(
     """
     body_idx = wp.tid()
 
-    out_vec[body_idx] = to_spatial_momentum(gen_inv_mass[body_idx], in_vec[body_idx])
+    out_vec[body_idx] = to_spatial_momentum(inv_sp_inertia[body_idx], in_vec[body_idx])
 
 
 @wp.kernel
@@ -198,7 +198,7 @@ class MatrixFreeSystemOperator(LinearOperator):
             kernel=kernel_inv_mass_matvec,
             dim=self.engine.dims.N_b,
             inputs=[
-                self.engine.data.gen_inv_mass,
+                self.engine.data.M_inv,
                 self._tmp_dyn_vec,
             ],
             outputs=[self._tmp_dyn_vec],

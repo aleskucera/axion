@@ -1,5 +1,5 @@
 import warp as wp
-from warp.sim import Model
+from newton import Model
 
 from .engine_config import EngineConfig
 from .engine_data import EngineArrays
@@ -64,8 +64,8 @@ def update_body_q_kernel(
 ):
     body_idx = wp.tid()
 
-    w = wp.spatial_top(body_qd[body_idx])
-    v = wp.spatial_bottom(body_qd[body_idx])
+    v = wp.spatial_top(body_qd[body_idx])
+    w = wp.spatial_bottom(body_qd[body_idx])
 
     x_prev = wp.transform_get_translation(body_q_prev[body_idx])
     r_prev = wp.transform_get_rotation(body_q_prev[body_idx])

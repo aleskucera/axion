@@ -1,21 +1,22 @@
-"""
-An abstract base class for running a Warp-based physics simulation.
-"""
 import math
 from abc import ABC
 from abc import abstractmethod
 from dataclasses import dataclass
 from typing import Optional
 
+import newton
 import warp as wp
-import warp.sim.render
 from axion.logging import HDF5Logger
 from axion.logging import NullLogger
+from newton import Model
+from newton.solvers import SolverFeatherstone
+from newton.solvers import SolverSemiImplicit
+from newton.solvers import SolverXPBD
 from tqdm import tqdm
 
 from .engine import AxionEngine
-from .engine_config import EngineConfig
 from .engine_config import AxionEngineConfig
+from .engine_config import EngineConfig
 from .engine_config import FeatherstoneEngineConfig
 from .engine_config import SemiImplicitEngineConfig
 from .engine_config import XPBDEngineConfig
@@ -139,25 +140,26 @@ class AbstractSimulator(ABC):
         if isinstance(self.engine_config, AxionEngineConfig):
             self.integrator = AxionEngine(self.model, self.engine_config, self.logger)
         elif isinstance(self.engine_config, FeatherstoneEngineConfig):
-            self.integrator = wp.sim.FeatherstoneIntegrator(self.model, **vars(self.engine_config))
-            wp.sim.eval_fk(
+            self.integrator = SolverFeatherstone(self.model, **vars(self.engine_config))
+            newton.eval_fk(
                 self.model, self.model.joint_q, self.model.joint_qd, None, self.current_state
             )
         elif isinstance(self.engine_config, SemiImplicitEngineConfig):
-            self.integrator = wp.sim.SemiImplicitIntegrator(**vars(self.engine_config))
+            self.integrator = SolverSemiImplicit(**vars(self.engine_config))
         elif isinstance(self.engine_config, XPBDEngineConfig):
-            self.integrator = wp.sim.XPBDIntegrator(**vars(self.engine_config))
+            self.integrator = SolverXPBD(**vars(self.engine_config))
         else:
             raise ValueError(f"Unsupported engine configuration type: {type(self.engine_config)}")
 
-        self.renderer: Optional[wp.sim.render.SimRenderer] = None
+        self.renderer = None
         if self.rendering_config.enable:
-            self.renderer = wp.sim.render.SimRenderer(
-                self.model,
-                self.rendering_config.usd_file,
-                scaling=self.rendering_config.scaling,
-                fps=self.rendering_config.fps,
-            )
+            # self.renderer = wp.sim.render.SimRenderer(
+            #     self.model,
+            #     self.rendering_config.usd_file,
+            #     scaling=self.rendering_config.scaling,
+            #     fps=self.rendering_config.fps,
+            # )
+            self.renderer = None
 
         self.cuda_graph: Optional[wp.Graph] = None
 
@@ -299,7 +301,7 @@ class AbstractSimulator(ABC):
             wp.record_event(self.events[step_num]["step_start"])
 
             # Detect collisions
-            wp.sim.collide(self.model, self.current_state)
+            self.model.collide(self.model, self.current_state)
 
             # Record that collision detection finished
             wp.record_event(self.events[step_num]["collision"])
@@ -347,7 +349,7 @@ class AbstractSimulator(ABC):
         )
 
     @abstractmethod
-    def build_model(self) -> wp.sim.Model:
+    def build_model(self) -> Model:
         """
         Builds the physics model for the simulation.
 

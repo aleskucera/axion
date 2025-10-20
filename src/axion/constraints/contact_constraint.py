@@ -50,7 +50,7 @@ def contact_constraint_kernel(
     body_qd_prev: wp.array(dtype=wp.spatial_vector),
     lambda_n: wp.array(dtype=wp.float32),
     interactions: wp.array(dtype=ContactInteraction),
-    gen_inv_mass: wp.array(dtype=SpatialInertia),
+    M_inv: wp.array(dtype=SpatialInertia),
     # --- Simulation & Solver Parameters ---
     dt: wp.float32,
     stabilization_factor: wp.float32,
@@ -115,6 +115,7 @@ def contact_constraint_kernel(
     # if body_b_idx >= 0:
     #     Minv_b = gen_inv_mass[body_b_idx]
     #     r += wp.dot(J_n_b, to_spatial_momentum(Minv_b, J_n_b))
+    # TODO: Check this value
     r = 1.0
 
     # Evaluate the Fisher-Burmeister complementarity function φ(a, λ)
@@ -158,7 +159,7 @@ def linesearch_contact_residuals_kernel(
     body_qd_prev: wp.array(dtype=wp.spatial_vector),
     lambda_n: wp.array(dtype=wp.float32),
     interactions: wp.array(dtype=ContactInteraction),
-    gen_inv_mass: wp.array(dtype=SpatialInertia),
+    M_inv: wp.array(dtype=SpatialInertia),
     # --- Simulation & Solver Parameters ---
     dt: wp.float32,
     stabilization_factor: wp.float32,

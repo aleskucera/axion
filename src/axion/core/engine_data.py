@@ -4,15 +4,18 @@ from typing import Optional
 
 import warp as wp
 import warp.context as wpc
-from axion.constraints import update_constraint_body_idx_kernel
-from axion.types import assemble_spatial_inertia_kernel
+from axion.constraints import fill_contact_constraint_body_idx_kernel
+from axion.constraints import fill_friction_constraint_body_idx_kernel
+from axion.constraints import fill_joint_constraint_body_idx_kernel
 from axion.types import contact_interaction_kernel
 from axion.types import ContactInteraction
-from axion.types import joint_interaction_kernel
-from axion.types import JointInteraction
+from axion.types import joint_constraint_data_kernel
+from axion.types import JointConstraintData
+from axion.types import spatial_inertia_kernel
 from axion.types import SpatialInertia
-from warp.sim import Model
-from warp.sim import State
+from newton import Contacts
+from newton import Model
+from newton import State
 
 from .engine_dims import EngineDimensions
 
@@ -54,9 +57,10 @@ class EngineArrays:
     delta_lambda: wp.array  # Change in constraint impulses
     b: wp.array  # RHS vector for linear system
 
-    gen_mass: wp.array  # Generalized mass properties
-    gen_inv_mass: wp.array  # Inverse generalized mass properties
-    joint_interaction: wp.array  # Joint interaction data
+    M: wp.array  # Generalized mass properties
+    M_inv: wp.array  # Inverse generalized mass properties
+    joint_constraint_data: wp.array
+    joint_constraint_offsets: wp.array
     contact_interaction: wp.array  # Contact interaction data
 
     # --- Linesearch specific arrays (always allocated, may be empty) ---
@@ -65,11 +69,11 @@ class EngineArrays:
     res_alpha: wp.array = None  # Residuals for different alphas
     res_alpha_norm_sq: wp.array = None  # Squared norms of linesearch residuals
 
-    Minv_dense: wp.array = None
+    M_inv_dense: wp.array = None
     J_dense: wp.array = None
     C_dense: wp.array = None
 
-    g_accel: wp.types.vector = None
+    g_accel: wp.array = None
 
     # --- Core views ---
     @cached_property
@@ -183,6 +187,27 @@ class EngineArrays:
         """Change in friction impulses."""
         return self.delta_lambda[self.dims.friction_slice] if self.dims.N_c > 0 else None
 
+    @cached_property
+    def joint_constraint_body_idx(self) -> Optional[wp.array]:
+        """Previous friction impulses."""
+        return self.constraint_body_idx[self.dims.joint_slice] if self.dims.joint_dim > 0 else None
+
+    @cached_property
+    def contact_constraint_body_idx(self) -> Optional[wp.array]:
+        """Previous friction impulses."""
+        return (
+            self.constraint_body_idx[self.dims.normal_slice] if self.dims.normal_dim > 0 else None
+        )
+
+    @cached_property
+    def friction_constraint_body_idx(self) -> Optional[wp.array]:
+        """Previous friction impulses."""
+        return (
+            self.constraint_body_idx[self.dims.friction_slice]
+            if self.dims.friction_dim > 0
+            else None
+        )
+
     # --- Linesearch views (always available, may be empty arrays) ---
     @cached_property
     def g_alpha(self) -> wp.array:
@@ -227,25 +252,25 @@ class EngineArrays:
         """Returns True if linesearch arrays are allocated (N_alpha > 0)."""
         return self.dims.N_alpha > 0
 
-    def set_generalized_mass(self, model: Model):
+    def set_spatial_inertia(self, model: Model):
         wp.launch(
-            kernel=assemble_spatial_inertia_kernel,
+            kernel=spatial_inertia_kernel,
             dim=self.dims.N_b,
             inputs=[
                 model.body_mass,
                 model.body_inertia,
             ],
-            outputs=[self.gen_mass],
+            outputs=[self.M],
         )
 
         wp.launch(
-            kernel=assemble_spatial_inertia_kernel,
+            kernel=spatial_inertia_kernel,
             dim=self.dims.N_b,
             inputs=[
                 model.body_inv_mass,
                 model.body_inv_inertia,
             ],
-            outputs=[self.gen_inv_mass],
+            outputs=[self.M_inv],
         )
 
     def set_gravitational_acceleration(self, model: Model):
@@ -269,7 +294,13 @@ class EngineArrays:
             self.res_alpha_norm_sq.zero_()
             self.best_alpha_idx.zero_()
 
-    def update_state_data(self, model: Model, state_in: State, state_out: State):
+    def update_state_data(
+        self,
+        model: Model,
+        state_in: State,
+        state_out: State,
+        contacts: Contacts,
+    ):
         wp.copy(dest=self.body_f, src=state_in.body_f)
         wp.copy(dest=self.body_q, src=state_out.body_q)
         wp.copy(dest=self.body_q_prev, src=state_in.body_q)
@@ -283,14 +314,17 @@ class EngineArrays:
                 self.body_q,
                 model.body_com,
                 model.shape_body,
-                model.shape_geo,
-                model.shape_materials,
-                model.rigid_contact_count,
-                model.rigid_contact_point0,
-                model.rigid_contact_point1,
-                model.rigid_contact_normal,
-                model.rigid_contact_shape0,
-                model.rigid_contact_shape1,
+                model.shape_thickness,
+                model.shape_material_mu,
+                model.shape_material_restitution,
+                contacts.rigid_contact_count,
+                contacts.rigid_contact_point0,
+                contacts.rigid_contact_point1,
+                contacts.rigid_contact_normal,
+                contacts.rigid_contact_shape0,
+                contacts.rigid_contact_shape1,
+                contacts.rigid_contact_thickness0,
+                contacts.rigid_contact_thickness1,
             ],
             outputs=[
                 self.contact_interaction,
@@ -299,8 +333,8 @@ class EngineArrays:
         )
 
         wp.launch(
-            kernel=joint_interaction_kernel,
-            dim=self.dims.N_j,
+            kernel=joint_constraint_data_kernel,
+            dim=self.dims.joint_count,
             inputs=[
                 self.body_q,
                 model.body_com,
@@ -310,31 +344,49 @@ class EngineArrays:
                 model.joint_child,
                 model.joint_X_p,
                 model.joint_X_c,
-                model.joint_axis_start,
+                model.joint_qd_start,
                 model.joint_axis,
-                model.joint_linear_compliance,
-                model.joint_angular_compliance,
+                self.joint_constraint_offsets,
             ],
             outputs=[
-                self.joint_interaction,
+                self.joint_constraint_data,
+            ],
+            device=self.device,
+        )
+
+        # TODO: Not needed each iteration
+        wp.launch(
+            kernel=fill_joint_constraint_body_idx_kernel,
+            dim=self.dims.N_j,
+            inputs=[
+                self.joint_constraint_data,
+            ],
+            outputs=[
+                self.joint_constraint_body_idx,
             ],
             device=self.device,
         )
 
         wp.launch(
-            kernel=update_constraint_body_idx_kernel,
-            dim=self.dims.con_dim,
+            kernel=fill_contact_constraint_body_idx_kernel,
+            dim=self.dims.N_c,
             inputs=[
-                model.shape_body,
-                model.rigid_contact_shape0,
-                model.rigid_contact_shape1,
-                model.joint_parent,
-                model.joint_child,
-                self.dims.N_j,
-                self.dims.N_c,
+                self.contact_interaction,
             ],
             outputs=[
-                self.constraint_body_idx,
+                self.contact_constraint_body_idx,
+            ],
+            device=self.device,
+        )
+
+        wp.launch(
+            kernel=fill_friction_constraint_body_idx_kernel,
+            dim=2 * self.dims.N_c,
+            inputs=[
+                self.contact_interaction,
+            ],
+            outputs=[
+                self.friction_constraint_body_idx,
             ],
             device=self.device,
         )
@@ -342,6 +394,7 @@ class EngineArrays:
 
 def create_engine_arrays(
     dims: EngineDimensions,
+    joint_constraint_offsets: wp.array,
     device: wpc.Device,
     allocate_dense: bool = False,
 ) -> EngineArrays:
@@ -390,9 +443,9 @@ def create_engine_arrays(
     delta_lambda = _zeros(dims.con_dim)
     b = _zeros(dims.con_dim)
 
-    gen_mass = _empty(dims.N_b, SpatialInertia)
-    gen_inv_mass = _empty(dims.N_b, SpatialInertia)
-    joint_interaction = _empty(dims.N_j, JointInteraction)
+    M = _empty(dims.N_b, SpatialInertia)
+    M_inv = _empty(dims.N_b, SpatialInertia)
+    joint_constraint_data = _empty(dims.N_j, JointConstraintData)
     contact_interaction = _empty(dims.N_c, ContactInteraction)
 
     # --- Arrays for linesearch ---
@@ -410,11 +463,11 @@ def create_engine_arrays(
         alphas_array = wp.array(alphas, dtype=wp.float32, device=device)
 
     # --- Dense representation of the arrays---
-    Minv_dense = None
+    M_inv_dense = None
     J_dense = None
     C_dense = None
     if allocate_dense:
-        Minv_dense = _zeros((dims.dyn_dim, dims.dyn_dim))
+        M_inv_dense = _zeros((dims.dyn_dim, dims.dyn_dim))
         J_dense = _zeros((dims.con_dim, dims.dyn_dim))
         C_dense = _zeros((dims.con_dim, dims.con_dim))
 
@@ -438,15 +491,16 @@ def create_engine_arrays(
         delta_body_qd=delta_body_qd,
         delta_lambda=delta_lambda,
         b=b,
-        gen_mass=gen_mass,
-        gen_inv_mass=gen_inv_mass,
-        joint_interaction=joint_interaction,
+        M=M,
+        M_inv=M_inv,
+        joint_constraint_data=joint_constraint_data,
+        joint_constraint_offsets=joint_constraint_offsets,
         contact_interaction=contact_interaction,
         alpha=alpha,
         alphas=alphas_array,
         res_alpha=res_alpha,
         res_alpha_norm_sq=res_alpha_norm_sq,
-        Minv_dense=Minv_dense,
+        M_inv_dense=M_inv_dense,
         J_dense=J_dense,
         C_dense=C_dense,
     )

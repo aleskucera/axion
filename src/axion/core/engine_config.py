@@ -30,7 +30,7 @@ class AxionEngineConfig(EngineConfig):
     friction_fb_alpha: float = 0.25
     friction_fb_beta: float = 0.25
 
-    linesearch_steps: int = 2
+    linesearch_steps: int = 0
 
     matrixfree_representation: bool = True
 

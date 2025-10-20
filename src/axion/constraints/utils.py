@@ -1,4 +1,6 @@
 import warp as wp
+from axion.types import ContactInteraction
+from axion.types import JointConstraintData
 
 
 @wp.func
@@ -46,53 +48,81 @@ def scaled_fisher_burmeister_new(
 
 
 @wp.kernel
-def update_constraint_body_idx_kernel(
-    shape_body: wp.array(dtype=wp.int32),
-    contact_shape0: wp.array(dtype=wp.int32),
-    contact_shape1: wp.array(dtype=wp.int32),
-    joint_parent: wp.array(dtype=wp.int32),
-    joint_child: wp.array(dtype=wp.int32),
-    # --- Parameters ---
-    joint_count: wp.uint32,
-    max_contact_count: wp.uint32,
-    # --- Outputs ---
-    constraint_body_idx: wp.array(dtype=wp.int32, ndim=2),
+def fill_joint_constraint_body_idx_kernel(
+    joint_constraints: wp.array(dtype=JointConstraintData),
+    joint_constraint_body_idx: wp.array(dtype=wp.int32, ndim=2),
 ):
     constraint_idx = wp.tid()
-    nj = wp.int32(joint_count)
-    nc = wp.int32(max_contact_count)
 
-    body_a = -1
-    body_b = -1
+    if constraint_idx >= len(joint_constraints):
+        return
 
-    if constraint_idx < 5 * nj:
-        joint_index = constraint_idx // 5
-        body_a = joint_parent[joint_index]
-        body_b = joint_child[joint_index]
-    elif constraint_idx < 5 * nj + nc:
-        offset = 5 * nj
-        contact_index = (constraint_idx - offset) // 1
+    c = joint_constraints[constraint_idx]
+    joint_constraint_body_idx[constraint_idx, 0] = c.parent_idx
+    joint_constraint_body_idx[constraint_idx, 1] = c.child_idx
 
-        shape_a = contact_shape0[contact_index]
-        shape_b = contact_shape1[contact_index]
 
-        if shape_a != shape_b:
-            if shape_a >= 0:
-                body_a = shape_body[shape_a]
-            if shape_b >= 0:
-                body_b = shape_body[shape_b]
+@wp.kernel
+def fill_contact_constraint_body_idx_kernel(
+    contact_interaction: wp.array(dtype=ContactInteraction),
+    contact_constraint_body_idx: wp.array(dtype=wp.int32, ndim=2),
+):
+    contact_idx = wp.tid()
 
-    else:
-        offset = 5 * nj + nc
-        contact_index = (constraint_idx - offset) // 2
-        shape_a = contact_shape0[contact_index]
-        shape_b = contact_shape1[contact_index]
+    if contact_idx >= len(contact_interaction):
+        return
 
-        if shape_a != shape_b:
-            if shape_a >= 0:
-                body_a = shape_body[shape_a]
-            if shape_b >= 0:
-                body_b = shape_body[shape_b]
+    interaction = contact_interaction[contact_idx]
+    contact_constraint_body_idx[contact_idx, 0] = interaction.body_a_idx
+    contact_constraint_body_idx[contact_idx, 1] = interaction.body_b_idx
 
-    constraint_body_idx[constraint_idx, 0] = body_a
-    constraint_body_idx[constraint_idx, 1] = body_b
+
+@wp.kernel
+def fill_friction_constraint_body_idx_kernel(
+    contact_interaction: wp.array(dtype=ContactInteraction),
+    friction_constraint_body_idx: wp.array(dtype=wp.int32, ndim=2),
+):
+    constraint_idx = wp.tid()
+    contact_idx = constraint_idx // 2
+
+    if contact_idx >= len(contact_interaction):
+        return
+
+    interaction = contact_interaction[contact_idx]
+    friction_constraint_body_idx[constraint_idx, 0] = interaction.body_a_idx
+    friction_constraint_body_idx[constraint_idx, 1] = interaction.body_b_idx
+
+
+# @wp.kernel
+# def update_constraint_body_idx_kernel(
+#     joint_constraints: wp.array(dtype=JointConstraintData),
+#     contact_interaction: wp.array(dtype=ContactInteraction),
+#     # --- Outputs ---
+#     constraint_body_idx: wp.array(dtype=wp.int32, ndim=2),
+# ):
+#     constraint_idx = wp.tid()
+#     N_jc = len(joint_constraints)
+#     N_n = len(contact_interaction)
+#
+#     body_a = -1
+#     body_b = -1
+#
+#     if constraint_idx < N_jc:
+#         c = joint_constraints[constraint_idx]
+#         body_a = c.parent_idx
+#         body_b = c.child_idx
+#     elif constraint_idx < N_jc + N_n:
+#         offset = N_jc
+#         contact_idx = constraint_idx - offset
+#
+#         body_a = contact_interaction[contact_idx].body_a_idx
+#         body_b = contact_interaction[contact_idx].body_b_idx
+#     else:
+#         offset = N_jc + N_n
+#         contact_idx = (constraint_idx - offset) // 2
+#
+#         body_a = contact_interaction[contact_idx].body_a_idx
+#         body_b = contact_interaction[contact_idx].body_b_idx
+#
+#     constraint_body_idx[constraint_idx, 0] = body_a
+#     constraint_body_idx[constraint_idx, 1] = body_b

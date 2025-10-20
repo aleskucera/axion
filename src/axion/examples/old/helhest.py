@@ -1,6 +1,7 @@
 from importlib.resources import files
 
 import hydra
+import newton
 import numpy as np
 import openmesh
 import warp as wp
@@ -47,7 +48,7 @@ class Simulator(AbstractSimulator):
             dtype=wp.float32,
         )
 
-    def build_model(self) -> wp.sim.Model:
+    def build_model(self) -> newton.Model:
         """
         Implements the abstract method to define the physics objects in the scene.
 
@@ -56,18 +57,18 @@ class Simulator(AbstractSimulator):
         FRICTION = 1.0
         RESTITUTION = 0.0
 
-        builder = wp.sim.ModelBuilder(up_vector=wp.vec3(0, 0, 1))
+        builder = newton.ModelBuilder(up_vector=wp.vec3(0, 0, 1))
 
         # --- Build the Vehicle ---
         wheel_m = openmesh.read_trimesh(f"{ASSETS_DIR}/helhest/wheel2.obj")
         mesh_points = np.array(wheel_m.points())
         mesh_indices = np.array(wheel_m.face_vertex_indices(), dtype=np.int32).flatten()
-        wheel_mesh_render = wp.sim.Mesh(mesh_points, mesh_indices)
+        wheel_mesh_render = newton.Mesh(mesh_points, mesh_indices)
 
         wheel_m_col = openmesh.read_trimesh(f"{ASSETS_DIR}/helhest/wheel_collision.obj")
         mesh_points = np.array(wheel_m_col.points())
         mesh_indices = np.array(wheel_m_col.face_vertex_indices(), dtype=np.int32).flatten()
-        wheel_mesh_collision = wp.sim.Mesh(mesh_points, mesh_indices)
+        wheel_mesh_collision = newton.Mesh(mesh_points, mesh_indices)
 
         # Create main body (chassis)
         chassis = builder.add_body(

@@ -1,7 +1,6 @@
 """
 Jacobi preconditioner for the system matrix A = J M⁻¹ Jᵀ + C.
 """
-
 import warp as wp
 from axion.types import SpatialInertia
 from axion.types import to_spatial_momentum
@@ -11,7 +10,7 @@ from warp.optim.linear import LinearOperator
 @wp.kernel
 def compute_inv_diag_kernel(
     constraint_body_idx: wp.array(dtype=wp.int32, ndim=2),
-    gen_inv_mass: wp.array(dtype=SpatialInertia),
+    M_inv: wp.array(dtype=SpatialInertia),
     J_values: wp.array(dtype=wp.spatial_vector, ndim=2),
     C_values: wp.array(dtype=wp.float32),
     # Output array
@@ -28,11 +27,11 @@ def compute_inv_diag_kernel(
 
     result = 0.0
     if body_a >= 0:
-        Minv_a = gen_inv_mass[body_a]
+        Minv_a = M_inv[body_a]
         J_ia = J_values[constraint_idx, 0]
         result += wp.dot(J_ia, to_spatial_momentum(Minv_a, J_ia))
     if body_b >= 0:
-        Minv_b = gen_inv_mass[body_b]
+        Minv_b = M_inv[body_b]
         J_ib = J_values[constraint_idx, 1]
         result += wp.dot(J_ib, to_spatial_momentum(Minv_b, J_ib))
 
@@ -92,7 +91,7 @@ class JacobiPreconditioner(LinearOperator):
             dim=self.engine.dims.con_dim,
             inputs=[
                 self.engine.data.constraint_body_idx,
-                self.engine.data.gen_inv_mass,
+                self.engine.data.M_inv,
                 self.engine.data.J_values,
                 self.engine.data.C_values,
             ],

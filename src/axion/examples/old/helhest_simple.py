@@ -1,6 +1,7 @@
 from importlib.resources import files
 
 import hydra
+import newton
 import warp as wp
 from axion import AbstractSimulator
 from axion import EngineConfig
@@ -43,11 +44,11 @@ class Simulator(AbstractSimulator):
             dtype=wp.float32,
         )
 
-    def build_model(self) -> wp.sim.Model:
+    def build_model(self) -> newton.Model:
         FRICTION = 1.0
         RESTITUTION = 0.0
 
-        builder = wp.sim.ModelBuilder(up_vector=wp.vec3(0, 0, 1))
+        builder = newton.ModelBuilder(up_vector=wp.vec3(0, 0, 1))
 
         # --- Build the Vehicle ---
 

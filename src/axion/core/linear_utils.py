@@ -5,7 +5,7 @@ from axion.constraints import joint_constraint_kernel
 from axion.constraints import unconstrained_dynamics_kernel
 from axion.types import SpatialInertia
 from axion.types import to_spatial_momentum
-from warp.sim import Model
+from newton import Model
 
 from .engine_config import EngineConfig
 from .engine_data import EngineArrays
@@ -14,7 +14,7 @@ from .engine_dims import EngineDimensions
 
 @wp.kernel
 def update_system_rhs_kernel(
-    Hinv: wp.array(dtype=SpatialInertia),
+    M_inv: wp.array(dtype=SpatialInertia),
     constraint_body_idx: wp.array(dtype=wp.int32, ndim=2),
     J_values: wp.array(dtype=wp.spatial_vector, ndim=2),
     g: wp.array(dtype=wp.spatial_vector),
@@ -29,12 +29,12 @@ def update_system_rhs_kernel(
     J_ia = J_values[constraint_idx, 0]
     J_ib = J_values[constraint_idx, 1]
 
-    # Calculate (J_i * H^-1 * g)
-    a_contrib = wp.dot(J_ia, to_spatial_momentum(Hinv[body_a], g[body_a]))
-    b_contrib = wp.dot(J_ib, to_spatial_momentum(Hinv[body_b], g[body_b]))
+    # Calculate (J_i * M^-1 * g)
+    a_contrib = wp.dot(J_ia, to_spatial_momentum(M_inv[body_a], g[body_a]))
+    b_contrib = wp.dot(J_ib, to_spatial_momentum(M_inv[body_b], g[body_b]))
     JHinvg = a_contrib + b_contrib
 
-    # b = J * H^-1 * g - h
+    # b = J * M^-1 * g - h
     b[constraint_idx] = JHinvg - h[constraint_idx]
 
 
@@ -64,23 +64,27 @@ def compute_JT_delta_lambda_kernel(
 
 @wp.kernel
 def compute_delta_body_qd_kernel(
-    gen_inv_mass: wp.array(dtype=SpatialInertia),
+    M_inv: wp.array(dtype=SpatialInertia),
     JT_delta_lambda: wp.array(dtype=wp.spatial_vector),
     g: wp.array(dtype=wp.spatial_vector),
     delta_body_qd: wp.array(dtype=wp.spatial_vector),
 ):
     body_idx = wp.tid()
 
-    if body_idx >= gen_inv_mass.shape[0]:
+    if body_idx >= M_inv.shape[0]:
         return
 
     delta_body_qd[body_idx] = to_spatial_momentum(
-        gen_inv_mass[body_idx], (JT_delta_lambda[body_idx] - g[body_idx])
+        M_inv[body_idx], (JT_delta_lambda[body_idx] - g[body_idx])
     )
 
 
 def compute_linear_system(
-    model: Model, data: EngineArrays, config: EngineConfig, dims: EngineDimensions, dt: float
+    model: Model,
+    data: EngineArrays,
+    config: EngineConfig,
+    dims: EngineDimensions,
+    dt: float,
 ):
     device = data.device
 
@@ -99,7 +103,7 @@ def compute_linear_system(
             data.body_qd,
             data.body_qd_prev,
             data.body_f,
-            data.gen_mass,
+            data.M,
             dt,
             data.g_accel,
         ],
@@ -109,11 +113,11 @@ def compute_linear_system(
 
     wp.launch(
         kernel=joint_constraint_kernel,
-        dim=(5, dims.N_j),
+        dim=(dims.N_j),
         inputs=[
             data.body_qd,
             data.lambda_j,
-            data.joint_interaction,
+            data.joint_constraint_data,
             dt,
             config.joint_stabilization_factor,
         ],
@@ -134,7 +138,7 @@ def compute_linear_system(
             data.body_qd_prev,
             data.lambda_n,
             data.contact_interaction,
-            data.gen_inv_mass,
+            data.M_inv,
             dt,
             config.contact_stabilization_factor,
             config.contact_fb_alpha,
@@ -178,7 +182,7 @@ def compute_linear_system(
         kernel=update_system_rhs_kernel,
         dim=(dims.con_dim,),
         inputs=[
-            data.gen_inv_mass,
+            data.M_inv,
             data.constraint_body_idx,
             data.J_values,
             data.g_v,
@@ -212,7 +216,7 @@ def compute_delta_body_qd_from_delta_lambda(
         kernel=compute_delta_body_qd_kernel,
         dim=dims.dyn_dim,
         inputs=[
-            data.gen_inv_mass,
+            data.M_inv,
             data.JT_delta_lambda,
             data.g_v,
         ],

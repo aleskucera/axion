@@ -20,13 +20,13 @@ def to_spatial_momentum(
     a: SpatialInertia,
     b: wp.spatial_vector,
 ) -> wp.spatial_vector:
-    top = a.inertia @ wp.spatial_top(b)
-    bot = a.m * wp.spatial_bottom(b)
+    top = a.m * wp.spatial_top(b)
+    bot = a.inertia @ wp.spatial_bottom(b)
     return wp.spatial_vector(top, bot)
 
 
 @wp.kernel
-def assemble_spatial_inertia_kernel(
+def spatial_inertia_kernel(
     mass: wp.array(dtype=wp.float32),
     inertia: wp.array(dtype=wp.mat33),
     # Outputs

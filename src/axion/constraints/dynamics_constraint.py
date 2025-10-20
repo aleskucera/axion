@@ -13,7 +13,7 @@ def unconstrained_dynamics_kernel(
     gen_mass: wp.array(dtype=SpatialInertia),
     # --- Simulation Parameters ---
     dt: wp.float32,
-    g_accel: wp.vec3,
+    g_accel: wp.array(dtype=wp.vec3),
     # --- Output ---
     g: wp.array(dtype=wp.spatial_vector),
 ):
@@ -26,7 +26,7 @@ def unconstrained_dynamics_kernel(
     u_prev = body_qd_prev[body_idx]
     f = body_f[body_idx]
 
-    f_g = to_spatial_momentum(M, wp.spatial_vector(wp.vec3(), g_accel))
+    f_g = to_spatial_momentum(M, wp.spatial_vector(g_accel[0], wp.vec3()))
 
     g[body_idx] = to_spatial_momentum(M, u - u_prev) - (f + f_g) * dt
 
@@ -43,7 +43,7 @@ def linesearch_dynamics_residuals_kernel(
     gen_mass: wp.array(dtype=SpatialInertia),
     # --- Simulation Parameters ---
     dt: wp.float32,
-    g_accel: wp.vec3,
+    g_accel: wp.array(dtype=wp.vec3),
     # --- Output ---
     g_alpha: wp.array(dtype=wp.spatial_vector, ndim=2),
 ):
@@ -56,6 +56,6 @@ def linesearch_dynamics_residuals_kernel(
     u_prev = body_qd_prev[body_idx]
     f = body_f[body_idx]
 
-    f_g = to_spatial_momentum(M, wp.spatial_vector(wp.vec3(), g_accel))
+    f_g = to_spatial_momentum(M, wp.spatial_vector(wp.vec3(), g_accel[0]))
 
     g_alpha[alpha_idx, body_idx] = to_spatial_momentum(M, u - u_prev) - (f + f_g) * dt

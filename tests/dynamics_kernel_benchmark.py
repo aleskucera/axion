@@ -3,7 +3,7 @@ import time
 import numpy as np
 import warp as wp
 from axion.constraints import unconstrained_dynamics_kernel
-from axion.types import assemble_spatial_inertia_kernel
+from axion.types import spatial_inertia_kernel
 from axion.types import SpatialInertia
 
 
@@ -35,7 +35,7 @@ def setup_data(num_bodies, device):
 
     # Launch kernel to populate the generalized mass array from the raw components
     wp.launch(
-        kernel=assemble_spatial_inertia_kernel,
+        kernel=spatial_inertia_kernel,
         dim=B,
         inputs=[body_mass_wp, body_inertia_wp, gen_mass_wp],
         device=device,

@@ -1,6 +1,5 @@
 from dataclasses import dataclass
 from functools import cached_property
-from typing import ClassVar
 
 
 @dataclass(frozen=True)
@@ -12,21 +11,45 @@ class EngineDimensions:
     """
 
     # --- Primary Inputs ---
-    N_b: int  # Number of bodies
-    N_c: int  # Number of potential contacts
-    N_j: int  # Number of joints
-    N_alpha: int  # Number of linesearch steps
+    body_count: int
+    contact_count: int
+    joint_count: int
+    linesearch_steps: int
+    joint_constraint_count: int
 
-    # --- Constants ---
-    DOF_PER_BODY: ClassVar[int] = 6
-    CON_PER_JOINT: ClassVar[int] = 5
-    CON_PER_FRICTION: ClassVar[int] = 2
+    @cached_property
+    def N_b(self) -> int:
+        return self.body_count
+
+    @cached_property
+    def N_u(self) -> int:
+        return 6 * self.body_count
+
+    @cached_property
+    def N_q(self) -> int:
+        return 7 * self.body_count
+
+    @cached_property
+    def N_j(self) -> int:
+        return self.joint_constraint_count
+
+    @cached_property
+    def N_c(self) -> int:
+        return self.contact_count
+
+    @cached_property
+    def N_f(self) -> int:
+        return 2 * self.contact_count
+
+    @cached_property
+    def N_alpha(self) -> int:
+        return self.linesearch_steps
 
     # --- Derived Total Dimensions ---
     @cached_property
     def dyn_dim(self) -> int:
         """Dimension of the dynamics part (e.g., body velocities)."""
-        return self.DOF_PER_BODY * self.N_b
+        return 6 * self.N_b
 
     @cached_property
     def con_dim(self) -> int:
@@ -42,7 +65,7 @@ class EngineDimensions:
     @cached_property
     def joint_dim(self) -> int:
         """Dimension of joint constraints."""
-        return self.CON_PER_JOINT * self.N_j
+        return self.N_j
 
     @cached_property
     def normal_dim(self) -> int:
@@ -52,7 +75,7 @@ class EngineDimensions:
     @cached_property
     def friction_dim(self) -> int:
         """Dimension of friction constraints."""
-        return self.CON_PER_FRICTION * self.N_c
+        return 2 * self.N_c
 
     # --- Per-Constraint-Type Offsets ---
     @cached_property

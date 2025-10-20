@@ -3,6 +3,7 @@ Axion physics engine implementation using Warp.
 """
 from typing import Optional
 
+import newton
 import numpy as np
 import scipy
 import warp as wp
@@ -12,10 +13,11 @@ from axion.optim import cr_solver
 from axion.optim import JacobiPreconditioner
 from axion.optim import MatrixFreeSystemOperator
 from axion.optim import MatrixSystemOperator
-from warp.sim import Control
-from warp.sim import Integrator
-from warp.sim import Model
-from warp.sim import State
+from axion.types import compute_joint_constraint_offsets
+from newton import Control
+from newton import Model
+from newton import State
+from newton.solvers import SolverBase
 
 from .control_utils import apply_control
 from .dense_utils import get_system_matrix_numpy
@@ -30,7 +32,7 @@ from .linear_utils import compute_linear_system
 from .linesearch_utils import perform_linesearch
 
 
-class AxionEngine(Integrator):
+class AxionEngine(SolverBase):
     """
     The class implements a low-level physics solver.
     The engine implements a Non-Smooth Newton Method to solve
@@ -44,8 +46,8 @@ class AxionEngine(Integrator):
     def __init__(
         self,
         model: Model,
-        config: Optional[AxionEngineConfig],
-        logger: Optional[HDF5Logger | NullLogger],
+        config: Optional[AxionEngineConfig] = AxionEngineConfig(),
+        logger: Optional[HDF5Logger | NullLogger] = NullLogger(),
     ):
         """
         Initialize the physics engine for the given model and configuration.
@@ -55,22 +57,30 @@ class AxionEngine(Integrator):
             config: Configuration parameters for the engine of type EngineConfig.
             logger: Optional HDF5Logger or NullLogger for recording simulation data.
         """
-        super().__init__()
-        self.device = model.device
+        super().__init__(model)
 
-        self.model = model
         self.logger = logger
         self.config = config
 
+        joint_constraint_offsets, num_constraints = compute_joint_constraint_offsets(
+            model.joint_type,
+        )
+
         self.dims = EngineDimensions(
-            N_b=self.model.body_count,
-            N_c=self.model.rigid_contact_max,
-            N_j=self.model.joint_count,
-            N_alpha=self.config.linesearch_steps,
+            body_count=self.model.body_count,
+            contact_count=self.model.rigid_contact_max,
+            joint_count=self.model.joint_count,
+            linesearch_steps=self.config.linesearch_steps,
+            joint_constraint_count=num_constraints,
         )
 
         allocate_dense_matrices = isinstance(self.logger, HDF5Logger)
-        self.data = create_engine_arrays(self.dims, self.device, allocate_dense_matrices)
+        self.data = create_engine_arrays(
+            self.dims,
+            joint_constraint_offsets,
+            self.device,
+            allocate_dense_matrices,
+        )
 
         if self.config.matrixfree_representation:
             self.A_op = MatrixFreeSystemOperator(self)
@@ -79,7 +89,7 @@ class AxionEngine(Integrator):
 
         self.preconditioner = JacobiPreconditioner(self)
 
-        self.data.set_generalized_mass(model)
+        self.data.set_spatial_inertia(model)
         self.data.set_gravitational_acceleration(model)
 
         self.events = [
@@ -114,15 +124,15 @@ class AxionEngine(Integrator):
 
         self.logger.log_wp_dataset("b", self.data.b)
 
-        self.logger.log_struct_array("gen_mass", self.data.gen_mass)
-        self.logger.log_struct_array("gen_inv_mass", self.data.gen_inv_mass)
+        self.logger.log_struct_array("M", self.data.M)
+        self.logger.log_struct_array("M_inv", self.data.M_inv)
 
-        self.logger.log_struct_array("joint_interaction", self.data.joint_interaction)
+        self.logger.log_struct_array("joint_constraint_data", self.data.joint_constraint_data)
         self.logger.log_struct_array("contact_interaction", self.data.contact_interaction)
 
         update_dense_matrices(self.data, self.config, self.dims)
 
-        self.logger.log_wp_dataset("Minv_dense", self.data.Minv_dense)
+        self.logger.log_wp_dataset("M_inv_dense", self.data.M_inv_dense)
         self.logger.log_wp_dataset("J_dense", self.data.J_dense)
         self.logger.log_wp_dataset("C_dense", self.data.C_dense)
 
@@ -138,16 +148,16 @@ class AxionEngine(Integrator):
         if isinstance(self.logger, NullLogger):
             return
 
-        self.logger.log_wp_dataset("gen_mass", self.data.gen_mass)
-        self.logger.log_wp_dataset("gen_inv_mass", self.data.gen_inv_mass)
+        self.logger.log_wp_dataset("gen_mass", self.data.M)
+        self.logger.log_wp_dataset("gen_inv_mass", self.data.M_inv)
 
-    def simulate(
+    def step(
         self,
-        model: Model,
-        state_in: State,
-        state_out: State,
+        state_in: newton.State,
+        state_out: newton.State,
+        control: newton.Control,
+        contacts: newton.Contacts,
         dt: float,
-        control: Control | None = None,
     ):
         """
         The primary method for running the physics simulation for a single time step.
@@ -160,9 +170,9 @@ class AxionEngine(Integrator):
             dt: The time step duration.
             control: Optional control inputs to be applied during the simulation step.
         """
-        apply_control(model, state_in, state_out, dt, control)
-        self.integrate_bodies(model, state_in, state_out, dt)
-        self.data.update_state_data(model, state_in, state_out)
+        apply_control(self.model, state_in, state_out, dt, control)
+        self.integrate_bodies(self.model, state_in, state_out, dt)
+        self.data.update_state_data(self.model, state_in, state_out, contacts)
 
         # TODO: Check the warm startup
         # self._lambda.zero_()
