@@ -23,9 +23,9 @@ from warp.optim.linear import LinearOperator
 
 @wp.kernel
 def kernel_J_transpose_matvec(
-    constraint_body_idx: wp.array(dtype=wp.int32, ndim=2),
+    in_vec: wp.array(dtype=wp.float32),
     J_values: wp.array(dtype=wp.spatial_vector, ndim=2),
-    vec_x: wp.array(dtype=wp.float32),
+    constraint_body_idx: wp.array(dtype=wp.int32, ndim=2),
     # Output array
     out_vec: wp.array(dtype=wp.spatial_vector),
 ):
@@ -42,23 +42,23 @@ def kernel_J_transpose_matvec(
     """
     constraint_idx = wp.tid()
 
-    body_a = constraint_body_idx[constraint_idx, 0]
-    body_b = constraint_body_idx[constraint_idx, 1]
+    body_1 = constraint_body_idx[constraint_idx, 0]
+    body_2 = constraint_body_idx[constraint_idx, 1]
 
-    J_ia = J_values[constraint_idx, 0]
-    J_ib = J_values[constraint_idx, 1]
-    x_i = vec_x[constraint_idx]
+    J_1 = J_values[constraint_idx, 0]
+    J_2 = J_values[constraint_idx, 1]
+    x_i = in_vec[constraint_idx]
 
-    if body_a >= 0:
-        out_vec[body_a] += x_i * J_ia
-    if body_b >= 0:
-        out_vec[body_b] += x_i * J_ib
+    if body_1 >= 0:
+        out_vec[body_1] += x_i * J_1
+    if body_2 >= 0:
+        out_vec[body_2] += x_i * J_2
 
 
 @wp.kernel
 def kernel_inv_mass_matvec(
-    inv_sp_inertia: wp.array(dtype=SpatialInertia),
     in_vec: wp.array(dtype=wp.spatial_vector),
+    body_M_inv: wp.array(dtype=SpatialInertia),
     out_vec: wp.array(dtype=wp.spatial_vector),
 ):
     """
@@ -73,14 +73,15 @@ def kernel_inv_mass_matvec(
     """
     body_idx = wp.tid()
 
-    out_vec[body_idx] = to_spatial_momentum(inv_sp_inertia[body_idx], in_vec[body_idx])
+    M_inv = body_M_inv[body_idx]
+    out_vec[body_idx] = to_spatial_momentum(M_inv, in_vec[body_idx])
 
 
 @wp.kernel
 def kernel_J_matvec(
-    constraint_body_idx: wp.array(dtype=wp.int32, ndim=2),
-    J_values: wp.array(dtype=wp.spatial_vector, ndim=2),
     in_vec: wp.array(dtype=wp.spatial_vector),
+    J_values: wp.array(dtype=wp.spatial_vector, ndim=2),
+    constraint_body_idx: wp.array(dtype=wp.int32, ndim=2),
     # Output array
     out_vec: wp.array(dtype=wp.float32),
 ):
@@ -96,17 +97,17 @@ def kernel_J_matvec(
     """
     constraint_idx = wp.tid()
 
-    body_a = constraint_body_idx[constraint_idx, 0]
-    body_b = constraint_body_idx[constraint_idx, 1]
+    body_1 = constraint_body_idx[constraint_idx, 0]
+    body_2 = constraint_body_idx[constraint_idx, 1]
 
-    J_ia = J_values[constraint_idx, 0]
-    J_ib = J_values[constraint_idx, 1]
+    J_1 = J_values[constraint_idx, 0]
+    J_2 = J_values[constraint_idx, 1]
 
     result = 0.0
-    if body_a >= 0:
-        result += wp.dot(J_ia, in_vec[body_a])
-    if body_b >= 0:
-        result += wp.dot(J_ib, in_vec[body_b])
+    if body_1 >= 0:
+        result += wp.dot(J_1, in_vec[body_1])
+    if body_2 >= 0:
+        result += wp.dot(J_2, in_vec[body_2])
 
     out_vec[constraint_idx] = result
 
@@ -119,6 +120,7 @@ def kernel_finalize_matvec(
     vec_y: wp.array(dtype=wp.float32),
     alpha: float,
     beta: float,
+    regularization: float,
     out_vec_z: wp.array(dtype=wp.float32),
 ):
     """
@@ -135,7 +137,8 @@ def kernel_finalize_matvec(
         out_vec_z: The final output vector z.
     """
     i = wp.tid()
-    c_times_x = C_values[i] * vec_x[i]
+    # TODO: Fix the regularization
+    c_times_x = (C_values[i] + regularization) * vec_x[i]
     a_times_x = J_M_inv_Jt_x[i] + c_times_x
 
     # The crucial change is here: including beta * y
@@ -154,7 +157,7 @@ class MatrixFreeSystemOperator(LinearOperator):
     to be used with iterative linear solvers like `cr_solver`.
     """
 
-    def __init__(self, engine):
+    def __init__(self, engine, regularization: float = 1e-5):
         """
         Initializes the operator with data from the main physics engine.
 
@@ -164,16 +167,17 @@ class MatrixFreeSystemOperator(LinearOperator):
                     masses, constraint info, etc.).
         """
         super().__init__(
-            shape=(engine.dims.con_dim, engine.dims.con_dim),
+            shape=(engine.dims.N_c, engine.dims.N_c),
             dtype=wp.float32,
             device=engine.device,
             matvec=None,
         ),
         self.engine = engine
+        self.regularization = regularization
 
         # Pre-allocate temporary buffers for intermediate calculations.
         self._tmp_dyn_vec = wp.zeros(engine.dims.N_b, dtype=wp.spatial_vector, device=engine.device)
-        self._tmp_con_vec = wp.zeros(engine.dims.con_dim, dtype=wp.float32, device=engine.device)
+        self._tmp_con_vec = wp.zeros(engine.dims.N_c, dtype=wp.float32, device=engine.device)
 
     def matvec(self, x, y, z, alpha, beta):
         """
@@ -183,11 +187,11 @@ class MatrixFreeSystemOperator(LinearOperator):
         self._tmp_dyn_vec.zero_()
         wp.launch(
             kernel=kernel_J_transpose_matvec,
-            dim=self.engine.dims.con_dim,
+            dim=self.engine.dims.N_c,
             inputs=[
-                self.engine.data.constraint_body_idx,
-                self.engine.data.J_values,
                 x,
+                self.engine.data.J_values,
+                self.engine.data.constraint_body_idx,
             ],
             outputs=[self._tmp_dyn_vec],
             device=self.device,
@@ -198,8 +202,8 @@ class MatrixFreeSystemOperator(LinearOperator):
             kernel=kernel_inv_mass_matvec,
             dim=self.engine.dims.N_b,
             inputs=[
-                self.engine.data.M_inv,
                 self._tmp_dyn_vec,
+                self.engine.data.body_M_inv,
             ],
             outputs=[self._tmp_dyn_vec],
             device=self.device,
@@ -208,11 +212,11 @@ class MatrixFreeSystemOperator(LinearOperator):
         # --- Step 3: Compute v₃ = J @ v₂ ---
         wp.launch(
             kernel=kernel_J_matvec,
-            dim=self.engine.dims.con_dim,
+            dim=self.engine.dims.N_c,
             inputs=[
-                self.engine.data.constraint_body_idx,
-                self.engine.data.J_values,
                 self._tmp_dyn_vec,
+                self.engine.data.J_values,
+                self.engine.data.constraint_body_idx,
             ],
             outputs=[self._tmp_con_vec],
             device=self.device,
@@ -221,7 +225,7 @@ class MatrixFreeSystemOperator(LinearOperator):
         # --- Step 4: Compute z = beta * y + alpha * (v₃ + C @ x) ---
         wp.launch(
             kernel=kernel_finalize_matvec,
-            dim=self.engine.dims.con_dim,
+            dim=self.engine.dims.N_c,
             inputs=[
                 self._tmp_con_vec,  # This is J M⁻¹ Jᵀ @ x
                 self.engine.data.C_values,
@@ -229,7 +233,8 @@ class MatrixFreeSystemOperator(LinearOperator):
                 y,  # original y vector
                 alpha,  # alpha scalar
                 beta,  # beta scalar
-                z,  # The final output vector
+                self.regularization,
             ],
+            outputs=[z],
             device=self.device,
         )

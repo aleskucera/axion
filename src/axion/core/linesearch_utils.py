@@ -47,7 +47,7 @@ def update_alpha(
 
 def perform_linesearch(data: EngineArrays, config: EngineConfig, dims: EngineDimensions, dt: float):
     device = data.device
-    data.g_alpha.zero_()
+    data.h_d_alpha.zero_()
 
     # =================== UPDATE RESIDUALS ===================
     wp.launch(
@@ -55,16 +55,16 @@ def perform_linesearch(data: EngineArrays, config: EngineConfig, dims: EngineDim
         dim=(dims.N_alpha, dims.N_b),
         inputs=[
             data.alphas,
-            data.delta_body_qd_v,
+            data.dbody_u_v,
             # ---
-            data.body_qd,
-            data.body_qd_prev,
+            data.body_u,
+            data.body_u_prev,
             data.body_f,
-            data.M,
+            data.body_M,
             dt,
             data.g_accel,
         ],
-        outputs=[data.g_alpha_v],
+        outputs=[data.h_d_alpha_v],
         device=device,
     )
 
@@ -73,17 +73,17 @@ def perform_linesearch(data: EngineArrays, config: EngineConfig, dims: EngineDim
         dim=(dims.N_alpha, dims.N_j),
         inputs=[
             data.alphas,
-            data.delta_body_qd_v,
-            data.delta_lambda_j,
+            data.dbody_u_v,
+            data.dbody_lambda_j,
             # ---
-            data.body_qd,
-            data.lambda_j,
+            data.body_u,
+            data.body_lambda_j,
             data.joint_interaction,
             # Parameters
             dt,
             config.joint_stabilization_factor,
         ],
-        outputs=[data.g_alpha_v, data.h_alpha_j],
+        outputs=[data.h_d_alpha_v, data.h_j_alpha],
         device=device,
     )
 
@@ -92,14 +92,14 @@ def perform_linesearch(data: EngineArrays, config: EngineConfig, dims: EngineDim
         dim=(dims.N_alpha, dims.N_c),
         inputs=[
             data.alphas,
-            data.delta_body_qd_v,
-            data.delta_lambda_n,
+            data.dbody_u_v,
+            data.dbody_lambda_n,
             # ---
-            data.body_qd,
-            data.body_qd_prev,
-            data.lambda_n,
+            data.body_u,
+            data.body_u_prev,
+            data.body_lambda_n,
             data.contact_interaction,
-            data.M_inv,
+            data.body_M_inv,
             # Parameters
             dt,
             config.contact_stabilization_factor,
@@ -107,7 +107,7 @@ def perform_linesearch(data: EngineArrays, config: EngineConfig, dims: EngineDim
             config.contact_fb_beta,
             config.contact_compliance,
         ],
-        outputs=[data.g_alpha_v, data.h_alpha_n],
+        outputs=[data.h_d_alpha_v, data.h_n_alpha],
         device=device,
     )
 
@@ -116,20 +116,20 @@ def perform_linesearch(data: EngineArrays, config: EngineConfig, dims: EngineDim
         dim=(dims.N_alpha, dims.N_c),
         inputs=[
             data.alphas,
-            data.delta_body_qd_v,
-            data.delta_lambda_f,
-            data.delta_lambda_n,
+            data.dbody_u_v,
+            data.dbody_lambda_f,
+            data.dbody_lambda_n,
             # ---
-            data.body_qd,
-            data.lambda_f,
-            data.lambda_n,
+            data.body_u,
+            data.body_lambda_f,
+            data.body_lambda_n,
             data.contact_interaction,
             # Parameters
             config.friction_fb_alpha,
             config.friction_fb_beta,
             config.friction_compliance,
         ],
-        outputs=[data.g_alpha_v, data.h_alpha_f],
+        outputs=[data.h_d_alpha_v, data.h_f_alpha],
         device=device,
     )
 
@@ -137,15 +137,15 @@ def perform_linesearch(data: EngineArrays, config: EngineConfig, dims: EngineDim
     wp.launch(
         kernel=update_sq_norm,
         dim=dims.N_alpha,
-        inputs=[data.res_alpha],
-        outputs=[data.res_alpha_norm_sq],
+        inputs=[data.h_alpha],
+        outputs=[data.h_alpha_norm_sq],
         device=device,
     )
 
     wp.launch(
         kernel=update_alpha,
         dim=1,
-        inputs=[data.alphas, data.res_alpha_norm_sq],
+        inputs=[data.alphas, data.h_alpha_norm_sq],
         outputs=[data.alpha],
         device=device,
     )

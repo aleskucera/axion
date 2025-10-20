@@ -1,6 +1,3 @@
-"""
-Axion physics engine implementation using Warp.
-"""
 from typing import Optional
 
 import newton
@@ -27,7 +24,7 @@ from .engine_data import create_engine_arrays
 from .engine_dims import EngineDimensions
 from .general_utils import update_body_q
 from .general_utils import update_variables
-from .linear_utils import compute_delta_body_qd_from_delta_lambda
+from .linear_utils import compute_dbody_qd_from_dbody_lambda
 from .linear_utils import compute_linear_system
 from .linesearch_utils import perform_linesearch
 
@@ -83,14 +80,21 @@ class AxionEngine(SolverBase):
         )
 
         if self.config.matrixfree_representation:
-            self.A_op = MatrixFreeSystemOperator(self)
+            self.A_op = MatrixFreeSystemOperator(
+                engine=self,
+                regularization=self.config.regularization,
+            )
         else:
-            self.A_op = MatrixSystemOperator(self)
+            self.A_op = MatrixSystemOperator(
+                engine=self,
+                regularization=self.config.regularization,
+            )
 
         self.preconditioner = JacobiPreconditioner(self)
 
-        self.data.set_spatial_inertia(model)
-        self.data.set_gravitational_acceleration(model)
+        self.data.set_body_M(model)
+        self.data.set_g_accel(model)
+        # self.data.set_joint_constraint_body_idx(model)
 
         self.events = [
             {
@@ -106,26 +110,26 @@ class AxionEngine(SolverBase):
         if isinstance(self.logger, NullLogger):
             return
 
-        self.logger.log_wp_dataset("res", self.data.res)
+        self.logger.log_wp_dataset("h", self.data.h)
         self.logger.log_wp_dataset("J_values", self.data.J_values)
         self.logger.log_wp_dataset("C_values", self.data.C_values)
         self.logger.log_wp_dataset("constraint_body_idx", self.data.constraint_body_idx)
 
         self.logger.log_wp_dataset("body_f", self.data.body_f)
         self.logger.log_wp_dataset("body_q", self.data.body_q)
-        self.logger.log_wp_dataset("body_qd", self.data.body_qd)
-        self.logger.log_wp_dataset("body_qd_prev", self.data.body_qd_prev)
+        self.logger.log_wp_dataset("body_u", self.data.body_u)
+        self.logger.log_wp_dataset("body_u_prev", self.data.body_u_prev)
 
-        self.logger.log_wp_dataset("lambda", self.data._lambda)
-        self.logger.log_wp_dataset("lambda_prev", self.data.lambda_prev)
+        self.logger.log_wp_dataset("body_lambda", self.data.body_lambda)
+        self.logger.log_wp_dataset("body_lambda_prev", self.data.body_lambda_prev)
 
-        self.logger.log_wp_dataset("delta_body_qd", self.data.delta_body_qd)
-        self.logger.log_wp_dataset("delta_lambda", self.data.delta_lambda)
+        self.logger.log_wp_dataset("dbody_qd", self.data.dbody_u)
+        self.logger.log_wp_dataset("dbody_lambda", self.data.dbody_lambda)
 
         self.logger.log_wp_dataset("b", self.data.b)
 
-        self.logger.log_struct_array("M", self.data.M)
-        self.logger.log_struct_array("M_inv", self.data.M_inv)
+        self.logger.log_struct_array("body_M", self.data.body_M)
+        self.logger.log_struct_array("body_M_inv", self.data.body_M_inv)
 
         self.logger.log_struct_array("joint_constraint_data", self.data.joint_constraint_data)
         self.logger.log_struct_array("contact_interaction", self.data.contact_interaction)
@@ -148,8 +152,8 @@ class AxionEngine(SolverBase):
         if isinstance(self.logger, NullLogger):
             return
 
-        self.logger.log_wp_dataset("gen_mass", self.data.M)
-        self.logger.log_wp_dataset("gen_inv_mass", self.data.M_inv)
+        self.logger.log_wp_dataset("gen_mass", self.data.body_M)
+        self.logger.log_wp_dataset("gen_inv_mass", self.data.body_M_inv)
 
     def step(
         self,
@@ -181,8 +185,8 @@ class AxionEngine(SolverBase):
             wp.record_event(self.events[i]["iter_start"])
 
             with self.logger.scope(f"newton_iteration_{i:02d}"):
-                wp.copy(dest=self.data.lambda_prev, src=self.data._lambda)
-                wp.copy(dest=self.data.lambda_n_scale_prev, src=self.data.lambda_n_scale)
+                wp.copy(dest=self.data.body_lambda_prev, src=self.data.body_lambda)
+                wp.copy(dest=self.data.s_n_prev, src=self.data.s_n)
 
                 # --- Linearize the system of equations ---
                 compute_linear_system(self.model, self.data, self.config, self.dims, dt)
@@ -196,13 +200,13 @@ class AxionEngine(SolverBase):
                 cr_solver(
                     A=self.A_op,
                     b=self.data.b,
-                    x=self.data.delta_lambda,
+                    x=self.data.dbody_lambda,
                     iters=self.config.linear_iters,
                     preconditioner=self.preconditioner,
                     logger=self.logger,
                 )
 
-                compute_delta_body_qd_from_delta_lambda(self.data, self.config, self.dims)
+                compute_dbody_qd_from_dbody_lambda(self.data, self.config, self.dims)
                 wp.record_event(self.events[i]["lin_solve"])
 
                 if self.config.linesearch_steps > 0:
@@ -214,7 +218,7 @@ class AxionEngine(SolverBase):
                 self._log_newton_iteration_data()
 
         update_body_q(self.model, self.data, self.config, self.dims, dt)
-        wp.copy(dest=state_out.body_qd, src=self.data.body_qd)
+        wp.copy(dest=state_out.body_qd, src=self.data.body_u)
         wp.copy(dest=state_out.body_q, src=self.data.body_q)
 
         return self.events
@@ -248,35 +252,35 @@ class AxionEngine(SolverBase):
         self.data.update_state_data(model, state_in, state_out)
 
         def residual_function(x: np.ndarray) -> np.ndarray:
-            wp.copy(dest=self.data.lambda_prev, src=self.data._lambda)
+            wp.copy(dest=self.data.body_lambda_prev, src=self.data.body_lambda)
 
             # x contains both lambda and body_qd
-            n_lambda = self.dims.con_dim
+            n_lambda = self.dims.N_c
             lambda_vals = x[:n_lambda]
             body_qd_vals = x[n_lambda:]
 
             # Store current state
-            lambda_backup = wp.clone(self.data._lambda)
-            body_qd_backup = wp.clone(self.data.body_qd)
+            lambda_backup = wp.clone(self.data.body_lambda)
+            body_qd_backup = wp.clone(self.data.body_u)
 
             try:
                 # Set state from input vector
-                self.data._lambda.assign(lambda_vals)
-                self.data.body_qd.assign(body_qd_vals)
+                self.data.body_lambda.assign(lambda_vals)
+                self.data.body_u.assign(body_qd_vals)
 
                 # Compute residuals (right hand side of the linear system)
                 compute_linear_system(self.data, self.config, self.dims, dt)
 
                 # Residual is concatenation of g and h vector
-                return self.data.res.numpy()
+                return self.data.h_c.numpy()
 
             finally:
                 # Restore original state
-                wp.copy(dest=self.data._lambda, src=lambda_backup)
-                wp.copy(dest=self.data.body_qd, src=body_qd_backup)
+                wp.copy(dest=self.data.body_lambda, src=lambda_backup)
+                wp.copy(dest=self.data.body_u, src=body_qd_backup)
 
         # Initial guess from current state
-        x0 = np.concatenate([self.data._lambda.numpy(), self.data.body_qd.numpy().flatten()])
+        x0 = np.concatenate([self.data.body_lambda.numpy(), self.data.body_u.numpy().flatten()])
 
         # Solve
         result = scipy.optimize.root(
@@ -287,9 +291,9 @@ class AxionEngine(SolverBase):
         )
 
         n_lambda = self.dims.con_dim
-        self.data._lambda.assign(wp.from_numpy(result.x[:n_lambda].astype(np.float32)))
+        self.data.body_lambda.assign(wp.from_numpy(result.x[:n_lambda].astype(np.float32)))
         body_qd_solution = result.x[n_lambda:][np.newaxis, :]
-        self.data.body_qd.assign(wp.from_numpy(body_qd_solution.astype(np.float32)))
+        self.data.body_u.assign(wp.from_numpy(body_qd_solution.astype(np.float32)))
 
-        wp.copy(dest=state_out.body_qd, src=self.data.body_qd)
+        wp.copy(dest=state_out.body_qd, src=self.data.body_u)
         wp.copy(dest=state_out.body_q, src=self.data.body_q)

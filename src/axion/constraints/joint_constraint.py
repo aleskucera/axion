@@ -5,46 +5,51 @@ from axion.types import JointConstraintData
 @wp.kernel
 def joint_constraint_kernel(
     # --- Iterative Inputs ---
-    body_qd: wp.array(dtype=wp.spatial_vector),
-    lambda_j: wp.array(dtype=wp.float32),
+    body_u: wp.array(dtype=wp.spatial_vector),
+    body_lambda_j: wp.array(dtype=wp.float32),
     joint_constraint_data: wp.array(dtype=JointConstraintData),
     # --- Parameters ---
     dt: wp.float32,
-    joint_stabilization_factor: wp.float32,
+    upsilon: wp.float32,
+    compliance: wp.float32,
     # --- Outputs ---
-    g: wp.array(dtype=wp.spatial_vector),
+    h_d: wp.array(dtype=wp.spatial_vector),
     h_j: wp.array(dtype=wp.float32),
-    J_j_values: wp.array(dtype=wp.spatial_vector, ndim=2),
+    J_hat_j_values: wp.array(dtype=wp.spatial_vector, ndim=2),
     C_j_values: wp.array(dtype=wp.float32),
 ):
-    # Each thread processes one constraint axis for one joint
     constraint_idx = wp.tid()
 
     c = joint_constraint_data[constraint_idx]
+    lambda_j = body_lambda_j[constraint_idx]
 
     if not c.is_active:
+        h_j[constraint_idx] = lambda_j
+        J_hat_j_values[constraint_idx, 0] = wp.spatial_vector()
+        J_hat_j_values[constraint_idx, 1] = wp.spatial_vector()
+        C_j_values[constraint_idx] = 1.0
         return
 
-    body_qd_c = body_qd[c.child_idx]
-    body_qd_p = wp.spatial_vector()
+    u_c = body_u[c.child_idx]
+    u_p = wp.spatial_vector()
     if c.parent_idx >= 0:
-        body_qd_p = body_qd[c.parent_idx]
+        u_p = body_u[c.parent_idx]
 
-    grad_c = wp.dot(c.J_child, body_qd_c) + wp.dot(c.J_parent, body_qd_p)
-    bias = joint_stabilization_factor / dt * c.value
+    v_j = wp.dot(c.J_child, u_c) + wp.dot(c.J_parent, u_p)
 
-    lambda_current = lambda_j[constraint_idx]
+    J_hat_child = c.J_child
+    J_hat_parent = c.J_parent if c.parent_idx >= 0 else wp.spatial_vector()
 
-    h_j[constraint_idx] = grad_c + bias
-    C_j_values[constraint_idx] = c.compliance
-
-    wp.atomic_add(g, c.child_idx, -c.J_child * lambda_current)
-    J_j_values[constraint_idx, 1] = c.J_child
     if c.parent_idx >= 0:
-        wp.atomic_add(g, c.parent_idx, -c.J_parent * lambda_current)
-        J_j_values[constraint_idx, 0] = c.J_parent
-    else:
-        J_j_values[constraint_idx, 0] = wp.spatial_vector()
+        wp.atomic_add(h_d, c.parent_idx, -J_hat_parent * lambda_j)
+    wp.atomic_add(h_d, c.child_idx, -J_hat_child * lambda_j)
+
+    h_j[constraint_idx] = v_j + upsilon / dt * c.value + compliance * lambda_j
+
+    J_hat_j_values[constraint_idx, 0] = J_hat_parent
+    J_hat_j_values[constraint_idx, 1] = J_hat_child
+
+    C_j_values[constraint_idx] = compliance + 5e-3
 
 
 @wp.kernel

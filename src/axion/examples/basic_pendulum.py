@@ -32,7 +32,7 @@ class Example:
         self.fps = 30
         self.frame_dt = 1.0 / self.fps
         self.sim_time = 2.0
-        self.sim_substeps = 2
+        self.sim_substeps = 3
         self.sim_dt = self.frame_dt / self.sim_substeps
 
         self.viewer = viewer

@@ -35,39 +35,40 @@ class EngineArrays:
     device: wpc.Device
 
     # --- Primary allocated arrays ---
-    res: wp.array  # Residual: [g, h]
+    h: wp.array  # Residual
     J_values: wp.array  # Jacobian values for sparse construction
     C_values: wp.array  # Compliance values
 
     body_f: wp.array  # External forces
     body_q: wp.array  # Positions
     body_q_prev: wp.array  # Positions at previous time step
-    body_qd: wp.array  # Velocities
-    body_qd_prev: wp.array  # Velocities at previous time step
+    body_u: wp.array  # Velocities
+    body_u_prev: wp.array  # Velocities at previous time step
 
-    _lambda: wp.array  # Constraint impulses
-    lambda_prev: wp.array  # Constraint impulses at previous newton step
-    lambda_n_scale: wp.array  # Scale for normal impulse
-    lambda_n_scale_prev: wp.array  # Scale for normal impulse at previous newton step
+    body_lambda: wp.array  # Constraint impulses
+    body_lambda_prev: wp.array  # Constraint impulses at previous newton step
+
+    s_n: wp.array  # Scale for normal impulse
+    s_n_prev: wp.array  # Scale for normal impulse at previous newton step
 
     constraint_body_idx: wp.array  # Indices of bodies involved in constraints
 
-    JT_delta_lambda: wp.array  # J^T * delta_lambda
-    delta_body_qd: wp.array  # Change in body velocities (full vector)
-    delta_lambda: wp.array  # Change in constraint impulses
+    JT_delta_lambda: wp.array  # J^T * delta_body_lambda
+    dbody_u: wp.array  # Change in body velocities
+    dbody_lambda: wp.array  # Change in constraint impulses
     b: wp.array  # RHS vector for linear system
 
-    M: wp.array  # Generalized mass properties
-    M_inv: wp.array  # Inverse generalized mass properties
+    body_M: wp.array
+    body_M_inv: wp.array
     joint_constraint_data: wp.array
     joint_constraint_offsets: wp.array
-    contact_interaction: wp.array  # Contact interaction data
+    contact_interaction: wp.array
 
     # --- Linesearch specific arrays (always allocated, may be empty) ---
     alpha: wp.array  # Step size
     alphas: wp.array = None  # Alpha values for linesearch
-    res_alpha: wp.array = None  # Residuals for different alphas
-    res_alpha_norm_sq: wp.array = None  # Squared norms of linesearch residuals
+    h_alpha: wp.array = None  # Residuals for different alphas
+    h_alpha_norm_sq: wp.array = None  # Squared norms of linesearch residuals
 
     M_inv_dense: wp.array = None
     J_dense: wp.array = None
@@ -75,184 +76,173 @@ class EngineArrays:
 
     g_accel: wp.array = None
 
-    # --- Core views ---
     @cached_property
-    def g(self) -> wp.array:
-        """Residual vector g (dynamics part)."""
-        return self.res[: self.dims.dyn_dim]
+    def h_d(self) -> wp.array:
+        return self.h[: self.dims.N_u]
 
     @cached_property
-    def g_v(self) -> wp.array:
-        """Residual vector g as spatial vectors."""
-        return wp.array(self.g, shape=self.dims.N_b, dtype=wp.spatial_vector)
+    def h_d_v(self) -> wp.array:
+        return wp.array(self.h_d, shape=self.dims.N_b, dtype=wp.spatial_vector)
 
     @cached_property
-    def h(self) -> wp.array:
-        """Residual vector h (constraints part)."""
-        return self.res[self.dims.dyn_dim :]
+    def h_c(self) -> wp.array:
+        return self.h[self.dims.N_u :]
 
-    @cached_property
-    def delta_body_qd_v(self) -> wp.array:
-        """Change in body velocities as spatial vectors."""
-        return wp.array(self.delta_body_qd, shape=self.dims.N_b, dtype=wp.spatial_vector)
-
-    # --- Constraint-specific views ---
     @cached_property
     def h_j(self) -> Optional[wp.array]:
         """Joint constraint residuals."""
-        return self.h[self.dims.joint_slice] if self.dims.N_j > 0 else None
+        return self.h_c[self.dims.slice_j] if self.dims.N_j > 0 else None
 
     @cached_property
     def h_n(self) -> Optional[wp.array]:
         """Normal contact constraint residuals."""
-        return self.h[self.dims.normal_slice] if self.dims.N_c > 0 else None
+        return self.h_c[self.dims.slice_n] if self.dims.N_n > 0 else None
 
     @cached_property
     def h_f(self) -> Optional[wp.array]:
         """Friction constraint residuals."""
-        return self.h[self.dims.friction_slice] if self.dims.N_c > 0 else None
+        return self.h_c[self.dims.slice_f] if self.dims.N_f > 0 else None
 
     @cached_property
     def J_j_values(self) -> Optional[wp.array]:
         """Joint Jacobian values."""
-        return self.J_values[self.dims.joint_slice] if self.dims.N_j > 0 else None
+        return self.J_values[self.dims.slice_j] if self.dims.N_j > 0 else None
 
     @cached_property
     def J_n_values(self) -> Optional[wp.array]:
         """Normal contact Jacobian values."""
-        return self.J_values[self.dims.normal_slice] if self.dims.N_c > 0 else None
+        return self.J_values[self.dims.slice_n] if self.dims.N_n > 0 else None
 
     @cached_property
     def J_f_values(self) -> Optional[wp.array]:
         """Friction Jacobian values."""
-        return self.J_values[self.dims.friction_slice] if self.dims.N_c > 0 else None
+        return self.J_values[self.dims.slice_f] if self.dims.N_f > 0 else None
 
     @cached_property
     def C_j_values(self) -> Optional[wp.array]:
         """Joint compliance values."""
-        return self.C_values[self.dims.joint_slice] if self.dims.N_j > 0 else None
+        return self.C_values[self.dims.slice_j] if self.dims.N_j > 0 else None
 
     @cached_property
     def C_n_values(self) -> Optional[wp.array]:
         """Normal contact compliance values."""
-        return self.C_values[self.dims.normal_slice] if self.dims.N_c > 0 else None
+        return self.C_values[self.dims.slice_n] if self.dims.N_n > 0 else None
 
     @cached_property
     def C_f_values(self) -> Optional[wp.array]:
         """Friction compliance values."""
-        return self.C_values[self.dims.friction_slice] if self.dims.N_c > 0 else None
+        return self.C_values[self.dims.slice_f] if self.dims.N_f > 0 else None
 
     @cached_property
-    def lambda_j(self) -> Optional[wp.array]:
+    def body_lambda_j(self) -> Optional[wp.array]:
         """Joint constraint impulses."""
-        return self._lambda[self.dims.joint_slice] if self.dims.N_j > 0 else None
+        return self.body_lambda[self.dims.slice_j] if self.dims.N_j > 0 else None
 
     @cached_property
-    def lambda_n(self) -> Optional[wp.array]:
+    def body_lambda_n(self) -> Optional[wp.array]:
         """Normal contact impulses."""
-        return self._lambda[self.dims.normal_slice] if self.dims.N_c > 0 else None
+        return self.body_lambda[self.dims.slice_n] if self.dims.N_n > 0 else None
 
     @cached_property
-    def lambda_f(self) -> Optional[wp.array]:
+    def body_lambda_f(self) -> Optional[wp.array]:
         """Friction impulses."""
-        return self._lambda[self.dims.friction_slice] if self.dims.N_c > 0 else None
+        return self.body_lambda[self.dims.slice_f] if self.dims.N_f > 0 else None
 
     @cached_property
-    def lambda_j_prev(self) -> Optional[wp.array]:
+    def body_lambda_j_prev(self) -> Optional[wp.array]:
         """Previous joint constraint impulses."""
-        return self.lambda_prev[self.dims.joint_slice] if self.dims.N_j > 0 else None
+        return self.body_lambda_prev[self.dims.slice_j] if self.dims.N_j > 0 else None
 
     @cached_property
-    def lambda_n_prev(self) -> Optional[wp.array]:
+    def body_lambda_n_prev(self) -> Optional[wp.array]:
         """Previous normal contact impulses."""
-        return self.lambda_prev[self.dims.normal_slice] if self.dims.N_c > 0 else None
+        return self.body_lambda_prev[self.dims.slice_n] if self.dims.N_n > 0 else None
 
     @cached_property
-    def lambda_f_prev(self) -> Optional[wp.array]:
+    def body_lambda_f_prev(self) -> Optional[wp.array]:
         """Previous friction impulses."""
-        return self.lambda_prev[self.dims.friction_slice] if self.dims.N_c > 0 else None
+        return self.body_lambda_prev[self.dims.slice_f] if self.dims.N_f > 0 else None
 
     @cached_property
-    def delta_lambda_j(self) -> Optional[wp.array]:
+    def dbody_u_v(self) -> wp.array:
+        """Change in body velocities as spatial vectors."""
+        return wp.array(self.dbody_u, shape=self.dims.N_b, dtype=wp.spatial_vector)
+
+    @cached_property
+    def dbody_lambda_j(self) -> Optional[wp.array]:
         """Change in joint impulses."""
-        return self.delta_lambda[self.dims.joint_slice] if self.dims.N_j > 0 else None
+        return self.dbody_lambda[self.dims.slice_j] if self.dims.N_j > 0 else None
 
     @cached_property
-    def delta_lambda_n(self) -> Optional[wp.array]:
+    def dbody_lambda_n(self) -> Optional[wp.array]:
         """Change in normal contact impulses."""
-        return self.delta_lambda[self.dims.normal_slice] if self.dims.N_c > 0 else None
+        return self.dbody_lambda[self.dims.slice_n] if self.dims.N_n > 0 else None
 
     @cached_property
-    def delta_lambda_f(self) -> Optional[wp.array]:
+    def dbody_lambda_f(self) -> Optional[wp.array]:
         """Change in friction impulses."""
-        return self.delta_lambda[self.dims.friction_slice] if self.dims.N_c > 0 else None
+        return self.dbody_lambda[self.dims.slice_f] if self.dims.N_f > 0 else None
 
     @cached_property
     def joint_constraint_body_idx(self) -> Optional[wp.array]:
         """Previous friction impulses."""
-        return self.constraint_body_idx[self.dims.joint_slice] if self.dims.joint_dim > 0 else None
+        return self.constraint_body_idx[self.dims.slice_j] if self.dims.N_j > 0 else None
 
     @cached_property
     def contact_constraint_body_idx(self) -> Optional[wp.array]:
         """Previous friction impulses."""
-        return (
-            self.constraint_body_idx[self.dims.normal_slice] if self.dims.normal_dim > 0 else None
-        )
+        return self.constraint_body_idx[self.dims.slice_n] if self.dims.N_n > 0 else None
 
     @cached_property
     def friction_constraint_body_idx(self) -> Optional[wp.array]:
         """Previous friction impulses."""
-        return (
-            self.constraint_body_idx[self.dims.friction_slice]
-            if self.dims.friction_dim > 0
-            else None
-        )
+        return self.constraint_body_idx[self.dims.slice_f] if self.dims.N_f > 0 else None
 
     # --- Linesearch views (always available, may be empty arrays) ---
     @cached_property
-    def g_alpha(self) -> wp.array:
+    def h_d_alpha(self) -> wp.array:
         """Linesearch residual g for different alphas."""
         if self.has_linesearch:
-            return self.res_alpha[:, : self.dims.dyn_dim]
+            return self.h_alpha[:, : self.dims.N_u]
 
     @cached_property
-    def g_alpha_v(self) -> wp.array:
+    def h_d_alpha_v(self) -> wp.array:
         """Linesearch residual g as spatial vectors."""
         if self.has_linesearch:
             return wp.array(
-                self.g_alpha, shape=(self.dims.N_alpha, self.dims.N_b), dtype=wp.spatial_vector
+                self.h_d_alpha, shape=(self.dims.N_alpha, self.dims.N_b), dtype=wp.spatial_vector
             )
 
     @cached_property
-    def h_alpha(self) -> wp.array:
+    def h_c_alpha(self) -> wp.array:
         """Linesearch residual h for different alphas."""
         if self.has_linesearch:
-            return self.res_alpha[:, self.dims.dyn_dim :]
+            return self.h_alpha[:, self.dims.N_u :]
 
     @cached_property
-    def h_alpha_j(self) -> Optional[wp.array]:
+    def h_j_alpha(self) -> Optional[wp.array]:
         """Linesearch joint constraint residuals."""
         if self.has_linesearch:
-            return self.h_alpha[:, self.dims.joint_slice] if self.dims.N_j > 0 else None
+            return self.h_alpha[:, self.dims.slice_j] if self.dims.N_j > 0 else None
 
     @cached_property
-    def h_alpha_n(self) -> Optional[wp.array]:
+    def h_n_alpha(self) -> Optional[wp.array]:
         """Linesearch normal contact residuals."""
         if self.has_linesearch:
-            return self.h_alpha[:, self.dims.normal_slice] if self.dims.N_c > 0 else None
+            return self.h_alpha[:, self.dims.slice_n] if self.dims.N_n > 0 else None
 
     @cached_property
-    def h_alpha_f(self) -> Optional[wp.array]:
+    def h_f_alpha(self) -> Optional[wp.array]:
         """Linesearch friction residuals."""
         if self.has_linesearch:
-            return self.h_alpha[:, self.dims.friction_slice] if self.dims.N_c > 0 else None
+            return self.h_alpha[:, self.dims.slice_f] if self.dims.N_f > 0 else None
 
     @property
     def has_linesearch(self) -> bool:
         """Returns True if linesearch arrays are allocated (N_alpha > 0)."""
         return self.dims.N_alpha > 0
 
-    def set_spatial_inertia(self, model: Model):
+    def set_body_M(self, model: Model):
         wp.launch(
             kernel=spatial_inertia_kernel,
             dim=self.dims.N_b,
@@ -260,7 +250,7 @@ class EngineArrays:
                 model.body_mass,
                 model.body_inertia,
             ],
-            outputs=[self.M],
+            outputs=[self.body_M],
         )
 
         wp.launch(
@@ -270,29 +260,14 @@ class EngineArrays:
                 model.body_inv_mass,
                 model.body_inv_inertia,
             ],
-            outputs=[self.M_inv],
+            outputs=[self.body_M_inv],
         )
 
-    def set_gravitational_acceleration(self, model: Model):
+    def set_g_accel(self, model: Model):
         assert (
             self.g_accel is None
         ), "Setting gravitational acceleration more than once is forbidden"
         object.__setattr__(self, "g_accel", model.gravity)
-
-    def clear_working_buffers(self):
-        """Clears non-persistent, working arrays."""
-        self.res.zero_()
-        self.J_values.zero_()
-        self.C_values.zero_()
-        self.JT_delta_lambda.zero_()
-        self.b.zero_()
-        self.delta_body_qd.zero_()
-        self.delta_lambda.zero_()
-
-        if self.has_linesearch:
-            self.res_alpha.zero_()
-            self.res_alpha_norm_sq.zero_()
-            self.best_alpha_idx.zero_()
 
     def update_state_data(
         self,
@@ -304,12 +279,12 @@ class EngineArrays:
         wp.copy(dest=self.body_f, src=state_in.body_f)
         wp.copy(dest=self.body_q, src=state_out.body_q)
         wp.copy(dest=self.body_q_prev, src=state_in.body_q)
-        wp.copy(dest=self.body_qd, src=state_out.body_qd)
-        wp.copy(dest=self.body_qd_prev, src=state_in.body_qd)
+        wp.copy(dest=self.body_u, src=state_out.body_qd)
+        wp.copy(dest=self.body_u_prev, src=state_in.body_qd)
 
         wp.launch(
             kernel=contact_interaction_kernel,
-            dim=self.dims.N_c,
+            dim=model.rigid_contact_max,
             inputs=[
                 self.body_q,
                 model.body_com,
@@ -334,7 +309,7 @@ class EngineArrays:
 
         wp.launch(
             kernel=joint_constraint_data_kernel,
-            dim=self.dims.joint_count,
+            dim=model.joint_count,
             inputs=[
                 self.body_q,
                 model.body_com,
@@ -354,7 +329,6 @@ class EngineArrays:
             device=self.device,
         )
 
-        # TODO: Not needed each iteration
         wp.launch(
             kernel=fill_joint_constraint_body_idx_kernel,
             dim=self.dims.N_j,
@@ -369,7 +343,7 @@ class EngineArrays:
 
         wp.launch(
             kernel=fill_contact_constraint_body_idx_kernel,
-            dim=self.dims.N_c,
+            dim=self.dims.N_n,
             inputs=[
                 self.contact_interaction,
             ],
@@ -381,7 +355,7 @@ class EngineArrays:
 
         wp.launch(
             kernel=fill_friction_constraint_body_idx_kernel,
-            dim=2 * self.dims.N_c,
+            dim=self.dims.N_f,
             inputs=[
                 self.contact_interaction,
             ],
@@ -390,6 +364,21 @@ class EngineArrays:
             ],
             device=self.device,
         )
+
+    def clear_working_buffers(self):
+        """Clears non-persistent, working arrays."""
+        self.h.zero_()
+        self.J_values.zero_()
+        self.C_values.zero_()
+        self.JT_delta_lambda.zero_()
+        self.b.zero_()
+        self.dbody_u.zero_()
+        self.dbody_lambda.zero_()
+
+        if self.has_linesearch:
+            self.h_alpha.zero_()
+            self.h_alpha_norm_sq.zero_()
+            self.best_alpha_idx.zero_()
 
 
 def create_engine_arrays(
@@ -421,32 +410,35 @@ def create_engine_arrays(
         return wp.empty(shape, dtype=dtype, device=device)
 
     # Allocate core arrays
-    res = _zeros(dims.res_dim)
-    J_values = _zeros((dims.con_dim, 2), wp.spatial_vector)
-    C_values = _zeros(dims.con_dim)
+    h = _zeros(dims.N_u + dims.N_c)
+    J_values = _zeros((dims.N_c, 2), wp.spatial_vector)
+    C_values = _zeros(dims.N_c)
 
     body_f = _zeros(dims.N_b, wp.spatial_vector)
     body_q = _zeros(dims.N_b, wp.transform)
     body_q_prev = _zeros(dims.N_b, wp.transform)
-    body_qd = _zeros(dims.N_b, wp.spatial_vector)
-    body_qd_prev = _zeros(dims.N_b, wp.spatial_vector)
+    body_u = _zeros(dims.N_b, wp.spatial_vector)
+    body_u_prev = _zeros(dims.N_b, wp.spatial_vector)
 
-    _lambda = _zeros(dims.con_dim)
-    lambda_prev = _zeros(dims.con_dim)
-    lambda_n_scale = _zeros(dims.N_c)
-    lambda_n_scale_prev = _zeros(dims.N_c)
+    body_lambda = _zeros(dims.N_c)
+    body_lambda_prev = _zeros(dims.N_c)
 
-    constraint_body_idx = _zeros((dims.con_dim, 2), wp.int32)
+    s_n = _zeros(dims.N_n)
+    s_n_prev = _zeros(dims.N_n)
+
+    constraint_body_idx = _zeros((dims.N_c, 2), wp.int32)
 
     JT_delta_lambda = _zeros(dims.N_b, wp.spatial_vector)
-    delta_body_qd = _zeros(dims.dyn_dim)
-    delta_lambda = _zeros(dims.con_dim)
-    b = _zeros(dims.con_dim)
+    dbody_u = _zeros(dims.N_u)
+    dbody_lambda = _zeros(dims.N_c)
 
-    M = _empty(dims.N_b, SpatialInertia)
-    M_inv = _empty(dims.N_b, SpatialInertia)
+    b = _zeros(dims.N_c)
+
+    body_M = _empty(dims.N_b, SpatialInertia)
+    body_M_inv = _empty(dims.N_b, SpatialInertia)
+
     joint_constraint_data = _empty(dims.N_j, JointConstraintData)
-    contact_interaction = _empty(dims.N_c, ContactInteraction)
+    contact_interaction = _empty(dims.N_n, ContactInteraction)
 
     # --- Arrays for linesearch ---
     alpha = _ones(1)  # Always set defaultly to one
@@ -455,7 +447,7 @@ def create_engine_arrays(
     res_alpha = None
     res_alpha_norm_sq = None
     if dims.N_alpha > 0:
-        res_alpha = _zeros((dims.N_alpha, dims.res_dim))
+        res_alpha = _zeros((dims.N_alpha, dims.N_u + dims.N_c))
         res_alpha_norm_sq = _zeros(dims.N_alpha)
 
         # Create default alpha values if not provide
@@ -467,39 +459,39 @@ def create_engine_arrays(
     J_dense = None
     C_dense = None
     if allocate_dense:
-        M_inv_dense = _zeros((dims.dyn_dim, dims.dyn_dim))
-        J_dense = _zeros((dims.con_dim, dims.dyn_dim))
-        C_dense = _zeros((dims.con_dim, dims.con_dim))
+        M_inv_dense = _zeros((dims.N_u, dims.N_u))
+        J_dense = _zeros((dims.N_c, dims.N_u))
+        C_dense = _zeros((dims.N_c, dims.N_c))
 
     return EngineArrays(
         dims=dims,
         device=device,
-        res=res,
+        h=h,
         J_values=J_values,
         C_values=C_values,
         body_f=body_f,
         body_q=body_q,
         body_q_prev=body_q_prev,
-        body_qd=body_qd,
-        body_qd_prev=body_qd_prev,
-        _lambda=_lambda,
-        lambda_prev=lambda_prev,
-        lambda_n_scale=lambda_n_scale,
-        lambda_n_scale_prev=lambda_n_scale_prev,
+        body_u=body_u,
+        body_u_prev=body_u_prev,
+        body_lambda=body_lambda,
+        body_lambda_prev=body_lambda_prev,
+        s_n=s_n,
+        s_n_prev=s_n_prev,
         constraint_body_idx=constraint_body_idx,
         JT_delta_lambda=JT_delta_lambda,
-        delta_body_qd=delta_body_qd,
-        delta_lambda=delta_lambda,
+        dbody_u=dbody_u,
+        dbody_lambda=dbody_lambda,
         b=b,
-        M=M,
-        M_inv=M_inv,
+        body_M=body_M,
+        body_M_inv=body_M_inv,
         joint_constraint_data=joint_constraint_data,
         joint_constraint_offsets=joint_constraint_offsets,
         contact_interaction=contact_interaction,
         alpha=alpha,
         alphas=alphas_array,
-        res_alpha=res_alpha,
-        res_alpha_norm_sq=res_alpha_norm_sq,
+        h_alpha=res_alpha,
+        h_alpha_norm_sq=res_alpha_norm_sq,
         M_inv_dense=M_inv_dense,
         J_dense=J_dense,
         C_dense=C_dense,
