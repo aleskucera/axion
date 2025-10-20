@@ -26,7 +26,7 @@ def to_spatial_momentum(
 
 
 @wp.kernel
-def assemble_spatial_inertia_kernel(
+def spatial_inertia_kernel(
     mass: wp.array(dtype=wp.float32),
     inertia: wp.array(dtype=wp.mat33),
     # Outputs

@@ -60,7 +60,7 @@ def perform_linesearch(data: EngineArrays, config: EngineConfig, dims: EngineDim
             data.body_qd,
             data.body_qd_prev,
             data.body_f,
-            data.gen_mass,
+            data.M,
             dt,
             data.g_accel,
         ],
@@ -70,7 +70,7 @@ def perform_linesearch(data: EngineArrays, config: EngineConfig, dims: EngineDim
 
     wp.launch(
         kernel=linesearch_joint_residuals_kernel,
-        dim=(dims.N_alpha, 5, dims.N_j),
+        dim=(dims.N_alpha, dims.N_j),
         inputs=[
             data.alphas,
             data.delta_body_qd_v,
@@ -99,7 +99,7 @@ def perform_linesearch(data: EngineArrays, config: EngineConfig, dims: EngineDim
             data.body_qd_prev,
             data.lambda_n,
             data.contact_interaction,
-            data.gen_inv_mass,
+            data.M_inv,
             # Parameters
             dt,
             config.contact_stabilization_factor,

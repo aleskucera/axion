@@ -1,6 +1,3 @@
-"""
-An abstract base class for running a Warp-based physics simulation.
-"""
 import math
 from abc import ABC
 from abc import abstractmethod
@@ -23,8 +20,6 @@ from .engine_config import EngineConfig
 from .engine_config import FeatherstoneEngineConfig
 from .engine_config import SemiImplicitEngineConfig
 from .engine_config import XPBDEngineConfig
-
-# import warp.sim.render
 
 
 @dataclass

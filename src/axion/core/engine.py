@@ -13,6 +13,7 @@ from axion.optim import cr_solver
 from axion.optim import JacobiPreconditioner
 from axion.optim import MatrixFreeSystemOperator
 from axion.optim import MatrixSystemOperator
+from axion.types import compute_joint_constraint_offsets
 from newton import Control
 from newton import Model
 from newton import State
@@ -57,21 +58,29 @@ class AxionEngine(SolverBase):
             logger: Optional HDF5Logger or NullLogger for recording simulation data.
         """
         super().__init__(model)
-        # self.device = model.device
 
-        # self.model = model
         self.logger = logger
         self.config = config
 
+        joint_constraint_offsets, num_constraints = compute_joint_constraint_offsets(
+            model.joint_type,
+        )
+
         self.dims = EngineDimensions(
-            N_b=self.model.body_count,
-            N_c=self.model.rigid_contact_max,
-            N_j=self.model.joint_count,
-            N_alpha=self.config.linesearch_steps,
+            body_count=self.model.body_count,
+            contact_count=self.model.rigid_contact_max,
+            joint_count=self.model.joint_count,
+            linesearch_steps=self.config.linesearch_steps,
+            joint_constraint_count=num_constraints,
         )
 
         allocate_dense_matrices = isinstance(self.logger, HDF5Logger)
-        self.data = create_engine_arrays(self.dims, self.device, allocate_dense_matrices)
+        self.data = create_engine_arrays(
+            self.dims,
+            joint_constraint_offsets,
+            self.device,
+            allocate_dense_matrices,
+        )
 
         if self.config.matrixfree_representation:
             self.A_op = MatrixFreeSystemOperator(self)
@@ -80,7 +89,7 @@ class AxionEngine(SolverBase):
 
         self.preconditioner = JacobiPreconditioner(self)
 
-        self.data.set_generalized_mass(model)
+        self.data.set_spatial_inertia(model)
         self.data.set_gravitational_acceleration(model)
 
         self.events = [
@@ -115,15 +124,15 @@ class AxionEngine(SolverBase):
 
         self.logger.log_wp_dataset("b", self.data.b)
 
-        self.logger.log_struct_array("gen_mass", self.data.gen_mass)
-        self.logger.log_struct_array("gen_inv_mass", self.data.gen_inv_mass)
+        self.logger.log_struct_array("M", self.data.M)
+        self.logger.log_struct_array("M_inv", self.data.M_inv)
 
-        self.logger.log_struct_array("joint_interaction", self.data.joint_interaction)
+        self.logger.log_struct_array("joint_constraint_data", self.data.joint_constraint_data)
         self.logger.log_struct_array("contact_interaction", self.data.contact_interaction)
 
         update_dense_matrices(self.data, self.config, self.dims)
 
-        self.logger.log_wp_dataset("Minv_dense", self.data.Minv_dense)
+        self.logger.log_wp_dataset("M_inv_dense", self.data.M_inv_dense)
         self.logger.log_wp_dataset("J_dense", self.data.J_dense)
         self.logger.log_wp_dataset("C_dense", self.data.C_dense)
 
@@ -139,8 +148,8 @@ class AxionEngine(SolverBase):
         if isinstance(self.logger, NullLogger):
             return
 
-        self.logger.log_wp_dataset("gen_mass", self.data.gen_mass)
-        self.logger.log_wp_dataset("gen_inv_mass", self.data.gen_inv_mass)
+        self.logger.log_wp_dataset("gen_mass", self.data.M)
+        self.logger.log_wp_dataset("gen_inv_mass", self.data.M_inv)
 
     def step(
         self,

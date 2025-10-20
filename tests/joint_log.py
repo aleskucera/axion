@@ -1,3 +1,4 @@
+import newton
 import numpy as np
 import warp as wp
 from axion.logging import HDF5Logger
@@ -17,7 +18,7 @@ wp_body_q = wp.array(
     [wp.transform_identity() for _ in range(num_joints * 2)], dtype=wp.transform, device=device
 )
 wp_body_com = wp.zeros(num_joints * 2, dtype=wp.vec3, device=device)
-wp_joint_type = wp.array([wp.sim.JOINT_REVOLUTE] * num_joints, dtype=wp.int32, device=device)
+wp_joint_type = wp.array([newton.JOINT_REVOLUTE] * num_joints, dtype=wp.int32, device=device)
 wp_joint_enabled = wp.ones(num_joints, dtype=wp.int32, device=device)
 wp_joint_parent = wp.array([i for i in range(num_joints)], dtype=wp.int32, device=device)
 wp_joint_child = wp.array(

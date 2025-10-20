@@ -1,4 +1,3 @@
-import newton
 import warp as wp
 from newton import Control
 from newton import JointMode

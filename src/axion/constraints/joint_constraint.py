@@ -1,6 +1,5 @@
 import warp as wp
-from axion.types import get_joint_axis_kinematics
-from axion.types import JointInteraction
+from axion.types import JointConstraintData
 
 
 @wp.kernel
@@ -8,7 +7,7 @@ def joint_constraint_kernel(
     # --- Iterative Inputs ---
     body_qd: wp.array(dtype=wp.spatial_vector),
     lambda_j: wp.array(dtype=wp.float32),
-    interactions: wp.array(dtype=JointInteraction),
+    joint_constraint_data: wp.array(dtype=JointConstraintData),
     # --- Parameters ---
     dt: wp.float32,
     joint_stabilization_factor: wp.float32,
@@ -19,39 +18,33 @@ def joint_constraint_kernel(
     C_j_values: wp.array(dtype=wp.float32),
 ):
     # Each thread processes one constraint axis for one joint
-    constraint_axis_idx, joint_idx = wp.tid()
+    constraint_idx = wp.tid()
 
-    interaction = interactions[joint_idx]
+    c = joint_constraint_data[constraint_idx]
 
-    if not interaction.is_active:
+    if not c.is_active:
         return
 
-    axis_data = get_joint_axis_kinematics(interaction, constraint_axis_idx)
-
-    child_idx = interaction.child_idx
-    parent_idx = interaction.parent_idx
-
-    body_qd_c = body_qd[child_idx]
+    body_qd_c = body_qd[c.child_idx]
     body_qd_p = wp.spatial_vector()
-    if parent_idx >= 0:
-        body_qd_p = body_qd[parent_idx]
+    if c.parent_idx >= 0:
+        body_qd_p = body_qd[c.parent_idx]
 
-    grad_c = wp.dot(axis_data.J_child, body_qd_c) + wp.dot(axis_data.J_parent, body_qd_p)
-    bias = joint_stabilization_factor / dt * axis_data.error
+    grad_c = wp.dot(c.J_child, body_qd_c) + wp.dot(c.J_parent, body_qd_p)
+    bias = joint_stabilization_factor / dt * c.value
 
-    global_constraint_idx = joint_idx * 5 + constraint_axis_idx
-    lambda_current = lambda_j[global_constraint_idx]
+    lambda_current = lambda_j[constraint_idx]
 
-    h_j[global_constraint_idx] = grad_c + bias
-    C_j_values[global_constraint_idx] = axis_data.compliance
+    h_j[constraint_idx] = grad_c + bias
+    C_j_values[constraint_idx] = c.compliance
 
-    wp.atomic_add(g, child_idx, -axis_data.J_child * lambda_current)
-    J_j_values[global_constraint_idx, 1] = axis_data.J_child
-    if parent_idx >= 0:
-        wp.atomic_add(g, parent_idx, -axis_data.J_parent * lambda_current)
-        J_j_values[global_constraint_idx, 0] = axis_data.J_parent
+    wp.atomic_add(g, c.child_idx, -c.J_child * lambda_current)
+    J_j_values[constraint_idx, 1] = c.J_child
+    if c.parent_idx >= 0:
+        wp.atomic_add(g, c.parent_idx, -c.J_parent * lambda_current)
+        J_j_values[constraint_idx, 0] = c.J_parent
     else:
-        J_j_values[global_constraint_idx, 0] = wp.spatial_vector()
+        J_j_values[constraint_idx, 0] = wp.spatial_vector()
 
 
 @wp.kernel
@@ -62,7 +55,7 @@ def linesearch_joint_residuals_kernel(
     # --- Iterative Inputs ---
     body_qd: wp.array(dtype=wp.spatial_vector),
     lambda_j: wp.array(dtype=wp.float32),
-    interactions: wp.array(dtype=JointInteraction),
+    joint_constraint_data: wp.array(dtype=JointConstraintData),
     # --- Parameters ---
     dt: wp.float32,
     joint_stabilization_factor: wp.float32,
@@ -71,33 +64,27 @@ def linesearch_joint_residuals_kernel(
     h_alpha_j: wp.array(dtype=wp.float32, ndim=2),
 ):
     # Each thread processes one constraint axis for one joint
-    alpha_idx, constraint_axis_idx, joint_idx = wp.tid()
-    global_constraint_idx = joint_idx * 5 + constraint_axis_idx
+    alpha_idx, constraint_idx = wp.tid()
 
-    interaction = interactions[joint_idx]
     alpha = alphas[alpha_idx]
+    c = joint_constraint_data[constraint_idx]
 
-    if not interaction.is_active:
-        h_alpha_j[alpha_idx, global_constraint_idx] = 0.0
+    if not c.is_active:
+        h_alpha_j[alpha_idx, constraint_idx] = 0.0
         return
 
-    axis_data = get_joint_axis_kinematics(interaction, constraint_axis_idx)
-
-    child_idx = interaction.child_idx
-    parent_idx = interaction.parent_idx
-
-    body_qd_c = body_qd[child_idx] + alpha * delta_body_qd[child_idx]
+    body_qd_c = body_qd[c.child_idx] + alpha * delta_body_qd[c.child_idx]
     body_qd_p = wp.spatial_vector()
-    if parent_idx >= 0:
-        body_qd_p = body_qd[parent_idx] + alpha * delta_body_qd[parent_idx]
+    if c.parent_idx >= 0:
+        body_qd_p = body_qd[c.parent_idx] + alpha * delta_body_qd[c.parent_idx]
 
-    grad_c = wp.dot(axis_data.J_child, body_qd_c) + wp.dot(axis_data.J_parent, body_qd_p)
-    bias = joint_stabilization_factor / dt * axis_data.error
+    grad_c = wp.dot(c.J_child, body_qd_c) + wp.dot(c.J_parent, body_qd_p)
+    bias = joint_stabilization_factor / dt * c.value
 
-    h_alpha_j[alpha_idx, global_constraint_idx] = grad_c + bias
+    h_alpha_j[alpha_idx, constraint_idx] = grad_c + bias
 
-    lambda_current = lambda_j[global_constraint_idx] + alpha * delta_lambda_j[global_constraint_idx]
+    lambda_current = lambda_j[constraint_idx] + alpha * delta_lambda_j[constraint_idx]
 
-    g_alpha[alpha_idx, child_idx] += -axis_data.J_child * lambda_current
-    if parent_idx >= 0:
-        g_alpha[alpha_idx, parent_idx] += -axis_data.J_parent * lambda_current
+    g_alpha[alpha_idx, c.child_idx] += -c.J_child * lambda_current
+    if c.parent_idx >= 0:
+        g_alpha[alpha_idx, c.parent_idx] += -c.J_parent * lambda_current

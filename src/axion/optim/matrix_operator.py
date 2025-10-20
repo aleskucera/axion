@@ -23,7 +23,7 @@ from warp.optim.linear import LinearOperator
 
 @wp.func
 def _compute_Aij(
-    body_spatial_inertia: wp.array(dtype=SpatialInertia),
+    M_inv: wp.array(dtype=SpatialInertia),
     body_i: int,
     body_j: int,
     J_i: wp.spatial_vector,
@@ -34,7 +34,7 @@ def _compute_Aij(
     if body_i != body_j or body_i < 0 or body_j < 0:
         return 0.0
 
-    Minv = body_spatial_inertia[body_i]
+    Minv = M_inv[body_i]
 
     MinvJ_j = to_spatial_momentum(Minv, J_j)
 
@@ -43,7 +43,7 @@ def _compute_Aij(
 
 @wp.kernel
 def update_system_matrix_kernel(
-    body_spatial_inertia: wp.array(dtype=SpatialInertia),
+    M_inv: wp.array(dtype=SpatialInertia),
     constraint_body_idx: wp.array(dtype=wp.int32, ndim=2),
     J_values: wp.array(dtype=wp.spatial_vector, ndim=2),
     C_values: wp.array(dtype=wp.float32),
@@ -69,19 +69,19 @@ def update_system_matrix_kernel(
 
     # Term 1: body_a_i vs body_a_j
     if body_a_i >= 0 and body_a_i == body_a_j:
-        A_ij += _compute_Aij(body_spatial_inertia, body_a_i, body_a_j, J_ia, J_ja)
+        A_ij += _compute_Aij(M_inv, body_a_i, body_a_j, J_ia, J_ja)
 
     # Term 2: body_a_i vs body_b_j
     if body_a_i >= 0 and body_a_i == body_b_j:
-        A_ij += _compute_Aij(body_spatial_inertia, body_a_i, body_b_j, J_ia, J_jb)
+        A_ij += _compute_Aij(M_inv, body_a_i, body_b_j, J_ia, J_jb)
 
     # Term 3: body_b_i vs body_a_j
     if body_b_i >= 0 and body_b_i == body_a_j:
-        A_ij += _compute_Aij(body_spatial_inertia, body_b_i, body_a_j, J_ib, J_ja)
+        A_ij += _compute_Aij(M_inv, body_b_i, body_a_j, J_ib, J_ja)
 
     # Term 4: body_b_i vs body_b_j
     if body_b_i >= 0 and body_b_i == body_b_j:
-        A_ij += _compute_Aij(body_spatial_inertia, body_b_i, body_b_j, J_ib, J_jb)
+        A_ij += _compute_Aij(M_inv, body_b_i, body_b_j, J_ib, J_jb)
 
     # Add compliance term C_ij (only on diagonal)
     if i == j:
@@ -115,7 +115,7 @@ class MatrixSystemOperator(LinearOperator):
             kernel=update_system_matrix_kernel,
             dim=self.shape,
             inputs=[
-                self.engine.data.gen_inv_mass,
+                self.engine.data.inv_sp_inertia,
                 self.engine.data.constraint_body_idx,
                 self.engine.data.J_values,
                 self.engine.data.C_values,

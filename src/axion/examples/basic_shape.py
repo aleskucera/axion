@@ -105,13 +105,13 @@ class Example:
         # finalize model
         self.model = builder.finalize()
 
-        self.solver = newton.solvers.SolverXPBD(self.model, iterations=10)
-        # self.solver = axion.AxionEngine(self.model)
+        # self.solver = newton.solvers.SolverXPBD(self.model, iterations=10)
+        self.solver = axion.AxionEngine(self.model)
 
         self.state_0 = self.model.state()
         self.state_1 = self.model.state()
         self.control = self.model.control()
-        self.contacts = self.model.collide(self.state_0, rigid_contact_max_per_pair=2)
+        self.contacts = self.model.collide(self.state_0)
 
         self.viewer.set_model(self.model)
 
@@ -135,7 +135,7 @@ class Example:
             # apply forces to the model
             self.viewer.apply_forces(self.state_0)
 
-            self.contacts = self.model.collide(self.state_0, rigid_contact_max_per_pair=2)
+            self.contacts = self.model.collide(self.state_0)
             self.solver.step(self.state_0, self.state_1, self.control, self.contacts, self.sim_dt)
 
             # swap states

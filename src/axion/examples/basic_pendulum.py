@@ -29,10 +29,10 @@ import warp as wp
 class Example:
     def __init__(self, viewer):
         # setup simulation parameters first
-        self.fps = 60
+        self.fps = 30
         self.frame_dt = 1.0 / self.fps
         self.sim_time = 2.0
-        self.sim_substeps = 5
+        self.sim_substeps = 2
         self.sim_dt = self.frame_dt / self.sim_substeps
 
         self.viewer = viewer
@@ -82,27 +82,27 @@ class Example:
         self.model = builder.finalize()
 
         # self.solver = newton.solvers.SolverFeatherstone(self.model)
-        self.solver = newton.solvers.SolverMuJoCo(self.model)
+        # self.solver = newton.solvers.SolverMuJoCo(self.model)
         # self.solver = newton.solvers.SolverXPBD(self.model, iterations=10)
-        # self.solver = axion.AxionEngine(self.model)
+        self.solver = axion.AxionEngine(self.model)
 
         self.state_0 = self.model.state()
         self.state_1 = self.model.state()
         self.control = self.model.control()
-        self.control.joint_target = wp.array(
-            [
-                2.5,  # left wheel target velocity
-                -1.0,  # right wheel target velocity
-            ],
-            dtype=wp.float32,
-        )
-        self.control.joint_f = wp.array(
-            [
-                800.0,  # left wheel target velocity
-                0.0,  # right wheel target velocity
-            ],
-            dtype=wp.float32,
-        )
+        # self.control.joint_target = wp.array(
+        #     [
+        #         2.5,  # left wheel target velocity
+        #         -1.0,  # right wheel target velocity
+        #     ],
+        #     dtype=wp.float32,
+        # )
+        # self.control.joint_f = wp.array(
+        #     [
+        #         800.0,  # left wheel target velocity
+        #         0.0,  # right wheel target velocity
+        #     ],
+        #     dtype=wp.float32,
+        # )
         self.contacts = self.model.collide(self.state_0)
 
         self.viewer.set_model(self.model)
