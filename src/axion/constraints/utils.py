@@ -17,32 +17,11 @@ def scaled_fisher_burmeister(
     value = scaled_a + scaled_b - norm
 
     # Avoid division by zero
-    if norm < 1e-6:
+    if norm < 1e-5:
         return value, 0.0, 1.0
 
     dvalue_da = alpha * (1.0 - scaled_a / norm)
     dvalue_db = beta * (1.0 - scaled_b / norm)
-
-    return value, dvalue_da, dvalue_db
-
-
-@wp.func
-def scaled_fisher_burmeister_new(
-    a: wp.float32,
-    b: wp.float32,
-    r: wp.float32 = 1.0,
-):
-    scaled_b = r * b
-    norm = wp.sqrt(a**2.0 + scaled_b**2.0)
-
-    value = a + scaled_b - norm
-
-    # Avoid division by zero
-    if norm < 1e-6:
-        return value, 0.0, 1.0
-
-    dvalue_da = 1.0 - a / norm
-    dvalue_db = r * (1.0 - scaled_b / norm)
 
     return value, dvalue_da, dvalue_db
 
@@ -91,38 +70,3 @@ def fill_friction_constraint_body_idx_kernel(
     interaction = contact_interaction[contact_idx]
     friction_constraint_body_idx[constraint_idx, 0] = interaction.body_a_idx
     friction_constraint_body_idx[constraint_idx, 1] = interaction.body_b_idx
-
-
-# @wp.kernel
-# def update_constraint_body_idx_kernel(
-#     joint_constraints: wp.array(dtype=JointConstraintData),
-#     contact_interaction: wp.array(dtype=ContactInteraction),
-#     # --- Outputs ---
-#     constraint_body_idx: wp.array(dtype=wp.int32, ndim=2),
-# ):
-#     constraint_idx = wp.tid()
-#     N_jc = len(joint_constraints)
-#     N_n = len(contact_interaction)
-#
-#     body_a = -1
-#     body_b = -1
-#
-#     if constraint_idx < N_jc:
-#         c = joint_constraints[constraint_idx]
-#         body_a = c.parent_idx
-#         body_b = c.child_idx
-#     elif constraint_idx < N_jc + N_n:
-#         offset = N_jc
-#         contact_idx = constraint_idx - offset
-#
-#         body_a = contact_interaction[contact_idx].body_a_idx
-#         body_b = contact_interaction[contact_idx].body_b_idx
-#     else:
-#         offset = N_jc + N_n
-#         contact_idx = (constraint_idx - offset) // 2
-#
-#         body_a = contact_interaction[contact_idx].body_a_idx
-#         body_b = contact_interaction[contact_idx].body_b_idx
-#
-#     constraint_body_idx[constraint_idx, 0] = body_a
-#     constraint_body_idx[constraint_idx, 1] = body_b

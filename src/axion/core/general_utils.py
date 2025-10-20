@@ -9,23 +9,23 @@ from .engine_dims import EngineDimensions
 @wp.kernel
 def update_variables_kernel(
     alpha: wp.array(dtype=wp.float32),
-    delta_body_qd: wp.array(dtype=wp.spatial_vector),
-    delta_lambda: wp.array(dtype=wp.float32),
+    dbody_u: wp.array(dtype=wp.spatial_vector),
+    dbody_lambda: wp.array(dtype=wp.float32),
     # Outputs
-    body_qd: wp.array(dtype=wp.spatial_vector),
-    _lambda: wp.array(dtype=wp.float32),
+    body_u: wp.array(dtype=wp.spatial_vector),
+    body_lambda: wp.array(dtype=wp.float32),
 ):
     tid = wp.tid()
 
-    body_qd_dim = body_qd.shape[0]
-    lambda_dim = _lambda.shape[0]
+    body_qd_dim = body_u.shape[0]
+    lambda_dim = body_lambda.shape[0]
 
     if tid < body_qd_dim:
         idx = tid
-        body_qd[idx] += alpha[0] * delta_body_qd[idx]
+        body_u[idx] += alpha[0] * dbody_u[idx]
     elif tid < body_qd_dim + lambda_dim:
         idx = tid - body_qd_dim
-        _lambda[idx] += alpha[0] * delta_lambda[idx]
+        body_lambda[idx] += alpha[0] * dbody_lambda[idx]
     else:
         return
 
@@ -33,30 +33,30 @@ def update_variables_kernel(
 @wp.kernel
 def update_lambda_kernel(
     alpha: wp.array(dtype=wp.float32),
-    delta_lambda: wp.array(dtype=wp.float32),
+    dbody_lambda: wp.array(dtype=wp.float32),
     # Outputs
-    _lambda: wp.array(dtype=wp.float32),
+    body_lambda: wp.array(dtype=wp.float32),
 ):
     con_idx = wp.tid()
 
-    _lambda[con_idx] += alpha[0] * delta_lambda[con_idx]
+    body_lambda[con_idx] += alpha[0] * dbody_lambda[con_idx]
 
 
 @wp.kernel
 def update_body_qd_kernel(
     alpha: wp.array(dtype=wp.float32),
-    delta_body_qd: wp.array(dtype=wp.spatial_vector),
+    dbody_u: wp.array(dtype=wp.spatial_vector),
     # Outputs
-    body_qd: wp.array(dtype=wp.spatial_vector),
+    body_u: wp.array(dtype=wp.spatial_vector),
 ):
     body_idx = wp.tid()
 
-    body_qd[body_idx] += alpha[0] * delta_body_qd[body_idx]
+    body_u[body_idx] += alpha[0] * dbody_u[body_idx]
 
 
 @wp.kernel
 def update_body_q_kernel(
-    body_qd: wp.array(dtype=wp.spatial_vector),
+    body_u: wp.array(dtype=wp.spatial_vector),
     body_q_prev: wp.array(dtype=wp.transform),
     body_com: wp.array(dtype=wp.vec3),
     dt: wp.float32,
@@ -64,8 +64,8 @@ def update_body_q_kernel(
 ):
     body_idx = wp.tid()
 
-    v = wp.spatial_top(body_qd[body_idx])
-    w = wp.spatial_bottom(body_qd[body_idx])
+    v = wp.spatial_top(body_u[body_idx])
+    w = wp.spatial_bottom(body_u[body_idx])
 
     x_prev = wp.transform_get_translation(body_q_prev[body_idx])
     r_prev = wp.transform_get_rotation(body_q_prev[body_idx])
@@ -90,12 +90,12 @@ def update_variables(
 
     wp.launch(
         kernel=update_lambda_kernel,
-        dim=dims.con_dim,
+        dim=dims.N_c,
         inputs=[
             data.alpha,
-            data.delta_lambda,
+            data.dbody_lambda,
         ],
-        outputs=[data._lambda],
+        outputs=[data.body_lambda],
         device=device,
     )
 
@@ -104,9 +104,9 @@ def update_variables(
         dim=dims.N_b,
         inputs=[
             data.alpha,
-            data.delta_body_qd_v,
+            data.dbody_u_v,
         ],
-        outputs=[data.body_qd],
+        outputs=[data.body_u],
         device=device,
     )
 
@@ -124,7 +124,7 @@ def update_body_q(
         kernel=update_body_q_kernel,
         dim=dims.N_b,
         inputs=[
-            data.body_qd,
+            data.body_u,
             data.body_q_prev,
             model.body_com,
             dt,

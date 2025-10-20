@@ -15,23 +15,23 @@ def update_J_dense(
 ):
     constraint_idx = wp.tid()
 
-    body_a = constraint_body_idx[constraint_idx, 0]
-    body_b = constraint_body_idx[constraint_idx, 1]
+    body_1 = constraint_body_idx[constraint_idx, 0]
+    body_2 = constraint_body_idx[constraint_idx, 1]
 
-    J_ia = J_values[constraint_idx, 0]
-    J_ib = J_values[constraint_idx, 1]
+    J_1 = J_values[constraint_idx, 0]
+    J_2 = J_values[constraint_idx, 1]
 
-    if body_a >= 0:
-        body_idx = body_a * 6
+    if body_1 >= 0:
+        body_idx = body_1 * 6
         for i in range(wp.static(6)):
             st_i = wp.static(i)
-            wp.atomic_add(J_dense, constraint_idx, body_idx + st_i, J_ia[st_i])
+            wp.atomic_add(J_dense, constraint_idx, body_idx + st_i, J_1[st_i])
 
-    if body_b >= 0:
-        body_idx = body_b * 6
+    if body_2 >= 0:
+        body_idx = body_2 * 6
         for i in range(wp.static(6)):
             st_i = wp.static(i)
-            wp.atomic_add(J_dense, constraint_idx, body_idx + st_i, J_ib[st_i])
+            wp.atomic_add(J_dense, constraint_idx, body_idx + st_i, J_2[st_i])
 
 
 @wp.kernel
@@ -92,7 +92,7 @@ def update_dense_matrices(
     wp.launch(
         kernel=update_Minv_dense_kernel,
         dim=dims.N_b,
-        inputs=[data.M_inv],
+        inputs=[data.body_M_inv],
         outputs=[data.M_inv_dense],
         device=device,
     )
@@ -100,7 +100,7 @@ def update_dense_matrices(
     # Update J (constraint Jacobian)
     wp.launch(
         kernel=update_J_dense,
-        dim=dims.con_dim,
+        dim=dims.N_c,
         inputs=[
             data.constraint_body_idx,
             data.J_values,
@@ -112,7 +112,7 @@ def update_dense_matrices(
     # Update C (compliance matrix)
     wp.launch(
         kernel=update_C_dense_kernel,
-        dim=dims.con_dim,
+        dim=dims.N_c,
         inputs=[data.C_values],
         outputs=[data.C_dense],
         device=device,

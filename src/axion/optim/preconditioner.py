@@ -9,10 +9,10 @@ from warp.optim.linear import LinearOperator
 
 @wp.kernel
 def compute_inv_diag_kernel(
-    constraint_body_idx: wp.array(dtype=wp.int32, ndim=2),
-    M_inv: wp.array(dtype=SpatialInertia),
+    body_M_inv: wp.array(dtype=SpatialInertia),
     J_values: wp.array(dtype=wp.spatial_vector, ndim=2),
     C_values: wp.array(dtype=wp.float32),
+    constraint_body_idx: wp.array(dtype=wp.int32, ndim=2),
     # Output array
     P_inv_diag: wp.array(dtype=wp.float32),
 ):
@@ -22,18 +22,18 @@ def compute_inv_diag_kernel(
     """
     constraint_idx = wp.tid()
 
-    body_a = constraint_body_idx[constraint_idx, 0]
-    body_b = constraint_body_idx[constraint_idx, 1]
+    body_1 = constraint_body_idx[constraint_idx, 0]
+    body_2 = constraint_body_idx[constraint_idx, 1]
 
     result = 0.0
-    if body_a >= 0:
-        Minv_a = M_inv[body_a]
-        J_ia = J_values[constraint_idx, 0]
-        result += wp.dot(J_ia, to_spatial_momentum(Minv_a, J_ia))
-    if body_b >= 0:
-        Minv_b = M_inv[body_b]
-        J_ib = J_values[constraint_idx, 1]
-        result += wp.dot(J_ib, to_spatial_momentum(Minv_b, J_ib))
+    if body_1 >= 0:
+        M_inv_1 = body_M_inv[body_1]
+        J_1 = J_values[constraint_idx, 0]
+        result += wp.dot(J_1, to_spatial_momentum(M_inv_1, J_1))
+    if body_2 >= 0:
+        M_inv_2 = body_M_inv[body_2]
+        J_2 = J_values[constraint_idx, 1]
+        result += wp.dot(J_2, to_spatial_momentum(M_inv_2, J_2))
 
     # Add diagonal compliance term C[i,i]
     diag_A = result + C_values[constraint_idx]
@@ -71,7 +71,7 @@ class JacobiPreconditioner(LinearOperator):
 
     def __init__(self, engine):
         super().__init__(
-            shape=(engine.dims.con_dim, engine.dims.con_dim),
+            shape=(engine.dims.N_c, engine.dims.N_c),
             dtype=wp.float32,
             device=engine.device,
             matvec=None,  # Will be set later
@@ -79,7 +79,7 @@ class JacobiPreconditioner(LinearOperator):
         self.engine = engine
 
         # Storage for the inverse diagonal elements
-        self._P_inv_diag = wp.zeros(engine.dims.con_dim, dtype=wp.float32, device=self.device)
+        self._P_inv_diag = wp.zeros(engine.dims.N_c, dtype=wp.float32, device=self.device)
 
     def update(self):
         """
@@ -88,12 +88,12 @@ class JacobiPreconditioner(LinearOperator):
         """
         wp.launch(
             kernel=compute_inv_diag_kernel,
-            dim=self.engine.dims.con_dim,
+            dim=self.engine.dims.N_c,
             inputs=[
-                self.engine.data.constraint_body_idx,
-                self.engine.data.M_inv,
+                self.engine.data.body_M_inv,
                 self.engine.data.J_values,
                 self.engine.data.C_values,
+                self.engine.data.constraint_body_idx,
             ],
             outputs=[self._P_inv_diag],
             device=self.device,
@@ -106,7 +106,7 @@ class JacobiPreconditioner(LinearOperator):
         """
         wp.launch(
             kernel=apply_preconditioner_kernel,
-            dim=self.engine.dims.con_dim,
+            dim=self.engine.dims.N_c,
             inputs=[self._P_inv_diag, x, y, alpha, beta, z],
             device=self.device,
         )

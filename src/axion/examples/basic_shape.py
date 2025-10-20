@@ -35,7 +35,7 @@ class Example:
         self.fps = 60
         self.frame_dt = 1.0 / self.fps
         self.sim_time = 0.0
-        self.sim_substeps = 2
+        self.sim_substeps = 4
         self.sim_dt = self.frame_dt / self.sim_substeps
 
         self.viewer = viewer
@@ -52,12 +52,12 @@ class Example:
         # z height to drop shapes from
         drop_z = 2.0
 
-        # # SPHERE
-        # self.sphere_pos = wp.vec3(0.0, -2.0, drop_z)
-        # body_sphere = builder.add_body(
-        #     xform=wp.transform(p=self.sphere_pos, q=wp.quat_identity()), key="sphere"
-        # )
-        # builder.add_shape_sphere(body_sphere, radius=0.5, cfg=rigid_cfg)
+        # SPHERE
+        self.sphere_pos = wp.vec3(0.0, -2.0, drop_z)
+        body_sphere = builder.add_body(
+            xform=wp.transform(p=self.sphere_pos, q=wp.quat_identity()), key="sphere"
+        )
+        builder.add_shape_sphere(body_sphere, radius=0.5, cfg=rigid_cfg)
 
         # CAPSULE
         self.capsule_pos = wp.vec3(0.0, 0.0, drop_z)

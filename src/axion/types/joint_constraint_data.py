@@ -17,8 +17,6 @@ class JointConstraintData:
     J_parent: wp.spatial_vector
     J_child: wp.spatial_vector
 
-    compliance: wp.float32
-
 
 def compute_joint_constraint_offsets(joint_types: wp.array) -> tuple[wp.array, int]:
     constraint_count_map = np.array(
@@ -68,14 +66,12 @@ def formulate_translational_constraints(
     c_pos: wp.vec3,
     r_c: wp.vec3,
     r_p: wp.vec3,
-    lin_compliance: wp.float32,
 ):
     """Assembles the 3 common translational constraints directly into the output array."""
     c = JointConstraintData()
     c.is_active = True
     c.parent_idx = parent_idx
     c.child_idx = child_idx
-    c.compliance = lin_compliance
 
     # Constraint 0: X translation
     c.J_child = wp.spatial_vector(1.0, 0.0, 0.0, 0.0, r_c[2], -r_c[1])
@@ -111,8 +107,6 @@ def formulate_revolute_constraints(
     r_p: wp.vec3,
     q_wc_rot: wp.quat,
     q_wp_rot: wp.quat,
-    lin_compliance: wp.float32,
-    ang_compliance: wp.float32,
 ):
     """Assembles all 5 constraints for a Revolute joint."""
     # First, assemble the 3 translational constraints (ball-socket part)
@@ -124,7 +118,6 @@ def formulate_revolute_constraints(
         c_pos,
         r_c,
         r_p,
-        lin_compliance,
     )
 
     # Now, assemble the 2 rotational constraints (swing part)
@@ -132,7 +125,6 @@ def formulate_revolute_constraints(
     c.is_active = True
     c.parent_idx = parent_idx
     c.child_idx = child_idx
-    c.compliance = ang_compliance
 
     axis_start = joint_qd_start[joint_idx]
     axis = joint_axis[axis_start]
@@ -166,7 +158,6 @@ def formulate_ball_constraints(
     c_pos: wp.vec3,
     r_c: wp.vec3,
     r_p: wp.vec3,
-    lin_compliance: wp.float32,
 ):
     """Assembles all 3 constraints for a Ball (Spherical) joint."""
     formulate_translational_constraints(
@@ -177,7 +168,6 @@ def formulate_ball_constraints(
         c_pos,
         r_c,
         r_p,
-        lin_compliance,
     )
 
 
@@ -235,10 +225,6 @@ def joint_constraint_data_kernel(
     q_wc_rot = wp.transform_get_rotation(X_wc)
     q_wp_rot = wp.transform_get_rotation(X_wp)
 
-    # TODO: Replace this with values provided somehow from the user
-    lin_compliance = 0.1
-    ang_compliance = 0.1
-
     # --- Dispatch to the correct assembly function ---
     if j_type == JointType.REVOLUTE:
         formulate_revolute_constraints(
@@ -254,8 +240,6 @@ def joint_constraint_data_kernel(
             r_p,
             q_wc_rot,
             q_wp_rot,
-            lin_compliance,
-            ang_compliance,
         )
     elif j_type == JointType.BALL:
         formulate_ball_constraints(
@@ -266,5 +250,4 @@ def joint_constraint_data_kernel(
             c_pos,
             r_c,
             r_p,
-            lin_compliance,
         )
