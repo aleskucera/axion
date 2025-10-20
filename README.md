@@ -38,6 +38,9 @@ Differentiable simulators are crucial tools for bridging physics-based modeling 
 git clone https://github.com/aleskucera/axion.git
 cd axion
 
+# Install third-party dependencies
+git submodule update --init --recursive
+
 # Install with pip
 pip install -e .
 
