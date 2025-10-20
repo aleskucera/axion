@@ -64,7 +64,15 @@ git clone https://github.com/aleskucera/axion.git
 cd axion
 ```
 
-### Step 3: Create Environment and Install Dependencies
+### Step 3: Initialize Submodules
+
+This step ensures all third-party dependencies included as git submodules are properly set up.
+
+```bash
+git submodule update --init --recursive
+```
+
+### Step 4: Create Environment and Install Dependencies
 
 This is where `uv` shines. A single command handles everything.
 
@@ -80,7 +88,7 @@ The `uv sync` command is a powerful all-in-one tool. It reads the `pyproject.tom
 !!! info "What is `uv sync` doing?"
     Unlike traditional `pip install -r requirements.txt`, `uv sync` ensures that the environment is an *exact* reflection of the project's locked dependencies. It will add missing packages and remove ones that are not specified, guaranteeing a reproducible environment.
 
-### Step 4: Verify Your Installation
+### Step 5: Verify Your Installation
 
 To confirm everything is working, run one of the included examples.
 
