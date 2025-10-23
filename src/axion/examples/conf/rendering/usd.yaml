@@ -1,6 +1,5 @@
 # @package rendering
 _target_: axion.RenderingConfig
 vis_type: "usd"
-usd_fps: 30
+target_fps: 30
 usd_file: "${project_name}.usd"
-

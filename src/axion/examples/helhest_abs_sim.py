@@ -1,4 +1,5 @@
 from importlib.resources import files
+from typing import override
 
 import hydra
 import newton
@@ -13,7 +14,7 @@ from axion import RenderingConfig
 from axion import SimulationConfig
 from omegaconf import DictConfig
 
-from ._assets import ASSETS_DIR
+from _assets import ASSETS_DIR
 
 CONFIG_PATH = files("axion").joinpath("examples").joinpath("conf")
 
@@ -29,8 +30,10 @@ class Simulator(AbstractSimulator):
     ):
         super().__init__(sim_config, render_config, exec_config, profile_config, engine_config)
 
+    @override
+    def control_policy(self, current_state: newton.State):
         self.control.joint_target = wp.array(
-            6 * [0.0] + [-10.0, -10.0, 0.0],
+            6 * [0.0] + [10.0, 10.0, 0.0],
             dtype=wp.float32,
         )
 
@@ -64,7 +67,7 @@ class Simulator(AbstractSimulator):
 
         # Create main body (chassis)
         chassis = builder.add_body(
-            xform=wp.transform((0.0, 0.0, 2.6), wp.quat_identity()), key="chassis"
+            xform=wp.transform((-2.0, 0.0, 2.6), wp.quat_identity()), key="chassis"
         )
         builder.add_shape_box(
             body=chassis,
@@ -76,7 +79,7 @@ class Simulator(AbstractSimulator):
 
         # Left Wheel
         left_wheel = builder.add_body(
-            xform=wp.transform((0.75, -0.75, 2.6), wp.quat_identity()), key="left_wheel"
+            xform=wp.transform((-1.25, -0.75, 2.6), wp.quat_identity()), key="left_wheel"
         )
         builder.add_shape_mesh(
             body=left_wheel,
@@ -103,7 +106,7 @@ class Simulator(AbstractSimulator):
 
         # Right Wheel
         right_wheel = builder.add_body(
-            xform=wp.transform((0.75, 0.75, 2.6), wp.quat_identity()), key="right_wheel"
+            xform=wp.transform((-1.25, 0.75, 2.6), wp.quat_identity()), key="right_wheel"
         )
         builder.add_shape_mesh(
             body=right_wheel,
@@ -131,7 +134,7 @@ class Simulator(AbstractSimulator):
 
         # Back Wheel
         back_wheel = builder.add_body(
-            xform=wp.transform((-1.5, 0.0, 2.6), wp.quat_identity()), key="back_wheel"
+            xform=wp.transform((-3.25, 0.0, 2.6), wp.quat_identity()), key="back_wheel"
         )
         builder.add_shape_mesh(
             body=back_wheel,
@@ -176,7 +179,7 @@ class Simulator(AbstractSimulator):
             axis=(0.0, 1.0, 0.0),
             mode=newton.JointMode.TARGET_VELOCITY,
         )
-        # Back wheel revolute joint (force control - not actively driven)
+        # Back wheel revolute joint (not actively driven)
         builder.add_joint_revolute(
             parent=chassis,
             child=back_wheel,
@@ -184,6 +187,17 @@ class Simulator(AbstractSimulator):
             axis=(0.0, 1.0, 0.0),
             mode=newton.JointMode.NONE,
         )
+
+        # Set joint control gains
+        builder.joint_target_ke[-3] = 500.0
+        builder.joint_target_ke[-2] = 500.0
+        builder.joint_target_ke[-1] = 0.0
+        builder.joint_armature[-3] = 0.1
+        builder.joint_armature[-2] = 0.1
+        builder.joint_armature[-1] = 0.1
+        builder.joint_target_kd[-3] = 5.0
+        builder.joint_target_kd[-2] = 5.0
+        builder.joint_target_kd[-1] = 5.0
 
         # --- Add Static Obstacles and Ground ---
 
@@ -218,24 +232,9 @@ class Simulator(AbstractSimulator):
             )
         )
 
-        builder.joint_target_ke[-3] = 500.0
-        builder.joint_target_ke[-2] = 500.0
-        builder.joint_target_ke[-1] = 0.0
-        builder.joint_armature[-3] = 0.1
-        builder.joint_armature[-2] = 0.1
-        builder.joint_armature[-1] = 0.1
-        builder.joint_target_kd[-3] = 5.0
-        builder.joint_target_kd[-2] = 5.0
-        builder.joint_target_kd[-1] = 5.0
-
+        # Finalize and return the model
         model = builder.finalize()
         return model
-
-    def control_policy(self, current_state: newton.State):
-        self.control.joint_target = wp.array(
-            6 * [0.0] + [-10.0, -10.0, 0.0],
-            dtype=wp.float32,
-        )
 
 
 @hydra.main(config_path=str(CONFIG_PATH), config_name="helhest", version_base=None)

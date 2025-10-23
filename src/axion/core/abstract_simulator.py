@@ -3,6 +3,7 @@ from abc import ABC
 from abc import abstractmethod
 from dataclasses import dataclass
 from typing import Optional, Literal
+from time import perf_counter_ns
 
 import newton
 import warp as wp
@@ -35,9 +36,9 @@ class RenderingConfig:
     """Parameters for rendering the simulation to a USD file."""
 
     vis_type: Literal["gl", "usd", "null"] = "gl"
+    target_fps: int = 30
     usd_file: str = "sim.usd"
     usd_scaling: float = 100.0
-    usd_fps: int = 30
 
 
 @dataclass
@@ -155,7 +156,7 @@ class AbstractSimulator(ABC):
         if self.rendering_config.vis_type == "usd":
             self.viewer = newton.viewer.ViewerUSD(
                 output_path=self.rendering_config.usd_file,
-                fps=self.rendering_config.usd_fps,
+                fps=self.rendering_config.target_fps,
                 up_axis="Z",
                 num_frames=self.num_segments,
                 scaling=self.rendering_config.usd_scaling,
@@ -195,10 +196,12 @@ class AbstractSimulator(ABC):
                 desc="Simulating",
             )
             segment_num = 0
+            prev_ns = perf_counter_ns()
             while self.viewer.is_running():
                 if not self.viewer.is_paused():
                     self._run_simulation_segment(segment_num)
-                    self._render(segment_num)
+                    prev_ns = self._fps_limiter(prev_ns)
+                    self._render(segment_num, prev_ns)
                     segment_num += 1
                     pbar.update(1)
             pbar.close()
@@ -207,13 +210,23 @@ class AbstractSimulator(ABC):
             self.viewer.close()
             print(f"Rendering complete. Output saved to {self.rendering_config.usd_file}")
 
-    def _render(self, segment_num: int):
+    def _render(self, segment_num: int, sim_time_ns: int):
         """Renders the current state to the appropriate viewers."""
-        time = (segment_num + 1) * (1.0 / self.rendering_config.usd_fps)
-        self.viewer.begin_frame(time)
+        if self.rendering_config.vis_type == "gl":
+            sim_time = sim_time_ns * 1e-9
+        else:
+            sim_time = (segment_num + 1) * (1.0 / self.rendering_config.target_fps)
+        self.viewer.begin_frame(sim_time)
         self.viewer.log_state(self.current_state)
         self.viewer.log_contacts(self.contacts, self.current_state)
         self.viewer.end_frame()
+
+    def _fps_limiter(self, prev_ns: int):
+        if self.rendering_config.vis_type == "gl":
+            target = prev_ns + (1e9 / self.rendering_config.target_fps)
+            while perf_counter_ns() < target:
+                pass
+            return perf_counter_ns()
 
     def _run_simulation_segment(self, segment_num: int):
         """Executes a single simulation segment, using the chosen execution path."""
@@ -343,7 +356,7 @@ class AbstractSimulator(ABC):
         """
         if self.rendering_config.vis_type == "usd":
             self.effective_timestep, self.steps_per_segment = calculate_render_aligned_timestep(
-                self.simulation_config.target_timestep_seconds, self.rendering_config.usd_fps
+                self.simulation_config.target_timestep_seconds, self.rendering_config.target_fps
             )
         else:
             self.effective_timestep = self.simulation_config.target_timestep_seconds
@@ -374,13 +387,13 @@ class AbstractSimulator(ABC):
         """
         pass
 
-    @abstractmethod
     def control_policy(self, current_state: newton.State):
         """
         Implements the control policy for the simulation.
 
-        This method may be optionally implemented by any subclass.
-        It is called at each simulation step.
+        This method may be optionally overridden by any subclass.
+        It is called at each simulation step. It can be used to update control inputs
+        (self.control.joint_targets and self.control.joint_f).
         By default, it does nothing.
         """
         pass
