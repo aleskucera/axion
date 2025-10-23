@@ -156,11 +156,15 @@ class Example:
         # set initial joint angle
         builder.joint_q[-4:] = wp.quat_rpy(0.5, 0.6, 0.7)
 
+        #collapse fixed joints
+        #builder.collapse_fixed_joints()
+
         # finalize model
         self.model = builder.finalize()
 
-        # self.solver = newton.solvers.SolverXPBD(self.model)
+        #self.solver = newton.solvers.SolverXPBD(self.model)
         self.solver = axion.AxionEngine(self.model)
+        #self.solver = newton.solvers.SolverMuJoCo(self.model)
 
         self.state_0 = self.model.state()
         self.state_1 = self.model.state()
