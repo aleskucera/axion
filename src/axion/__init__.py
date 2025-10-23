@@ -3,7 +3,7 @@ from .core import AxionEngine
 from .core import EngineConfig
 from .core import AxionEngineConfig
 from .core import FeatherstoneEngineConfig
-from .core import SemiImplicitEngineConfig
+from .core import MuJoCoEngineConfig
 from .core import XPBDEngineConfig
 from .core import ExecutionConfig
 from .core import ProfilingConfig
@@ -19,7 +19,7 @@ __all__ = [
     "EngineConfig",
     "AxionEngineConfig",
     "FeatherstoneEngineConfig",
-    "SemiImplicitEngineConfig",
+    "MuJoCoEngineConfig",
     "XPBDEngineConfig",
     "ExecutionConfig",
     "ProfilingConfig",

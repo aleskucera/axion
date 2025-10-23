@@ -2,7 +2,7 @@ import math
 from abc import ABC
 from abc import abstractmethod
 from dataclasses import dataclass
-from typing import Optional
+from typing import Optional, Literal
 
 import newton
 import warp as wp
@@ -10,7 +10,7 @@ from axion.logging import HDF5Logger
 from axion.logging import NullLogger
 from newton import Model
 from newton.solvers import SolverFeatherstone
-from newton.solvers import SolverSemiImplicit
+from newton.solvers import SolverMuJoCo
 from newton.solvers import SolverXPBD
 from tqdm import tqdm
 
@@ -18,7 +18,7 @@ from .engine import AxionEngine
 from .engine_config import AxionEngineConfig
 from .engine_config import EngineConfig
 from .engine_config import FeatherstoneEngineConfig
-from .engine_config import SemiImplicitEngineConfig
+from .engine_config import MuJoCoEngineConfig
 from .engine_config import XPBDEngineConfig
 
 
@@ -34,10 +34,10 @@ class SimulationConfig:
 class RenderingConfig:
     """Parameters for rendering the simulation to a USD file."""
 
-    enable: bool = True
-    fps: int = 30
-    scaling: float = 100.0
+    vis_type: Literal["gl", "usd", "null"] = "gl"
     usd_file: str = "sim.usd"
+    usd_scaling: float = 100.0
+    usd_fps: int = 30
 
 
 @dataclass
@@ -136,30 +136,37 @@ class AbstractSimulator(ABC):
         self.current_state = self.model.state()
         self.next_state = self.model.state()
         self.control = self.model.control()
+        self.contacts = self.model.collide(self.current_state)
 
         if isinstance(self.engine_config, AxionEngineConfig):
-            self.integrator = AxionEngine(self.model, self.engine_config, self.logger)
+            self.solver = AxionEngine(self.model, self.engine_config, self.logger)
         elif isinstance(self.engine_config, FeatherstoneEngineConfig):
-            self.integrator = SolverFeatherstone(self.model, **vars(self.engine_config))
+            self.solver = SolverFeatherstone(self.model, **vars(self.engine_config))
             newton.eval_fk(
                 self.model, self.model.joint_q, self.model.joint_qd, None, self.current_state
             )
-        elif isinstance(self.engine_config, SemiImplicitEngineConfig):
-            self.integrator = SolverSemiImplicit(**vars(self.engine_config))
+        elif isinstance(self.engine_config, MuJoCoEngineConfig):
+            self.solver = SolverMuJoCo(self.model, **vars(self.engine_config))
         elif isinstance(self.engine_config, XPBDEngineConfig):
-            self.integrator = SolverXPBD(**vars(self.engine_config))
+            self.solver = SolverXPBD(self.model, **vars(self.engine_config))
         else:
             raise ValueError(f"Unsupported engine configuration type: {type(self.engine_config)}")
 
-        self.renderer = None
-        if self.rendering_config.enable:
-            # self.renderer = wp.sim.render.SimRenderer(
-            #     self.model,
-            #     self.rendering_config.usd_file,
-            #     scaling=self.rendering_config.scaling,
-            #     fps=self.rendering_config.fps,
-            # )
-            self.renderer = None
+        if self.rendering_config.vis_type == "usd":
+            self.viewer = newton.viewer.ViewerUSD(
+                output_path=self.rendering_config.usd_file,
+                fps=self.rendering_config.usd_fps,
+                up_axis="Z",
+                num_frames=self.num_segments,
+                scaling=self.rendering_config.usd_scaling,
+            )
+        elif self.rendering_config.vis_type == "gl":
+            self.viewer = newton.viewer.ViewerGL()
+            self.viewer.set_model(self.model)
+        elif self.rendering_config.vis_type == "null":
+            self.viewer = newton.viewer.ViewerNull(self.num_segments)
+        else:
+            raise ValueError(f"Unsupported rendering type: {self.rendering_config.vis_type}")
 
         self.cuda_graph: Optional[wp.Graph] = None
 
@@ -182,28 +189,31 @@ class AbstractSimulator(ABC):
 
     def run(self):
         """Main entry point to start the simulation."""
-        disable_progress = self.profiling_config.enable_timing
         with self.logger:
-            for i in tqdm(
-                range(self.num_segments),
+            pbar = tqdm(
+                total=self.num_segments,
                 desc="Simulating",
-                disable=disable_progress,
-            ):
-                self._run_simulation_segment(i)
+            )
+            segment_num = 0
+            while self.viewer.is_running():
+                if not self.viewer.is_paused():
+                    self._run_simulation_segment(segment_num)
+                    self._render(segment_num)
+                    segment_num += 1
+                    pbar.update(1)
+            pbar.close()
 
-                if self.rendering_config.enable:
-                    wp.synchronize()
-                    time = (i + 1) * (1.0 / self.rendering_config.fps)
-                    self.renderer.begin_frame(time)
-                    self.renderer.render(self.current_state)
-                    self.renderer.end_frame()
-
-        if self.rendering_config.enable:
-            self.renderer.save()
+        if self.rendering_config.vis_type == "usd":
+            self.viewer.close()
             print(f"Rendering complete. Output saved to {self.rendering_config.usd_file}")
-        else:
-            wp.synchronize()
-            print("Headless simulation complete.")
+
+    def _render(self, segment_num: int):
+        """Renders the current state to the appropriate viewers."""
+        time = (segment_num + 1) * (1.0 / self.rendering_config.usd_fps)
+        self.viewer.begin_frame(time)
+        self.viewer.log_state(self.current_state)
+        self.viewer.log_contacts(self.contacts, self.current_state)
+        self.viewer.end_frame()
 
     def _run_simulation_segment(self, segment_num: int):
         """Executes a single simulation segment, using the chosen execution path."""
@@ -301,35 +311,39 @@ class AbstractSimulator(ABC):
             wp.record_event(self.events[step_num]["step_start"])
 
             # Detect collisions
-            self.model.collide(self.model, self.current_state)
+            self.contacts = self.model.collide(self.current_state)
 
             # Record that collision detection finished
             wp.record_event(self.events[step_num]["collision"])
-            self.logger.log_wp_dataset("rigid_contact_count", self.model.rigid_contact_count)
+            self.logger.log_wp_dataset("rigid_contact_count", self.model.rigid_contact_max)
+
+            self.control_policy(self.current_state)
+
+            self.current_state.clear_forces()
+            self.viewer.apply_forces(self.current_state)
 
             # Compute simulation step
-            self.events[step_num]["integration_parts"] = self.integrator.simulate(
-                model=self.model,
+            self.events[step_num]["integration_parts"] = self.solver.step(
                 state_in=self.current_state,
                 state_out=self.next_state,
-                dt=self.effective_timestep,
                 control=self.control,
+                contacts=self.contacts,
+                dt=self.effective_timestep,
             )
 
             # Record that simulation step finished
             wp.record_event(self.events[step_num]["integration"])
 
-            wp.copy(dest=self.current_state.body_q, src=self.next_state.body_q)
-            wp.copy(dest=self.current_state.body_qd, src=self.next_state.body_qd)
+            self.current_state, self.next_state = self.next_state, self.current_state
 
     def _resolve_timing_parameters(self):
         """
         Calculates all operational timing parameters based on user configuration,
         ensuring alignment between simulation, rendering, and segmentation.
         """
-        if self.rendering_config.enable:
+        if self.rendering_config.vis_type == "usd":
             self.effective_timestep, self.steps_per_segment = calculate_render_aligned_timestep(
-                self.simulation_config.target_timestep_seconds, self.rendering_config.fps
+                self.simulation_config.target_timestep_seconds, self.rendering_config.usd_fps
             )
         else:
             self.effective_timestep = self.simulation_config.target_timestep_seconds
@@ -338,6 +352,8 @@ class AbstractSimulator(ABC):
         self.effective_duration, self.num_segments = align_duration_to_segment(
             self.simulation_config.duration_seconds, self.effective_timestep, self.steps_per_segment
         )
+        if self.rendering_config.vis_type == "gl":
+            self.num_segments = None
 
     @property
     def use_cuda_graph(self) -> bool:
@@ -355,5 +371,16 @@ class AbstractSimulator(ABC):
 
         This method MUST be implemented by any subclass. It should define all the
         rigid bodies, joints, and other physical properties of the scene.
+        """
+        pass
+
+    @abstractmethod
+    def control_policy(self, current_state: newton.State):
+        """
+        Implements the control policy for the simulation.
+
+        This method may be optionally implemented by any subclass.
+        It is called at each simulation step.
+        By default, it does nothing.
         """
         pass

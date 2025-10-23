@@ -3,7 +3,7 @@ defaults:
   - rendering: 30_fps 
   - execution: cuda_graph
   - profiling: disabled
-  - engine: helhest
+  - engine: helhest_mujoco
   - _self_
 
 # Use the recommended hybrid approach for project names

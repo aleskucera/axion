@@ -96,9 +96,27 @@ class FeatherstoneEngineConfig(EngineConfig):
 
 
 @dataclass(frozen=True)
-class SemiImplicitEngineConfig(EngineConfig):
-    angular_damping: float = 0.05
-    friction_smoothing: float = 1.0
+class MuJoCoEngineConfig(EngineConfig):
+    separate_worlds: bool | None = None
+    njmax: int | None = None
+    ncon_per_world: int | None = None
+    iterations: int = 20
+    ls_iterations: int = 10
+    solver: int | str = "cg"
+    integrator: int | str = "euler"
+    cone: int | str = "pyramidal"
+    impratio: float = 1.0
+    use_mujoco_cpu: bool = False
+    disable_contacts: bool = False
+    default_actuator_gear: float | None = None
+    actuator_gears: dict[str, float] | None = None
+    update_data_interval: int = 1
+    save_to_mjcf: str | None = None
+    contact_stiffness_time_const: float = 0.02
+    ls_parallel: bool = False
+    use_mujoco_contacts: bool = True
+    joint_solref_limit: tuple[float, float] | None = None
+    joint_solimp_limit: tuple[float, float, float, float, float] | None = None
 
 
 @dataclass(frozen=True)

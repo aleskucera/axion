@@ -5,6 +5,8 @@ soft_body_relaxation: 0.9
 soft_contact_relaxation: 0.9
 joint_linear_relaxation: 0.9
 joint_angular_relaxation: 0.9
+joint_linear_compliance: 0.0
+joint_angular_compliance: 0.0
 rigid_contact_relaxation: 0.8
 rigid_contact_con_weighting: true
 angular_damping: 0.0
