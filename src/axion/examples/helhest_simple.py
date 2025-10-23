@@ -3,8 +3,6 @@ from typing import override
 
 import hydra
 import newton
-import numpy as np
-import openmesh
 import warp as wp
 from axion import AbstractSimulator
 from axion import EngineConfig
@@ -13,8 +11,6 @@ from axion import ProfilingConfig
 from axion import RenderingConfig
 from axion import SimulationConfig
 from omegaconf import DictConfig
-
-from _assets import ASSETS_DIR
 
 CONFIG_PATH = files("axion").joinpath("examples").joinpath("conf")
 
@@ -32,9 +28,8 @@ class Simulator(AbstractSimulator):
 
     @override
     def control_policy(self, current_state: newton.State):
-        self.control.joint_target = wp.array(
-            6 * [0.0] + [10.0, 10.0, 0.0],
-            dtype=wp.float32,
+        wp.copy(
+            self.control.joint_target, wp.array(6 * [0.0] + [10.0, 10.0, 0.0], dtype=wp.float32)
         )
 
     def build_model(self) -> newton.Model:
@@ -47,24 +42,9 @@ class Simulator(AbstractSimulator):
         RESTITUTION = 1.0
 
         builder = newton.ModelBuilder()
-        builder.add_articulation(key="helhest")
-        builder.default_joint_cfg = newton.ModelBuilder.JointDofConfig(
-            armature=0.1,
-            limit_ke=1.0e3,
-            limit_kd=1.0e1,
-        )
+        builder.add_articulation(key="helhest_simple")
 
         # --- Build the Vehicle ---
-        wheel_m = openmesh.read_trimesh(f"{ASSETS_DIR}/helhest/wheel2.obj")
-        mesh_points = np.array(wheel_m.points())
-        mesh_indices = np.array(wheel_m.face_vertex_indices(), dtype=np.int32).flatten()
-        wheel_mesh_render = newton.Mesh(mesh_points, mesh_indices)
-
-        wheel_m_col = openmesh.read_trimesh(f"{ASSETS_DIR}/helhest/wheel_collision.obj")
-        mesh_points = np.array(wheel_m_col.points())
-        mesh_indices = np.array(wheel_m_col.face_vertex_indices(), dtype=np.int32).flatten()
-        wheel_mesh_collision = newton.Mesh(mesh_points, mesh_indices)
-
         # Create main body (chassis)
         chassis = builder.add_body(
             xform=wp.transform((-2.0, 0.0, 2.6), wp.quat_identity()), key="chassis"
@@ -81,26 +61,11 @@ class Simulator(AbstractSimulator):
         left_wheel = builder.add_body(
             xform=wp.transform((-1.25, -0.75, 2.6), wp.quat_identity()), key="left_wheel"
         )
-        builder.add_shape_mesh(
+        builder.add_shape_sphere(
             body=left_wheel,
-            mesh=wheel_mesh_render,
+            radius=0.5,
             cfg=newton.ModelBuilder.ShapeConfig(
-                density=20.0,
-                mu=FRICTION,
-                restitution=RESTITUTION,
-                thickness=0.0,
-                has_shape_collision=False,
-            ),
-        )
-        builder.add_shape_mesh(
-            body=left_wheel,
-            mesh=wheel_mesh_collision,
-            cfg=newton.ModelBuilder.ShapeConfig(
-                density=20.0,
-                mu=FRICTION,
-                restitution=RESTITUTION,
-                thickness=0.0,
-                is_visible=False,
+                density=10.0, mu=FRICTION, restitution=RESTITUTION, thickness=0.1
             ),
         )
 
@@ -108,27 +73,11 @@ class Simulator(AbstractSimulator):
         right_wheel = builder.add_body(
             xform=wp.transform((-1.25, 0.75, 2.6), wp.quat_identity()), key="right_wheel"
         )
-        builder.add_shape_mesh(
+        builder.add_shape_sphere(
             body=right_wheel,
-            mesh=wheel_mesh_render,
+            radius=0.5,
             cfg=newton.ModelBuilder.ShapeConfig(
-                density=20.0,
-                mu=FRICTION,
-                restitution=RESTITUTION,
-                thickness=0.0,
-                has_shape_collision=False,
-            ),
-        )
-
-        builder.add_shape_mesh(
-            body=right_wheel,
-            mesh=wheel_mesh_collision,
-            cfg=newton.ModelBuilder.ShapeConfig(
-                density=20.0,
-                mu=FRICTION,
-                restitution=RESTITUTION,
-                thickness=0.0,
-                is_visible=False,
+                density=10.0, mu=FRICTION, restitution=RESTITUTION, thickness=0.1
             ),
         )
 
@@ -136,26 +85,11 @@ class Simulator(AbstractSimulator):
         back_wheel = builder.add_body(
             xform=wp.transform((-3.25, 0.0, 2.6), wp.quat_identity()), key="back_wheel"
         )
-        builder.add_shape_mesh(
+        builder.add_shape_sphere(
             body=back_wheel,
-            mesh=wheel_mesh_render,
+            radius=0.5,
             cfg=newton.ModelBuilder.ShapeConfig(
-                density=20.0,
-                mu=FRICTION,
-                restitution=RESTITUTION,
-                thickness=0.0,
-                has_shape_collision=False,
-            ),
-        )
-        builder.add_shape_mesh(
-            body=back_wheel,
-            mesh=wheel_mesh_collision,
-            cfg=newton.ModelBuilder.ShapeConfig(
-                density=20.0,
-                mu=FRICTION,
-                restitution=RESTITUTION,
-                thickness=0.0,
-                is_visible=False,
+                density=10.0, mu=FRICTION, restitution=RESTITUTION, thickness=0.1
             ),
         )
 

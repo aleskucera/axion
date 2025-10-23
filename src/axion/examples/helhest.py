@@ -1,35 +1,52 @@
-import axion
-import newton.examples
-import warp as wp
-import openmesh
+from importlib.resources import files
+from typing import override
+
+import hydra
+import newton
 import numpy as np
+import openmesh
+import warp as wp
+from axion import AbstractSimulator
+from axion import EngineConfig
+from axion import ExecutionConfig
+from axion import ProfilingConfig
+from axion import RenderingConfig
+from axion import SimulationConfig
+from omegaconf import DictConfig
 
-from ._assets import ASSETS_DIR
+from _assets import ASSETS_DIR
+
+CONFIG_PATH = files("axion").joinpath("examples").joinpath("conf")
 
 
-class HelhestExample:
-    def __init__(self, viewer):
-        # setup simulation parameters first
-        self.fps = 30
-        self.frame_dt = 1.0 / self.fps
-        self.sim_time = 2.0
-        self.sim_substeps = 4
-        self.sim_dt = self.frame_dt / self.sim_substeps
+class Simulator(AbstractSimulator):
+    def __init__(
+        self,
+        sim_config: SimulationConfig,
+        render_config: RenderingConfig,
+        exec_config: ExecutionConfig,
+        profile_config: ProfilingConfig,
+        engine_config: EngineConfig,
+    ):
+        super().__init__(sim_config, render_config, exec_config, profile_config, engine_config)
 
-        self.viewer = viewer
+    @override
+    def control_policy(self, current_state: newton.State):
+        wp.copy(
+            self.control.joint_target, wp.array(6 * [0.0] + [10.0, 10.0, 0.0], dtype=wp.float32)
+        )
+
+    def build_model(self) -> newton.Model:
+        """
+        Implements the abstract method to define the physics objects in the scene.
+
+        This method constructs the three-wheeled vehicle, obstacles, and ground plane.
+        """
+        FRICTION = 1.0
+        RESTITUTION = 1.0
 
         builder = newton.ModelBuilder()
         builder.add_articulation(key="helhest")
-        builder.default_joint_cfg = newton.ModelBuilder.JointDofConfig(
-            armature=0.1,
-            limit_ke=1.0e3,
-            limit_kd=1.0e1,
-        )
-
-        FRICTION = 1.0
-        RESTITUTION = 0.0
-
-        self.act = (0.0, 0.0)
 
         # --- Build the Vehicle ---
         wheel_m = openmesh.read_trimesh(f"{ASSETS_DIR}/helhest/wheel2.obj")
@@ -44,7 +61,7 @@ class HelhestExample:
 
         # Create main body (chassis)
         chassis = builder.add_body(
-            xform=wp.transform((0.0, 0.0, 2.6), wp.quat_identity()), key="chassis"
+            xform=wp.transform((-2.0, 0.0, 2.6), wp.quat_identity()), key="chassis"
         )
         builder.add_shape_box(
             body=chassis,
@@ -56,7 +73,7 @@ class HelhestExample:
 
         # Left Wheel
         left_wheel = builder.add_body(
-            xform=wp.transform((0.75, -0.75, 2.6), wp.quat_identity()), key="left_wheel"
+            xform=wp.transform((-1.25, -0.75, 2.6), wp.quat_identity()), key="left_wheel"
         )
         builder.add_shape_mesh(
             body=left_wheel,
@@ -83,7 +100,7 @@ class HelhestExample:
 
         # Right Wheel
         right_wheel = builder.add_body(
-            xform=wp.transform((0.75, 0.75, 2.6), wp.quat_identity()), key="right_wheel"
+            xform=wp.transform((-1.25, 0.75, 2.6), wp.quat_identity()), key="right_wheel"
         )
         builder.add_shape_mesh(
             body=right_wheel,
@@ -111,7 +128,7 @@ class HelhestExample:
 
         # Back Wheel
         back_wheel = builder.add_body(
-            xform=wp.transform((-1.5, 0.0, 2.6), wp.quat_identity()), key="back_wheel"
+            xform=wp.transform((-3.25, 0.0, 2.6), wp.quat_identity()), key="back_wheel"
         )
         builder.add_shape_mesh(
             body=back_wheel,
@@ -156,7 +173,7 @@ class HelhestExample:
             axis=(0.0, 1.0, 0.0),
             mode=newton.JointMode.TARGET_VELOCITY,
         )
-        # Back wheel revolute joint (force control - not actively driven)
+        # Back wheel revolute joint (not actively driven)
         builder.add_joint_revolute(
             parent=chassis,
             child=back_wheel,
@@ -164,6 +181,17 @@ class HelhestExample:
             axis=(0.0, 1.0, 0.0),
             mode=newton.JointMode.NONE,
         )
+
+        # Set joint control gains
+        builder.joint_target_ke[-3] = 500.0
+        builder.joint_target_ke[-2] = 500.0
+        builder.joint_target_ke[-1] = 0.0
+        builder.joint_armature[-3] = 0.1
+        builder.joint_armature[-2] = 0.1
+        builder.joint_armature[-1] = 0.1
+        builder.joint_target_kd[-3] = 5.0
+        builder.joint_target_kd[-2] = 5.0
+        builder.joint_target_kd[-1] = 5.0
 
         # --- Add Static Obstacles and Ground ---
 
@@ -198,93 +226,29 @@ class HelhestExample:
             )
         )
 
-        builder.joint_target_ke[-3] = 500.0
-        builder.joint_target_ke[-2] = 500.0
-        builder.joint_target_ke[-1] = 0.0
-        builder.joint_armature[-3] = 0.1
-        builder.joint_armature[-2] = 0.1
-        builder.joint_armature[-1] = 0.1
-        builder.joint_target_kd[-3] = 5.0
-        builder.joint_target_kd[-2] = 5.0
-        builder.joint_target_kd[-1] = 5.0
+        # Finalize and return the model
+        model = builder.finalize()
+        return model
 
-        # finalize model
-        self.model = builder.finalize()
 
-        # self.solver = newton.solvers.SolverXPBD(self.model, iterations=10)
-        # self.solver = newton.solvers.SolverFeatherstone(self.model)
-        # self.solver = newton.solvers.SolverMuJoCo(self.model)
-        self.solver = axion.AxionEngine(self.model)
-        # self.solver = newton.solvers.SolverMuJoCo(self.model, njmax=50)
+@hydra.main(config_path=str(CONFIG_PATH), config_name="helhest", version_base=None)
+def helhest_example(cfg: DictConfig):
+    sim_config: SimulationConfig = hydra.utils.instantiate(cfg.simulation)
+    render_config: RenderingConfig = hydra.utils.instantiate(cfg.rendering)
+    exec_config: ExecutionConfig = hydra.utils.instantiate(cfg.execution)
+    profile_config: ProfilingConfig = hydra.utils.instantiate(cfg.profiling)
+    engine_config: EngineConfig = hydra.utils.instantiate(cfg.engine)
 
-        self.state_0 = self.model.state()
-        self.state_1 = self.model.state()
-        self.control = self.model.control()
-        self.contacts = self.model.collide(self.state_0)
-        self.viewer.set_model(self.model)
-        self.capture()
+    simulator = Simulator(
+        sim_config=sim_config,
+        render_config=render_config,
+        exec_config=exec_config,
+        profile_config=profile_config,
+        engine_config=engine_config,
+    )
 
-    def capture(self):
-        if wp.get_device().is_cuda:
-            with wp.ScopedCapture() as capture:
-                self.simulate()
-            self.graph = capture.graph
-        else:
-            self.graph = None
-
-    def simulate(self):
-        self.contacts = self.model.collide(self.state_0)
-        for _ in range(self.sim_substeps):
-            self.state_0.clear_forces()
-
-            # apply forces to the model
-            self.viewer.apply_forces(self.state_0)
-
-            self.solver.step(self.state_0, self.state_1, self.control, self.contacts, self.sim_dt)
-
-            # swap states
-            self.state_0, self.state_1 = self.state_1, self.state_0
-
-    def step(self):
-        if hasattr(self.viewer, "is_key_down"):
-            left_control = (
-                1.0
-                if self.viewer.is_key_down("o")
-                else (-1.0 if self.viewer.is_key_down("l") else 0.0)
-            )
-            right_control = (
-                1.0
-                if self.viewer.is_key_down("i")
-                else (-1.0 if self.viewer.is_key_down("k") else 0.0)
-            )
-
-            wp.copy(
-                self.control.joint_target,
-                wp.array(
-                    6 * [0.0] + [10 * left_control, 10 * right_control, 0.0],
-                    dtype=wp.float32,
-                ),
-            )
-
-        if self.graph:
-            wp.capture_launch(self.graph)
-        else:
-            self.simulate()
-
-        self.sim_time += self.frame_dt
-
-    def render(self):
-        self.viewer.begin_frame(self.sim_time)
-        self.viewer.log_state(self.state_0)
-        self.viewer.log_contacts(self.contacts, self.state_0)
-        self.viewer.end_frame()
+    simulator.run()
 
 
 if __name__ == "__main__":
-    # Parse arguments and initialize viewer
-    viewer, args = newton.examples.init()
-
-    # Create viewer and run
-    example = HelhestExample(viewer)
-
-    newton.examples.run(example, args)
+    helhest_example()

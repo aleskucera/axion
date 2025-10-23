@@ -201,9 +201,9 @@ class AbstractSimulator(ABC):
                 if not self.viewer.is_paused():
                     self._run_simulation_segment(segment_num)
                     prev_ns = self._fps_limiter(prev_ns)
-                    self._render(segment_num, prev_ns)
                     segment_num += 1
                     pbar.update(1)
+                self._render(segment_num, prev_ns)
             pbar.close()
 
         if self.rendering_config.vis_type == "usd":

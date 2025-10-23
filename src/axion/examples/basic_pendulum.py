@@ -1,51 +1,42 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 The Newton Developers
-# SPDX-License-Identifier: Apache-2.0
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-# http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-###########################################################################
-# Example Basic Pendulum
-#
-# Shows how to set up a simulation of a simple double pendulum using the
-# newton.ModelBuilder() class.
-#
-# Command: python -m newton.examples basic_pendulum
-#
-###########################################################################
-import axion
-import newton.examples
+from importlib.resources import files
+from typing import override
+
+import hydra
+import newton
 import warp as wp
+from axion import AbstractSimulator
+from axion import EngineConfig
+from axion import ExecutionConfig
+from axion import ProfilingConfig
+from axion import RenderingConfig
+from axion import SimulationConfig
+from omegaconf import DictConfig
+
+CONFIG_PATH = files("axion").joinpath("examples").joinpath("conf")
 
 
-class Example:
-    def __init__(self, viewer):
-        # setup simulation parameters first
-        self.fps = 30
-        self.frame_dt = 1.0 / self.fps
-        self.sim_time = 2.0
-        self.sim_substeps = 3
-        self.sim_dt = self.frame_dt / self.sim_substeps
+class Simulator(AbstractSimulator):
+    def __init__(
+        self,
+        sim_config: SimulationConfig,
+        render_config: RenderingConfig,
+        exec_config: ExecutionConfig,
+        profile_config: ProfilingConfig,
+        engine_config: EngineConfig,
+    ):
+        super().__init__(sim_config, render_config, exec_config, profile_config, engine_config)
 
-        self.viewer = viewer
+    @override
+    def control_policy(self, state: newton.State):
+        wp.copy(self.control.joint_f, wp.array([0.0, 800.0], dtype=wp.float32))
 
+    def build_model(self) -> newton.Model:
         builder = newton.ModelBuilder()
-
-        builder.add_articulation(key="pendulum")
 
         hx = 1.0
         hy = 0.1
         hz = 0.1
 
-        # create first link
         link_0 = builder.add_body()
         builder.add_shape_box(link_0, hx=hx, hy=hy, hz=hz)
 
@@ -57,10 +48,9 @@ class Example:
             parent=-1,
             child=link_0,
             axis=wp.vec3(0.0, 1.0, 0.0),
-            # rotate pendulum around the z-axis to appear sideways to the viewer
             parent_xform=wp.transform(p=wp.vec3(0.0, 0.0, 5.0), q=rot),
             child_xform=wp.transform(p=wp.vec3(-hx, 0.0, 0.0), q=wp.quat_identity()),
-            mode=newton.JointMode.TARGET_VELOCITY,
+            mode=newton.JointMode.NONE,
             target_ke=1000.0,
             target_kd=50.0,
         )
@@ -71,119 +61,35 @@ class Example:
             parent_xform=wp.transform(p=wp.vec3(hx, 0.0, 0.0), q=wp.quat_identity()),
             child_xform=wp.transform(p=wp.vec3(-hx, 0.0, 0.0), q=wp.quat_identity()),
             mode=newton.JointMode.NONE,
-            target_ke=1000.0,
-            target_kd=50.0,
+            target_ke=500.0,
+            target_kd=5.0,
+            armature=0.1,
         )
 
-        # add ground plane
         builder.add_ground_plane()
 
-        # finalize model
-        self.model = builder.finalize()
+        model = builder.finalize()
+        return model
 
-        # self.solver = newton.solvers.SolverFeatherstone(self.model)
-        # self.solver = newton.solvers.SolverMuJoCo(self.model)
-        # self.solver = newton.solvers.SolverXPBD(self.model, iterations=10)
-        self.solver = axion.AxionEngine(self.model)
 
-        self.state_0 = self.model.state()
-        self.state_1 = self.model.state()
-        self.control = self.model.control()
-        # self.control.joint_target = wp.array(
-        #     [
-        #         2.5,  # left wheel target velocity
-        #         -1.0,  # right wheel target velocity
-        #     ],
-        #     dtype=wp.float32,
-        # )
-        # self.control.joint_f = wp.array(
-        #     [
-        #         800.0,  # left wheel target velocity
-        #         0.0,  # right wheel target velocity
-        #     ],
-        #     dtype=wp.float32,
-        # )
-        self.contacts = self.model.collide(self.state_0)
+@hydra.main(config_path=str(CONFIG_PATH), config_name="helhest", version_base=None)
+def helhest_example(cfg: DictConfig):
+    sim_config: SimulationConfig = hydra.utils.instantiate(cfg.simulation)
+    render_config: RenderingConfig = hydra.utils.instantiate(cfg.rendering)
+    exec_config: ExecutionConfig = hydra.utils.instantiate(cfg.execution)
+    profile_config: ProfilingConfig = hydra.utils.instantiate(cfg.profiling)
+    engine_config: EngineConfig = hydra.utils.instantiate(cfg.engine)
 
-        self.viewer.set_model(self.model)
+    simulator = Simulator(
+        sim_config=sim_config,
+        render_config=render_config,
+        exec_config=exec_config,
+        profile_config=profile_config,
+        engine_config=engine_config,
+    )
 
-        # not required for MuJoCo, but required for other solvers
-        newton.eval_fk(self.model, self.model.joint_q, self.model.joint_qd, self.state_0)
-
-        self.capture()
-
-    def capture(self):
-        if wp.get_device().is_cuda:
-            with wp.ScopedCapture() as capture:
-                self.simulate()
-            self.graph = capture.graph
-        else:
-            self.graph = None
-
-    def simulate(self):
-        for _ in range(self.sim_substeps):
-            self.state_0.clear_forces()
-
-            # apply forces to the model
-            self.viewer.apply_forces(self.state_0)
-
-            self.contacts = self.model.collide(self.state_0)
-            self.solver.step(self.state_0, self.state_1, self.control, self.contacts, self.sim_dt)
-
-            # swap states
-            self.state_0, self.state_1 = self.state_1, self.state_0
-
-    def step(self):
-        if self.graph:
-            wp.capture_launch(self.graph)
-        else:
-            self.simulate()
-
-        self.sim_time += self.frame_dt
-
-    def test(self):
-        # rough check that the pendulum links are in the correct area
-        newton.examples.test_body_state(
-            self.model,
-            self.state_0,
-            "pendulum links in correct area",
-            lambda q, qd: abs(q[0]) < 1e-5 and abs(q[1]) < 1.0 and q[2] < 5.0 and q[2] > 0.0,
-            [0, 1],
-        )
-
-        def check_velocities(_, qd):
-            # velocity outside the plane of the pendulum should be close to zero
-            check = abs(qd[0]) < 1e-4 and abs(qd[6]) < 1e-4
-            # velocity in the plane of the pendulum should be reasonable
-            check = (
-                check
-                and abs(qd[1]) < 10.0
-                and abs(qd[2]) < 5.0
-                and abs(qd[3]) < 10.0
-                and abs(qd[4]) < 10.0
-            )
-            return check
-
-        newton.examples.test_body_state(
-            self.model,
-            self.state_0,
-            "pendulum links have reasonable velocities",
-            check_velocities,
-            [0, 1],
-        )
-
-    def render(self):
-        self.viewer.begin_frame(self.sim_time)
-        self.viewer.log_state(self.state_0)
-        self.viewer.log_contacts(self.contacts, self.state_0)
-        self.viewer.end_frame()
+    simulator.run()
 
 
 if __name__ == "__main__":
-    # Parse arguments and initialize viewer
-    viewer, args = newton.examples.init()
-
-    # Create viewer and run
-    example = Example(viewer)
-
-    newton.examples.run(example, args)
+    helhest_example()
