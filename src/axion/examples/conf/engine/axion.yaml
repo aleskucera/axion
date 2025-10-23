@@ -1,12 +1,13 @@
 # @package engine
 _target_: axion.AxionEngineConfig
-newton_iters: 8
+newton_iters: 6
 linear_iters: 4
 linesearch_steps: 0
 joint_stabilization_factor: 0.01
-contact_stabilization_factor: 0.01
-contact_compliance: 0.1
-friction_compliance: 1.0
+contact_stabilization_factor: 0.05
+joint_compliance: 1e-3
+contact_compliance: 1e-5
+friction_compliance: 1e-6
 contact_fb_alpha: 0.25
 contact_fb_beta: 0.25
 friction_fb_alpha: 0.25

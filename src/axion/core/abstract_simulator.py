@@ -2,8 +2,9 @@ import math
 from abc import ABC
 from abc import abstractmethod
 from dataclasses import dataclass
-from typing import Optional, Literal
 from time import perf_counter_ns
+from typing import Literal
+from typing import Optional
 
 import newton
 import warp as wp
@@ -159,15 +160,15 @@ class AbstractSimulator(ABC):
                 fps=self.rendering_config.target_fps,
                 up_axis="Z",
                 num_frames=self.num_segments,
-                scaling=self.rendering_config.usd_scaling,
             )
         elif self.rendering_config.vis_type == "gl":
             self.viewer = newton.viewer.ViewerGL()
-            self.viewer.set_model(self.model)
         elif self.rendering_config.vis_type == "null":
             self.viewer = newton.viewer.ViewerNull(self.num_segments)
         else:
             raise ValueError(f"Unsupported rendering type: {self.rendering_config.vis_type}")
+
+        self.viewer.set_model(self.model)
 
         self.cuda_graph: Optional[wp.Graph] = None
 
