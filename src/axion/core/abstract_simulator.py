@@ -36,10 +36,10 @@ class SimulationConfig:
 class RenderingConfig:
     """Parameters for rendering the simulation to a USD file."""
 
-    vis_type: Literal["gl", "usd", "null"] = "gl"
-    target_fps: int = 30
-    usd_file: str = "sim.usd"
-    usd_scaling: float = 100.0
+    vis_type: Literal["gl", "usd", "null", None] = "gl"
+    target_fps: int | None = 30
+    usd_file: str | None = "sim.usd"
+    usd_scaling: float | None = 100.0
 
 
 @dataclass
@@ -163,7 +163,7 @@ class AbstractSimulator(ABC):
             )
         elif self.rendering_config.vis_type == "gl":
             self.viewer = newton.viewer.ViewerGL()
-        elif self.rendering_config.vis_type == "null":
+        elif self.rendering_config.vis_type == "null" or self.rendering_config.vis_type is None:
             self.viewer = newton.viewer.ViewerNull(self.num_segments)
         else:
             raise ValueError(f"Unsupported rendering type: {self.rendering_config.vis_type}")
@@ -197,37 +197,33 @@ class AbstractSimulator(ABC):
                 desc="Simulating",
             )
             segment_num = 0
-            prev_ns = perf_counter_ns()
+            t_0 = perf_counter_ns()
             while self.viewer.is_running():
                 if not self.viewer.is_paused():
                     self._run_simulation_segment(segment_num)
-                    prev_ns = self._fps_limiter(prev_ns)
+                    self._fps_limiter(t_0, segment_num)
                     segment_num += 1
                     pbar.update(1)
-                self._render(segment_num, prev_ns)
+                self._render(segment_num)
             pbar.close()
 
         if self.rendering_config.vis_type == "usd":
             self.viewer.close()
             print(f"Rendering complete. Output saved to {self.rendering_config.usd_file}")
 
-    def _render(self, segment_num: int, sim_time_ns: int):
+    def _render(self, segment_num: int):
         """Renders the current state to the appropriate viewers."""
-        if self.rendering_config.vis_type == "gl":
-            sim_time = sim_time_ns * 1e-9
-        else:
-            sim_time = (segment_num + 1) * (1.0 / self.rendering_config.target_fps)
+        sim_time = segment_num * self.steps_per_segment * self.effective_timestep
         self.viewer.begin_frame(sim_time)
         self.viewer.log_state(self.current_state)
         self.viewer.log_contacts(self.contacts, self.current_state)
         self.viewer.end_frame()
 
-    def _fps_limiter(self, prev_ns: int):
-        if self.rendering_config.vis_type == "gl":
-            target = prev_ns + (1e9 / self.rendering_config.target_fps)
+    def _fps_limiter(self, t_0: int, segment_num: int):
+        if self.rendering_config.vis_type == "gl" and not self.rendering_config.target_fps is None:
+            target = t_0 + segment_num * (1e9 / self.rendering_config.target_fps)
             while perf_counter_ns() < target:
                 pass
-            return perf_counter_ns()
 
     def _run_simulation_segment(self, segment_num: int):
         """Executes a single simulation segment, using the chosen execution path."""
