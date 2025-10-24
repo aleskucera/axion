@@ -2,7 +2,6 @@ import math
 from abc import ABC
 from abc import abstractmethod
 from dataclasses import dataclass
-from time import perf_counter_ns
 from typing import Literal
 from typing import Optional
 
@@ -197,11 +196,9 @@ class AbstractSimulator(ABC):
                 desc="Simulating",
             )
             segment_num = 0
-            t_0 = perf_counter_ns()
             while self.viewer.is_running():
                 if not self.viewer.is_paused():
                     self._run_simulation_segment(segment_num)
-                    self._fps_limiter(t_0, segment_num)
                     segment_num += 1
                     pbar.update(1)
                 self._render(segment_num)
@@ -218,12 +215,6 @@ class AbstractSimulator(ABC):
         self.viewer.log_state(self.current_state)
         self.viewer.log_contacts(self.contacts, self.current_state)
         self.viewer.end_frame()
-
-    def _fps_limiter(self, t_0: int, segment_num: int):
-        if self.rendering_config.vis_type == "gl" and not self.rendering_config.target_fps is None:
-            target = t_0 + segment_num * (1e9 / self.rendering_config.target_fps)
-            while perf_counter_ns() < target:
-                pass
 
     def _run_simulation_segment(self, segment_num: int):
         """Executes a single simulation segment, using the chosen execution path."""
