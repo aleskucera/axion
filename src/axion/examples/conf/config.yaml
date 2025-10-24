@@ -1,6 +1,6 @@
 defaults:
   - simulation: base
-  - rendering: 30_fps 
+  - rendering: gl
   - execution: cuda_graph
   - profiling: disabled
   - engine: base

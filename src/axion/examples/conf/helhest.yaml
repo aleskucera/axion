@@ -1,9 +1,9 @@
 defaults:
   - simulation: helhest
-  - rendering: 30_fps 
+  - rendering: gl
   - execution: cuda_graph
   - profiling: disabled
-  - engine: helhest
+  - engine: mujoco
   - _self_
 
 # Use the recommended hybrid approach for project names

@@ -27,28 +27,37 @@ class Simulator(AbstractSimulator):
 
     def build_model(self) -> newton.Model:
         FRICTION = 0.8
-        RESTITUTION = 1.0
+        RESTITUTION = 0.9
 
-        builder = newton.ModelBuilder(up_vector=wp.vec3(0, 0, 1))
+        builder = newton.ModelBuilder()
 
         ball1 = builder.add_body(
-            origin=wp.transform((0.0, 0.0, 2.0), wp.quat_identity()), name="ball1"
+            xform=wp.transform((0.0, 0.0, 2.0), wp.quat_identity()), key="ball1"
         )
+
         builder.add_shape_sphere(
             body=ball1,
             radius=1.0,
-            density=10.0,
-            ke=2000.0,
-            kd=10.0,
-            kf=200.0,
-            mu=FRICTION,
-            restitution=RESTITUTION,
-            thickness=0.0,
+            cfg=newton.ModelBuilder.ShapeConfig(
+                density=10.0,
+                ke=2000.0,
+                kd=10.0,
+                kf=200.0,
+                mu=FRICTION,
+                restitution=RESTITUTION,
+                thickness=0.0,
+            ),
         )
 
-        builder.set_ground_plane(ke=10, kd=10, kf=0.0, mu=FRICTION, restitution=RESTITUTION)
+        builder.add_joint_free(parent=-1, child=ball1)
+
+        builder.add_ground_plane(
+            cfg=newton.ModelBuilder.ShapeConfig(
+                ke=10.0, kd=10.0, kf=0.0, mu=FRICTION, restitution=RESTITUTION
+            )
+        )
+
         model = builder.finalize()
-        exit()
         return model
 
 

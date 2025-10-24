@@ -7,7 +7,7 @@ from .engine import AxionEngine
 from .engine_config import EngineConfig
 from .engine_config import AxionEngineConfig
 from .engine_config import FeatherstoneEngineConfig
-from .engine_config import SemiImplicitEngineConfig
+from .engine_config import MuJoCoEngineConfig
 from .engine_config import XPBDEngineConfig
 
 __all__ = [
@@ -15,7 +15,7 @@ __all__ = [
     "EngineConfig",
     "AxionEngineConfig",
     "FeatherstoneEngineConfig",
-    "SemiImplicitEngineConfig",
+    "MuJoCoEngineConfig",
     "XPBDEngineConfig",
     "AbstractSimulator",
     "ExecutionConfig",

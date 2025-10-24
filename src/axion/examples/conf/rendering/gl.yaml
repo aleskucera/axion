@@ -1,5 +1,5 @@
 # @package rendering
 _target_: axion.RenderingConfig
-vis_type: "null"
-target_fps: 30
+vis_type: "gl"
+target_fps: 20
 usd_file: null

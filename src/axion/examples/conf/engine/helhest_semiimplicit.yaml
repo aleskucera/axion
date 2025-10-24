@@ -1,4 +1,0 @@
-# @package engine
-_target_: axion.SemiImplicitEngineConfig
-angular_damping: 0.05
-friction_smoothing: 1.0
