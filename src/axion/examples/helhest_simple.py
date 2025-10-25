@@ -28,9 +28,13 @@ class Simulator(AbstractSimulator):
 
     @override
     def control_policy(self, current_state: newton.State):
-        wp.copy(
-            self.control.joint_target, wp.array(6 * [0.0] + [10.0, 10.0, 0.0], dtype=wp.float32)
-        )
+        # For mujoco
+        wp.copy(self.control.joint_f, wp.array(6 * [0.0] + [500.0, 500.0, 0.0], dtype=wp.float32))
+
+        # For axion
+        # wp.copy(
+        #     self.control.joint_target, wp.array(6 * [0.0] + [500.0, 500.0, 0.0], dtype=wp.float32)
+        # )
 
     def build_model(self) -> newton.Model:
         """
@@ -39,7 +43,9 @@ class Simulator(AbstractSimulator):
         This method constructs the three-wheeled vehicle, obstacles, and ground plane.
         """
         FRICTION = 1.0
-        RESTITUTION = 1.0
+        RESTITUTION = 0.0
+        WHEEL_DENSITY = 500
+        CHASSIS_DENSITY = 1200
 
         builder = newton.ModelBuilder()
         builder.add_articulation(key="helhest_simple")
@@ -54,7 +60,11 @@ class Simulator(AbstractSimulator):
             hx=0.75,
             hy=0.25,
             hz=0.25,
-            cfg=newton.ModelBuilder.ShapeConfig(density=10.0, mu=FRICTION, restitution=RESTITUTION),
+            cfg=newton.ModelBuilder.ShapeConfig(
+                density=CHASSIS_DENSITY,
+                mu=FRICTION,
+                restitution=RESTITUTION,
+            ),
         )
 
         # Left Wheel
@@ -65,7 +75,10 @@ class Simulator(AbstractSimulator):
             body=left_wheel,
             radius=0.5,
             cfg=newton.ModelBuilder.ShapeConfig(
-                density=10.0, mu=FRICTION, restitution=RESTITUTION, thickness=0.1
+                density=WHEEL_DENSITY,
+                mu=FRICTION,
+                restitution=RESTITUTION,
+                thickness=0.0,
             ),
         )
 
@@ -77,7 +90,10 @@ class Simulator(AbstractSimulator):
             body=right_wheel,
             radius=0.5,
             cfg=newton.ModelBuilder.ShapeConfig(
-                density=10.0, mu=FRICTION, restitution=RESTITUTION, thickness=0.1
+                density=WHEEL_DENSITY,
+                mu=FRICTION,
+                restitution=RESTITUTION,
+                thickness=0.0,
             ),
         )
 
@@ -89,7 +105,10 @@ class Simulator(AbstractSimulator):
             body=back_wheel,
             radius=0.5,
             cfg=newton.ModelBuilder.ShapeConfig(
-                density=10.0, mu=FRICTION, restitution=RESTITUTION, thickness=0.1
+                density=WHEEL_DENSITY,
+                mu=FRICTION,
+                restitution=RESTITUTION,
+                thickness=0.0,
             ),
         )
 
@@ -103,7 +122,7 @@ class Simulator(AbstractSimulator):
             child=left_wheel,
             parent_xform=wp.transform((0.75, -0.75, 0.0), wp.quat_identity()),
             axis=(0.0, 1.0, 0.0),
-            mode=newton.JointMode.TARGET_VELOCITY,
+            mode=newton.JointMode.NONE,
         )
         # Right wheel revolute joint (velocity control)
         builder.add_joint_revolute(
@@ -111,7 +130,7 @@ class Simulator(AbstractSimulator):
             child=right_wheel,
             parent_xform=wp.transform((0.75, 0.75, 0.0), wp.quat_identity()),
             axis=(0.0, 1.0, 0.0),
-            mode=newton.JointMode.TARGET_VELOCITY,
+            mode=newton.JointMode.NONE,
         )
         # Back wheel revolute joint (not actively driven)
         builder.add_joint_revolute(

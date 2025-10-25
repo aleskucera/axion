@@ -27,7 +27,7 @@ class Simulator(AbstractSimulator):
 
     def build_model(self) -> newton.Model:
         FRICTION = 0.8
-        RESTITUTION = 0.9
+        RESTITUTION = 0.0
 
         builder = newton.ModelBuilder()
 
@@ -125,28 +125,19 @@ class Simulator(AbstractSimulator):
         a_ball = builder.add_body(
             xform=wp.transform(
                 p=wp.vec3(0.0, y, drop_z + radius + cuboid_hz + z_offset), q=wp.quat_identity()
-            ),
-            key="a_ball",
+            )
         )
         b_ball = builder.add_body(
             xform=wp.transform(
                 p=wp.vec3(0.0, y, drop_z + radius + z_offset),
                 q=wp.quat_from_axis_angle(wp.vec3(1.0, 1.0, 0.0), 0.1),
-            ),
-            key="b_ball",
+            )
         )
 
         rigid_cfg = newton.ModelBuilder.ShapeConfig()
+        rigid_cfg.density = 0.0
         builder.add_shape_sphere(a_ball, radius=radius, cfg=rigid_cfg)
         builder.add_shape_box(b_ball, hx=cuboid_hx, hy=cuboid_hy, hz=cuboid_hz)
-
-        builder.add_joint_fixed(
-            parent=-1,
-            child=a_ball,
-            parent_xform=wp.transform(p=wp.vec3(0.0, y, drop_z + upper_hz), q=wp.quat_identity()),
-            child_xform=wp.transform(p=wp.vec3(0.0, 0.0, 0.0), q=wp.quat_identity()),
-            key="fixed_ball_anchor",
-        )
 
         builder.add_joint_ball(
             parent=a_ball,

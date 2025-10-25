@@ -3,7 +3,7 @@ defaults:
   - rendering: gl
   - execution: cuda_graph
   - profiling: disabled
-  - engine: base
+  - engine: axion
   - _self_
 
 # Use the recommended hybrid approach for project names
