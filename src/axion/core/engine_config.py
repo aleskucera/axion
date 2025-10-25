@@ -17,11 +17,11 @@ class AxionEngineConfig(EngineConfig):
     during a simulation run.
     """
 
-    newton_iters: int = 8
+    newton_iters: int = 6
     linear_iters: int = 4
 
     joint_stabilization_factor: float = 0.01
-    contact_stabilization_factor: float = 0.1
+    contact_stabilization_factor: float = 0.05
 
     joint_compliance: float = 1e-3
     contact_compliance: float = 1e-5

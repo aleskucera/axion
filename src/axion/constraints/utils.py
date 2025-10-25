@@ -70,3 +70,56 @@ def fill_friction_constraint_body_idx_kernel(
     interaction = contact_interaction[contact_idx]
     friction_constraint_body_idx[constraint_idx, 0] = interaction.body_a_idx
     friction_constraint_body_idx[constraint_idx, 1] = interaction.body_b_idx
+
+
+@wp.kernel
+def fill_joint_constraint_active_mask_kernel(
+    joint_constraints: wp.array(dtype=JointConstraintData),
+    joint_constraint_active_mask: wp.array(dtype=wp.float32),
+):
+    constraint_idx = wp.tid()
+
+    if constraint_idx >= len(joint_constraints):
+        return
+
+    c = joint_constraints[constraint_idx]
+
+    if c.is_active:
+        joint_constraint_active_mask[constraint_idx] = 1.0
+    else:
+        joint_constraint_active_mask[constraint_idx] = 0.0
+
+
+@wp.kernel
+def fill_contact_constraint_active_mask_kernel(
+    contact_interaction: wp.array(dtype=ContactInteraction),
+    contact_constraint_active_mask: wp.array(dtype=wp.float32),
+):
+    contact_idx = wp.tid()
+
+    if contact_idx >= len(contact_interaction):
+        return
+
+    interaction = contact_interaction[contact_idx]
+    if interaction.is_active:
+        contact_constraint_active_mask[contact_idx] = 1.0
+    else:
+        contact_constraint_active_mask[contact_idx] = 0.0
+
+
+@wp.kernel
+def fill_friction_constraint_active_mask_kernel(
+    contact_interaction: wp.array(dtype=ContactInteraction),
+    friction_constraint_active_mask: wp.array(dtype=wp.float32),
+):
+    constraint_idx = wp.tid()
+    contact_idx = constraint_idx // 2
+
+    if contact_idx >= len(contact_interaction):
+        return
+
+    interaction = contact_interaction[contact_idx]
+    if interaction.is_active:
+        friction_constraint_active_mask[constraint_idx] = 1.0
+    else:
+        friction_constraint_active_mask[constraint_idx] = 0.0
