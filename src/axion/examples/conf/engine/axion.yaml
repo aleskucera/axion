@@ -8,6 +8,7 @@ contact_stabilization_factor: 0.05
 joint_compliance: 1e-3
 contact_compliance: 1e-5
 friction_compliance: 1e-6
+regularization: 1e-6
 contact_fb_alpha: 0.25
 contact_fb_beta: 0.25
 friction_fb_alpha: 0.25

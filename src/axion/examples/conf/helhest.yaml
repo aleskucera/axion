@@ -3,7 +3,7 @@ defaults:
   - rendering: gl
   - execution: cuda_graph
   - profiling: disabled
-  - engine: mujoco
+  - engine: xpbd
   - _self_
 
 # Use the recommended hybrid approach for project names

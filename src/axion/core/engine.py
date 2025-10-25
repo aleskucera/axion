@@ -174,12 +174,12 @@ class AxionEngine(SolverBase):
             dt: The time step duration.
             control: Optional control inputs to be applied during the simulation step.
         """
+        newton.eval_ik(self.model, state_in, state_in.joint_q, state_in.joint_qd)
         apply_control(self.model, state_in, state_out, dt, control)
         self.integrate_bodies(self.model, state_in, state_out, dt)
         self.data.update_state_data(self.model, state_in, state_out, contacts)
 
-        # TODO: Check the warm startup
-        # self._lambda.zero_()
+        self.data.body_lambda.zero_()
 
         for i in range(self.config.newton_iters):
             wp.record_event(self.events[i]["iter_start"])
@@ -197,13 +197,16 @@ class AxionEngine(SolverBase):
                 self.preconditioner.update()
 
                 # --- Solve linear system of equations ---
-                cr_solver(
+                self.data.dbody_lambda.zero_()
+                wp.optim.linear.cg(
                     A=self.A_op,
                     b=self.data.b,
                     x=self.data.dbody_lambda,
-                    iters=self.config.linear_iters,
-                    preconditioner=self.preconditioner,
-                    logger=self.logger,
+                    atol=1e-5,
+                    maxiter=self.config.linear_iters,
+                    M=self.preconditioner,
+                    check_every=0,
+                    use_cuda_graph=True,
                 )
 
                 compute_dbody_qd_from_dbody_lambda(self.data, self.config, self.dims)

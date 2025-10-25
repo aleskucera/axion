@@ -14,9 +14,8 @@ from axion import RenderingConfig
 from axion import SimulationConfig
 from omegaconf import DictConfig
 
-from _assets import ASSETS_DIR
-
 CONFIG_PATH = files("axion").joinpath("examples").joinpath("conf")
+ASSETS_DIR = files("axion").joinpath("examples").joinpath("assets")
 
 
 class Simulator(AbstractSimulator):
@@ -43,7 +42,7 @@ class Simulator(AbstractSimulator):
         This method constructs the three-wheeled vehicle, obstacles, and ground plane.
         """
         FRICTION = 1.0
-        RESTITUTION = 1.0
+        RESTITUTION = 0.0
 
         builder = newton.ModelBuilder()
         builder.add_articulation(key="helhest")
@@ -68,7 +67,9 @@ class Simulator(AbstractSimulator):
             hx=0.75,
             hy=0.25,
             hz=0.25,
-            cfg=newton.ModelBuilder.ShapeConfig(density=10.0, mu=FRICTION, restitution=RESTITUTION),
+            cfg=newton.ModelBuilder.ShapeConfig(
+                density=1200.0, mu=FRICTION, restitution=RESTITUTION
+            ),
         )
 
         # Left Wheel
@@ -79,10 +80,9 @@ class Simulator(AbstractSimulator):
             body=left_wheel,
             mesh=wheel_mesh_render,
             cfg=newton.ModelBuilder.ShapeConfig(
-                density=20.0,
+                density=0.0,
                 mu=FRICTION,
                 restitution=RESTITUTION,
-                thickness=0.0,
                 has_shape_collision=False,
             ),
         )
@@ -90,10 +90,9 @@ class Simulator(AbstractSimulator):
             body=left_wheel,
             mesh=wheel_mesh_collision,
             cfg=newton.ModelBuilder.ShapeConfig(
-                density=20.0,
+                density=500.0,
                 mu=FRICTION,
                 restitution=RESTITUTION,
-                thickness=0.0,
                 is_visible=False,
             ),
         )
@@ -106,10 +105,9 @@ class Simulator(AbstractSimulator):
             body=right_wheel,
             mesh=wheel_mesh_render,
             cfg=newton.ModelBuilder.ShapeConfig(
-                density=20.0,
+                density=0.0,
                 mu=FRICTION,
                 restitution=RESTITUTION,
-                thickness=0.0,
                 has_shape_collision=False,
             ),
         )
@@ -118,10 +116,9 @@ class Simulator(AbstractSimulator):
             body=right_wheel,
             mesh=wheel_mesh_collision,
             cfg=newton.ModelBuilder.ShapeConfig(
-                density=20.0,
+                density=500.0,
                 mu=FRICTION,
                 restitution=RESTITUTION,
-                thickness=0.0,
                 is_visible=False,
             ),
         )
@@ -134,7 +131,7 @@ class Simulator(AbstractSimulator):
             body=back_wheel,
             mesh=wheel_mesh_render,
             cfg=newton.ModelBuilder.ShapeConfig(
-                density=20.0,
+                density=0.0,
                 mu=FRICTION,
                 restitution=RESTITUTION,
                 thickness=0.0,
@@ -145,7 +142,7 @@ class Simulator(AbstractSimulator):
             body=back_wheel,
             mesh=wheel_mesh_collision,
             cfg=newton.ModelBuilder.ShapeConfig(
-                density=20.0,
+                density=500.0,
                 mu=FRICTION,
                 restitution=RESTITUTION,
                 thickness=0.0,
@@ -183,8 +180,8 @@ class Simulator(AbstractSimulator):
         )
 
         # Set joint control gains
-        builder.joint_target_ke[-3] = 500.0
-        builder.joint_target_ke[-2] = 500.0
+        builder.joint_target_ke[-3] = 50.0
+        builder.joint_target_ke[-2] = 50.0
         builder.joint_target_ke[-1] = 0.0
         builder.joint_armature[-3] = 0.1
         builder.joint_armature[-2] = 0.1

@@ -1,5 +1,4 @@
 from importlib.resources import files
-from typing import override
 
 import hydra
 import newton
@@ -69,7 +68,7 @@ class Simulator(AbstractSimulator):
         return model
 
 
-@hydra.main(config_path=str(CONFIG_PATH), config_name="helhest", version_base=None)
+@hydra.main(config_path=str(CONFIG_PATH), config_name="config", version_base=None)
 def helhest_example(cfg: DictConfig):
     sim_config: SimulationConfig = hydra.utils.instantiate(cfg.simulation)
     render_config: RenderingConfig = hydra.utils.instantiate(cfg.rendering)
