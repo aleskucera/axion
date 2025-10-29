@@ -149,6 +149,9 @@ class Simulator(AbstractSimulator):
         # set initial joint angle
         builder.joint_q[-4:] = wp.quat_rpy(0.5, 0.6, 0.7)
 
+        #collapse fixed joints
+        #builder.collapse_fixed_joints()
+
         builder.add_ground_plane(
             cfg=newton.ModelBuilder.ShapeConfig(
                 ke=10.0, kd=10.0, kf=0.0, mu=FRICTION, restitution=RESTITUTION

@@ -1,6 +1,7 @@
 import numpy as np
 import warp as wp
 from newton import JointType
+from newton import utils
 
 from .utils import orthogonal_basis
 
@@ -16,7 +17,6 @@ class JointConstraintData:
 
     J_parent: wp.spatial_vector
     J_child: wp.spatial_vector
-
 
 def compute_joint_constraint_offsets(joint_types: wp.array) -> tuple[wp.array, int]:
     constraint_count_map = np.array(
@@ -58,7 +58,7 @@ def compute_joint_kinematics(
 
 
 @wp.func
-def formulate_translational_constraints(
+def formulate_translational_constraints_in_world(
     joint_constraints: wp.array(dtype=JointConstraintData),
     start_index: wp.int32,
     parent_idx: wp.int32,
@@ -67,7 +67,10 @@ def formulate_translational_constraints(
     r_c: wp.vec3,
     r_p: wp.vec3,
 ):
-    """Assembles the 3 common translational constraints directly into the output array."""
+    """
+    Assembles the 3 common translational constraints with respect to the world's xyz
+    directly into the output array.
+    """
     c = JointConstraintData()
     c.is_active = True
     c.parent_idx = parent_idx
@@ -91,6 +94,75 @@ def formulate_translational_constraints(
     c.value = c_pos.z
     joint_constraints[start_index + 2] = c
 
+@wp.func
+def formulate_prismatic_constraints(
+    joint_constraints: wp.array(dtype=JointConstraintData),
+    start_index: wp.int32,
+    # kinematics and other data
+    parent_idx: wp.int32,
+    child_idx: wp.int32,
+    joint_qd_start: wp.array(dtype=wp.int32),
+    joint_idx: wp.int32,
+    joint_axis: wp.array(dtype=wp.vec3),
+    c_pos: wp.vec3,
+    r_c: wp.vec3,
+    r_p: wp.vec3,
+    q_wc_rot: wp.quat,
+    q_wp_rot: wp.quat,
+):
+    """Assembles all 5 constraints for a Prismatic joint."""
+    # Retrieve the joint axis
+    axis_start = joint_qd_start[joint_idx]
+    axis = joint_axis[axis_start]
+    axis_p_w = wp.quat_rotate(q_wp_rot, axis)
+
+    # Create axes orthogonal to the joint axis
+    b1_w, b2_w = orthogonal_basis(axis_p_w)
+    #b1_c_w = wp.quat_rotate(q_wc_rot, b1_w)
+    #b2_c_w = wp.quat_rotate(q_wc_rot, b2_w)
+
+    # Reusable JointConstraintData struct
+    c = JointConstraintData()
+    c.is_active = True
+    c.parent_idx = parent_idx
+    c.child_idx = child_idx
+
+    # Translational constraint 1
+    # Source: https://danielchappuis.ch/download/ConstraintsDerivationRigidBody3D.pdf
+    c.value = wp.dot(c_pos, b1_w)     # projection of c_pos onto b1_c_w
+    b1_J_w = - wp.cross((r_p + c_pos), b1_w)
+    c.J_parent = wp.spatial_vector(-b1_w, b1_J_w)
+    c.J_child = wp.spatial_vector(b1_w, wp.cross(r_c, b1_w))
+    joint_constraints[start_index + 0] = c
+
+    # Translational constraint 2
+    c.value = wp.dot(c_pos, b2_w)     # projection of c_pos onto b2_c_w
+    b2_J_w = - wp.cross((r_p + c_pos), b2_w)
+    c.J_parent = wp.spatial_vector(-b2_w, b2_J_w)
+    c.J_child = wp.spatial_vector(b2_w, wp.cross(r_c, b2_w))
+    joint_constraints[start_index + 1] = c
+
+    # relative rotation between parent's joint and child's joint in quaternions
+    q_rel = wp.quat_inverse(q_wp_rot) * q_wc_rot
+    q_err = 2.0*wp.vec3(q_rel[0], q_rel[1], q_rel[2])
+
+    # Rotational constraint 1
+    c.value = q_err[0]
+    c.J_parent = wp.spatial_vector(0.0, 0.0, 0.0, -1.0, 0.0, 0.0)
+    c.J_child = wp.spatial_vector(0.0, 0.0, 0.0, 1.0, 0.0, 0.0)
+    joint_constraints[start_index + 2] = c
+
+    # Rotational constraint 2
+    c.value = q_err[1]
+    c.J_parent = wp.spatial_vector(0.0, 0.0, 0.0, 0.0, -1.0, 0.0)
+    c.J_child = wp.spatial_vector(0.0, 0.0, 0.0, 0.0, 1.0, 0.0)
+    joint_constraints[start_index + 3] = c
+
+    # Rotational constraint 3 (rotation about axis_p_w)
+    c.value = q_err[2]
+    c.J_parent = wp.spatial_vector(0.0, 0.0, 0.0, 0.0, 0.0, -1.0)
+    c.J_child = wp.spatial_vector(0.0, 0.0, 0.0, 0.0, 0.0, 1.0)
+    joint_constraints[start_index + 4] = c
 
 @wp.func
 def formulate_revolute_constraints(
@@ -110,7 +182,7 @@ def formulate_revolute_constraints(
 ):
     """Assembles all 5 constraints for a Revolute joint."""
     # First, assemble the 3 translational constraints (ball-socket part)
-    formulate_translational_constraints(
+    formulate_translational_constraints_in_world(
         joint_constraints,
         start_index,
         parent_idx,
@@ -160,7 +232,7 @@ def formulate_ball_constraints(
     r_p: wp.vec3,
 ):
     """Assembles all 3 constraints for a Ball (Spherical) joint."""
-    formulate_translational_constraints(
+    formulate_translational_constraints_in_world(
         joint_constraints,
         start_index,
         parent_idx,
@@ -170,6 +242,87 @@ def formulate_ball_constraints(
         r_p,
     )
 
+@wp.func
+def formulate_fixed_constraints(
+    joint_constraints: wp.array(dtype=JointConstraintData),
+    start_index: wp.int32,
+    # kinematics and other data
+    parent_idx: wp.int32,
+    child_idx: wp.int32,
+    joint_qd_start: wp.array(dtype=wp.int32),
+    joint_idx: wp.int32,
+    joint_axis: wp.array(dtype=wp.vec3),
+    c_pos: wp.vec3,
+    r_c: wp.vec3,
+    r_p: wp.vec3,
+    q_wc_rot: wp.quat,
+    q_wp_rot: wp.quat,
+):
+    """Assembles all 6 constraints for a Fixed joint."""
+    # First, assemble the 3 translational constraints
+    formulate_translational_constraints_in_world(
+        joint_constraints,
+        start_index,
+        parent_idx,
+        child_idx,
+        c_pos,
+        r_c,
+        r_p,
+    )
+    
+    c = JointConstraintData()
+    c.is_active = True
+    c.parent_idx = parent_idx
+    c.child_idx = child_idx
+
+    # angle theta between quaternions  
+    #dot = wp.dot(q_wc_rot, q_wp_rot)
+    #dot = wp.clamp(dot, -1.0, 1.0)  # for numerical safety
+    #theta_quaternion = 2.0 * wp.acos(abs(dot))  <----- I tried putting theta_quaternion into c_values. The result was a bit more stable but still incorrect I think
+
+    # euler_angles_wp =  utils.quat_to_euler(q_wp_rot, 0, 1, 2) #wp.quat_to_euler(q_wp_rot)    # are these XYZ euler angles?
+    # euler_angles_wc = utils.quat_to_euler(q_wc_rot, 0, 1, 2) 
+ 
+    # relative rotation between parent's joint and child's joint in quaternions
+    q_rel = wp.quat_inverse(q_wp_rot) * q_wc_rot
+    q_err = 2.0*wp.vec3(q_rel[0], q_rel[1], q_rel[2])
+
+    # Rotational constraint X
+    c.value = q_err[0]
+    c.J_parent = wp.spatial_vector(0.0, 0.0, 0.0, -1.0, 0.0, 0.0)
+    c.J_child = wp.spatial_vector(0.0, 0.0, 0.0, 1.0, 0.0, 0.0)
+    joint_constraints[start_index + 3] = c
+
+    # Rotational constraint Y
+    c.value = q_err[1]
+    c.J_parent = wp.spatial_vector(0.0, 0.0, 0.0, 0.0, -1.0, 0.0)
+    c.J_child = wp.spatial_vector(0.0, 0.0, 0.0, 0.0, 1.0, 0.0)
+    joint_constraints[start_index + 4] = c
+
+    # Rotational constraint Z
+    c.value = q_err[2]
+    c.J_parent = wp.spatial_vector(0.0, 0.0, 0.0, 0.0, 0.0, -1.0)
+    c.J_child = wp.spatial_vector(0.0, 0.0, 0.0, 0.0, 0.0, 1.0)
+    joint_constraints[start_index + 5] = c
+
+@wp.func
+def formulate_free_constraints(
+    joint_constraints: wp.array(dtype=JointConstraintData),
+    start_index: wp.int32,
+    # kinematics and other data
+    parent_idx: wp.int32,
+    child_idx: wp.int32,
+    joint_qd_start: wp.array(dtype=wp.int32),
+    joint_idx: wp.int32,
+    joint_axis: wp.array(dtype=wp.vec3),
+    c_pos: wp.vec3,
+    r_c: wp.vec3,
+    r_p: wp.vec3,
+    q_wc_rot: wp.quat,
+    q_wp_rot: wp.quat,
+):
+    """ Free joint has no constraint """
+    pass
 
 @wp.kernel
 def joint_constraint_data_kernel(
@@ -193,7 +346,12 @@ def joint_constraint_data_kernel(
     j_type = joint_type[joint_idx]
 
     # Early exit for disabled or unsupported joints
-    if joint_enabled[joint_idx] == 0 or (j_type != JointType.REVOLUTE and j_type != JointType.BALL):
+    if joint_enabled[joint_idx] == 0 or (
+        j_type != JointType.REVOLUTE
+        and j_type != JointType.FIXED
+        and j_type != JointType.BALL 
+        and j_type != JointType.PRISMATIC
+        ):
         return
 
     child_idx = joint_child[joint_idx]
@@ -215,18 +373,19 @@ def joint_constraint_data_kernel(
     if parent_idx >= 0:
         parent_com = body_com[parent_idx]
 
-    r_c = compute_joint_kinematics(body_q_c, joint_X_c[joint_idx], child_com)
-    r_p = compute_joint_kinematics(body_q_p, joint_X_p[joint_idx], parent_com)
+    r_wc = compute_joint_kinematics(body_q_c, joint_X_c[joint_idx], child_com)
+    r_wp = compute_joint_kinematics(body_q_p, joint_X_p[joint_idx], parent_com)
 
-    X_wc = body_q_c * joint_X_c[joint_idx]
-    X_wp = body_q_p * joint_X_p[joint_idx]
+    X_wjc = body_q_c * joint_X_c[joint_idx]
+    X_wjp = body_q_p * joint_X_p[joint_idx]
 
-    c_pos = wp.transform_get_translation(X_wc) - wp.transform_get_translation(X_wp)
-    q_wc_rot = wp.transform_get_rotation(X_wc)
-    q_wp_rot = wp.transform_get_rotation(X_wp)
+    c_pos = wp.transform_get_translation(X_wjc) - wp.transform_get_translation(X_wjp)
+    q_wc_rot = wp.transform_get_rotation(X_wjc)
+    q_wp_rot = wp.transform_get_rotation(X_wjp)
 
     # --- Dispatch to the correct assembly function ---
     if j_type == JointType.REVOLUTE:
+        #wp.printf("Axion's Revolute joint used \n")
         formulate_revolute_constraints(
             joint_constraints,
             start_index,
@@ -236,18 +395,51 @@ def joint_constraint_data_kernel(
             joint_idx,
             joint_axis,
             c_pos,
-            r_c,
-            r_p,
+            r_wc,
+            r_wp,
             q_wc_rot,
             q_wp_rot,
         )
     elif j_type == JointType.BALL:
+        #wp.printf("Axion's Ball joint used \n")
         formulate_ball_constraints(
             joint_constraints,
             start_index,
             parent_idx,
             child_idx,
             c_pos,
-            r_c,
-            r_p,
+            r_wc,
+            r_wp,
+        )
+    elif j_type == JointType.PRISMATIC:
+        #wp.printf("Axion's Prismatic joint used \n")
+        formulate_prismatic_constraints(
+            joint_constraints,
+            start_index,
+            parent_idx,
+            child_idx,
+            joint_qd_start,
+            joint_idx,
+            joint_axis,
+            c_pos,
+            r_wc,
+            r_wp,
+            q_wc_rot,
+            q_wp_rot,
+        )
+    elif j_type == JointType.FIXED:
+        #wp.printf("Axion's Fixed joint used \n")
+        formulate_fixed_constraints(
+            joint_constraints,
+            start_index,
+            parent_idx,
+            child_idx,
+            joint_qd_start,
+            joint_idx,
+            joint_axis,
+            c_pos,
+            r_wc,
+            r_wp,
+            q_wc_rot,
+            q_wp_rot,
         )
