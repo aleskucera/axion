@@ -1127,6 +1127,18 @@ wheels = [
 ]
 
 [[package]]
+name = "mujoco-warp"
+version = "0.0.1"
+source = { git = "https://github.com/google-deepmind/mujoco_warp#317bde16a2d866f2c189f2d7a91f3cf97014a326" }
+dependencies = [
+    { name = "absl-py" },
+    { name = "etils", extra = ["epath"] },
+    { name = "mujoco" },
+    { name = "numpy" },
+    { name = "warp-lang" },
+]
+
+[[package]]
 name = "munch"
 version = "4.0.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1178,6 +1190,7 @@ dev = [
     { name = "gitpython" },
     { name = "imgui-bundle" },
     { name = "mujoco" },
+    { name = "mujoco-warp" },
     { name = "pycollada" },
     { name = "pyglet" },
     { name = "pyyaml" },
@@ -1204,6 +1217,7 @@ examples = [
     { name = "gitpython" },
     { name = "imgui-bundle" },
     { name = "mujoco" },
+    { name = "mujoco-warp" },
     { name = "pycollada" },
     { name = "pyglet" },
     { name = "pyyaml" },
@@ -1225,6 +1239,7 @@ importers = [
 sim = [
     { name = "cbor2" },
     { name = "mujoco" },
+    { name = "mujoco-warp" },
 ]
 torch-cu12 = [
     { name = "alphashape" },
@@ -1234,6 +1249,7 @@ torch-cu12 = [
     { name = "gitpython" },
     { name = "imgui-bundle" },
     { name = "mujoco" },
+    { name = "mujoco-warp" },
     { name = "pycollada" },
     { name = "pyglet" },
     { name = "pyyaml" },
@@ -1278,6 +1294,10 @@ requires-dist = [
     { name = "mujoco", marker = "extra == 'examples'", specifier = ">=3.3.6.dev802089588", index = "https://py.mujoco.org/" },
     { name = "mujoco", marker = "extra == 'sim'", specifier = ">=3.3.6.dev802089588", index = "https://py.mujoco.org/" },
     { name = "mujoco", marker = "extra == 'torch-cu12'", specifier = ">=3.3.6.dev802089588", index = "https://py.mujoco.org/" },
+    { name = "mujoco-warp", marker = "extra == 'dev'", git = "https://github.com/google-deepmind/mujoco_warp" },
+    { name = "mujoco-warp", marker = "extra == 'examples'", git = "https://github.com/google-deepmind/mujoco_warp" },
+    { name = "mujoco-warp", marker = "extra == 'sim'", git = "https://github.com/google-deepmind/mujoco_warp" },
+    { name = "mujoco-warp", marker = "extra == 'torch-cu12'", git = "https://github.com/google-deepmind/mujoco_warp" },
     { name = "myst-parser", marker = "extra == 'docs'", specifier = ">=3.0.1" },
     { name = "pycollada", marker = "extra == 'dev'", specifier = ">=0.9" },
     { name = "pycollada", marker = "extra == 'examples'", specifier = ">=0.9" },
