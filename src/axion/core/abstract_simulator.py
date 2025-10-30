@@ -140,7 +140,9 @@ class AbstractSimulator(ABC):
         self.contacts = self.model.collide(self.current_state)
 
         if isinstance(self.engine_config, AxionEngineConfig):
-            self.solver = AxionEngine(self.model, self.engine_config, self.logger)
+            self.solver = AxionEngine(
+                self.model, self.init_state_fn, self.engine_config, self.logger
+            )
         elif isinstance(self.engine_config, FeatherstoneEngineConfig):
             self.solver = SolverFeatherstone(self.model, **vars(self.engine_config))
             newton.eval_fk(
@@ -385,3 +387,21 @@ class AbstractSimulator(ABC):
         By default, it does nothing.
         """
         pass
+
+    def init_state_fn(
+        self,
+        current_state: newton.State,
+        next_state: newton.State,
+        contacts: newton.Contacts,
+        dt: float,
+    ):
+        """
+        This function initializes the simulation state before the first step for the Axion engine.
+
+        It is not necessary to use every available argument. Control is applied before this call.
+        This method may be optionally overridden by any subclass.
+        For one time initializations use the subclass constructor, which can use all the AbstractSimulator self attributes.
+        It is called before each simulation step.
+        """
+
+        self.solver.integrate_bodies(self.model, current_state, next_state, dt)

@@ -1,4 +1,5 @@
 from typing import Optional
+from typing import Callable
 
 import newton
 import numpy as np
@@ -14,6 +15,7 @@ from axion.types import compute_joint_constraint_offsets
 from newton import Control
 from newton import Model
 from newton import State
+from newton import Contacts
 from newton.solvers import SolverBase
 
 from .control_utils import apply_control
@@ -43,6 +45,7 @@ class AxionEngine(SolverBase):
     def __init__(
         self,
         model: Model,
+        init_state_fn: Callable[[State, State, Contacts, float], None],
         config: Optional[AxionEngineConfig] = AxionEngineConfig(),
         logger: Optional[HDF5Logger | NullLogger] = NullLogger(),
     ):
@@ -56,6 +59,7 @@ class AxionEngine(SolverBase):
         """
         super().__init__(model)
 
+        self.init_state_fn = init_state_fn
         self.logger = logger
         self.config = config
 
@@ -176,7 +180,7 @@ class AxionEngine(SolverBase):
         """
         newton.eval_ik(self.model, state_in, state_in.joint_q, state_in.joint_qd)
         apply_control(self.model, state_in, state_out, dt, control)
-        self.integrate_bodies(self.model, state_in, state_out, dt)
+        self.init_state_fn(state_in, state_out, contacts, dt)
         self.data.update_state_data(self.model, state_in, state_out, contacts)
 
         self.data.body_lambda.zero_()
@@ -251,7 +255,7 @@ class AxionEngine(SolverBase):
             max_iterations: The maximum number of iterations for the solver (default is 5000).
         """
         apply_control(model, state_in, state_out, dt, control)
-        self.integrate_bodies(model, state_in, state_out, dt)
+        self.init_state_fn(model, state_in, state_out, dt)
         self.data.update_state_data(model, state_in, state_out)
 
         def residual_function(x: np.ndarray) -> np.ndarray:
