@@ -28,12 +28,23 @@ class Simulator(AbstractSimulator):
         engine_config: EngineConfig,
     ):
         super().__init__(sim_config, render_config, exec_config, profile_config, engine_config)
+        self.init_fn = newton.solvers.SolverMuJoCo(self.model)
 
     @override
     def control_policy(self, current_state: newton.State):
         wp.copy(
-            self.control.joint_target, wp.array(6 * [0.0] + [10.0, 10.0, 0.0], dtype=wp.float32)
+            self.control.joint_target, wp.array(6 * [0.0] + [25.0, 25.0, 0.0], dtype=wp.float32)
         )
+
+    @override
+    def init_state_fn(
+        self,
+        current_state: newton.State,
+        next_state: newton.State,
+        contacts: newton.Contacts,
+        dt: float,
+    ):
+        self.init_fn.step(current_state, next_state, self.model.control(), contacts, dt)
 
     def build_model(self) -> newton.Model:
         """

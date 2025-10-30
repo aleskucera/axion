@@ -28,7 +28,7 @@ class Simulator(AbstractSimulator):
     def build_model(self) -> newton.Model:
         FRICTION = 0.7
         RESTITUTION = 0.5
-        DENSITY = 10.0
+        DENSITY = 1000.0
         KE = 200.0
         KD = 50.0
         KF = 200.0
