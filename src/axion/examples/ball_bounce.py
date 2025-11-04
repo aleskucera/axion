@@ -6,7 +6,7 @@ import warp as wp
 from axion import AbstractSimulator
 from axion import EngineConfig
 from axion import ExecutionConfig
-from axion import ProfilingConfig
+from axion import LoggingConfig
 from axion import RenderingConfig
 from axion import SimulationConfig
 from omegaconf import DictConfig
@@ -20,10 +20,16 @@ class Simulator(AbstractSimulator):
         sim_config: SimulationConfig,
         render_config: RenderingConfig,
         exec_config: ExecutionConfig,
-        profile_config: ProfilingConfig,
         engine_config: EngineConfig,
+        logging_config: LoggingConfig,
     ):
-        super().__init__(sim_config, render_config, exec_config, profile_config, engine_config)
+        super().__init__(
+            sim_config,
+            render_config,
+            exec_config,
+            engine_config,
+            logging_config,
+        )
 
     def build_model(self) -> newton.Model:
         FRICTION = 0.8
@@ -66,15 +72,15 @@ def ball_bounce_example(cfg: DictConfig):
     sim_config: SimulationConfig = hydra.utils.instantiate(cfg.simulation)
     render_config: RenderingConfig = hydra.utils.instantiate(cfg.rendering)
     exec_config: ExecutionConfig = hydra.utils.instantiate(cfg.execution)
-    profile_config: ProfilingConfig = hydra.utils.instantiate(cfg.profiling)
+    logging_config: LoggingConfig = hydra.utils.instantiate(cfg.logging)
     engine_config: EngineConfig = hydra.utils.instantiate(cfg.engine)
 
     simulator = Simulator(
         sim_config=sim_config,
         render_config=render_config,
         exec_config=exec_config,
-        profile_config=profile_config,
         engine_config=engine_config,
+        logging_config=logging_config,
     )
 
     simulator.run()

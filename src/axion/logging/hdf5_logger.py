@@ -81,6 +81,9 @@ class HDF5Logger:
 
     def log_np_dataset(self, name: str, data: np.ndarray, attributes: Dict[str, Any] = None):
         """Logs a NumPy array as a dataset within the current scope."""
+        if data is None:
+            return
+
         group = self._get_current_group()
         dset = group.create_dataset(name, data=data, compression="gzip")
         if not attributes:
@@ -91,6 +94,9 @@ class HDF5Logger:
 
     def log_wp_dataset(self, name: str, data: "wp.array", attributes: Dict[str, Any] = None):
         """Logs a Warp array as a dataset within the current scope."""
+        if data is None:
+            return
+
         if isinstance(data.dtype, WpStruct):
             print(
                 f"WARNING: 'log_wp_dataset' called on struct array '{name}'. "
@@ -124,6 +130,9 @@ class HDF5Logger:
         Logs a wp.array of structs, correctly handling nested structs by
         recursively creating groups for each level of nesting.
         """
+        if data is None:
+            return
+
         if not isinstance(data.dtype, WpStruct):
             print(
                 f"Warning: 'log_struct_array' called on a non-struct array '{name}'."
@@ -167,3 +176,15 @@ class HDF5Scope:
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         self._logger._pop_scope()
+
+
+if __name__ == "__main__":
+    logger = HDF5Logger("data/output.h5")
+    logger.open()
+
+    try:
+        logger.log_scalar("step", 1)
+        with logger.scope("run1"):
+            logger.log_np_dataset("positions", np.random.rand(5, 3))
+    finally:
+        logger.close()

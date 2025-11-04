@@ -2,7 +2,7 @@ defaults:
   - simulation: base
   - rendering: gl
   - execution: cuda_graph
-  - profiling: disabled
+  - logging: disabled
   - engine: axion
   - _self_
 

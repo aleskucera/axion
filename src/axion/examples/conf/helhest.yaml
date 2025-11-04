@@ -2,8 +2,8 @@ defaults:
   - simulation: helhest
   - rendering: gl
   - execution: cuda_graph
-  - profiling: disabled
-  - engine: xpbd
+  - logging: disabled
+  - engine: axion 
   - _self_
 
 # Use the recommended hybrid approach for project names

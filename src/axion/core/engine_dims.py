@@ -49,38 +49,6 @@ class EngineDimensions:
     def N_alpha(self) -> int:
         return self.linesearch_steps
 
-    # --- Derived Total Dimensions ---
-    # @cached_property
-    # def dyn_dim(self) -> int:
-    #     """Dimension of the dynamics part (e.g., body velocities)."""
-    #     return 6 * self.N_b
-
-    # @cached_property
-    # def con_dim(self) -> int:
-    #     """Total dimension of the constraint part."""
-    #     return self.joint_dim + self.normal_dim + self.friction_dim
-
-    # @cached_property
-    # def res_dim(self) -> int:
-    #     """Total dimension of the residual (dyn_dim + con_dim)."""
-    #     return self.dyn_dim + self.con_dim
-
-    # --- Per-Constraint-Type Dimensions ---
-    # @cached_property
-    # def joint_dim(self) -> int:
-    #     """Dimension of joint constraints."""
-    #     return self.N_j
-    #
-    # @cached_property
-    # def normal_dim(self) -> int:
-    #     """Dimension of normal contact constraints."""
-    #     return self.N_n
-    #
-    # @cached_property
-    # def friction_dim(self) -> int:
-    #     """Dimension of friction constraints."""
-    #     return self.N_f
-
     # --- Per-Constraint-Type Offsets ---
     @cached_property
     def offset_j(self) -> int:

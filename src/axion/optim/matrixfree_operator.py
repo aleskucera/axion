@@ -203,7 +203,7 @@ class MatrixFreeSystemOperator(LinearOperator):
             dim=self.engine.dims.N_b,
             inputs=[
                 self._tmp_dyn_vec,
-                self.engine.data.body_M_inv,
+                self.engine.data.world_M_inv,
             ],
             outputs=[self._tmp_dyn_vec],
             device=self.device,
