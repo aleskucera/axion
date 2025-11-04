@@ -321,6 +321,8 @@ class EngineArrays:
                 model.joint_X_c,
                 model.joint_qd_start,
                 model.joint_axis,
+                model.joint_limit_lower,
+                model.joint_limit_upper,
                 self.joint_constraint_offsets,
             ],
             outputs=[
