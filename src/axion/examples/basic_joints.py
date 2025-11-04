@@ -82,14 +82,18 @@ class Simulator(AbstractSimulator):
         # PRISMATIC (slider) joint demo
         # -----------------------------
         y = rows[1]
+
+        drop_z = 4.0
+        q_rotation_example = wp.quat(wp.sin(wp.pi/16),0,0,wp.cos(wp.pi/8))
+
         a_pri = builder.add_body(
-            xform=wp.transform(p=wp.vec3(0.0, y, drop_z + upper_hz), q=wp.quat_identity()),
+            xform=wp.transform(p=wp.vec3(0.0, y, drop_z + upper_hz), q=q_rotation_example),
             key="a_pri",
         )
         b_pri = builder.add_body(
             xform=wp.transform(
                 p=wp.vec3(0.0, y, drop_z - cuboid_hz),
-                q=wp.quat_from_axis_angle(wp.vec3(0.0, 1.0, 0.0), 0.12),
+                q=q_rotation_example,#wp.quat_from_axis_angle(wp.vec3(0.0, 1.0, 0.0), 0.12),
             ),
             key="b_pri",
         )
@@ -99,24 +103,25 @@ class Simulator(AbstractSimulator):
         builder.add_joint_fixed(
             parent=-1,
             child=a_pri,
-            parent_xform=wp.transform(p=wp.vec3(0.0, y, drop_z + upper_hz), q=wp.quat_identity()),
-            child_xform=wp.transform(p=wp.vec3(0.0, 0.0, 0.0), q=wp.quat_identity()),
+            parent_xform=wp.transform(p=wp.vec3(0.0, y, drop_z + upper_hz), q=q_rotation_example),
+            child_xform=wp.transform(p=wp.vec3(0.0, 0.0, 0.0), q=q_rotation_example),
             key="fixed_prismatic_anchor",
         )
         builder.add_joint_prismatic(
             parent=a_pri,
             child=b_pri,
             axis=wp.vec3(0.0, 0.0, 1.0),  # slide along Z
-            parent_xform=wp.transform(p=wp.vec3(0.0, 0.0, -upper_hz), q=wp.quat_identity()),
-            child_xform=wp.transform(p=wp.vec3(0.0, 0.0, +cuboid_hz), q=wp.quat_identity()),
-            limit_lower=-0.3,
-            limit_upper=0.3,
+            parent_xform=wp.transform(p=wp.vec3(0.0, 0.0, -upper_hz), q=q_rotation_example),
+            child_xform=wp.transform(p=wp.vec3(0.0, 0.0, +cuboid_hz), q=q_rotation_example),
+            limit_lower=-0.1,
+            limit_upper=0.1,
             key="prismatic_a_b",
         )
 
         # -----------------------------
         # BALL joint demo (sphere + cuboid)
         # -----------------------------
+        drop_z = 2.0
         y = rows[2]
         radius = 0.3
         z_offset = -1.0  # Shift down by 2 units

@@ -70,6 +70,10 @@ def formulate_translational_constraints_in_world(
     """
     Assembles the 3 common translational constraints with respect to the world's xyz
     directly into the output array.
+    Used in: REVOLUTE, BALL, FIXED joints.
+
+    This function assumes it is called first (before `formulate_rotational_constraints_in_world`,
+    for example) because no start_subindex is passed as its input argument.
     """
     c = JointConstraintData()
     c.is_active = True
@@ -95,6 +99,48 @@ def formulate_translational_constraints_in_world(
     joint_constraints[start_index + 2] = c
 
 @wp.func
+def formulate_rotational_constraints_in_world(
+    joint_constraints: wp.array(dtype=JointConstraintData),
+    start_index: wp.int32,
+    start_subindex: wp.int32,
+    parent_idx: wp.int32,
+    child_idx: wp.int32,
+    q_wc_rot: wp.quat,
+    q_wp_rot: wp.quat,
+):
+    """
+    Assembles 3 common rotational constraints with respect to the joint->world transformations
+    of both the parent and the child via the difference in their quaternion rotations.
+    Used in: FIXED, PRISMATIC joints.
+    """
+    c = JointConstraintData()
+    c.is_active = True
+    c.parent_idx = parent_idx
+    c.child_idx = child_idx
+
+    # relative rotation between parent's joint and child's joint in quaternions
+    q_rel = wp.quat_inverse(q_wp_rot) * q_wc_rot
+    q_err = 2.0*wp.vec3(q_rel[0], q_rel[1], q_rel[2])
+
+    # Rotational constraint X
+    c.value = q_err[0]
+    c.J_parent = wp.spatial_vector(0.0, 0.0, 0.0, -1.0, 0.0, 0.0)
+    c.J_child = wp.spatial_vector(0.0, 0.0, 0.0, 1.0, 0.0, 0.0)
+    joint_constraints[start_index + start_subindex + 0] = c
+
+    # Rotational constraint Y
+    c.value = q_err[1]
+    c.J_parent = wp.spatial_vector(0.0, 0.0, 0.0, 0.0, -1.0, 0.0)
+    c.J_child = wp.spatial_vector(0.0, 0.0, 0.0, 0.0, 1.0, 0.0)
+    joint_constraints[start_index + start_subindex + 1] = c
+
+    # Rotational constraint Z
+    c.value = q_err[2]
+    c.J_parent = wp.spatial_vector(0.0, 0.0, 0.0, 0.0, 0.0, -1.0)
+    c.J_child = wp.spatial_vector(0.0, 0.0, 0.0, 0.0, 0.0, 1.0)
+    joint_constraints[start_index + start_subindex + 2] = c
+
+@wp.func
 def formulate_prismatic_constraints(
     joint_constraints: wp.array(dtype=JointConstraintData),
     start_index: wp.int32,
@@ -104,6 +150,8 @@ def formulate_prismatic_constraints(
     joint_qd_start: wp.array(dtype=wp.int32),
     joint_idx: wp.int32,
     joint_axis: wp.array(dtype=wp.vec3),
+    joint_limit_lower: wp.array(dtype=wp.float32),
+    joint_limit_upper: wp.array(dtype=wp.float32),
     c_pos: wp.vec3,
     r_c: wp.vec3,
     r_p: wp.vec3,
@@ -118,8 +166,6 @@ def formulate_prismatic_constraints(
 
     # Create axes orthogonal to the joint axis
     b1_w, b2_w = orthogonal_basis(axis_p_w)
-    #b1_c_w = wp.quat_rotate(q_wc_rot, b1_w)
-    #b2_c_w = wp.quat_rotate(q_wc_rot, b2_w)
 
     # Reusable JointConstraintData struct
     c = JointConstraintData()
@@ -130,39 +176,28 @@ def formulate_prismatic_constraints(
     # Translational constraint 1
     # Source: https://danielchappuis.ch/download/ConstraintsDerivationRigidBody3D.pdf
     c.value = wp.dot(c_pos, b1_w)     # projection of c_pos onto b1_c_w
-    b1_J_w = - wp.cross((r_p + c_pos), b1_w)
+    b1_J_w = -wp.cross((r_p + c_pos), b1_w)
     c.J_parent = wp.spatial_vector(-b1_w, b1_J_w)
     c.J_child = wp.spatial_vector(b1_w, wp.cross(r_c, b1_w))
     joint_constraints[start_index + 0] = c
 
     # Translational constraint 2
     c.value = wp.dot(c_pos, b2_w)     # projection of c_pos onto b2_c_w
-    b2_J_w = - wp.cross((r_p + c_pos), b2_w)
+    b2_J_w = -wp.cross((r_p + c_pos), b2_w)
     c.J_parent = wp.spatial_vector(-b2_w, b2_J_w)
     c.J_child = wp.spatial_vector(b2_w, wp.cross(r_c, b2_w))
     joint_constraints[start_index + 1] = c
 
-    # relative rotation between parent's joint and child's joint in quaternions
-    q_rel = wp.quat_inverse(q_wp_rot) * q_wc_rot
-    q_err = 2.0*wp.vec3(q_rel[0], q_rel[1], q_rel[2])
-
-    # Rotational constraint 1
-    c.value = q_err[0]
-    c.J_parent = wp.spatial_vector(0.0, 0.0, 0.0, -1.0, 0.0, 0.0)
-    c.J_child = wp.spatial_vector(0.0, 0.0, 0.0, 1.0, 0.0, 0.0)
-    joint_constraints[start_index + 2] = c
-
-    # Rotational constraint 2
-    c.value = q_err[1]
-    c.J_parent = wp.spatial_vector(0.0, 0.0, 0.0, 0.0, -1.0, 0.0)
-    c.J_child = wp.spatial_vector(0.0, 0.0, 0.0, 0.0, 1.0, 0.0)
-    joint_constraints[start_index + 3] = c
-
-    # Rotational constraint 3 (rotation about axis_p_w)
-    c.value = q_err[2]
-    c.J_parent = wp.spatial_vector(0.0, 0.0, 0.0, 0.0, 0.0, -1.0)
-    c.J_child = wp.spatial_vector(0.0, 0.0, 0.0, 0.0, 0.0, 1.0)
-    joint_constraints[start_index + 4] = c
+    # Rotational constraints
+    formulate_rotational_constraints_in_world(
+        joint_constraints,
+        start_index,
+        2,
+        parent_idx,
+        child_idx,
+        q_wc_rot,
+        q_wp_rot
+    )
 
 @wp.func
 def formulate_revolute_constraints(
@@ -269,41 +304,17 @@ def formulate_fixed_constraints(
         r_c,
         r_p,
     )
-    
-    c = JointConstraintData()
-    c.is_active = True
-    c.parent_idx = parent_idx
-    c.child_idx = child_idx
-
-    # angle theta between quaternions  
-    #dot = wp.dot(q_wc_rot, q_wp_rot)
-    #dot = wp.clamp(dot, -1.0, 1.0)  # for numerical safety
-    #theta_quaternion = 2.0 * wp.acos(abs(dot))  <----- I tried putting theta_quaternion into c_values. The result was a bit more stable but still incorrect I think
-
-    # euler_angles_wp =  utils.quat_to_euler(q_wp_rot, 0, 1, 2) #wp.quat_to_euler(q_wp_rot)    # are these XYZ euler angles?
-    # euler_angles_wc = utils.quat_to_euler(q_wc_rot, 0, 1, 2) 
  
-    # relative rotation between parent's joint and child's joint in quaternions
-    q_rel = wp.quat_inverse(q_wp_rot) * q_wc_rot
-    q_err = 2.0*wp.vec3(q_rel[0], q_rel[1], q_rel[2])
-
-    # Rotational constraint X
-    c.value = q_err[0]
-    c.J_parent = wp.spatial_vector(0.0, 0.0, 0.0, -1.0, 0.0, 0.0)
-    c.J_child = wp.spatial_vector(0.0, 0.0, 0.0, 1.0, 0.0, 0.0)
-    joint_constraints[start_index + 3] = c
-
-    # Rotational constraint Y
-    c.value = q_err[1]
-    c.J_parent = wp.spatial_vector(0.0, 0.0, 0.0, 0.0, -1.0, 0.0)
-    c.J_child = wp.spatial_vector(0.0, 0.0, 0.0, 0.0, 1.0, 0.0)
-    joint_constraints[start_index + 4] = c
-
-    # Rotational constraint Z
-    c.value = q_err[2]
-    c.J_parent = wp.spatial_vector(0.0, 0.0, 0.0, 0.0, 0.0, -1.0)
-    c.J_child = wp.spatial_vector(0.0, 0.0, 0.0, 0.0, 0.0, 1.0)
-    joint_constraints[start_index + 5] = c
+    # The, assemble the 3 rotational constraints
+    formulate_rotational_constraints_in_world(
+        joint_constraints,
+        start_index,
+        3,
+        parent_idx,
+        child_idx,
+        q_wc_rot,
+        q_wp_rot
+    )
 
 @wp.func
 def formulate_free_constraints(
@@ -337,6 +348,8 @@ def joint_constraint_data_kernel(
     joint_X_c: wp.array(dtype=wp.transform),
     joint_qd_start: wp.array(dtype=wp.int32),
     joint_axis: wp.array(dtype=wp.vec3),
+    joint_limit_lower: wp.array(dtype=wp.float32),
+    joint_limit_upper: wp.array(dtype=wp.float32),
     # Precomputed offsets
     constraint_offsets: wp.array(dtype=wp.int32),
     # --- Output ---
@@ -421,6 +434,8 @@ def joint_constraint_data_kernel(
             joint_qd_start,
             joint_idx,
             joint_axis,
+            joint_limit_lower,
+            joint_limit_upper,
             c_pos,
             r_wc,
             r_wp,
