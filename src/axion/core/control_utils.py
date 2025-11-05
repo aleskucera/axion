@@ -43,13 +43,13 @@ def joint_force(
             limit_f = limit_ke * (limit_lower - q)
             if qd < 0.0:  # Only apply damping against the direction of violation
                 damping_f = -limit_kd * qd
-            if mode != JointMode.NONE:
+            if mode != JointMode.NONE: # if mode == JointMode.TARGET_VELOCITY
                 target_f = 0.0  # Override target force when limit is violated
         elif q > limit_upper:
             limit_f = limit_ke * (limit_upper - q)
             if qd > 0.0:  # Only apply damping against the direction of violation
                 damping_f = -limit_kd * qd
-            if mode != JointMode.NONE:
+            if mode != JointMode.NONE: # if mode == JointMode.TARGET_VELOCITY
                 target_f = 0.0  # Override target force when limit is violated
 
     return limit_f + damping_f + target_f
@@ -73,6 +73,7 @@ def apply_joint_control_kernel(
     joint_axis: wp.array(dtype=wp.vec3),
     # --- Control/Actuation Inputs ---
     joint_target: wp.array(dtype=float),
+    joint_f: wp.array(dtype=float),
     joint_dof_mode: wp.array(dtype=int),
     joint_target_ke: wp.array(dtype=float),
     joint_target_kd: wp.array(dtype=float),
@@ -134,7 +135,7 @@ def apply_joint_control_kernel(
             joint_dof_mode[dof_idx],
         )
         axis_world = wp.transform_vector(X_wp, joint_axis[dof_idx])
-        f_total += f * axis_world
+        f_total += axis_world * (-joint_f[dof_idx] - f)
 
     if lin_axis_count > 1:
         dof_idx = qd_start + 1
@@ -151,7 +152,7 @@ def apply_joint_control_kernel(
             joint_dof_mode[dof_idx],
         )
         axis_world = wp.transform_vector(X_wp, joint_axis[dof_idx])
-        f_total += f * axis_world
+        f_total += axis_world * (-joint_f[dof_idx] - f)
 
     if lin_axis_count > 2:
         dof_idx = qd_start + 2
@@ -168,7 +169,7 @@ def apply_joint_control_kernel(
             joint_dof_mode[dof_idx],
         )
         axis_world = wp.transform_vector(X_wp, joint_axis[dof_idx])
-        f_total += f * axis_world
+        f_total += axis_world * (-joint_f[dof_idx] - f)
 
     # --- Process Angular Degrees of Freedom ---
     # Angular DoF indices start after all linear DoFs
@@ -188,7 +189,7 @@ def apply_joint_control_kernel(
             joint_dof_mode[dof_idx],
         )
         axis_world = wp.transform_vector(X_wp, joint_axis[dof_idx])
-        t_total += t * axis_world
+        t_total += axis_world * (-joint_f[dof_idx] - t)
 
     if ang_axis_count > 1:
         dof_idx = ang_dof_start_offset + 1
@@ -205,7 +206,7 @@ def apply_joint_control_kernel(
             joint_dof_mode[dof_idx],
         )
         axis_world = wp.transform_vector(X_wp, joint_axis[dof_idx])
-        t_total += t * axis_world
+        t_total += axis_world * (-joint_f[dof_idx] - t)
 
     if ang_axis_count > 2:
         dof_idx = ang_dof_start_offset + 2
@@ -222,7 +223,7 @@ def apply_joint_control_kernel(
             joint_dof_mode[dof_idx],
         )
         axis_world = wp.transform_vector(X_wp, joint_axis[dof_idx])
-        t_total += t * axis_world
+        t_total += axis_world * (-joint_f[dof_idx] - t)
 
     # === Step 3: Apply Spatial Forces to Bodies ===
     # Apply force/torque to child body
@@ -269,6 +270,7 @@ def apply_control(
                 model.joint_axis,
                 # Control
                 control.joint_target,
+                control.joint_f,
                 model.joint_dof_mode,
                 model.joint_target_ke,
                 model.joint_target_kd,
