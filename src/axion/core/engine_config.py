@@ -17,13 +17,13 @@ class AxionEngineConfig(EngineConfig):
     during a simulation run.
     """
 
-    newton_iters: int = 6
-    linear_iters: int = 4
+    newton_iters: int = 8
+    linear_iters: int = 8
 
     joint_stabilization_factor: float = 0.01
     contact_stabilization_factor: float = 0.05
 
-    joint_compliance: float = 1e-3
+    joint_compliance: float = 1e-5
     contact_compliance: float = 1e-5
     friction_compliance: float = 1e-6
 
@@ -31,8 +31,8 @@ class AxionEngineConfig(EngineConfig):
 
     contact_fb_alpha: float = 0.25
     contact_fb_beta: float = 0.25
-    friction_fb_alpha: float = 0.25
-    friction_fb_beta: float = 0.25
+    friction_fb_alpha: float = 1.0
+    friction_fb_beta: float = 1.0
 
     linesearch_steps: int = 0
 
@@ -89,7 +89,7 @@ class AxionEngineConfig(EngineConfig):
 @dataclass(frozen=True)
 class FeatherstoneEngineConfig(EngineConfig):
     angular_damping: float = 0.05
-    update_mass_matrix_every: int = 1
+    update_mass_matrix_interval: int = 1
     friction_smoothing: float = 1.0
     use_tile_gemm: bool = False
     fuse_cholesky: bool = True

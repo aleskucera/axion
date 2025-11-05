@@ -3,16 +3,19 @@ from typing import override
 
 import hydra
 import newton
+import numpy as np
+import openmesh
 import warp as wp
 from axion import AbstractSimulator
 from axion import EngineConfig
 from axion import ExecutionConfig
-from axion import ProfilingConfig
+from axion import LoggingConfig
 from axion import RenderingConfig
 from axion import SimulationConfig
 from omegaconf import DictConfig
 
 CONFIG_PATH = files("axion").joinpath("examples").joinpath("conf")
+ASSETS_DIR = files("axion").joinpath("examples").joinpath("assets")
 
 
 class Simulator(AbstractSimulator):
@@ -21,20 +24,27 @@ class Simulator(AbstractSimulator):
         sim_config: SimulationConfig,
         render_config: RenderingConfig,
         exec_config: ExecutionConfig,
-        profile_config: ProfilingConfig,
         engine_config: EngineConfig,
+        logging_config: LoggingConfig,
     ):
-        super().__init__(sim_config, render_config, exec_config, profile_config, engine_config)
+        super().__init__(
+            sim_config,
+            render_config,
+            exec_config,
+            engine_config,
+            logging_config,
+        )
 
     @override
     def control_policy(self, current_state: newton.State):
         # For mujoco
-        wp.copy(self.control.joint_f, wp.array(6 * [0.0] + [500.0, 500.0, 0.0], dtype=wp.float32))
+        # wp.copy(self.control.joint_f, wp.array(6 * [0.0] + [500.0, 500.0, 0.0], dtype=wp.float32))
 
         # For axion
-        # wp.copy(
-        #     self.control.joint_target, wp.array(6 * [0.0] + [500.0, 500.0, 0.0], dtype=wp.float32)
-        # )
+        wp.copy(
+            self.control.joint_target, wp.array(6 * [0.0] + [800.0, 800.0, 0.0], dtype=wp.float32)
+        )
+        pass
 
     def build_model(self) -> newton.Model:
         """
@@ -44,8 +54,13 @@ class Simulator(AbstractSimulator):
         """
         FRICTION = 1.0
         RESTITUTION = 0.0
-        WHEEL_DENSITY = 500
+        WHEEL_DENSITY = 300
         CHASSIS_DENSITY = 1200
+
+        wheel_m = openmesh.read_trimesh(f"{ASSETS_DIR}/helhest/wheel2.obj")
+        mesh_points = np.array(wheel_m.points())
+        mesh_indices = np.array(wheel_m.face_vertex_indices(), dtype=np.int32).flatten()
+        wheel_mesh_render = newton.Mesh(mesh_points, mesh_indices)
 
         builder = newton.ModelBuilder()
         builder.add_articulation(key="helhest_simple")
@@ -53,7 +68,7 @@ class Simulator(AbstractSimulator):
         # --- Build the Vehicle ---
         # Create main body (chassis)
         chassis = builder.add_body(
-            xform=wp.transform((-2.0, 0.0, 2.6), wp.quat_identity()), key="chassis"
+            xform=wp.transform((-2.0, 0.0, 1.0), wp.quat_identity()), key="chassis"
         )
         builder.add_shape_box(
             body=chassis,
@@ -69,46 +84,88 @@ class Simulator(AbstractSimulator):
 
         # Left Wheel
         left_wheel = builder.add_body(
-            xform=wp.transform((-1.25, -0.75, 2.6), wp.quat_identity()), key="left_wheel"
+            xform=wp.transform((-1.25, -0.75, 1.0), wp.quat_identity()),
+            key="left_wheel",
         )
-        builder.add_shape_sphere(
+        builder.add_shape_mesh(
             body=left_wheel,
-            radius=0.5,
+            mesh=wheel_mesh_render,
+            cfg=newton.ModelBuilder.ShapeConfig(
+                density=0.0,
+                has_shape_collision=False,
+            ),
+        )
+        builder.add_shape_capsule(
+            body=left_wheel,
+            xform=wp.transform(
+                (0.0, 0.0, 0.0), wp.quat_from_axis_angle(wp.vec3(1.0, 0.0, 0.0), wp.pi / 2)
+            ),
+            radius=0.45,
+            half_height=0.1,
             cfg=newton.ModelBuilder.ShapeConfig(
                 density=WHEEL_DENSITY,
                 mu=FRICTION,
                 restitution=RESTITUTION,
                 thickness=0.0,
+                is_visible=False,
             ),
         )
 
         # Right Wheel
         right_wheel = builder.add_body(
-            xform=wp.transform((-1.25, 0.75, 2.6), wp.quat_identity()), key="right_wheel"
+            xform=wp.transform((-1.25, 0.75, 1.0), wp.quat_identity()),
+            key="right_wheel",
         )
-        builder.add_shape_sphere(
+        builder.add_shape_mesh(
             body=right_wheel,
-            radius=0.5,
+            mesh=wheel_mesh_render,
+            cfg=newton.ModelBuilder.ShapeConfig(
+                density=0.0,
+                has_shape_collision=False,
+            ),
+        )
+        builder.add_shape_capsule(
+            body=right_wheel,
+            xform=wp.transform(
+                (0.0, 0.0, 0.0), wp.quat_from_axis_angle(wp.vec3(1.0, 0.0, 0.0), wp.pi / 2)
+            ),
+            radius=0.45,
+            half_height=0.1,
             cfg=newton.ModelBuilder.ShapeConfig(
                 density=WHEEL_DENSITY,
                 mu=FRICTION,
                 restitution=RESTITUTION,
                 thickness=0.0,
+                is_visible=False,
             ),
         )
 
         # Back Wheel
         back_wheel = builder.add_body(
-            xform=wp.transform((-3.25, 0.0, 2.6), wp.quat_identity()), key="back_wheel"
+            xform=wp.transform((-3.25, 0.0, 1.0), wp.quat_identity()),
+            key="back_wheel",
         )
-        builder.add_shape_sphere(
+        builder.add_shape_mesh(
             body=back_wheel,
-            radius=0.5,
+            mesh=wheel_mesh_render,
+            cfg=newton.ModelBuilder.ShapeConfig(
+                density=0.0,
+                has_shape_collision=False,
+            ),
+        )
+        builder.add_shape_capsule(
+            body=back_wheel,
+            xform=wp.transform(
+                (0.0, 0.0, 0.0), wp.quat_from_axis_angle(wp.vec3(1.0, 0.0, 0.0), wp.pi / 2)
+            ),
+            radius=0.45,
+            half_height=0.1,
             cfg=newton.ModelBuilder.ShapeConfig(
                 density=WHEEL_DENSITY,
                 mu=FRICTION,
                 restitution=RESTITUTION,
                 thickness=0.0,
+                is_visible=False,
             ),
         )
 
@@ -141,16 +198,16 @@ class Simulator(AbstractSimulator):
             mode=newton.JointMode.NONE,
         )
 
-        # Set joint control gains
-        builder.joint_target_ke[-3] = 500.0
-        builder.joint_target_ke[-2] = 500.0
-        builder.joint_target_ke[-1] = 0.0
-        builder.joint_armature[-3] = 0.1
-        builder.joint_armature[-2] = 0.1
-        builder.joint_armature[-1] = 0.1
-        builder.joint_target_kd[-3] = 5.0
-        builder.joint_target_kd[-2] = 5.0
-        builder.joint_target_kd[-1] = 5.0
+        # # Set joint control gains
+        # builder.joint_target_ke[-3] = 500.0
+        # builder.joint_target_ke[-2] = 500.0
+        # builder.joint_target_ke[-1] = 0.0
+        # builder.joint_armature[-3] = 0.1
+        # builder.joint_armature[-2] = 0.1
+        # builder.joint_armature[-1] = 0.1
+        # builder.joint_target_kd[-3] = 5.0
+        # builder.joint_target_kd[-2] = 5.0
+        # builder.joint_target_kd[-1] = 5.0
 
         # --- Add Static Obstacles and Ground ---
 
@@ -191,23 +248,24 @@ class Simulator(AbstractSimulator):
 
 
 @hydra.main(config_path=str(CONFIG_PATH), config_name="helhest", version_base=None)
-def helhest_example(cfg: DictConfig):
+def helhest_simple_example(cfg: DictConfig):
     sim_config: SimulationConfig = hydra.utils.instantiate(cfg.simulation)
     render_config: RenderingConfig = hydra.utils.instantiate(cfg.rendering)
     exec_config: ExecutionConfig = hydra.utils.instantiate(cfg.execution)
-    profile_config: ProfilingConfig = hydra.utils.instantiate(cfg.profiling)
     engine_config: EngineConfig = hydra.utils.instantiate(cfg.engine)
+
+    logging_config: LoggingConfig = hydra.utils.instantiate(cfg.logging)
 
     simulator = Simulator(
         sim_config=sim_config,
         render_config=render_config,
         exec_config=exec_config,
-        profile_config=profile_config,
         engine_config=engine_config,
+        logging_config=logging_config,
     )
 
     simulator.run()
 
 
 if __name__ == "__main__":
-    helhest_example()
+    helhest_simple_example()

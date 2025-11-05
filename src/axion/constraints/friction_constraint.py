@@ -42,7 +42,7 @@ def compute_friction_model(
     )
 
     # --- Compute the Slip Coupling Factor 'w' ---
-    w = (v_t_norm - phi_f) / (impulse_f_norm + phi_f + 1e-6)
+    w = wp.max((v_t_norm - phi_f) / (impulse_f_norm + phi_f + 1e-8), 0.0)
 
     # --- Package and return the results ---
     result = FrictionModelResult()
@@ -81,9 +81,9 @@ def friction_constraint_kernel(
     s_prev = s_n_prev[contact_idx]
 
     # --- 1. Handle Early Exit for Inactive/Non-Frictional Contacts ---
-    impulse_n_prev = lambda_n_prev / (s_prev + 1e-3)
+    impulse_n_prev = lambda_n_prev / (s_prev + 1e-6)
 
-    if not interaction.is_active or mu * impulse_n_prev <= 1e-4:
+    if not interaction.is_active or mu * impulse_n_prev <= 1e-3:
         # Unconstrained: h = λ, C = 1, J = 0
         h_f[constr_idx1] = body_lambda_f[constr_idx1]
         h_f[constr_idx2] = body_lambda_f[constr_idx2]
@@ -106,7 +106,7 @@ def friction_constraint_kernel(
     if body_2 >= 0:
         u_2 = body_u[body_2]
 
-    lambda_t1_prev = body_lambda_f[constr_idx1]
+    lambda_t1_prev = body_lambda_f_prev[constr_idx1]
     lambda_t2_prev = body_lambda_f_prev[constr_idx2]
     impulse_f_prev = wp.vec2(lambda_t1_prev, lambda_t2_prev)
 
@@ -149,6 +149,87 @@ def friction_constraint_kernel(
     # Update C (compliance)
     C_f_values[constr_idx1] = w + compliance
     C_f_values[constr_idx2] = w + compliance
+
+
+@wp.kernel
+def batch_friction_residual_kernel(
+    # --- Body State Inputs ---
+    body_u: wp.array(dtype=wp.spatial_vector, ndim=2),
+    body_lambda_f: wp.array(dtype=wp.float32, ndim=2),
+    body_lambda_f_prev: wp.array(dtype=wp.float32),
+    body_lambda_n_prev: wp.array(dtype=wp.float32),
+    s_n_prev: wp.array(dtype=wp.float32),
+    interactions: wp.array(dtype=ContactInteraction),
+    # --- Simulation & Solver Parameters ---
+    fb_alpha: wp.float32,
+    fb_beta: wp.float32,
+    compliance: wp.float32,
+    # --- Outputs (contributions to the linear system) ---
+    h_d: wp.array(dtype=wp.spatial_vector, ndim=2),
+    h_f: wp.array(dtype=wp.float32, ndim=2),
+):
+    batch_idx, contact_idx = wp.tid()
+    constr_idx1 = 2 * contact_idx
+    constr_idx2 = 2 * contact_idx + 1
+
+    interaction = interactions[contact_idx]
+    mu = interaction.friction_coeff
+
+    lambda_n_prev = body_lambda_n_prev[contact_idx]
+    s_prev = s_n_prev[contact_idx]
+
+    # --- 1. Handle Early Exit for Inactive/Non-Frictional Contacts ---
+    impulse_n_prev = lambda_n_prev / (s_prev + 1e-3)
+
+    if not interaction.is_active or mu * impulse_n_prev <= 1e-4:
+        h_f[batch_idx, constr_idx1] = 0.0
+        h_f[batch_idx, constr_idx2] = 0.0
+        return
+
+    # --- 2. Gather Inputs for the Friction Model ---
+    body_1 = interaction.body_a_idx
+    body_2 = interaction.body_b_idx
+
+    u_1 = wp.spatial_vector()
+    if body_1 >= 0:
+        u_1 = body_u[batch_idx, body_1]
+    u_2 = wp.spatial_vector()
+    if body_2 >= 0:
+        u_2 = body_u[batch_idx, body_2]
+
+    lambda_t1_prev = body_lambda_f_prev[constr_idx1]
+    lambda_t2_prev = body_lambda_f_prev[constr_idx2]
+    impulse_f_prev = wp.vec2(lambda_t1_prev, lambda_t2_prev)
+
+    # --- 3. Compute Friction Terms by Calling the Model ---
+    model_result = compute_friction_model(
+        interaction,
+        u_1,
+        u_2,
+        impulse_f_prev,
+        impulse_n_prev,
+        fb_alpha,
+        fb_beta,
+    )
+    v_t1, v_t2 = model_result.slip_velocity.x, model_result.slip_velocity.y
+    w = model_result.slip_coupling_factor
+
+    # --- 4. Assemble System Matrix Components ---
+    J_hat_t1_1, J_hat_t2_1 = interaction.basis_a.tangent1, interaction.basis_a.tangent2
+    J_hat_t1_2, J_hat_t2_2 = interaction.basis_b.tangent1, interaction.basis_b.tangent2
+
+    lambda_t1 = body_lambda_f[batch_idx, constr_idx1]
+    lambda_t2 = body_lambda_f[batch_idx, constr_idx2]
+
+    # Update g
+    if body_1 >= 0:
+        wp.atomic_add(h_d, batch_idx, body_1, -J_hat_t1_1 * lambda_t1 - J_hat_t2_1 * lambda_t2)
+    if body_2 >= 0:
+        wp.atomic_add(h_d, batch_idx, body_2, -J_hat_t1_2 * lambda_t1 - J_hat_t2_2 * lambda_t2)
+
+    # Update h (constraint violation)
+    h_f[batch_idx, constr_idx1] = v_t1 + (w + compliance) * lambda_t1
+    h_f[batch_idx, constr_idx2] = v_t2 + (w + compliance) * lambda_t2
 
 
 @wp.kernel
