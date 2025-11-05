@@ -10,14 +10,19 @@ from newton import State
 def joint_force(
     q: float,
     qd: float,
+    q_prev: float,
+    qd_prev: float,
     act: float,
     target_ke: float,
     target_kd: float,
+    target_ki: float,
+    integral_error: float,
     limit_lower: float,
     limit_upper: float,
     limit_ke: float,
     limit_kd: float,
     mode: wp.int32,
+    is_custom_attribute_used: wp.array(dtype=bool),
 ) -> float:
     """
     Control law regulator for a single joint degree of freedom.
@@ -61,6 +66,8 @@ def apply_joint_control_kernel(
     body_q: wp.array(dtype=wp.transform),
     joint_q: wp.array(dtype=float),
     joint_qd: wp.array(dtype=float),
+    joint_q_prev: wp.array(dtype=float),     # custom
+    joint_qd_prev: wp.array(dtype=float),    # custom
     # --- Model Inputs ---
     body_com: wp.array(dtype=wp.vec3),
     joint_type: wp.array(dtype=int),
@@ -74,13 +81,16 @@ def apply_joint_control_kernel(
     # --- Control/Actuation Inputs ---
     joint_target: wp.array(dtype=float),
     joint_f: wp.array(dtype=float),
+    joint_integral_err: wp.array(dtype=float),
     joint_dof_mode: wp.array(dtype=int),
     joint_target_ke: wp.array(dtype=float),
     joint_target_kd: wp.array(dtype=float),
+    joint_target_ki: wp.array(dtype=float),
     joint_limit_lower: wp.array(dtype=float),
     joint_limit_upper: wp.array(dtype=float),
     joint_limit_ke: wp.array(dtype=float),
     joint_limit_kd: wp.array(dtype=float),
+    is_custom_attribute_used: wp.array(dtype=bool),
     # --- Output ---
     body_f: wp.array(dtype=wp.spatial_vector),
 ):
@@ -125,51 +135,66 @@ def apply_joint_control_kernel(
         f = joint_force(
             joint_q[dof_idx],
             joint_qd[dof_idx],
+            joint_q_prev[dof_idx],
+            joint_qd_prev[dof_idx],
             joint_target[dof_idx],
             joint_target_ke[dof_idx],
             joint_target_kd[dof_idx],
+            joint_target_ki[dof_idx],
+            joint_integral_err[dof_idx],
             joint_limit_lower[dof_idx],
             joint_limit_upper[dof_idx],
             joint_limit_ke[dof_idx],
             joint_limit_kd[dof_idx],
             joint_dof_mode[dof_idx],
+            is_custom_attribute_used,
         )
         axis_world = wp.transform_vector(X_wp, joint_axis[dof_idx])
-        f_total += axis_world * (-joint_f[dof_idx] - f)
+        f_total += axis_world * (joint_f[dof_idx] + f)
 
     if lin_axis_count > 1:
         dof_idx = qd_start + 1
         f = joint_force(
             joint_q[dof_idx],
             joint_qd[dof_idx],
+            joint_q_prev[dof_idx],
+            joint_qd_prev[dof_idx],
             joint_target[dof_idx],
             joint_target_ke[dof_idx],
             joint_target_kd[dof_idx],
+            joint_target_ki[dof_idx],
+            joint_integral_err[dof_idx],
             joint_limit_lower[dof_idx],
             joint_limit_upper[dof_idx],
             joint_limit_ke[dof_idx],
             joint_limit_kd[dof_idx],
             joint_dof_mode[dof_idx],
+            is_custom_attribute_used,
         )
         axis_world = wp.transform_vector(X_wp, joint_axis[dof_idx])
-        f_total += axis_world * (-joint_f[dof_idx] - f)
+        f_total += axis_world * (joint_f[dof_idx] + f)
 
     if lin_axis_count > 2:
         dof_idx = qd_start + 2
         f = joint_force(
             joint_q[dof_idx],
             joint_qd[dof_idx],
+            joint_q_prev[dof_idx],
+            joint_qd_prev[dof_idx],
             joint_target[dof_idx],
             joint_target_ke[dof_idx],
             joint_target_kd[dof_idx],
+            joint_target_ki[dof_idx],
+            joint_integral_err[dof_idx],
             joint_limit_lower[dof_idx],
             joint_limit_upper[dof_idx],
             joint_limit_ke[dof_idx],
             joint_limit_kd[dof_idx],
             joint_dof_mode[dof_idx],
+            is_custom_attribute_used,
         )
         axis_world = wp.transform_vector(X_wp, joint_axis[dof_idx])
-        f_total += axis_world * (-joint_f[dof_idx] - f)
+        f_total += axis_world * (joint_f[dof_idx] + f)
 
     # --- Process Angular Degrees of Freedom ---
     # Angular DoF indices start after all linear DoFs
@@ -179,51 +204,66 @@ def apply_joint_control_kernel(
         t = joint_force(
             joint_q[dof_idx],
             joint_qd[dof_idx],
+            joint_q_prev[dof_idx],
+            joint_qd_prev[dof_idx],
             joint_target[dof_idx],
             joint_target_ke[dof_idx],
             joint_target_kd[dof_idx],
+            joint_target_ki[dof_idx],
+            joint_integral_err[dof_idx],
             joint_limit_lower[dof_idx],
             joint_limit_upper[dof_idx],
             joint_limit_ke[dof_idx],
             joint_limit_kd[dof_idx],
             joint_dof_mode[dof_idx],
+            is_custom_attribute_used,
         )
         axis_world = wp.transform_vector(X_wp, joint_axis[dof_idx])
-        t_total += axis_world * (-joint_f[dof_idx] - t)
+        t_total += axis_world * (joint_f[dof_idx] + t)
 
     if ang_axis_count > 1:
         dof_idx = ang_dof_start_offset + 1
         t = joint_force(
             joint_q[dof_idx],
             joint_qd[dof_idx],
+            joint_q_prev[dof_idx],
+            joint_qd_prev[dof_idx],
             joint_target[dof_idx],
             joint_target_ke[dof_idx],
             joint_target_kd[dof_idx],
+            joint_target_ki[dof_idx],
+            joint_integral_err[dof_idx],
             joint_limit_lower[dof_idx],
             joint_limit_upper[dof_idx],
             joint_limit_ke[dof_idx],
             joint_limit_kd[dof_idx],
             joint_dof_mode[dof_idx],
+            is_custom_attribute_used,
         )
         axis_world = wp.transform_vector(X_wp, joint_axis[dof_idx])
-        t_total += axis_world * (-joint_f[dof_idx] - t)
+        t_total += axis_world * (joint_f[dof_idx] + t)
 
     if ang_axis_count > 2:
         dof_idx = ang_dof_start_offset + 2
         t = joint_force(
             joint_q[dof_idx],
             joint_qd[dof_idx],
+            joint_q_prev[dof_idx],
+            joint_qd_prev[dof_idx],
             joint_target[dof_idx],
             joint_target_ke[dof_idx],
             joint_target_kd[dof_idx],
+            joint_target_ki[dof_idx],
+            joint_integral_err[dof_idx],
             joint_limit_lower[dof_idx],
             joint_limit_upper[dof_idx],
             joint_limit_ke[dof_idx],
             joint_limit_kd[dof_idx],
             joint_dof_mode[dof_idx],
+            is_custom_attribute_used,
         )
         axis_world = wp.transform_vector(X_wp, joint_axis[dof_idx])
-        t_total += axis_world * (-joint_f[dof_idx] - t)
+        t_total += axis_world * (joint_f[dof_idx] + t)
 
     # === Step 3: Apply Spatial Forces to Bodies ===
     # Apply force/torque to child body
@@ -250,6 +290,23 @@ def apply_control(
         control = model.control(clone_variables=False)
 
     if model.body_count and model.joint_count:
+
+        # Create additional argument for apply_joint_control_kernel signaling which custom attributes does the current Newton Model have
+        num_of_custom_attributes = 4
+        is_custom_attribute_used = num_of_custom_attributes*[False]
+        # mapping: 0 -> joint_q_prev, 1 ->joint_qd_prev, 2->joint_target_ki, 3->joint_integral_err
+        is_custom_attribute_used[0] = hasattr(model, "joint_q_prev")
+        is_custom_attribute_used[1] = hasattr(model, "joint_qd_prev")
+        is_custom_attribute_used[2] = hasattr(model, "joint_target_ki")
+        is_custom_attribute_used[3] = hasattr(control, "joint_integral_err")
+        is_custom_attribute_used = wp.array(is_custom_attribute_used, dtype=bool, device=model.device)
+       
+        # Use getattr with fallback to zero-arrays for the custom model attributes
+        joint_q_prev = getattr(model, "joint_q_prev", wp.zeros(model.joint_dof_count, dtype=wp.float32, device=model.device))
+        joint_qd_prev = getattr(model, "joint_qd_prev", wp.zeros(model.joint_dof_count, dtype=wp.float32, device=model.device))
+        joint_target_ki = getattr(model, "joint_target_ki", wp.zeros(model.joint_dof_count, dtype=wp.float32, device=model.device))
+        joint_integral_err = getattr(control, "joint_integral_err", wp.zeros(model.joint_dof_count, dtype=wp.float32, device=model.device))
+        
         wp.launch(
             kernel=apply_joint_control_kernel,
             dim=model.joint_count,
@@ -258,6 +315,8 @@ def apply_control(
                 state_in.body_q,
                 model.joint_q,
                 model.joint_qd,
+                joint_q_prev,
+                joint_qd_prev,
                 # Model
                 model.body_com,
                 model.joint_type,
@@ -271,13 +330,16 @@ def apply_control(
                 # Control
                 control.joint_target,
                 control.joint_f,
+                joint_integral_err,
                 model.joint_dof_mode,
                 model.joint_target_ke,
                 model.joint_target_kd,
+                joint_target_ki,
                 model.joint_limit_lower,
                 model.joint_limit_upper,
                 model.joint_limit_ke,
                 model.joint_limit_kd,
+                is_custom_attribute_used,
             ],
             outputs=[state_in.body_f],
             device=model.device,

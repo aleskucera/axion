@@ -42,7 +42,7 @@ class Simulator(AbstractSimulator):
 
         # For axion
         wp.copy(
-            self.control.joint_target, wp.array(6 * [0.0] + [800.0, 800.0, 0.0], dtype=wp.float32)
+            self.control.joint_target, wp.array(5 * [0.0] + [800.0, 800.0, 0.0], dtype=wp.float32)
         )
         pass
 
@@ -63,6 +63,39 @@ class Simulator(AbstractSimulator):
         wheel_mesh_render = newton.Mesh(mesh_points, mesh_indices)
 
         builder = newton.ModelBuilder()
+
+        # --- Add custom attributes to the model class ---
+        # Default namespace attributes - added directly to assignment objects
+        # builder.add_custom_attribute(
+        #     name="joint_target_ki",
+        #     frequency= newton.ModelAttributeFrequency.JOINT_DOF,
+        #     dtype=wp.float32,
+        #     default=0.1,  # Explicit default value
+        #     assignment= newton.ModelAttributeAssignment.MODEL
+        # )
+
+        builder.add_custom_attribute(
+            name="joint_q_prev",
+            frequency= newton.ModelAttributeFrequency.JOINT_DOF,
+            dtype=wp.float32,
+            assignment= newton.ModelAttributeAssignment.MODEL
+        )
+
+        builder.add_custom_attribute(
+            name="joint_qd_prev",
+            frequency= newton.ModelAttributeFrequency.JOINT_DOF,
+            dtype=wp.float32,
+            assignment= newton.ModelAttributeAssignment.MODEL
+        )
+
+        builder.add_custom_attribute(
+            name="joint_integral_err",
+            frequency= newton.ModelAttributeFrequency.JOINT_DOF,
+            dtype=wp.float32,
+            default=0.0,  # Explicit default value
+            assignment= newton.ModelAttributeAssignment.CONTROL
+        )
+
         builder.add_articulation(key="helhest_simple")
 
         # --- Build the Vehicle ---
