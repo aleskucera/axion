@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import numpy as np
+import pandas as pd
 import torch
 import warp as wp
 from axion.logging import HDF5Logger
@@ -29,6 +30,8 @@ class LoggingConfig:
     time_whole_step: bool = True
     time_collision_detection: bool = True
     time_engine_step: bool = True
+    time_control: bool = True
+    time_initial_guess: bool = True
     time_newton_iteration: bool = True
     time_linearization: bool = True
     time_linear_solve: bool = True
@@ -116,11 +119,20 @@ class EngineLogger:
     def initialize_events(self, steps_per_segment: int, newton_iters: int):
         """Creates pairs of (start, end) events for each timed block."""
 
-        # Events for the main simulator loop (collision, integration)
+        # Events for the main simulator loop (collision detection and step)
         self.simulator_event_pairs = [
             {
-                "collision": (wp.Event(enable_timing=True), wp.Event(enable_timing=True)),
-                "integration": (wp.Event(enable_timing=True), wp.Event(enable_timing=True)),
+                "collision_detection": (wp.Event(enable_timing=True), wp.Event(enable_timing=True)),
+                "step": (wp.Event(enable_timing=True), wp.Event(enable_timing=True)),
+            }
+            for _ in range(steps_per_segment)
+        ]
+
+        # Events for step-level timing blocks (control and initial guess)
+        self.step_event_pairs = [
+            {
+                "control": (wp.Event(enable_timing=True), wp.Event(enable_timing=True)),
+                "initial_guess": (wp.Event(enable_timing=True), wp.Event(enable_timing=True)),
             }
             for _ in range(steps_per_segment)
         ]
@@ -129,8 +141,14 @@ class EngineLogger:
         self.engine_event_pairs = [
             [
                 {
-                    "linearize": (wp.Event(enable_timing=True), wp.Event(enable_timing=True)),
-                    "lin_solve": (wp.Event(enable_timing=True), wp.Event(enable_timing=True)),
+                    "system_linearization": (
+                        wp.Event(enable_timing=True),
+                        wp.Event(enable_timing=True),
+                    ),
+                    "linear_system_solve": (
+                        wp.Event(enable_timing=True),
+                        wp.Event(enable_timing=True),
+                    ),
                     "linesearch": (wp.Event(enable_timing=True), wp.Event(enable_timing=True)),
                 }
                 for _ in range(newton_iters)
@@ -264,8 +282,8 @@ class EngineLogger:
             )
 
         # 1. Get parameters and data from the engine
-        grid_res = engine.config.pca_grid_res
-        plot_scale = engine.config.pca_plot_range_scale
+        grid_res = self.config.pca_grid_res
+        plot_scale = self.config.pca_plot_range_scale
 
         # Center the visualization plane on the final solution point
         x_center = trajectory[-1]
@@ -363,33 +381,258 @@ class EngineLogger:
         self.hdf5_logger.log_wp_dataset("rigid_contact_count", contacts.rigid_contact_count)
 
     def log_segment_timings(self, steps_per_segment: int, newton_iters: int):
-        """Calculates, prints, and logs timing info from the recorded events."""
+        """
+        Calculates, aggregates, and prints a statistical summary of timing info
+        from the recorded events for the last segment.
+        """
         if not self.config.enable_timing:
             return
 
+        # 1. Aggregate all raw timing values
+        timings: dict[str, list[float]] = {
+            "collision_detection": [],
+            "step": [],
+            "control": [],
+            "initial_guess": [],
+            "system_linearization": [],
+            "linear_system_solve": [],
+            "linesearch": [],
+        }
+
         for step in range(steps_per_segment):
             sim_events = self.simulator_event_pairs[step]
+            timings["collision_detection"].append(
+                wp.get_event_elapsed_time(*sim_events["collision_detection"])
+            )
+            timings["step"].append(wp.get_event_elapsed_time(*sim_events["step"]))
 
-            collision_time = wp.get_event_elapsed_time(*sim_events["collision"])
-            integration_time = wp.get_event_elapsed_time(*sim_events["integration"])
-
-            print(
-                f"\t- SUBSTEP {step}: collision detection took {collision_time:.03f} ms "
-                f"and integration step took {integration_time:0.3f} ms."
+            step_events = self.step_event_pairs[step]
+            timings["control"].append(wp.get_event_elapsed_time(*step_events["control"]))
+            timings["initial_guess"].append(
+                wp.get_event_elapsed_time(*step_events["initial_guess"])
             )
 
-            if not self.config.time_newton_iteration:
-                continue
-
             for newton_iter in range(newton_iters):
-                # Access the events using both the step and iteration index
                 engine_events = self.engine_event_pairs[step][newton_iter]
+                for key in ["system_linearization", "linear_system_solve", "linesearch"]:
+                    timings[key].append(wp.get_event_elapsed_time(*engine_events[key]))
 
-                linearize_time = wp.get_event_elapsed_time(*engine_events["linearize"])
-                lin_solve_time = wp.get_event_elapsed_time(*engine_events["lin_solve"])
-                linesearch_time = wp.get_event_elapsed_time(*engine_events["linesearch"])
+        # 2. Compute statistics for each timed operation
+        stats: dict[str, dict] = {}
+        for name, data in timings.items():
+            if not data:
+                continue
+            data_np = np.array(data)
+            stats[name] = {
+                "mean": np.mean(data_np),
+                "std": np.std(data_np),
+                "v_min": np.min(data_np),
+                "v_max": np.max(data_np),
+                "count": len(data_np),
+            }
 
-                print(
-                    f"\t\t- NEWTON ITERATION {newton_iter}: Linearization took {linearize_time:.03f} ms, "
-                    f"linear solve took {lin_solve_time:.03f} ms and linesearch took {linesearch_time:.03f} ms."
-                )
+        if not stats:
+            return
+
+        # 3. Calculate Derived Totals
+        total_physics_step_time = stats.get("collision_detection", {}).get("mean", 0.0) + stats.get(
+            "step", {}
+        ).get("mean", 0.0)
+        physics_update_total = stats.get("step", {}).get("mean", 0.0)
+        avg_newton_iters = newton_iters
+        per_newton_iter_total = sum(
+            stats.get(op, {}).get("mean", 0.0)
+            for op in ["system_linearization", "linear_system_solve", "linesearch"]
+        )
+        total_newton_time = per_newton_iter_total * avg_newton_iters
+
+        def format_stat(stat_data, parent_total, is_summary=False):
+            if not stat_data:
+                return {
+                    "mean_s": "N/A",
+                    "std_s": "N/A",
+                    "range_s": "N/A",
+                    "perc_s": "N/A",
+                    "count_s": "N/A",
+                }
+
+            mean = stat_data.get("mean", 0)
+            std = stat_data.get("std", 0)
+            v_min = stat_data.get("v_min", 0)
+            v_max = stat_data.get("v_max", 0)
+            count = stat_data.get("count", 0)
+
+            mean_s = f"{mean:.3f} ms"
+            std_s = f"± {std:.3f}" if not is_summary else "N/A"
+            range_s = f"{v_min:.3f} - {v_max:.3f}" if not is_summary else "N/A"
+            perc_s = f"{(mean / parent_total * 100):.1f}%" if parent_total > 0 else "0.0%"
+            count_s = str(count)
+            return {
+                "mean_s": mean_s,
+                "std_s": std_s,
+                "range_s": range_s,
+                "perc_s": perc_s,
+                "count_s": count_s,
+            }
+
+        # Collect data for DataFrame
+        data = []
+
+        # Total
+        s = format_stat(
+            {"mean": total_physics_step_time, "count": stats["step"]["count"]},
+            total_physics_step_time,
+            is_summary=True,
+        )
+        data.append(
+            {
+                "Operation": "TOTAL PHYSICS STEP",
+                "Mean": s["mean_s"],
+                "Std Dev": s["std_s"],
+                "Min - Max": s["range_s"],
+                "% Total": s["perc_s"],
+                "Samples": s["count_s"],
+            }
+        )
+
+        # Collision
+        s = format_stat(stats.get("collision_detection"), total_physics_step_time)
+        data.append(
+            {
+                "Operation": "├─ collision_detection",
+                "Mean": s["mean_s"],
+                "Std Dev": s["std_s"],
+                "Min - Max": s["range_s"],
+                "% Total": s["perc_s"],
+                "Samples": s["count_s"],
+            }
+        )
+
+        # Physics update
+        s = format_stat(stats.get("step"), total_physics_step_time)
+        data.append(
+            {
+                "Operation": "└─ physics_update",
+                "Mean": s["mean_s"],
+                "Std Dev": s["std_s"],
+                "Min - Max": s["range_s"],
+                "% Total": s["perc_s"],
+                "Samples": s["count_s"],
+            }
+        )
+
+        # Control
+        s = format_stat(stats.get("control"), physics_update_total)
+        data.append(
+            {
+                "Operation": "   ├─ control",
+                "Mean": s["mean_s"],
+                "Std Dev": s["std_s"],
+                "Min - Max": s["range_s"],
+                "% Total": s["perc_s"],
+                "Samples": s["count_s"],
+            }
+        )
+
+        # Initial guess
+        s = format_stat(stats.get("initial_guess"), physics_update_total)
+        data.append(
+            {
+                "Operation": "   ├─ initial_guess",
+                "Mean": s["mean_s"],
+                "Std Dev": s["std_s"],
+                "Min - Max": s["range_s"],
+                "% Total": s["perc_s"],
+                "Samples": s["count_s"],
+            }
+        )
+
+        # Newton iterations
+        s = format_stat(
+            {
+                "mean": total_newton_time,
+                "count": stats.get("system_linearization", {}).get("count", 0),
+            },
+            physics_update_total,
+            is_summary=True,
+        )
+        data.append(
+            {
+                "Operation": f"   └─ newton_iterations ({avg_newton_iters})",
+                "Mean": s["mean_s"],
+                "Std Dev": s["std_s"],
+                "Min - Max": s["range_s"],
+                "% Total": s["perc_s"],
+                "Samples": s["count_s"],
+            }
+        )
+
+        # Linearization
+        s = format_stat(stats.get("system_linearization"), per_newton_iter_total)
+        data.append(
+            {
+                "Operation": "      ├─ system_linearization",
+                "Mean": s["mean_s"],
+                "Std Dev": s["std_s"],
+                "Min - Max": s["range_s"],
+                "% Total": s["perc_s"],
+                "Samples": s["count_s"],
+            }
+        )
+
+        # Solve
+        s = format_stat(stats.get("linear_system_solve"), per_newton_iter_total)
+        data.append(
+            {
+                "Operation": "      ├─ linear_system_solve",
+                "Mean": s["mean_s"],
+                "Std Dev": s["std_s"],
+                "Min - Max": s["range_s"],
+                "% Total": s["perc_s"],
+                "Samples": s["count_s"],
+            }
+        )
+
+        # Linesearch
+        s = format_stat(stats.get("linesearch"), per_newton_iter_total)
+        data.append(
+            {
+                "Operation": "      └─ linesearch",
+                "Mean": s["mean_s"],
+                "Std Dev": s["std_s"],
+                "Min - Max": s["range_s"],
+                "% Total": s["perc_s"],
+                "Samples": s["count_s"],
+            }
+        )
+
+        df = pd.DataFrame(data)
+
+        # Format the table with better spacing and alignment
+        print("\nTIMING PERFORMANCE REPORT\n")
+
+        # Custom formatting for better readability
+        col_widths = {
+            "Operation": 35,
+            "Mean": 10,
+            "Std Dev": 12,
+            "Min - Max": 15,
+            "% Total": 8,
+            "Samples": 8,
+        }
+
+        # Print header
+        header = ""
+        for col, width in col_widths.items():
+            header += f"{col:<{width}}"
+        print(header)
+        print("-" * sum(col_widths.values()))
+
+        # Print data rows
+        for _, row in df.iterrows():
+            line = ""
+            for col, width in col_widths.items():
+                line += f"{str(row[col]):<{width}}"
+            print(line)
+
+        print()

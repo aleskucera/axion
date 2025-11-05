@@ -90,6 +90,7 @@ class AxionEngine(SolverBase):
             self.device,
             self.logger.uses_dense_matrices,
             self.logger.uses_pca_arrays,
+            self.logger.config.pca_grid_res,
         )
 
         if self.config.matrixfree_representation:
@@ -107,16 +108,6 @@ class AxionEngine(SolverBase):
 
         self.data.set_body_M(model)
         self.data.set_g_accel(model)
-
-        self.events = [
-            {
-                "iter_start": wp.Event(enable_timing=True),
-                "linearize": wp.Event(enable_timing=True),
-                "lin_solve": wp.Event(enable_timing=True),
-                "linesearch": wp.Event(enable_timing=True),
-            }
-            for _ in range(self.config.newton_iters)
-        ]
 
     def _copy_computed_state_to_trajectory(self, iter: int):
         if self.logger.uses_pca_arrays:
@@ -144,29 +135,37 @@ class AxionEngine(SolverBase):
         contacts: newton.Contacts,
         dt: float,
     ):
-        newton.eval_ik(self.model, state_in, state_in.joint_q, state_in.joint_qd)
-        apply_control(self.model, state_in, state_out, dt, control)
-        self.integrate_bodies(self.model, state_in, state_out, dt)
-        self.data.update_state_data(self.model, state_in, state_out, contacts, dt)
+        step_events = self.logger.step_event_pairs[self.logger.current_step_in_segment]
 
-        self.data.body_lambda.zero_()
+        # Control block
+        with self.logger.timed_block(*step_events["control"]):
+            newton.eval_ik(self.model, state_in, state_in.joint_q, state_in.joint_qd)
+            apply_control(self.model, state_in, state_out, dt, control)
+
+        # Initial guess block
+        with self.logger.timed_block(*step_events["initial_guess"]):
+            self.integrate_bodies(self.model, state_in, state_out, dt)
+            self.data.update_state_data(self.model, state_in, state_out, contacts, dt)
+            self.data.body_lambda.zero_()
 
         for i in range(self.config.newton_iters):
             wp.copy(dest=self.data.body_lambda_prev, src=self.data.body_lambda)
             wp.copy(dest=self.data.s_n_prev, src=self.data.s_n)
 
-            events = self.logger.engine_event_pairs[self.logger.current_step_in_segment][i]
+            newton_iter_events = self.logger.engine_event_pairs[
+                self.logger.current_step_in_segment
+            ][i]
 
-            # --- Linearize the system of equations ---
-            with self.logger.timed_block(*events["linearize"]):
+            # System linearization block
+            with self.logger.timed_block(*newton_iter_events["system_linearization"]):
                 compute_linear_system(self.model, self.data, self.config, self.dims, dt)
 
             if not self.config.matrixfree_representation:
                 self.A_op.update()
             self.preconditioner.update()
 
-            # --- Solve linear system of equations ---
-            with self.logger.timed_block(*events["lin_solve"]):
+            # Linear system solve block
+            with self.logger.timed_block(*newton_iter_events["linear_system_solve"]):
                 self.data.dbody_lambda.zero_()
                 ret = wp.optim.linear.cr(
                     A=self.A_op,
@@ -184,11 +183,11 @@ class AxionEngine(SolverBase):
 
                 compute_dbody_qd_from_dbody_lambda(self.data, self.config, self.dims)
 
-            with self.logger.timed_block(*events["linesearch"]):
+            # Linesearch block
+            with self.logger.timed_block(*newton_iter_events["linesearch"]):
                 if self.config.linesearch_steps > 0:
                     perform_linesearch(self.data, self.config, self.dims, dt)
-
-            update_variables(self.model, self.data, self.config, self.dims, dt)
+                update_variables(self.model, self.data, self.config, self.dims, dt)
 
             self.logger.log_newton_iteration_data(self, i)
             self._copy_computed_state_to_trajectory(i)

@@ -499,6 +499,7 @@ def create_engine_arrays(
     device: wpc.Device,
     allocate_dense: bool = False,
     allocate_pca: bool = False,
+    pca_grid_res: int = 100,
 ) -> EngineArrays:
     """
     Factory function to create and initialize EngineArrays.
@@ -594,7 +595,7 @@ def create_engine_arrays(
         None,
     )
     if allocate_pca:
-        pca_batch_size = config.pca_grid_res * config.pca_grid_res
+        pca_batch_size = pca_grid_res * pca_grid_res
         optim_h = _zeros((config.newton_iters, dims.N_u + dims.N_c))
         optim_trajectory = _zeros((config.newton_iters, dims.N_u + dims.N_c))
         pca_batch_body_u = _zeros((pca_batch_size, dims.N_b), dtype=wp.spatial_vector)
