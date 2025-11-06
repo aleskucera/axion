@@ -35,8 +35,6 @@ class Simulator(AbstractSimulator):
         FRICTION = 0.8
         RESTITUTION = 0.0
 
-        builder = newton.ModelBuilder()
-
         # common geometry settings
         cuboid_hx = 2 * 0.1
         cuboid_hy = 2 * 0.1
@@ -52,29 +50,29 @@ class Simulator(AbstractSimulator):
         # -----------------------------
         y = rows[0]
 
-        a_rev = builder.add_body(
+        a_rev = self.builder.add_body(
             xform=wp.transform(p=wp.vec3(0.0, y, drop_z + upper_hz), q=wp.quat_identity()),
             key="a_rev",
         )
-        b_rev = builder.add_body(
+        b_rev = self.builder.add_body(
             xform=wp.transform(
                 p=wp.vec3(0.0, y, drop_z - cuboid_hz),
                 q=wp.quat_from_axis_angle(wp.vec3(1.0, 0.0, 0.0), 0.0),
             ),
             key="b_rev",
         )
-        builder.add_shape_box(a_rev, hx=cuboid_hx, hy=cuboid_hy, hz=upper_hz)
-        builder.add_shape_box(b_rev, hx=cuboid_hx, hy=cuboid_hy, hz=cuboid_hz)
+        self.builder.add_shape_box(a_rev, hx=cuboid_hx, hy=cuboid_hy, hz=upper_hz)
+        self.builder.add_shape_box(b_rev, hx=cuboid_hx, hy=cuboid_hy, hz=cuboid_hz)
 
-        builder.add_joint_free(parent=-1, child=a_rev)
-        # builder.add_joint_fixed(
+        self.builder.add_joint_free(parent=-1, child=a_rev)
+        # self.builder.add_joint_fixed(
         #     parent=-1,
         #     child=a_rev,
         #     parent_xform=wp.transform(p=wp.vec3(0.0, y, drop_z + upper_hz), q=wp.quat_identity()),
         #     child_xform=wp.transform(p=wp.vec3(0.0, 0.0, 0.0), q=wp.quat_identity()),
         #     key="fixed_revolute_anchor",
         # )
-        builder.add_joint_revolute(
+        self.builder.add_joint_revolute(
             parent=a_rev,
             child=b_rev,
             axis=wp.vec3(1.0, 0.0, 0.0),
@@ -82,7 +80,7 @@ class Simulator(AbstractSimulator):
             child_xform=wp.transform(p=wp.vec3(0.0, 0.0, +cuboid_hz), q=wp.quat_identity()),
             key="revolute_a_b",
         )
-        # builder.add_joint_revolute(
+        # self.builder.add_joint_revolute(
         #     parent=a_rev,
         #     child=b_rev,
         #     axis=wp.vec3(1.0, 0.0, 0.0),
@@ -91,34 +89,34 @@ class Simulator(AbstractSimulator):
         #     key="revolute_a_b",
         # )
         # set initial joint angle
-        builder.joint_q[-1] = wp.pi * 0.5
+        self.builder.joint_q[-1] = wp.pi * 0.5
 
         # # -----------------------------
         # # PRISMATIC (slider) joint demo
         # # -----------------------------
         # y = rows[1]
-        # a_pri = builder.add_body(
+        # a_pri = self.builder.add_body(
         #     xform=wp.transform(p=wp.vec3(0.0, y, drop_z + upper_hz), q=wp.quat_identity()),
         #     key="a_pri",
         # )
-        # b_pri = builder.add_body(
+        # b_pri = self.builder.add_body(
         #     xform=wp.transform(
         #         p=wp.vec3(0.0, y, drop_z - cuboid_hz),
         #         q=wp.quat_from_axis_angle(wp.vec3(0.0, 1.0, 0.0), 0.12),
         #     ),
         #     key="b_pri",
         # )
-        # builder.add_shape_box(a_pri, hx=cuboid_hx, hy=cuboid_hy, hz=upper_hz)
-        # builder.add_shape_box(b_pri, hx=cuboid_hx, hy=cuboid_hy, hz=cuboid_hz)
+        # self.builder.add_shape_box(a_pri, hx=cuboid_hx, hy=cuboid_hy, hz=upper_hz)
+        # self.builder.add_shape_box(b_pri, hx=cuboid_hx, hy=cuboid_hy, hz=cuboid_hz)
         #
-        # builder.add_joint_fixed(
+        # self.builder.add_joint_fixed(
         #     parent=-1,
         #     child=a_pri,
         #     parent_xform=wp.transform(p=wp.vec3(0.0, y, drop_z + upper_hz), q=wp.quat_identity()),
         #     child_xform=wp.transform(p=wp.vec3(0.0, 0.0, 0.0), q=wp.quat_identity()),
         #     key="fixed_prismatic_anchor",
         # )
-        # builder.add_joint_prismatic(
+        # self.builder.add_joint_prismatic(
         #     parent=a_pri,
         #     child=b_pri,
         #     axis=wp.vec3(0.0, 0.0, 1.0),  # slide along Z
@@ -137,22 +135,22 @@ class Simulator(AbstractSimulator):
         # z_offset = -1.0  # Shift down by 2 units
         #
         # # sphere as the parent anchor
-        # a_ball = builder.add_body(
+        # a_ball = self.builder.add_body(
         #     xform=wp.transform(
         #         p=wp.vec3(0.0, y, drop_z + radius + cuboid_hz + z_offset), q=wp.quat_identity()
         #     )
         # )
-        # b_ball = builder.add_body(
+        # b_ball = self.builder.add_body(
         #     xform=wp.transform(
         #         p=wp.vec3(0.0, y, drop_z + radius + z_offset),
         #         q=wp.quat_from_axis_angle(wp.vec3(1.0, 1.0, 0.0), 0.1),
         #     )
         # )
         #
-        # builder.add_shape_sphere(a_ball, radius=radius)
-        # builder.add_shape_box(b_ball, hx=cuboid_hx, hy=cuboid_hy, hz=cuboid_hz)
+        # self.builder.add_shape_sphere(a_ball, radius=radius)
+        # self.builder.add_shape_box(b_ball, hx=cuboid_hx, hy=cuboid_hy, hz=cuboid_hz)
         #
-        # builder.add_joint_ball(
+        # self.builder.add_joint_ball(
         #     parent=a_ball,
         #     child=b_ball,
         #     parent_xform=wp.transform(p=wp.vec3(0.0, 0.0, 0.0), q=wp.quat_identity()),
@@ -160,15 +158,15 @@ class Simulator(AbstractSimulator):
         #     key="ball_a_b",
         # )
         # # set initial joint angle
-        # builder.joint_q[-4:] = wp.quat_rpy(0.5, 0.6, 0.7)
+        # self.builder.joint_q[-4:] = wp.quat_rpy(0.5, 0.6, 0.7)
         #
-        builder.add_ground_plane(
+        self.builder.add_ground_plane(
             cfg=newton.ModelBuilder.ShapeConfig(
                 ke=10.0, kd=10.0, kf=0.0, mu=FRICTION, restitution=RESTITUTION
             )
         )
 
-        model = builder.finalize()
+        model = self.builder.finalize()
         return model
 
 

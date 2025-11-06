@@ -35,13 +35,11 @@ class Simulator(AbstractSimulator):
         FRICTION = 0.8
         RESTITUTION = 0.9
 
-        builder = newton.ModelBuilder()
-
-        ball1 = builder.add_body(
+        ball1 = self.builder.add_body(
             xform=wp.transform((0.0, 0.0, 2.0), wp.quat_identity()), key="ball1"
         )
 
-        builder.add_shape_sphere(
+        self.builder.add_shape_sphere(
             body=ball1,
             radius=1.0,
             cfg=newton.ModelBuilder.ShapeConfig(
@@ -55,15 +53,15 @@ class Simulator(AbstractSimulator):
             ),
         )
 
-        builder.add_joint_free(parent=-1, child=ball1)
+        self.builder.add_joint_free(parent=-1, child=ball1)
 
-        builder.add_ground_plane(
+        self.builder.add_ground_plane(
             cfg=newton.ModelBuilder.ShapeConfig(
                 ke=10.0, kd=10.0, kf=0.0, mu=FRICTION, restitution=RESTITUTION
             )
         )
 
-        model = builder.finalize()
+        model = self.builder.finalize()
         return model
 
 

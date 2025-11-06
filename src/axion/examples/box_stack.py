@@ -39,16 +39,14 @@ class Simulator(AbstractSimulator):
         KD = 50.0
         KF = 200.0
 
-        builder = newton.ModelBuilder()
-
         box1_hx = 0.2
         box2_hx = 0.8
         box3_hx = 3.2
 
-        box1 = builder.add_body(
+        box1 = self.builder.add_body(
             xform=wp.transform((0.0, 0.0, box1_hx), wp.quat_identity()), key="box1"
         )
-        builder.add_shape_box(
+        self.builder.add_shape_box(
             body=box1,
             hx=box1_hx,
             hy=box1_hx,
@@ -64,10 +62,10 @@ class Simulator(AbstractSimulator):
             ),
         )
 
-        box2 = builder.add_body(
+        box2 = self.builder.add_body(
             xform=wp.transform((0.0, 0.0, 2 * box1_hx + box2_hx), wp.quat_identity()), key="box2"
         )
-        builder.add_shape_box(
+        self.builder.add_shape_box(
             body=box2,
             hx=box2_hx,
             hy=box2_hx,
@@ -83,11 +81,11 @@ class Simulator(AbstractSimulator):
             ),
         )
 
-        box3 = builder.add_body(
+        box3 = self.builder.add_body(
             xform=wp.transform((0.0, 0.0, 2 * box1_hx + 2 * box2_hx + box3_hx), wp.quat_identity()),
             key="box3",
         )
-        builder.add_shape_box(
+        self.builder.add_shape_box(
             body=box3,
             hx=box3_hx,
             hy=box3_hx,
@@ -102,16 +100,16 @@ class Simulator(AbstractSimulator):
                 thickness=0.0,
             ),
         )
-        builder.add_joint_free(parent=-1, child=box1)
-        builder.add_joint_free(parent=-1, child=box2)
-        builder.add_joint_free(parent=-1, child=box3)
+        self.builder.add_joint_free(parent=-1, child=box1)
+        self.builder.add_joint_free(parent=-1, child=box2)
+        self.builder.add_joint_free(parent=-1, child=box3)
 
-        builder.add_ground_plane(
+        self.builder.add_ground_plane(
             cfg=newton.ModelBuilder.ShapeConfig(
                 ke=10, kd=10, kf=0.0, mu=FRICTION, restitution=RESTITUTION
             )
         )
-        model = builder.finalize()
+        model = self.builder.finalize()
         return model
 
 

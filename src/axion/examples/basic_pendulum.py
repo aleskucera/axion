@@ -37,20 +37,19 @@ class Simulator(AbstractSimulator):
         wp.copy(self.control.joint_f, wp.array([0.0, 800.0], dtype=wp.float32))
 
     def build_model(self) -> newton.Model:
-        builder = newton.ModelBuilder()
 
         hx = 1.0
         hy = 0.1
         hz = 0.1
 
-        link_0 = builder.add_body()
-        builder.add_shape_box(link_0, hx=hx, hy=hy, hz=hz)
+        link_0 = self.builder.add_body()
+        self.builder.add_shape_box(link_0, hx=hx, hy=hy, hz=hz)
 
-        link_1 = builder.add_body()
-        builder.add_shape_box(link_1, hx=hx, hy=hy, hz=hz)
+        link_1 = self.builder.add_body()
+        self.builder.add_shape_box(link_1, hx=hx, hy=hy, hz=hz)
 
         rot = wp.quat_from_axis_angle(wp.vec3(0.0, 0.0, 1.0), -wp.pi * 0.5)
-        builder.add_joint_revolute(
+        self.builder.add_joint_revolute(
             parent=-1,
             child=link_0,
             axis=wp.vec3(0.0, 1.0, 0.0),
@@ -60,7 +59,7 @@ class Simulator(AbstractSimulator):
             target_ke=1000.0,
             target_kd=50.0,
         )
-        builder.add_joint_revolute(
+        self.builder.add_joint_revolute(
             parent=link_0,
             child=link_1,
             axis=wp.vec3(0.0, 1.0, 0.0),
@@ -72,9 +71,9 @@ class Simulator(AbstractSimulator):
             armature=0.1,
         )
 
-        builder.add_ground_plane()
+        self.builder.add_ground_plane()
 
-        model = builder.finalize()
+        model = self.builder.finalize()
         return model
 
 
