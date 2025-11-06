@@ -42,7 +42,7 @@ class Simulator(AbstractSimulator):
 
         # For axion
         wp.copy(
-            self.control.joint_target, wp.array(5 * [0.0] + [800.0, 800.0, 0.0], dtype=wp.float32)
+            self.control.joint_target, wp.array(5 * [0.0] + [1000.0, 1000.0, 0.0], dtype=wp.float32)
         )
         pass
 
@@ -178,7 +178,8 @@ class Simulator(AbstractSimulator):
             child=left_wheel,
             parent_xform=wp.transform((0.75, -0.75, 0.0), wp.quat_identity()),
             axis=(0.0, 1.0, 0.0),
-            mode=newton.JointMode.NONE,
+            mode=newton.JointMode.TARGET_VELOCITY,
+            #custom_attributes={"joint_err_i": [0.5]}
         )
         # Right wheel revolute joint (velocity control)
         self.builder.add_joint_revolute(
@@ -186,7 +187,8 @@ class Simulator(AbstractSimulator):
             child=right_wheel,
             parent_xform=wp.transform((0.75, 0.75, 0.0), wp.quat_identity()),
             axis=(0.0, 1.0, 0.0),
-            mode=newton.JointMode.NONE,
+            mode=newton.JointMode.TARGET_VELOCITY,
+            #custom_attributes={"joint_err_i": [0.5]}
         )
         # Back wheel revolute joint (not actively driven)
         self.builder.add_joint_revolute(

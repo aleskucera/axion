@@ -165,7 +165,7 @@ def apply_joint_control_kernel(
 
                 err, delta_err_i, err_d = calculate_errors(
                                             joint_target[dof_idx], 
-                                            joint_target[dof_idx],
+                                            joint_q[dof_idx],
                                             joint_qd[dof_idx],
                                             joint_err_prev[dof_idx],
                                             joint_dof_mode[dof_idx],
@@ -195,6 +195,7 @@ def apply_joint_control_kernel(
                 f_total += axis_world * (joint_f[dof_idx] + f)
 
                 # rewrite the last value of err_prev now:
+                wp.printf("--- Joint tid: %d, DofId: %d, Err: %0.2f, Err_prev: %0.2f, Err_i: %0.2f, Err_d: %0.2f \n", tid, dof_idx, err, joint_err_prev[dof_idx], joint_err_i[dof_idx], err_d)
                 joint_err_prev[dof_idx] =  err
 
         # angular DOFs:
@@ -204,7 +205,7 @@ def apply_joint_control_kernel(
 
                 err, delta_err_i, err_d = calculate_errors(
                                             joint_target[dof_idx], 
-                                            joint_target[dof_idx],
+                                            joint_q[dof_idx],
                                             joint_qd[dof_idx],
                                             joint_err_prev[dof_idx],
                                             joint_dof_mode[dof_idx],
@@ -234,6 +235,7 @@ def apply_joint_control_kernel(
                 t_total += axis_world * (joint_f[dof_idx] + t)
 
                 # rewrite the last value of err_prev now:
+                wp.printf("--- Joint tid: %d, DofId: %d, Err: %0.2f, Err_prev: %0.2f, Err_i: %0.2f, Err_d: %0.2f \n", tid, dof_idx, err, joint_err_prev[dof_idx], joint_err_i[dof_idx], err_d)
                 joint_err_prev[dof_idx] =  err
 
     # === Step 3: Apply Spatial Forces to Bodies ===
@@ -243,6 +245,8 @@ def apply_joint_control_kernel(
     # Apply equal and opposite force/torque to parent body
     if id_p >= 0:
         wp.atomic_sub(body_f, id_p, wp.spatial_vector(f_total, t_total + wp.cross(r_p, f_total)))
+
+    wp.printf("\n")
 
 
 def apply_control(
