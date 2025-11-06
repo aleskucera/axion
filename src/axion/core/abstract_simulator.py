@@ -117,6 +117,7 @@ class AbstractSimulator(ABC):
         self.effective_duration: float = 0.0
         self._resolve_timing_parameters()
 
+        self.builder = self._create_model_with_custom_attributes()
         self.model = self.build_model()
 
         self.current_state = self.model.state()
@@ -312,6 +313,56 @@ class AbstractSimulator(ABC):
         if self.rendering_config.vis_type == "gl":
             self.num_segments = None
 
+    def _create_model_with_custom_attributes(self) -> newton.ModelBuilder:
+        """
+        Adds the custom attributes to the ModelBuilder and adds the instance of the builder
+        to self attributes of AbstractSimulator class. 
+        """
+        builder = newton.ModelBuilder()
+
+        #--- Add custom attributes to the model class ---
+        builder.add_custom_attribute(
+            name="joint_target_ki",
+            frequency= newton.ModelAttributeFrequency.JOINT_DOF,
+            dtype=wp.float32,
+            default=0.1,  # Explicit default value
+            assignment= newton.ModelAttributeAssignment.MODEL
+        )
+
+        builder.add_custom_attribute(
+            name="joint_q_prev",
+            frequency= newton.ModelAttributeFrequency.JOINT_DOF,
+            dtype=wp.float32,
+            default=0.0,
+            assignment= newton.ModelAttributeAssignment.MODEL
+        )
+
+        builder.add_custom_attribute(
+            name="joint_qd_prev",
+            frequency= newton.ModelAttributeFrequency.JOINT_DOF,
+            dtype=wp.float32,
+            default=0.0,
+            assignment= newton.ModelAttributeAssignment.MODEL
+        )
+
+        builder.add_custom_attribute(
+            name="joint_err_prev",
+            frequency= newton.ModelAttributeFrequency.JOINT_DOF,
+            dtype=wp.float32,
+            default=0.0,
+            assignment= newton.ModelAttributeAssignment.CONTROL
+        )
+
+        builder.add_custom_attribute(
+            name="joint_integral_err",
+            frequency= newton.ModelAttributeFrequency.JOINT_DOF,
+            dtype=wp.float32,
+            default=0.0,
+            assignment= newton.ModelAttributeAssignment.CONTROL
+        )
+
+        return builder
+
     @property
     def use_cuda_graph(self) -> bool:
         """Determines if conditions are met to use CUDA graph optimization."""
@@ -332,6 +383,8 @@ class AbstractSimulator(ABC):
 
         This method MUST be implemented by any subclass. It should define all the
         rigid bodies, joints, and other physical properties of the scene.
+
+        It HAS TO use the self.builder instance of creating its own.
         """
         pass
 
