@@ -14,7 +14,7 @@ class EngineDimensions:
     body_count: int
     contact_count: int
     joint_count: int
-    linesearch_steps: int
+    linesearch_step_count: int
     joint_constraint_count: int
 
     @cached_property
@@ -47,7 +47,7 @@ class EngineDimensions:
 
     @cached_property
     def N_alpha(self) -> int:
-        return self.linesearch_steps
+        return self.linesearch_step_count
 
     # --- Per-Constraint-Type Offsets ---
     @cached_property
