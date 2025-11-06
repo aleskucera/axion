@@ -33,7 +33,7 @@ class Simulator(AbstractSimulator):
 
     def build_model(self) -> newton.Model:
         FRICTION = 0.8
-        RESTITUTION = 0.9
+        RESTITUTION = 0.99
 
         builder = newton.ModelBuilder()
 

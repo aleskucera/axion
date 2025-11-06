@@ -27,14 +27,14 @@ def compute_target_v_n(
     v_n_prev = wp.dot(J_n_1, u_1_prev) + wp.dot(J_n_2, u_2_prev)
 
     # --- Bias Terms ---
-
-    # 1. Baumgarte stabilization bias to correct positional error (penetration) over time.
-    #    We use wp.max to ensure we only correct for actual penetration (depth > 0).
-    positional_correction_bias = -(stabilization_factor / dt) * wp.max(0.0, c)
-
-    # 2. Restitution bias based on pre-collision velocity.
+    # 1. Restitution bias based on pre-collision velocity.
     #    We only apply restitution if the pre-collision velocity is approaching (negative relative velocity).
     restitution_bias = e * wp.min(v_n_prev, 0.0)
+
+    # 2. Baumgarte stabilization bias to correct positional error (penetration) over time.
+    #    We use wp.max to ensure we only correct for actual penetration (depth > 0).
+    # TODO: Correct the positional correction bias
+    positional_correction_bias = -(stabilization_factor / dt) * wp.max(0.0, c)
 
     # The final term for the complementarity function.
     # This represents the "effective" relative velocity after accounting for error correction and restitution.
@@ -222,89 +222,3 @@ def batch_contact_residual_kernel(
 
     # 2. Update `h_n`
     h_n[batch_idx, contact_idx] = phi_n
-
-
-@wp.kernel
-def linesearch_contact_residuals_kernel(
-    alphas: wp.array(dtype=wp.float32),
-    delta_body_qd: wp.array(dtype=wp.spatial_vector),
-    delta_lambda_n: wp.array(dtype=wp.float32),
-    # --- Body State Inputs ---
-    body_qd: wp.array(dtype=wp.spatial_vector),
-    body_qd_prev: wp.array(dtype=wp.spatial_vector),
-    lambda_n: wp.array(dtype=wp.float32),
-    interactions: wp.array(dtype=ContactInteraction),
-    M_inv: wp.array(dtype=SpatialInertia),
-    # --- Simulation & Solver Parameters ---
-    dt: wp.float32,
-    stabilization_factor: wp.float32,
-    fb_alpha: wp.float32,
-    fb_beta: wp.float32,
-    compliance: wp.float32,
-    # --- Outputs (contributions to the linear system) ---
-    g_alpha: wp.array(dtype=wp.spatial_vector, ndim=2),
-    h_alpha_n: wp.array(dtype=wp.float32, ndim=2),
-):
-    alpha_idx, contact_idx = wp.tid()
-    interaction = interactions[contact_idx]
-
-    alpha = alphas[alpha_idx]
-
-    # The normal impulse for this specific contact
-    lambda_normal = lambda_n[contact_idx] + alpha * delta_lambda_n[contact_idx]
-
-    # Early exit for inactive contacts.
-    if not interaction.is_active:
-        h_alpha_n[alpha_idx, contact_idx] = 0.0
-        return
-
-    # Unpack body indices for clarity
-    body_a_idx = interaction.body_a_idx
-    body_b_idx = interaction.body_b_idx
-
-    # Unpack Jacobian basis vectors
-    J_n_a = interaction.basis_a.normal
-    J_n_b = interaction.basis_b.normal
-
-    # Safely get body velocities (handles fixed bodies with index -1)
-    body_qd_a, body_qd_prev_a = wp.spatial_vector(), wp.spatial_vector()
-    if body_a_idx >= 0:
-        body_qd_a = body_qd[body_a_idx] + alpha * delta_body_qd[body_a_idx]
-        body_qd_prev_a = body_qd_prev[body_a_idx]
-
-    body_qd_b, body_qd_prev_b = wp.spatial_vector(), wp.spatial_vector()
-    if body_b_idx >= 0:
-        body_qd_b = body_qd[body_b_idx] + alpha * delta_body_qd[body_b_idx]
-        body_qd_prev_b = body_qd_prev[body_b_idx]
-
-    # Compute the velocity-level term for the complementarity function
-    constraint_term_a = compute_target_v_n(
-        interaction,
-        body_qd_a,
-        body_qd_b,
-        body_qd_prev_a,
-        body_qd_prev_b,
-        dt,
-        stabilization_factor,
-    )
-
-    r = 1.0
-
-    # Evaluate the Fisher-Burmeister complementarity function φ(λ, b)
-    phi_n, _, _ = scaled_fisher_burmeister(
-        constraint_term_a,
-        lambda_normal,
-        fb_alpha,
-        r * fb_beta,
-    )
-
-    # --- Update global system components ---
-
-    # 1. Update `g` (momentum balance residual): g -= J^T * λ
-    if body_a_idx >= 0:
-        g_alpha[alpha_idx, body_a_idx] -= J_n_a * lambda_normal
-    if body_b_idx >= 0:
-        g_alpha[alpha_idx, body_b_idx] -= J_n_b * lambda_normal
-
-    # 2. Update `h` (constraint violation residual): h_n = φ(λ, b)
-    h_alpha_n[alpha_idx, contact_idx] = phi_n
