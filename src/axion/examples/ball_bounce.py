@@ -33,7 +33,7 @@ class Simulator(AbstractSimulator):
 
     def build_model(self) -> newton.Model:
         FRICTION = 0.8
-        RESTITUTION = 0.9
+        RESTITUTION = 0.99
 
         ball1 = self.builder.add_body(
             xform=wp.transform((0.0, 0.0, 2.0), wp.quat_identity()), key="ball1"

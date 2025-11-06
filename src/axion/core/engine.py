@@ -1,3 +1,4 @@
+from typing import Callable
 from typing import Optional
 
 import newton
@@ -8,6 +9,7 @@ from axion.optim import JacobiPreconditioner
 from axion.optim import MatrixFreeSystemOperator
 from axion.optim import MatrixSystemOperator
 from axion.types import compute_joint_constraint_offsets
+from newton import Contacts
 from newton import Control
 from newton import Model
 from newton import State
@@ -18,11 +20,10 @@ from .engine_config import AxionEngineConfig
 from .engine_data import create_engine_arrays
 from .engine_dims import EngineDimensions
 from .engine_logger import EngineLogger
-from .general_utils import update_body_q
-from .general_utils import update_variables
 from .linear_utils import compute_dbody_qd_from_dbody_lambda
 from .linear_utils import compute_linear_system
 from .linesearch_utils import perform_linesearch
+from .linesearch_utils import update_body_q
 
 
 @wp.kernel
@@ -55,6 +56,7 @@ class AxionEngine(SolverBase):
     def __init__(
         self,
         model: Model,
+        init_state_fn: Callable[[State, State, Contacts, float], None],
         logger: EngineLogger,
         config: Optional[AxionEngineConfig] = AxionEngineConfig(),
     ):
@@ -68,6 +70,7 @@ class AxionEngine(SolverBase):
         """
         super().__init__(model)
 
+        self.init_state_fn = init_state_fn
         self.logger = logger
         self.config = config
 
@@ -79,7 +82,7 @@ class AxionEngine(SolverBase):
             body_count=self.model.body_count,
             contact_count=self.model.rigid_contact_max,
             joint_count=self.model.joint_count,
-            linesearch_steps=self.config.linesearch_steps,
+            linesearch_step_count=self.config.linesearch_step_count,
             joint_constraint_count=num_constraints,
         )
 
@@ -144,7 +147,7 @@ class AxionEngine(SolverBase):
 
         # Initial guess block
         with self.logger.timed_block(*step_events["initial_guess"]):
-            self.integrate_bodies(self.model, state_in, state_out, dt)
+            self.init_state_fn(state_in, state_out, contacts, dt)
             self.data.update_state_data(self.model, state_in, state_out, contacts, dt)
             self.data.body_lambda.zero_()
 
@@ -185,16 +188,14 @@ class AxionEngine(SolverBase):
 
             # Linesearch block
             with self.logger.timed_block(*newton_iter_events["linesearch"]):
-                if self.config.linesearch_steps > 0:
-                    perform_linesearch(self.data, self.config, self.dims, dt)
-                update_variables(self.model, self.data, self.config, self.dims, dt)
+                perform_linesearch(self.model, self.data, self.config, self.dims)
 
             self.logger.log_newton_iteration_data(self, i)
             self._copy_computed_state_to_trajectory(i)
 
         self.logger.log_residual_norm_landscape(self)
 
-        update_body_q(self.model, self.data, self.config, self.dims, dt)
+        update_body_q(self.model, self.data, self.config, self.dims)
         wp.copy(dest=state_out.body_qd, src=self.data.body_u)
         wp.copy(dest=state_out.body_q, src=self.data.body_q)
 
@@ -210,7 +211,7 @@ class AxionEngine(SolverBase):
         max_iterations: int = 5000,
     ):
         apply_control(model, state_in, state_out, dt, control)
-        self.integrate_bodies(model, state_in, state_out, dt)
+        self.init_state_fn(model, state_in, state_out, dt)
         self.data.update_state_data(model, state_in, state_out)
 
         def residual_function(x: np.ndarray) -> np.ndarray:
