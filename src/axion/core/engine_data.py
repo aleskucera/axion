@@ -386,7 +386,7 @@ class EngineArrays:
         self.set_dt(dt)
 
         wp.copy(dest=self.body_f, src=state_in.body_f)
-        wp.copy(dest=self.body_q, src=state_out.body_q)
+        wp.copy(dest=self.body_q, src=state_in.body_q)
         wp.copy(dest=self.body_q_prev, src=state_in.body_q)
         wp.copy(dest=self.body_u, src=state_out.body_qd)
         wp.copy(dest=self.body_u_prev, src=state_in.body_qd)

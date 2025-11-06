@@ -1,5 +1,5 @@
-from typing import Optional
 from typing import Callable
+from typing import Optional
 
 import newton
 import numpy as np
@@ -9,10 +9,10 @@ from axion.optim import JacobiPreconditioner
 from axion.optim import MatrixFreeSystemOperator
 from axion.optim import MatrixSystemOperator
 from axion.types import compute_joint_constraint_offsets
+from newton import Contacts
 from newton import Control
 from newton import Model
 from newton import State
-from newton import Contacts
 from newton.solvers import SolverBase
 
 from .control_utils import apply_control
@@ -148,7 +148,7 @@ class AxionEngine(SolverBase):
         # Initial guess block
         with self.logger.timed_block(*step_events["initial_guess"]):
             self.init_state_fn(state_in, state_out, contacts, dt)
-            self.data.update_state_data(self.model, state_in, state_out, contacts)
+            self.data.update_state_data(self.model, state_in, state_out, contacts, dt)
             self.data.body_lambda.zero_()
 
         for i in range(self.config.newton_iters):

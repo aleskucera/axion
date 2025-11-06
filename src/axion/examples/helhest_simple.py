@@ -35,6 +35,18 @@ class Simulator(AbstractSimulator):
             logging_config,
         )
 
+        self.mujoco_solver = newton.solvers.SolverMuJoCo(self.model, njmax=40)
+
+    @override
+    def init_state_fn(
+        self,
+        current_state: newton.State,
+        next_state: newton.State,
+        contacts: newton.Contacts,
+        dt: float,
+    ):
+        self.mujoco_solver.step(current_state, next_state, self.model.control(), contacts, dt)
+
     @override
     def control_policy(self, current_state: newton.State):
         # For mujoco
