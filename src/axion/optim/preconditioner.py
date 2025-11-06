@@ -90,7 +90,7 @@ class JacobiPreconditioner(LinearOperator):
             kernel=compute_inv_diag_kernel,
             dim=self.engine.dims.N_c,
             inputs=[
-                self.engine.data.body_M_inv,
+                self.engine.data.world_M_inv,
                 self.engine.data.J_values,
                 self.engine.data.C_values,
                 self.engine.data.constraint_body_idx,

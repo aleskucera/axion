@@ -9,7 +9,7 @@ import warp as wp
 from axion import AbstractSimulator
 from axion import EngineConfig
 from axion import ExecutionConfig
-from axion import ProfilingConfig
+from axion import LoggingConfig
 from axion import RenderingConfig
 from axion import SimulationConfig
 from omegaconf import DictConfig
@@ -24,17 +24,21 @@ class Simulator(AbstractSimulator):
         sim_config: SimulationConfig,
         render_config: RenderingConfig,
         exec_config: ExecutionConfig,
-        profile_config: ProfilingConfig,
         engine_config: EngineConfig,
+        logging_config: LoggingConfig,
     ):
-        super().__init__(sim_config, render_config, exec_config, profile_config, engine_config)
-        self.init_fn = newton.solvers.SolverMuJoCo(self.model)
+        super().__init__(
+            sim_config,
+            render_config,
+            exec_config,
+            engine_config,
+            logging_config,
+        )
+        self.mujoco_solver = newton.solvers.SolverMuJoCo(self.model)
 
     @override
     def control_policy(self, current_state: newton.State):
-        wp.copy(
-            self.control.joint_target, wp.array(6 * [0.0] + [25.0, 25.0, 0.0], dtype=wp.float32)
-        )
+        wp.copy(self.control.joint_target, wp.array(6 * [0.0] + [4.0, 4.0, 0.0], dtype=wp.float32))
 
     @override
     def init_state_fn(
@@ -44,7 +48,7 @@ class Simulator(AbstractSimulator):
         contacts: newton.Contacts,
         dt: float,
     ):
-        self.init_fn.step(current_state, next_state, self.model.control(), contacts, dt)
+        self.mujoco_solver.step(current_state, next_state, self.model.control(), contacts, dt)
 
     def build_model(self) -> newton.Model:
         """
@@ -101,7 +105,7 @@ class Simulator(AbstractSimulator):
             body=left_wheel,
             mesh=wheel_mesh_collision,
             cfg=newton.ModelBuilder.ShapeConfig(
-                density=500.0,
+                density=1000.0,
                 mu=FRICTION,
                 restitution=RESTITUTION,
                 is_visible=False,
@@ -127,7 +131,7 @@ class Simulator(AbstractSimulator):
             body=right_wheel,
             mesh=wheel_mesh_collision,
             cfg=newton.ModelBuilder.ShapeConfig(
-                density=500.0,
+                density=1000.0,
                 mu=FRICTION,
                 restitution=RESTITUTION,
                 is_visible=False,
@@ -153,7 +157,7 @@ class Simulator(AbstractSimulator):
             body=back_wheel,
             mesh=wheel_mesh_collision,
             cfg=newton.ModelBuilder.ShapeConfig(
-                density=500.0,
+                density=1000.0,
                 mu=FRICTION,
                 restitution=RESTITUTION,
                 thickness=0.0,
@@ -244,15 +248,15 @@ def helhest_example(cfg: DictConfig):
     sim_config: SimulationConfig = hydra.utils.instantiate(cfg.simulation)
     render_config: RenderingConfig = hydra.utils.instantiate(cfg.rendering)
     exec_config: ExecutionConfig = hydra.utils.instantiate(cfg.execution)
-    profile_config: ProfilingConfig = hydra.utils.instantiate(cfg.profiling)
     engine_config: EngineConfig = hydra.utils.instantiate(cfg.engine)
+    logging_config: LoggingConfig = hydra.utils.instantiate(cfg.logging)
 
     simulator = Simulator(
         sim_config=sim_config,
         render_config=render_config,
         exec_config=exec_config,
-        profile_config=profile_config,
         engine_config=engine_config,
+        logging_config=logging_config,
     )
 
     simulator.run()

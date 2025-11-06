@@ -17,13 +17,13 @@ class AxionEngineConfig(EngineConfig):
     during a simulation run.
     """
 
-    newton_iters: int = 6
-    linear_iters: int = 4
+    newton_iters: int = 8
+    linear_iters: int = 8
 
     joint_stabilization_factor: float = 0.01
-    contact_stabilization_factor: float = 0.05
+    contact_stabilization_factor: float = 0.02
 
-    joint_compliance: float = 1e-3
+    joint_compliance: float = 1e-5
     contact_compliance: float = 1e-5
     friction_compliance: float = 1e-6
 
@@ -31,10 +31,13 @@ class AxionEngineConfig(EngineConfig):
 
     contact_fb_alpha: float = 0.25
     contact_fb_beta: float = 0.25
-    friction_fb_alpha: float = 0.25
-    friction_fb_beta: float = 0.25
+    friction_fb_alpha: float = 1.0
+    friction_fb_beta: float = 1.0
 
-    linesearch_steps: int = 0
+    enable_linesearch: bool = False
+    linesearch_step_count: int = 200
+    linesearch_step_min: float = 1e-6
+    linesearch_step_max: float = 10.0
 
     matrixfree_representation: bool = True
 
@@ -83,13 +86,18 @@ class AxionEngineConfig(EngineConfig):
         _validate_unit_interval(self.friction_fb_beta, "friction_fb_beta")
 
         # Validate linesearch steps
-        _validate_non_negative_int(self.linesearch_steps, "linesearch_steps")
+        _validate_positive_int(self.linesearch_step_count, "linesearch_step_count")
+        _validate_non_negative_float(self.linesearch_step_min, "linesearch_step_min")
+        _validate_non_negative_float(self.linesearch_step_max, "linesearch_step_max")
+
+        if self.linesearch_step_min >= self.linesearch_step_max:
+            raise ValueError("linesearch_step_min must be < linesearch_step_max")
 
 
 @dataclass(frozen=True)
 class FeatherstoneEngineConfig(EngineConfig):
     angular_damping: float = 0.05
-    update_mass_matrix_every: int = 1
+    update_mass_matrix_interval: int = 1
     friction_smoothing: float = 1.0
     use_tile_gemm: bool = False
     fuse_cholesky: bool = True

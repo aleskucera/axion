@@ -32,30 +32,28 @@ def unconstrained_dynamics_kernel(
 
 
 @wp.kernel
-def linesearch_dynamics_residuals_kernel(
-    alphas: wp.array(dtype=wp.float32),
-    delta_body_qd: wp.array(dtype=wp.spatial_vector),
+def batch_unconstrained_dynamics_kernel(
     # --- Body State Inputs ---
-    body_qd: wp.array(dtype=wp.spatial_vector),
-    body_qd_prev: wp.array(dtype=wp.spatial_vector),
+    body_u: wp.array(dtype=wp.spatial_vector, ndim=2),
+    body_u_prev: wp.array(dtype=wp.spatial_vector),
     body_f: wp.array(dtype=wp.spatial_vector),
     # --- Body Property Inputs ---
-    gen_mass: wp.array(dtype=SpatialInertia),
+    body_M: wp.array(dtype=SpatialInertia),
     # --- Simulation Parameters ---
     dt: wp.float32,
     g_accel: wp.array(dtype=wp.vec3),
     # --- Output ---
-    g_alpha: wp.array(dtype=wp.spatial_vector, ndim=2),
+    h_d: wp.array(dtype=wp.spatial_vector, ndim=2),
 ):
-    alpha_idx, body_idx = wp.tid()
-    if body_idx >= body_qd.shape[0]:
+    batch_idx, body_idx = wp.tid()
+    if body_idx >= body_u.shape[0]:
         return
 
-    M = gen_mass[body_idx]
-    u = body_qd[body_idx] + alphas[alpha_idx] * delta_body_qd[body_idx]
-    u_prev = body_qd_prev[body_idx]
+    M = body_M[body_idx]
+    u = body_u[batch_idx, body_idx]
+    u_prev = body_u_prev[body_idx]
     f = body_f[body_idx]
 
-    f_g = to_spatial_momentum(M, wp.spatial_vector(wp.vec3(), g_accel[0]))
+    f_g = to_spatial_momentum(M, wp.spatial_vector(g_accel[0], wp.vec3()))
 
-    g_alpha[alpha_idx, body_idx] = to_spatial_momentum(M, u - u_prev) - (f + f_g) * dt
+    h_d[batch_idx, body_idx] = to_spatial_momentum(M, u - u_prev) - (f + f_g) * dt

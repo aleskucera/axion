@@ -1,4 +1,5 @@
 import warp as wp
+from newton.geometry import transform_inertia
 
 
 @wp.struct
@@ -33,6 +34,40 @@ def spatial_inertia_kernel(
     spatial_inertia: wp.array(dtype=SpatialInertia),
 ):
     tid = wp.tid()
+    spatial_inertia[tid] = SpatialInertia(mass[tid], inertia[tid])
 
-    M = SpatialInertia(mass[tid], inertia[tid])
-    spatial_inertia[tid] = M
+
+@wp.kernel
+def transform_spatial_inertia_to_world_kernel(
+    body_q: wp.array(dtype=wp.transform),
+    body_com: wp.array(dtype=wp.vec3),
+    body_spatial_inertia: wp.array(dtype=SpatialInertia),
+    # Outputs
+    world_spatial_inertia: wp.array(dtype=SpatialInertia),
+):
+    tid = wp.tid()
+
+    # Get body transform and spatial inertia
+    transform = body_q[tid]
+    com_body = body_com[tid]
+    spatial_inertia = body_spatial_inertia[tid]
+
+    # Transform COM from body frame to world frame
+    com_world = wp.transform_point(transform, com_body)
+
+    # Get orientation quaternion from transform
+    orientation = wp.transform_get_rotation(transform)
+
+    R = wp.quat_to_matrix(orientation)
+    transformed_inertia = R @ spatial_inertia.inertia @ wp.transpose(R)
+
+    # # Transform inertia to world frame using Newton's function
+    # transformed_inertia = transform_inertia(
+    #     spatial_inertia.m,
+    #     spatial_inertia.inertia,
+    #     com_world,
+    #     orientation,
+    # )
+
+    # Store the result
+    world_spatial_inertia[tid] = SpatialInertia(spatial_inertia.m, transformed_inertia)

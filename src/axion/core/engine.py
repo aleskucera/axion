@@ -5,9 +5,6 @@ import newton
 import numpy as np
 import scipy
 import warp as wp
-from axion.logging import HDF5Logger
-from axion.logging import NullLogger
-from axion.optim import cr_solver
 from axion.optim import JacobiPreconditioner
 from axion.optim import MatrixFreeSystemOperator
 from axion.optim import MatrixSystemOperator
@@ -19,16 +16,30 @@ from newton import Contacts
 from newton.solvers import SolverBase
 
 from .control_utils import apply_control
-from .dense_utils import get_system_matrix_numpy
-from .dense_utils import update_dense_matrices
 from .engine_config import AxionEngineConfig
 from .engine_data import create_engine_arrays
 from .engine_dims import EngineDimensions
-from .general_utils import update_body_q
-from .general_utils import update_variables
+from .engine_logger import EngineLogger
 from .linear_utils import compute_dbody_qd_from_dbody_lambda
 from .linear_utils import compute_linear_system
 from .linesearch_utils import perform_linesearch
+from .linesearch_utils import update_body_q
+
+
+@wp.kernel
+def print_linear_solve_result(
+    final_iteration: wp.array(dtype=wp.int32),
+    residual_norm_squared: wp.array(dtype=wp.float32),
+    absolute_tolerance_squared: wp.array(dtype=wp.float32),
+):
+
+    if wp.tid() > 0:
+        return
+
+    # if final_iteration[0] > 4:
+    #     wp.printf("Final iteration: %d\n", final_iteration[0])
+    if residual_norm_squared[0] > 1e-4:
+        wp.printf("Residual norm squared: %f\n", residual_norm_squared[0])
 
 
 class AxionEngine(SolverBase):
@@ -46,8 +57,8 @@ class AxionEngine(SolverBase):
         self,
         model: Model,
         init_state_fn: Callable[[State, State, Contacts, float], None],
+        logger: EngineLogger,
         config: Optional[AxionEngineConfig] = AxionEngineConfig(),
-        logger: Optional[HDF5Logger | NullLogger] = NullLogger(),
     ):
         """
         Initialize the physics engine for the given model and configuration.
@@ -71,16 +82,18 @@ class AxionEngine(SolverBase):
             body_count=self.model.body_count,
             contact_count=self.model.rigid_contact_max,
             joint_count=self.model.joint_count,
-            linesearch_steps=self.config.linesearch_steps,
+            linesearch_step_count=self.config.linesearch_step_count,
             joint_constraint_count=num_constraints,
         )
 
-        allocate_dense_matrices = isinstance(self.logger, HDF5Logger)
         self.data = create_engine_arrays(
             self.dims,
+            self.config,
             joint_constraint_offsets,
             self.device,
-            allocate_dense_matrices,
+            self.logger.uses_dense_matrices,
+            self.logger.uses_pca_arrays,
+            self.logger.config.pca_grid_res,
         )
 
         if self.config.matrixfree_representation:
@@ -98,66 +111,24 @@ class AxionEngine(SolverBase):
 
         self.data.set_body_M(model)
         self.data.set_g_accel(model)
-        # self.data.set_joint_constraint_body_idx(model)
 
-        self.events = [
-            {
-                "iter_start": wp.Event(enable_timing=True),
-                "linearize": wp.Event(enable_timing=True),
-                "lin_solve": wp.Event(enable_timing=True),
-                "linesearch": wp.Event(enable_timing=True),
-            }
-            for _ in range(self.config.newton_iters)
-        ]
-
-    def _log_newton_iteration_data(self):
-        if isinstance(self.logger, NullLogger):
-            return
-
-        self.logger.log_wp_dataset("h", self.data.h)
-        self.logger.log_wp_dataset("J_values", self.data.J_values)
-        self.logger.log_wp_dataset("C_values", self.data.C_values)
-        self.logger.log_wp_dataset("constraint_body_idx", self.data.constraint_body_idx)
-
-        self.logger.log_wp_dataset("body_f", self.data.body_f)
-        self.logger.log_wp_dataset("body_q", self.data.body_q)
-        self.logger.log_wp_dataset("body_u", self.data.body_u)
-        self.logger.log_wp_dataset("body_u_prev", self.data.body_u_prev)
-
-        self.logger.log_wp_dataset("body_lambda", self.data.body_lambda)
-        self.logger.log_wp_dataset("body_lambda_prev", self.data.body_lambda_prev)
-
-        self.logger.log_wp_dataset("dbody_qd", self.data.dbody_u)
-        self.logger.log_wp_dataset("dbody_lambda", self.data.dbody_lambda)
-
-        self.logger.log_wp_dataset("b", self.data.b)
-
-        self.logger.log_struct_array("body_M", self.data.body_M)
-        self.logger.log_struct_array("body_M_inv", self.data.body_M_inv)
-
-        self.logger.log_struct_array("joint_constraint_data", self.data.joint_constraint_data)
-        self.logger.log_struct_array("contact_interaction", self.data.contact_interaction)
-
-        update_dense_matrices(self.data, self.config, self.dims)
-
-        self.logger.log_wp_dataset("M_inv_dense", self.data.M_inv_dense)
-        self.logger.log_wp_dataset("J_dense", self.data.J_dense)
-        self.logger.log_wp_dataset("C_dense", self.data.C_dense)
-
-        if not self.config.matrixfree_representation:
-            self.logger.log_wp_dataset("A_dense", self.A_op._A)
-        else:
-            A_np = get_system_matrix_numpy(self.data, self.config, self.dims)
-            cond_number = np.linalg.cond(A_np)
-            self.logger.log_np_dataset("A_np", A_np)
-            self.logger.log_scalar("cond_number", cond_number)
-
-    def _log_static_data(self):
-        if isinstance(self.logger, NullLogger):
-            return
-
-        self.logger.log_wp_dataset("gen_mass", self.data.body_M)
-        self.logger.log_wp_dataset("gen_inv_mass", self.data.body_M_inv)
+    def _copy_computed_state_to_trajectory(self, iter: int):
+        if self.logger.uses_pca_arrays:
+            wp.copy(
+                dest=self.data.optim_trajectory,
+                src=self.data.body_u,
+                dest_offset=(iter * (self.dims.N_u + self.dims.N_c)),
+            )
+            wp.copy(
+                dest=self.data.optim_trajectory,
+                src=self.data.body_lambda,
+                dest_offset=(iter * (self.dims.N_u + self.dims.N_c) + self.dims.N_u),
+            )
+            wp.copy(
+                dest=self.data.optim_h,
+                src=self.data.h,
+                dest_offset=(iter * (self.dims.N_u + self.dims.N_c)),
+            )
 
     def step(
         self,
@@ -167,68 +138,66 @@ class AxionEngine(SolverBase):
         contacts: newton.Contacts,
         dt: float,
     ):
-        """
-        The primary method for running the physics simulation for a single time step.
-        This method is an implementation of the abstract method from the base `Integrator` class in Warp.
+        step_events = self.logger.step_event_pairs[self.logger.current_step_in_segment]
 
-        Args:
-            model: The physics model containing bodies, joints, and other physics properties.
-            state_in: The input state at the beginning of the time step.
-            state_out: The output state at the end of the time step. This will be modified by the engine.
-            dt: The time step duration.
-            control: Optional control inputs to be applied during the simulation step.
-        """
-        newton.eval_ik(self.model, state_in, state_in.joint_q, state_in.joint_qd)
-        apply_control(self.model, state_in, state_out, dt, control)
-        self.init_state_fn(state_in, state_out, contacts, dt)
-        self.data.update_state_data(self.model, state_in, state_out, contacts)
+        # Control block
+        with self.logger.timed_block(*step_events["control"]):
+            newton.eval_ik(self.model, state_in, state_in.joint_q, state_in.joint_qd)
+            apply_control(self.model, state_in, state_out, dt, control)
 
-        self.data.body_lambda.zero_()
+        # Initial guess block
+        with self.logger.timed_block(*step_events["initial_guess"]):
+            self.init_state_fn(state_in, state_out, contacts, dt)
+            self.data.update_state_data(self.model, state_in, state_out, contacts)
+            self.data.body_lambda.zero_()
 
         for i in range(self.config.newton_iters):
-            wp.record_event(self.events[i]["iter_start"])
+            wp.copy(dest=self.data.body_lambda_prev, src=self.data.body_lambda)
+            wp.copy(dest=self.data.s_n_prev, src=self.data.s_n)
 
-            with self.logger.scope(f"newton_iteration_{i:02d}"):
-                wp.copy(dest=self.data.body_lambda_prev, src=self.data.body_lambda)
-                wp.copy(dest=self.data.s_n_prev, src=self.data.s_n)
+            newton_iter_events = self.logger.engine_event_pairs[
+                self.logger.current_step_in_segment
+            ][i]
 
-                # --- Linearize the system of equations ---
+            # System linearization block
+            with self.logger.timed_block(*newton_iter_events["system_linearization"]):
                 compute_linear_system(self.model, self.data, self.config, self.dims, dt)
-                wp.record_event(self.events[i]["linearize"])
 
-                if not self.config.matrixfree_representation:
-                    self.A_op.update()
-                self.preconditioner.update()
+            if not self.config.matrixfree_representation:
+                self.A_op.update()
+            self.preconditioner.update()
 
-                # --- Solve linear system of equations ---
+            # Linear system solve block
+            with self.logger.timed_block(*newton_iter_events["linear_system_solve"]):
                 self.data.dbody_lambda.zero_()
-                wp.optim.linear.cg(
+                ret = wp.optim.linear.cr(
                     A=self.A_op,
                     b=self.data.b,
                     x=self.data.dbody_lambda,
-                    atol=1e-5,
-                    maxiter=self.config.linear_iters,
+                    atol=2e-5,
+                    maxiter=20,
                     M=self.preconditioner,
                     check_every=0,
                     use_cuda_graph=True,
                 )
+                final_iteration = ret[0]
+                residual_norm_squared = ret[1]
+                absolute_tolerance_squared = ret[2]
 
                 compute_dbody_qd_from_dbody_lambda(self.data, self.config, self.dims)
-                wp.record_event(self.events[i]["lin_solve"])
 
-                if self.config.linesearch_steps > 0:
-                    perform_linesearch(self.data, self.config, self.dims, dt)
-                wp.record_event(self.events[i]["linesearch"])
+            # Linesearch block
+            with self.logger.timed_block(*newton_iter_events["linesearch"]):
+                perform_linesearch(self.model, self.data, self.config, self.dims)
 
-                update_variables(self.model, self.data, self.config, self.dims, dt)
+            self.logger.log_newton_iteration_data(self, i)
+            self._copy_computed_state_to_trajectory(i)
 
-                self._log_newton_iteration_data()
+        self.logger.log_residual_norm_landscape(self)
 
-        update_body_q(self.model, self.data, self.config, self.dims, dt)
+        update_body_q(self.model, self.data, self.config, self.dims)
         wp.copy(dest=state_out.body_qd, src=self.data.body_u)
         wp.copy(dest=state_out.body_q, src=self.data.body_q)
-
-        return self.events
 
     def simulate_scipy(
         self,
@@ -241,19 +210,6 @@ class AxionEngine(SolverBase):
         tolerance: float = 1e-10,
         max_iterations: int = 5000,
     ):
-        """
-        Apply the SciPy root-finding algorithm to the simulation.
-
-        Args:
-            model: The physics model containing bodies, joints, and other physics properties.
-            state_in: The input state at the beginning of the time step.
-            state_out: The output state at the end of the time step. This will be modified by the engine.
-            dt: The time step duration.
-            control: Optional control inputs to be applied during the simulation step.
-            method: The scipy root-finding method to use (default is 'hybr').
-            tolerance: The tolerance for convergence (default is 1e-10).
-            max_iterations: The maximum number of iterations for the solver (default is 5000).
-        """
         apply_control(model, state_in, state_out, dt, control)
         self.init_state_fn(model, state_in, state_out, dt)
         self.data.update_state_data(model, state_in, state_out)
