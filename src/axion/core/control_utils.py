@@ -7,23 +7,49 @@ from newton import State
 
 
 @wp.func
+def calculate_errors(
+    act: float,
+    q: float,
+    qd: float,
+    err_prev: float,
+    mode: wp.int32,
+    dt: wp.float32
+):
+    """
+    Calculate the corresponding errors and or error differences.
+    This is meant be run before increasing the integral error using wp.atomic_add()
+    in the kernel.
+    """
+
+    if mode == JointMode.TARGET_POSITION:
+        err = (act - q)
+        err_d = (err - err_prev) / dt if dt > 0 else 0.0
+        delta_err_i = err * dt
+    elif mode == JointMode.TARGET_VELOCITY:
+        err = (act - qd)
+        err_d = (err - err_prev) / dt if dt > 0 else 0.0
+        delta_err_i = err * dt
+    elif mode == JointMode.NONE:
+        err, delta_err_i, err_d = 0.0, 0.0, 0.0     
+
+    return err, delta_err_i, err_d
+
+@wp.func
 def joint_force(
     q: float,
     qd: float,
-    q_prev: float,
-    qd_prev: float,
     act: float,
     target_ke: float,
     target_kd: float,
     target_ki: float,
-    error_prev: float,
-    integral_error: float,
+    err: float,
+    err_i: float,
+    err_d: float,
     limit_lower: float,
     limit_upper: float,
     limit_ke: float,
     limit_kd: float,
     mode: wp.int32,
-    dt: wp.float32,
 ) -> float:
     """
     Control law regulator for a single joint degree of freedom.
@@ -35,22 +61,10 @@ def joint_force(
     damping_f = 0.0
     target_f = 0.0
 
-    if mode == JointMode.TARGET_POSITION:
-        error = (act - q)
-        derivative_error = (error - error_prev) / dt if dt > 0 else 0.0
-        integral_error = error * dt
-        target_f = target_ke * error + target_ki * integral_error + target_kd * derivative_error   # the derivative term was completely different before, -target_kd * qd 
-        error_prev = error
-    elif mode == JointMode.TARGET_VELOCITY:
-        error = (act - qd)
-        derivative_error = (error - error_prev) / dt if dt > 0 else 0.0
-        integral_error = error * dt
-        target_f = target_ke * error + target_ki * integral_error + target_kd * derivative_error
-        error_prev = error
+    if mode == JointMode.TARGET_POSITION or mode == JointMode.TARGET_VELOCITY:
+        target_f = target_ke * err + target_ki * err_i + target_kd * err_d   # the derivative term was completely different before, -target_kd * qd 
     elif mode == JointMode.NONE:
         target_f = act
-
-    # what about anti-windup?
 
     # Compute limit forces, damping only active when limit is violated
     # Note: Target forces are overridden when limits are active to prioritize the limit spring.
@@ -77,8 +91,6 @@ def apply_joint_control_kernel(
     body_q: wp.array(dtype=wp.transform),
     joint_q: wp.array(dtype=float),
     joint_qd: wp.array(dtype=float),
-    joint_q_prev: wp.array(dtype=float),     # custom
-    joint_qd_prev: wp.array(dtype=float),    # custom
     # --- Model Inputs ---
     body_com: wp.array(dtype=wp.vec3),
     joint_type: wp.array(dtype=int),
@@ -92,8 +104,8 @@ def apply_joint_control_kernel(
     # --- Control/Actuation Inputs ---
     joint_target: wp.array(dtype=float),
     joint_f: wp.array(dtype=float),
-    joint_error_prev: wp.array(dtype=float),  # custom
-    joint_integral_err: wp.array(dtype=float),  # custom
+    joint_err_prev: wp.array(dtype=float),  # custom
+    joint_err_i: wp.array(dtype=float),  # custom
     joint_dof_mode: wp.array(dtype=int),
     joint_target_ke: wp.array(dtype=float),
     joint_target_kd: wp.array(dtype=float),
@@ -138,150 +150,91 @@ def apply_joint_control_kernel(
     ang_axis_count = joint_dof_dim[tid, 1]
 
     f_total = wp.vec3()
-    t_total = wp.vec3()
+    t_total = wp.vec3()    
 
-    # --- Process Linear Degrees of Freedom ---
-    # Unrolled loop for Warp compiler efficiency
-    if lin_axis_count > 0:
-        dof_idx = qd_start + 0
-        f = joint_force(
-            joint_q[dof_idx],
-            joint_qd[dof_idx],
-            joint_q_prev[dof_idx],
-            joint_qd_prev[dof_idx],
-            joint_target[dof_idx],
-            joint_target_ke[dof_idx],
-            joint_target_kd[dof_idx],
-            joint_target_ki[dof_idx],
-            joint_error_prev[dof_idx],
-            joint_integral_err[dof_idx],
-            joint_limit_lower[dof_idx],
-            joint_limit_upper[dof_idx],
-            joint_limit_ke[dof_idx],
-            joint_limit_kd[dof_idx],
-            joint_dof_mode[dof_idx],
-            dt,
-        )
-        axis_world = wp.transform_vector(X_wp, joint_axis[dof_idx])
-        f_total += axis_world * (joint_f[dof_idx] + f)
-
-    if lin_axis_count > 1:
-        dof_idx = qd_start + 1
-        f = joint_force(
-            joint_q[dof_idx],
-            joint_qd[dof_idx],
-            joint_q_prev[dof_idx],
-            joint_qd_prev[dof_idx],
-            joint_target[dof_idx],
-            joint_target_ke[dof_idx],
-            joint_target_kd[dof_idx],
-            joint_target_ki[dof_idx],
-            joint_error_prev[dof_idx],
-            joint_integral_err[dof_idx],
-            joint_limit_lower[dof_idx],
-            joint_limit_upper[dof_idx],
-            joint_limit_ke[dof_idx],
-            joint_limit_kd[dof_idx],
-            joint_dof_mode[dof_idx],
-            dt,
-        )
-        axis_world = wp.transform_vector(X_wp, joint_axis[dof_idx])
-        f_total += axis_world * (joint_f[dof_idx] + f)
-
-    if lin_axis_count > 2:
-        dof_idx = qd_start + 2
-        f = joint_force(
-            joint_q[dof_idx],
-            joint_qd[dof_idx],
-            joint_q_prev[dof_idx],
-            joint_qd_prev[dof_idx],
-            joint_target[dof_idx],
-            joint_target_ke[dof_idx],
-            joint_target_kd[dof_idx],
-            joint_target_ki[dof_idx],
-            joint_error_prev[dof_idx],
-            joint_integral_err[dof_idx],
-            joint_limit_lower[dof_idx],
-            joint_limit_upper[dof_idx],
-            joint_limit_ke[dof_idx],
-            joint_limit_kd[dof_idx],
-            joint_dof_mode[dof_idx],
-            dt,
-        )
-        axis_world = wp.transform_vector(X_wp, joint_axis[dof_idx])
-        f_total += axis_world * (joint_f[dof_idx] + f)
-
-    # --- Process Angular Degrees of Freedom ---
-    # Angular DoF indices start after all linear DoFs
+    # --- Process Linear and Angular Degrees of Freedom ---
     ang_dof_start_offset = qd_start + lin_axis_count
-    if ang_axis_count > 0:
-        dof_idx = ang_dof_start_offset + 0
-        t = joint_force(
-            joint_q[dof_idx],
-            joint_qd[dof_idx],
-            joint_q_prev[dof_idx],
-            joint_qd_prev[dof_idx],
-            joint_target[dof_idx],
-            joint_target_ke[dof_idx],
-            joint_target_kd[dof_idx],
-            joint_target_ki[dof_idx],
-            joint_error_prev[dof_idx],
-            joint_integral_err[dof_idx],
-            joint_limit_lower[dof_idx],
-            joint_limit_upper[dof_idx],
-            joint_limit_ke[dof_idx],
-            joint_limit_kd[dof_idx],
-            joint_dof_mode[dof_idx],
-            dt,
-        )
-        axis_world = wp.transform_vector(X_wp, joint_axis[dof_idx])
-        t_total += axis_world * (joint_f[dof_idx] + t)
+    
+    for i in range(wp.static(6)):   # 6 = number of max DOF
+        st_i = wp.static(i)
 
-    if ang_axis_count > 1:
-        dof_idx = ang_dof_start_offset + 1
-        t = joint_force(
-            joint_q[dof_idx],
-            joint_qd[dof_idx],
-            joint_q_prev[dof_idx],
-            joint_qd_prev[dof_idx],
-            joint_target[dof_idx],
-            joint_target_ke[dof_idx],
-            joint_target_kd[dof_idx],
-            joint_target_ki[dof_idx],
-            joint_error_prev[dof_idx],
-            joint_integral_err[dof_idx],
-            joint_limit_lower[dof_idx],
-            joint_limit_upper[dof_idx],
-            joint_limit_ke[dof_idx],
-            joint_limit_kd[dof_idx],
-            joint_dof_mode[dof_idx],
-            dt,
-        )
-        axis_world = wp.transform_vector(X_wp, joint_axis[dof_idx])
-        t_total += axis_world * (joint_f[dof_idx] + t)
+        # linear DOFs:
+        if st_i < 3:
+            if lin_axis_count > st_i:
+                dof_idx = qd_start + st_i
 
-    if ang_axis_count > 2:
-        dof_idx = ang_dof_start_offset + 2
-        t = joint_force(
-            joint_q[dof_idx],
-            joint_qd[dof_idx],
-            joint_q_prev[dof_idx],
-            joint_qd_prev[dof_idx],
-            joint_target[dof_idx],
-            joint_target_ke[dof_idx],
-            joint_target_kd[dof_idx],
-            joint_target_ki[dof_idx],
-            joint_error_prev[dof_idx],
-            joint_integral_err[dof_idx],
-            joint_limit_lower[dof_idx],
-            joint_limit_upper[dof_idx],
-            joint_limit_ke[dof_idx],
-            joint_limit_kd[dof_idx],
-            joint_dof_mode[dof_idx],
-            dt,
-        )
-        axis_world = wp.transform_vector(X_wp, joint_axis[dof_idx])
-        t_total += axis_world * (joint_f[dof_idx] + t)
+                err, delta_err_i, err_d = calculate_errors(
+                                            joint_target[dof_idx], 
+                                            joint_target[dof_idx],
+                                            joint_qd[dof_idx],
+                                            joint_err_prev[dof_idx],
+                                            joint_dof_mode[dof_idx],
+                                            dt)
+                
+                # add to the overall integral error:
+                wp.atomic_add(joint_err_i, dof_idx, delta_err_i)
+                # CONCERN: what about windup effect? Maybe add anti-windup 
+
+                f = joint_force(
+                    joint_q[dof_idx],
+                    joint_qd[dof_idx],
+                    joint_target[dof_idx],
+                    joint_target_ke[dof_idx],
+                    joint_target_kd[dof_idx],
+                    joint_target_ki[dof_idx],
+                    err,
+                    joint_err_i[dof_idx],
+                    err_d,
+                    joint_limit_lower[dof_idx],
+                    joint_limit_upper[dof_idx],
+                    joint_limit_ke[dof_idx],
+                    joint_limit_kd[dof_idx],
+                    joint_dof_mode[dof_idx],
+                )
+                axis_world = wp.transform_vector(X_wp, joint_axis[dof_idx])
+                f_total += axis_world * (joint_f[dof_idx] + f)
+
+                # rewrite the last value of err_prev now:
+                joint_err_prev[dof_idx] =  err
+
+        # angular DOFs:
+        else:
+            if ang_axis_count > st_i - 3:
+                dof_idx = ang_dof_start_offset + (st_i - 3)
+
+                err, delta_err_i, err_d = calculate_errors(
+                                            joint_target[dof_idx], 
+                                            joint_target[dof_idx],
+                                            joint_qd[dof_idx],
+                                            joint_err_prev[dof_idx],
+                                            joint_dof_mode[dof_idx],
+                                            dt)
+                
+                # add to the overall integral error:
+                wp.atomic_add(joint_err_i, dof_idx, delta_err_i)
+                # CONCERN: what about windup effect? Maybe add anti-windup 
+
+                t = joint_force(
+                    joint_q[dof_idx],
+                    joint_qd[dof_idx],
+                    joint_target[dof_idx],
+                    joint_target_ke[dof_idx],
+                    joint_target_kd[dof_idx],
+                    joint_target_ki[dof_idx],
+                    err,
+                    joint_err_i[dof_idx],
+                    err_d,
+                    joint_limit_lower[dof_idx],
+                    joint_limit_upper[dof_idx],
+                    joint_limit_ke[dof_idx],
+                    joint_limit_kd[dof_idx],
+                    joint_dof_mode[dof_idx],
+                )
+                axis_world = wp.transform_vector(X_wp, joint_axis[dof_idx])
+                t_total += axis_world * (joint_f[dof_idx] + t)
+
+                # rewrite the last value of err_prev now:
+                joint_err_prev[dof_idx] =  err
 
     # === Step 3: Apply Spatial Forces to Bodies ===
     # Apply force/torque to child body
@@ -317,8 +270,6 @@ def apply_control(
                 state_in.body_q,
                 model.joint_q,
                 model.joint_qd,
-                model.joint_q_prev,
-                model.joint_qd_prev,
                 # Model
                 model.body_com,
                 model.joint_type,
@@ -333,7 +284,7 @@ def apply_control(
                 control.joint_target,
                 control.joint_f,
                 control.joint_err_prev,
-                control.joint_integral_err,
+                control.joint_err_i,
                 model.joint_dof_mode,
                 model.joint_target_ke,
                 model.joint_target_kd,

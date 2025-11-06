@@ -117,7 +117,7 @@ class AbstractSimulator(ABC):
         self.effective_duration: float = 0.0
         self._resolve_timing_parameters()
 
-        self.builder = self._create_model_with_custom_attributes()
+        self.builder = self._create_builder_with_custom_attributes()
         self.model = self.build_model()
 
         self.current_state = self.model.state()
@@ -313,7 +313,7 @@ class AbstractSimulator(ABC):
         if self.rendering_config.vis_type == "gl":
             self.num_segments = None
 
-    def _create_model_with_custom_attributes(self) -> newton.ModelBuilder:
+    def _create_builder_with_custom_attributes(self) -> newton.ModelBuilder:
         """
         Adds the custom attributes to the ModelBuilder and adds the instance of the builder
         to self attributes of AbstractSimulator class. 
@@ -321,6 +321,8 @@ class AbstractSimulator(ABC):
         builder = newton.ModelBuilder()
 
         #--- Add custom attributes to the model class ---
+
+        # integral constant (PID control)
         builder.add_custom_attribute(
             name="joint_target_ki",
             frequency= newton.ModelAttributeFrequency.JOINT_DOF,
@@ -328,23 +330,8 @@ class AbstractSimulator(ABC):
             default=0.1,  # Explicit default value
             assignment= newton.ModelAttributeAssignment.MODEL
         )
-
-        builder.add_custom_attribute(
-            name="joint_q_prev",
-            frequency= newton.ModelAttributeFrequency.JOINT_DOF,
-            dtype=wp.float32,
-            default=0.0,
-            assignment= newton.ModelAttributeAssignment.MODEL
-        )
-
-        builder.add_custom_attribute(
-            name="joint_qd_prev",
-            frequency= newton.ModelAttributeFrequency.JOINT_DOF,
-            dtype=wp.float32,
-            default=0.0,
-            assignment= newton.ModelAttributeAssignment.MODEL
-        )
-
+        
+        # previous instance of the control error (PID control)
         builder.add_custom_attribute(
             name="joint_err_prev",
             frequency= newton.ModelAttributeFrequency.JOINT_DOF,
@@ -353,8 +340,9 @@ class AbstractSimulator(ABC):
             assignment= newton.ModelAttributeAssignment.CONTROL
         )
 
+        # cummulative error of the integral part (PID control)
         builder.add_custom_attribute(
-            name="joint_integral_err",
+            name="joint_err_i", 
             frequency= newton.ModelAttributeFrequency.JOINT_DOF,
             dtype=wp.float32,
             default=0.0,
