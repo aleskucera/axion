@@ -54,7 +54,7 @@ class Simulator(AbstractSimulator):
 
         # For axion
         wp.copy(
-            self.control.joint_target, wp.array(6 * [0.0] + [800.0, 800.0, 0.0], dtype=wp.float32)
+            self.control.joint_target, wp.array(5 * [0.0] + [1000.0, 1000.0, 0.0], dtype=wp.float32)
         )
         pass
 
@@ -74,15 +74,14 @@ class Simulator(AbstractSimulator):
         mesh_indices = np.array(wheel_m.face_vertex_indices(), dtype=np.int32).flatten()
         wheel_mesh_render = newton.Mesh(mesh_points, mesh_indices)
 
-        builder = newton.ModelBuilder()
-        builder.add_articulation(key="helhest_simple")
+        self.builder.add_articulation(key="helhest_simple")
 
         # --- Build the Vehicle ---
         # Create main body (chassis)
-        chassis = builder.add_body(
+        chassis = self.builder.add_body(
             xform=wp.transform((-2.0, 0.0, 1.0), wp.quat_identity()), key="chassis"
         )
-        builder.add_shape_box(
+        self.builder.add_shape_box(
             body=chassis,
             hx=0.75,
             hy=0.25,
@@ -95,11 +94,11 @@ class Simulator(AbstractSimulator):
         )
 
         # Left Wheel
-        left_wheel = builder.add_body(
+        left_wheel = self.builder.add_body(
             xform=wp.transform((-1.25, -0.75, 1.0), wp.quat_identity()),
             key="left_wheel",
         )
-        builder.add_shape_mesh(
+        self.builder.add_shape_mesh(
             body=left_wheel,
             mesh=wheel_mesh_render,
             cfg=newton.ModelBuilder.ShapeConfig(
@@ -107,7 +106,7 @@ class Simulator(AbstractSimulator):
                 has_shape_collision=False,
             ),
         )
-        builder.add_shape_capsule(
+        self.builder.add_shape_capsule(
             body=left_wheel,
             xform=wp.transform(
                 (0.0, 0.0, 0.0), wp.quat_from_axis_angle(wp.vec3(1.0, 0.0, 0.0), wp.pi / 2)
@@ -124,11 +123,11 @@ class Simulator(AbstractSimulator):
         )
 
         # Right Wheel
-        right_wheel = builder.add_body(
+        right_wheel = self.builder.add_body(
             xform=wp.transform((-1.25, 0.75, 1.0), wp.quat_identity()),
             key="right_wheel",
         )
-        builder.add_shape_mesh(
+        self.builder.add_shape_mesh(
             body=right_wheel,
             mesh=wheel_mesh_render,
             cfg=newton.ModelBuilder.ShapeConfig(
@@ -136,7 +135,7 @@ class Simulator(AbstractSimulator):
                 has_shape_collision=False,
             ),
         )
-        builder.add_shape_capsule(
+        self.builder.add_shape_capsule(
             body=right_wheel,
             xform=wp.transform(
                 (0.0, 0.0, 0.0), wp.quat_from_axis_angle(wp.vec3(1.0, 0.0, 0.0), wp.pi / 2)
@@ -153,11 +152,11 @@ class Simulator(AbstractSimulator):
         )
 
         # Back Wheel
-        back_wheel = builder.add_body(
+        back_wheel = self.builder.add_body(
             xform=wp.transform((-3.25, 0.0, 1.0), wp.quat_identity()),
             key="back_wheel",
         )
-        builder.add_shape_mesh(
+        self.builder.add_shape_mesh(
             body=back_wheel,
             mesh=wheel_mesh_render,
             cfg=newton.ModelBuilder.ShapeConfig(
@@ -165,7 +164,7 @@ class Simulator(AbstractSimulator):
                 has_shape_collision=False,
             ),
         )
-        builder.add_shape_capsule(
+        self.builder.add_shape_capsule(
             body=back_wheel,
             xform=wp.transform(
                 (0.0, 0.0, 0.0), wp.quat_from_axis_angle(wp.vec3(1.0, 0.0, 0.0), wp.pi / 2)
@@ -183,26 +182,28 @@ class Simulator(AbstractSimulator):
 
         # --- Define Joints ---
 
-        builder.add_joint_free(parent=-1, child=chassis)
+        self.builder.add_joint_free(parent=-1, child=chassis)
 
         # Left wheel revolute joint (velocity control)
-        builder.add_joint_revolute(
+        self.builder.add_joint_revolute(
             parent=chassis,
             child=left_wheel,
             parent_xform=wp.transform((0.75, -0.75, 0.0), wp.quat_identity()),
             axis=(0.0, 1.0, 0.0),
-            mode=newton.JointMode.NONE,
+            mode=newton.JointMode.TARGET_VELOCITY,
+            #custom_attributes={"joint_err_i": [0.5]}
         )
         # Right wheel revolute joint (velocity control)
-        builder.add_joint_revolute(
+        self.builder.add_joint_revolute(
             parent=chassis,
             child=right_wheel,
             parent_xform=wp.transform((0.75, 0.75, 0.0), wp.quat_identity()),
             axis=(0.0, 1.0, 0.0),
-            mode=newton.JointMode.NONE,
+            mode=newton.JointMode.TARGET_VELOCITY,
+            #custom_attributes={"joint_err_i": [0.5]}
         )
         # Back wheel revolute joint (not actively driven)
-        builder.add_joint_revolute(
+        self.builder.add_joint_revolute(
             parent=chassis,
             child=back_wheel,
             parent_xform=wp.transform((-1.5, 0.0, 0.0), wp.quat_identity()),
@@ -224,7 +225,7 @@ class Simulator(AbstractSimulator):
         # --- Add Static Obstacles and Ground ---
 
         # Add a static box obstacle (body=-1 means it's fixed to the world)
-        builder.add_shape_box(
+        self.builder.add_shape_box(
             body=-1,
             xform=wp.transform((2.5, 0.0, 0.0), wp.quat_identity()),
             hx=1.75,
@@ -235,7 +236,7 @@ class Simulator(AbstractSimulator):
                 restitution=RESTITUTION,
             ),
         )
-        builder.add_shape_box(
+        self.builder.add_shape_box(
             body=-1,
             xform=wp.transform((2.5, 0.0, 0.0), wp.quat_identity()),
             hx=0.75,
@@ -248,14 +249,14 @@ class Simulator(AbstractSimulator):
         )
 
         # add ground plane
-        builder.add_ground_plane(
+        self.builder.add_ground_plane(
             cfg=newton.ModelBuilder.ShapeConfig(
                 ke=10.0, kd=10.0, kf=0.0, mu=FRICTION, restitution=RESTITUTION
             )
         )
 
         # Finalize and return the model
-        model = builder.finalize()
+        model = self.builder.finalize()
         return model
 
 

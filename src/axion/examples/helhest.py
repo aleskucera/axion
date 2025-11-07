@@ -59,7 +59,7 @@ class Simulator(AbstractSimulator):
         FRICTION = 1.0
         RESTITUTION = 0.0
 
-        builder = newton.ModelBuilder()
+        builder = self.builder
         builder.add_articulation(key="helhest")
 
         # --- Build the Vehicle ---
