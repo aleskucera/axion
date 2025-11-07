@@ -127,10 +127,7 @@ class AbstractSimulator(ABC):
 
         if isinstance(self.engine_config, AxionEngineConfig):
             self.solver = AxionEngine(
-              self.model, 
-              self.init_state_fn, 
-              self.logger, 
-              self.engine_config
+                self.model, self.init_state_fn, self.logger, self.engine_config
             )
         elif isinstance(self.engine_config, FeatherstoneEngineConfig):
             self.solver = SolverFeatherstone(self.model, **vars(self.engine_config))
@@ -249,7 +246,9 @@ class AbstractSimulator(ABC):
                 linearize_time = wp.get_event_elapsed_time(
                     events["iter_start"], events["system_linearization"]
                 )
-                lin_solve_time = wp.get_event_elapsed_time(events["system_linearization"], events["linear_system_solve"])
+                lin_solve_time = wp.get_event_elapsed_time(
+                    events["system_linearization"], events["linear_system_solve"]
+                )
                 linesearch_time = wp.get_event_elapsed_time(
                     events["linear_system_solve"], events["linesearch"]
                 )
@@ -321,37 +320,43 @@ class AbstractSimulator(ABC):
     def _create_builder_with_custom_attributes(self) -> newton.ModelBuilder:
         """
         Adds the custom attributes to the ModelBuilder and adds the instance of the builder
-        to self attributes of AbstractSimulator class. 
+        to self attributes of AbstractSimulator class.
         """
         builder = newton.ModelBuilder()
 
-        #--- Add custom attributes to the model class ---
+        # --- Add custom attributes to the model class ---
 
         # integral constant (PID control)
         builder.add_custom_attribute(
-            name="joint_target_ki",
-            frequency= newton.ModelAttributeFrequency.JOINT_DOF,
-            dtype=wp.float32,
-            default=0.1,  # Explicit default value
-            assignment= newton.ModelAttributeAssignment.MODEL
+            newton.ModelBuilder.CustomAttribute(
+                name="joint_target_ki",
+                frequency=newton.ModelAttributeFrequency.JOINT_DOF,
+                dtype=wp.float32,
+                default=0.0,  # Explicit default value
+                assignment=newton.ModelAttributeAssignment.MODEL,
+            )
         )
-        
+
         # previous instance of the control error (PID control)
         builder.add_custom_attribute(
-            name="joint_err_prev",
-            frequency= newton.ModelAttributeFrequency.JOINT_DOF,
-            dtype=wp.float32,
-            default=0.0,
-            assignment= newton.ModelAttributeAssignment.CONTROL
+            newton.ModelBuilder.CustomAttribute(
+                name="joint_err_prev",
+                frequency=newton.ModelAttributeFrequency.JOINT_DOF,
+                dtype=wp.float32,
+                default=0.0,
+                assignment=newton.ModelAttributeAssignment.CONTROL,
+            )
         )
 
         # cummulative error of the integral part (PID control)
         builder.add_custom_attribute(
-            name="joint_err_i", 
-            frequency= newton.ModelAttributeFrequency.JOINT_DOF,
-            dtype=wp.float32,
-            default=0.0,
-            assignment= newton.ModelAttributeAssignment.CONTROL
+            newton.ModelBuilder.CustomAttribute(
+                name="joint_err_i",
+                frequency=newton.ModelAttributeFrequency.JOINT_DOF,
+                dtype=wp.float32,
+                default=0.0,
+                assignment=newton.ModelAttributeAssignment.CONTROL,
+            )
         )
 
         return builder
