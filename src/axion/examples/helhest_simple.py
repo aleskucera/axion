@@ -9,6 +9,7 @@ import warp as wp
 from axion import AbstractSimulator
 from axion import EngineConfig
 from axion import ExecutionConfig
+from axion import JointMode
 from axion import LoggingConfig
 from axion import RenderingConfig
 from axion import SimulationConfig
@@ -50,9 +51,6 @@ class Simulator(AbstractSimulator):
 
     @override
     def control_policy(self, current_state: newton.State):
-        # For mujoco
-        # wp.copy(self.control.joint_f, wp.array(6 * [0.0] + [500.0, 500.0, 0.0], dtype=wp.float32))
-
         # For axion
         wp.copy(self.control.joint_target, self.joint_target)
 
@@ -188,11 +186,11 @@ class Simulator(AbstractSimulator):
             child=left_wheel,
             parent_xform=wp.transform((0.0, -0.75, 0.0), wp.quat_identity()),
             axis=(0.0, 1.0, 0.0),
-            mode=newton.JointMode.TARGET_VELOCITY,
             target_ke=400.0,
             target_kd=40.5,
             custom_attributes={
                 "joint_target_ki": [0.5],
+                "joint_dof_mode": [JointMode.NONE],
             },
         )
         # Right wheel revolute joint (velocity control)
@@ -201,11 +199,11 @@ class Simulator(AbstractSimulator):
             child=right_wheel,
             parent_xform=wp.transform((0.0, 0.75, 0.0), wp.quat_identity()),
             axis=(0.0, 1.0, 0.0),
-            mode=newton.JointMode.TARGET_VELOCITY,
             target_ke=400.0,
             target_kd=40.5,
             custom_attributes={
                 "joint_target_ki": [0.5],
+                "joint_dof_mode": [JointMode.NONE],
             },
         )
         # Back wheel revolute joint (not actively driven)
@@ -214,7 +212,6 @@ class Simulator(AbstractSimulator):
             child=back_wheel,
             parent_xform=wp.transform((-1.5, 0.0, 0.0), wp.quat_identity()),
             axis=(0.0, 1.0, 0.0),
-            mode=newton.JointMode.NONE,
         )
 
         # --- Add Static Obstacles and Ground ---

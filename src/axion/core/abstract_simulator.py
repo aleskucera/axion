@@ -13,6 +13,7 @@ from newton.solvers import SolverMuJoCo
 from newton.solvers import SolverXPBD
 from tqdm import tqdm
 
+from .control_utils import JointMode
 from .engine import AxionEngine
 from .engine_config import AxionEngineConfig
 from .engine_config import EngineConfig
@@ -355,6 +356,26 @@ class AbstractSimulator(ABC):
                 frequency=newton.ModelAttributeFrequency.JOINT_DOF,
                 dtype=wp.float32,
                 default=0.0,
+                assignment=newton.ModelAttributeAssignment.CONTROL,
+            )
+        )
+
+        builder.add_custom_attribute(
+            newton.ModelBuilder.CustomAttribute(
+                name="joint_dof_mode",
+                frequency=newton.ModelAttributeFrequency.JOINT_DOF,
+                dtype=wp.int32,
+                default=JointMode.NONE,
+                assignment=newton.ModelAttributeAssignment.MODEL,
+            )
+        )
+
+        builder.add_custom_attribute(
+            newton.ModelBuilder.CustomAttribute(
+                name="joint_target",
+                frequency=newton.ModelAttributeFrequency.JOINT_DOF,
+                dtype=wp.float32,
+                default=0,
                 assignment=newton.ModelAttributeAssignment.CONTROL,
             )
         )
