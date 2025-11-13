@@ -2,7 +2,6 @@
 _target_: axion.MuJoCoEngineConfig
 separate_worlds: null
 njmax: 100
-ncon_per_world: null
 iterations: 20
 ls_iterations: 10
 solver: "newton"
@@ -18,5 +17,4 @@ save_to_mjcf: null
 contact_stiffness_time_const: 0.0001
 ls_parallel: False
 use_mujoco_contacts: True
-joint_solref_limit: null
 joint_solimp_limit: null

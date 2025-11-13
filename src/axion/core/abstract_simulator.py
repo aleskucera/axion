@@ -13,6 +13,7 @@ from newton.solvers import SolverMuJoCo
 from newton.solvers import SolverXPBD
 from tqdm import tqdm
 
+from .control_utils import JointMode
 from .engine import AxionEngine
 from .engine_config import AxionEngineConfig
 from .engine_config import EngineConfig
@@ -117,6 +118,7 @@ class AbstractSimulator(ABC):
         self.effective_duration: float = 0.0
         self._resolve_timing_parameters()
 
+        self.builder = self._create_builder_with_custom_attributes()
         self.model = self.build_model()
 
         self.current_state = self.model.state()
@@ -125,7 +127,9 @@ class AbstractSimulator(ABC):
         self.contacts = self.model.collide(self.current_state)
 
         if isinstance(self.engine_config, AxionEngineConfig):
-            self.solver = AxionEngine(self.model, self.logger, self.engine_config)
+            self.solver = AxionEngine(
+                self.model, self.init_state_fn, self.logger, self.engine_config
+            )
         elif isinstance(self.engine_config, FeatherstoneEngineConfig):
             self.solver = SolverFeatherstone(self.model, **vars(self.engine_config))
         elif isinstance(self.engine_config, MuJoCoEngineConfig):
@@ -243,7 +247,9 @@ class AbstractSimulator(ABC):
                 linearize_time = wp.get_event_elapsed_time(
                     events["iter_start"], events["system_linearization"]
                 )
-                lin_solve_time = wp.get_event_elapsed_time(events["system_linearization"], events["linear_system_solve"])
+                lin_solve_time = wp.get_event_elapsed_time(
+                    events["system_linearization"], events["linear_system_solve"]
+                )
                 linesearch_time = wp.get_event_elapsed_time(
                     events["linear_system_solve"], events["linesearch"]
                 )
@@ -312,6 +318,70 @@ class AbstractSimulator(ABC):
         if self.rendering_config.vis_type == "gl":
             self.num_segments = None
 
+    def _create_builder_with_custom_attributes(self) -> newton.ModelBuilder:
+        """
+        Adds the custom attributes to the ModelBuilder and adds the instance of the builder
+        to self attributes of AbstractSimulator class.
+        """
+        builder = newton.ModelBuilder()
+
+        # --- Add custom attributes to the model class ---
+
+        # integral constant (PID control)
+        builder.add_custom_attribute(
+            newton.ModelBuilder.CustomAttribute(
+                name="joint_target_ki",
+                frequency=newton.ModelAttributeFrequency.JOINT_DOF,
+                dtype=wp.float32,
+                default=0.0,  # Explicit default value
+                assignment=newton.ModelAttributeAssignment.MODEL,
+            )
+        )
+
+        # previous instance of the control error (PID control)
+        builder.add_custom_attribute(
+            newton.ModelBuilder.CustomAttribute(
+                name="joint_err_prev",
+                frequency=newton.ModelAttributeFrequency.JOINT_DOF,
+                dtype=wp.float32,
+                default=0.0,
+                assignment=newton.ModelAttributeAssignment.CONTROL,
+            )
+        )
+
+        # cummulative error of the integral part (PID control)
+        builder.add_custom_attribute(
+            newton.ModelBuilder.CustomAttribute(
+                name="joint_err_i",
+                frequency=newton.ModelAttributeFrequency.JOINT_DOF,
+                dtype=wp.float32,
+                default=0.0,
+                assignment=newton.ModelAttributeAssignment.CONTROL,
+            )
+        )
+
+        builder.add_custom_attribute(
+            newton.ModelBuilder.CustomAttribute(
+                name="joint_dof_mode",
+                frequency=newton.ModelAttributeFrequency.JOINT_DOF,
+                dtype=wp.int32,
+                default=JointMode.NONE,
+                assignment=newton.ModelAttributeAssignment.MODEL,
+            )
+        )
+
+        builder.add_custom_attribute(
+            newton.ModelBuilder.CustomAttribute(
+                name="joint_target",
+                frequency=newton.ModelAttributeFrequency.JOINT_DOF,
+                dtype=wp.float32,
+                default=0,
+                assignment=newton.ModelAttributeAssignment.CONTROL,
+            )
+        )
+
+        return builder
+
     @property
     def use_cuda_graph(self) -> bool:
         """Determines if conditions are met to use CUDA graph optimization."""
@@ -332,6 +402,8 @@ class AbstractSimulator(ABC):
 
         This method MUST be implemented by any subclass. It should define all the
         rigid bodies, joints, and other physical properties of the scene.
+
+        It HAS TO use the self.builder instance of creating its own.
         """
         pass
 
@@ -345,3 +417,21 @@ class AbstractSimulator(ABC):
         By default, it does nothing.
         """
         pass
+
+    def init_state_fn(
+        self,
+        current_state: newton.State,
+        next_state: newton.State,
+        contacts: newton.Contacts,
+        dt: float,
+    ):
+        """
+        This function initializes the simulation state before the first step for the Axion engine.
+
+        It is not necessary to use every available argument. Control is applied before this call.
+        This method may be optionally overridden by any subclass.
+        For one time initializations use the subclass constructor, which can use all the AbstractSimulator self attributes.
+        It is called before each simulation step.
+        """
+
+        self.solver.integrate_bodies(self.model, current_state, next_state, dt)

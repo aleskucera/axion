@@ -21,7 +21,7 @@ class AxionEngineConfig(EngineConfig):
     linear_iters: int = 8
 
     joint_stabilization_factor: float = 0.01
-    contact_stabilization_factor: float = 0.05
+    contact_stabilization_factor: float = 0.02
 
     joint_compliance: float = 1e-5
     contact_compliance: float = 1e-5
@@ -34,7 +34,10 @@ class AxionEngineConfig(EngineConfig):
     friction_fb_alpha: float = 1.0
     friction_fb_beta: float = 1.0
 
-    linesearch_steps: int = 0
+    enable_linesearch: bool = False
+    linesearch_step_count: int = 200
+    linesearch_step_min: float = 1e-6
+    linesearch_step_max: float = 10.0
 
     matrixfree_representation: bool = True
 
@@ -83,7 +86,12 @@ class AxionEngineConfig(EngineConfig):
         _validate_unit_interval(self.friction_fb_beta, "friction_fb_beta")
 
         # Validate linesearch steps
-        _validate_non_negative_int(self.linesearch_steps, "linesearch_steps")
+        _validate_positive_int(self.linesearch_step_count, "linesearch_step_count")
+        _validate_non_negative_float(self.linesearch_step_min, "linesearch_step_min")
+        _validate_non_negative_float(self.linesearch_step_max, "linesearch_step_max")
+
+        if self.linesearch_step_min >= self.linesearch_step_max:
+            raise ValueError("linesearch_step_min must be < linesearch_step_max")
 
 
 @dataclass(frozen=True)
@@ -99,7 +107,6 @@ class FeatherstoneEngineConfig(EngineConfig):
 class MuJoCoEngineConfig(EngineConfig):
     separate_worlds: bool | None = None
     njmax: int | None = None
-    ncon_per_world: int | None = None
     iterations: int = 20
     ls_iterations: int = 10
     solver: int | str = "cg"
@@ -115,7 +122,6 @@ class MuJoCoEngineConfig(EngineConfig):
     contact_stiffness_time_const: float = 0.02
     ls_parallel: bool = False
     use_mujoco_contacts: bool = True
-    joint_solref_limit: tuple[float, float] | None = None
     joint_solimp_limit: tuple[float, float, float, float, float] | None = None
 
 

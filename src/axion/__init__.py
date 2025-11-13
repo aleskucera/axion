@@ -4,6 +4,7 @@ from .core import AxionEngineConfig
 from .core import EngineConfig
 from .core import ExecutionConfig
 from .core import FeatherstoneEngineConfig
+from .core import JointMode
 from .core import LoggingConfig
 from .core import MuJoCoEngineConfig
 from .core import RenderingConfig
@@ -28,4 +29,5 @@ __all__ = [
     "HDF5Reader",
     "NullLogger",
     "LoggingConfig",
+    "JointMode",
 ]

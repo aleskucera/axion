@@ -32,45 +32,44 @@ class Simulator(AbstractSimulator):
         )
 
     def build_model(self) -> newton.Model:
-        builder = newton.ModelBuilder()
 
-        rigid_cfg = builder.ShapeConfig()
+        rigid_cfg = self.builder.ShapeConfig()
         rigid_cfg.restitution = 0.0
         rigid_cfg.has_shape_collision = True
         rigid_cfg.mu = 1.0
 
         # add ground plane
-        builder.add_ground_plane(cfg=rigid_cfg)
+        self.builder.add_ground_plane(cfg=rigid_cfg)
 
         # z height to drop shapes from
         drop_z = 2.0
 
         # SPHERE
         self.sphere_pos = wp.vec3(0.0, -2.0, drop_z)
-        body_sphere = builder.add_body(
+        body_sphere = self.builder.add_body(
             xform=wp.transform(p=self.sphere_pos, q=wp.quat_identity()), key="sphere"
         )
-        builder.add_shape_sphere(body_sphere, radius=0.5, cfg=rigid_cfg)
+        self.builder.add_shape_sphere(body_sphere, radius=0.5, cfg=rigid_cfg)
 
         # CAPSULE
         self.capsule_pos = wp.vec3(0.0, 0.0, drop_z)
-        body_capsule = builder.add_body(
+        body_capsule = self.builder.add_body(
             xform=wp.transform(p=self.capsule_pos, q=wp.quat_identity()), key="capsule"
         )
-        builder.add_shape_capsule(body_capsule, radius=0.3, half_height=0.7, cfg=rigid_cfg)
+        self.builder.add_shape_capsule(body_capsule, radius=0.3, half_height=0.7, cfg=rigid_cfg)
 
         # BOX
         self.box_pos = wp.vec3(0.0, 2.0, drop_z)
-        body_box = builder.add_body(
+        body_box = self.builder.add_body(
             xform=wp.transform(p=self.box_pos, q=wp.quat_identity()), key="box"
         )
-        builder.add_shape_box(body_box, hx=0.5, hy=0.35, hz=0.25, cfg=rigid_cfg)
+        self.builder.add_shape_box(body_box, hx=0.5, hy=0.35, hz=0.25, cfg=rigid_cfg)
 
-        builder.add_joint_free(parent=-1, child=body_sphere)
-        builder.add_joint_free(parent=-1, child=body_capsule)
-        builder.add_joint_free(parent=-1, child=body_box)
+        self.builder.add_joint_free(parent=-1, child=body_sphere)
+        self.builder.add_joint_free(parent=-1, child=body_capsule)
+        self.builder.add_joint_free(parent=-1, child=body_box)
 
-        model = builder.finalize()
+        model = self.builder.finalize()
         return model
 
 

@@ -34,10 +34,21 @@ class Simulator(AbstractSimulator):
             engine_config,
             logging_config,
         )
+        self.mujoco_solver = newton.solvers.SolverMuJoCo(self.model)
 
     @override
     def control_policy(self, current_state: newton.State):
         wp.copy(self.control.joint_target, wp.array(6 * [0.0] + [4.0, 4.0, 0.0], dtype=wp.float32))
+
+    @override
+    def init_state_fn(
+        self,
+        current_state: newton.State,
+        next_state: newton.State,
+        contacts: newton.Contacts,
+        dt: float,
+    ):
+        self.mujoco_solver.step(current_state, next_state, self.model.control(), contacts, dt)
 
     def build_model(self) -> newton.Model:
         """
@@ -48,7 +59,7 @@ class Simulator(AbstractSimulator):
         FRICTION = 1.0
         RESTITUTION = 0.0
 
-        builder = newton.ModelBuilder()
+        builder = self.builder
         builder.add_articulation(key="helhest")
 
         # --- Build the Vehicle ---

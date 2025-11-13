@@ -39,12 +39,10 @@ class Simulator(AbstractSimulator):
         KD = 50.0
         KF = 200.0
 
-        builder = newton.ModelBuilder()
-
-        ball1 = builder.add_body(
+        ball1 = self.builder.add_body(
             xform=wp.transform((0.0, 0.0, 2.0), wp.quat_identity()), key="ball1"
         )
-        builder.add_shape_sphere(
+        self.builder.add_shape_sphere(
             body=ball1,
             radius=0.5,
             cfg=newton.ModelBuilder.ShapeConfig(
@@ -58,11 +56,11 @@ class Simulator(AbstractSimulator):
             ),
         )
 
-        ball2 = builder.add_body(
+        ball2 = self.builder.add_body(
             xform=wp.transform((0.0, 0.3, 4.5), wp.quat_identity()), key="ball2"
         )
 
-        builder.add_shape_sphere(
+        self.builder.add_shape_sphere(
             body=ball2,
             radius=0.5,
             cfg=newton.ModelBuilder.ShapeConfig(
@@ -76,11 +74,11 @@ class Simulator(AbstractSimulator):
             ),
         )
 
-        ball3 = builder.add_body(
+        ball3 = self.builder.add_body(
             xform=wp.transform((0.0, -0.6, 6.5), wp.quat_identity()), key="ball3"
         )
 
-        builder.add_shape_sphere(
+        self.builder.add_shape_sphere(
             body=ball3,
             radius=0.4,
             cfg=newton.ModelBuilder.ShapeConfig(
@@ -94,11 +92,11 @@ class Simulator(AbstractSimulator):
             ),
         )
 
-        ball4 = builder.add_body(
+        ball4 = self.builder.add_body(
             xform=wp.transform((0.0, -0.6, 10.5), wp.quat_identity()), key="ball4"
         )
 
-        builder.add_shape_sphere(
+        self.builder.add_shape_sphere(
             body=ball4,
             radius=0.2,
             cfg=newton.ModelBuilder.ShapeConfig(
@@ -112,9 +110,9 @@ class Simulator(AbstractSimulator):
             ),
         )
 
-        box1 = builder.add_body(xform=wp.transform((0.0, 0.0, 9.0), wp.quat_identity()), key="box1")
+        box1 = self.builder.add_body(xform=wp.transform((0.0, 0.0, 9.0), wp.quat_identity()), key="box1")
 
-        builder.add_shape_box(
+        self.builder.add_shape_box(
             body=box1,
             hx=0.4,
             hy=0.4,
@@ -130,18 +128,18 @@ class Simulator(AbstractSimulator):
             ),
         )
 
-        builder.add_joint_free(parent=-1, child=ball1)
-        builder.add_joint_free(parent=-1, child=ball2)
-        builder.add_joint_free(parent=-1, child=ball3)
-        builder.add_joint_free(parent=-1, child=ball4)
-        builder.add_joint_free(parent=-1, child=box1)
+        self.builder.add_joint_free(parent=-1, child=ball1)
+        self.builder.add_joint_free(parent=-1, child=ball2)
+        self.builder.add_joint_free(parent=-1, child=ball3)
+        self.builder.add_joint_free(parent=-1, child=ball4)
+        self.builder.add_joint_free(parent=-1, child=box1)
 
-        builder.add_ground_plane(
+        self.builder.add_ground_plane(
             cfg=newton.ModelBuilder.ShapeConfig(
                 ke=10, kd=10, kf=0.0, mu=FRICTION, restitution=RESTITUTION
             )
         )
-        model = builder.finalize()
+        model = self.builder.finalize()
         return model
 
 

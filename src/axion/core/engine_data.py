@@ -2,6 +2,8 @@ from dataclasses import dataclass
 from functools import cached_property
 from typing import Optional
 
+import numpy as np
+import torch
 import warp as wp
 import warp.context as wpc
 from axion.constraints import fill_contact_constraint_body_idx_kernel
@@ -70,11 +72,12 @@ class EngineArrays:
     joint_constraint_offsets: wp.array
     contact_interaction: wp.array
 
-    # --- Linesearch specific arrays (always allocated, may be empty) ---
-    alpha: wp.array  # Step size
-    alphas: wp.array = None  # Alpha values for linesearch
-    h_alpha: wp.array = None  # Residuals for different alphas
-    h_alpha_norm_sq: wp.array = None  # Squared norms of linesearch residuals
+    linesearch_steps: wp.array = None
+    linesearch_batch_body_u: wp.array = None
+    linesearch_batch_body_lambda: wp.array = None
+    linesearch_batch_h: wp.array = None
+    linesearch_batch_h_norm_sq: wp.array = None
+    linesearch_minimal_index: wp.array = None
 
     M_inv_dense: wp.array = None
     J_dense: wp.array = None
@@ -212,44 +215,67 @@ class EngineArrays:
         """Previous friction impulses."""
         return self.constraint_body_idx[self.dims.slice_f] if self.dims.N_f > 0 else None
 
-    # --- Linesearch views (always available, may be empty arrays) ---
     @cached_property
-    def h_d_alpha(self) -> wp.array:
-        """Linesearch residual g for different alphas."""
+    def linesearch_batch_h_d(self) -> wp.array:
         if self.has_linesearch:
-            return self.h_alpha[:, : self.dims.N_u]
+            return self.linesearch_batch_h[:, : self.dims.N_u]
 
     @cached_property
-    def h_d_alpha_v(self) -> wp.array:
+    def linesearch_batch_h_d_v(self) -> wp.array:
         """Linesearch residual g as spatial vectors."""
         if self.has_linesearch:
             return wp.array(
-                self.h_d_alpha, shape=(self.dims.N_alpha, self.dims.N_b), dtype=wp.spatial_vector
+                self.linesearch_batch_h_d.contiguous(),
+                shape=(self.linesearch_batch_h.shape[0], self.dims.N_b),
+                dtype=wp.spatial_vector,
             )
 
     @cached_property
-    def h_c_alpha(self) -> wp.array:
-        """Linesearch residual h for different alphas."""
+    def linesearch_batch_h_c(self) -> wp.array:
         if self.has_linesearch:
-            return self.h_alpha[:, self.dims.N_u :]
+            return self.linesearch_batch_h[:, self.dims.N_u :]
 
     @cached_property
-    def h_j_alpha(self) -> Optional[wp.array]:
-        """Linesearch joint constraint residuals."""
+    def linesearch_batch_h_j(self) -> wp.array:
         if self.has_linesearch:
-            return self.h_alpha[:, self.dims.slice_j] if self.dims.N_j > 0 else None
+            return self.linesearch_batch_h[:, self.dims.slice_j] if self.dims.N_j > 0 else None
 
     @cached_property
-    def h_n_alpha(self) -> Optional[wp.array]:
-        """Linesearch normal contact residuals."""
+    def linesearch_batch_h_n(self) -> wp.array:
         if self.has_linesearch:
-            return self.h_alpha[:, self.dims.slice_n] if self.dims.N_n > 0 else None
+            return self.linesearch_batch_h[:, self.dims.slice_n] if self.dims.N_n > 0 else None
 
     @cached_property
-    def h_f_alpha(self) -> Optional[wp.array]:
-        """Linesearch friction residuals."""
+    def linesearch_batch_h_f(self) -> wp.array:
         if self.has_linesearch:
-            return self.h_alpha[:, self.dims.slice_f] if self.dims.N_f > 0 else None
+            return self.linesearch_batch_h[:, self.dims.slice_f] if self.dims.N_f > 0 else None
+
+    @cached_property
+    def linesearch_batch_body_lambda_j(self) -> wp.array:
+        if self.has_linesearch:
+            return (
+                self.linesearch_batch_body_lambda[:, self.dims.slice_j]
+                if self.dims.N_j > 0
+                else None
+            )
+
+    @cached_property
+    def linesearch_batch_body_lambda_n(self) -> wp.array:
+        if self.has_linesearch:
+            return (
+                self.linesearch_batch_body_lambda[:, self.dims.slice_n]
+                if self.dims.N_n > 0
+                else None
+            )
+
+    @cached_property
+    def linesearch_batch_body_lambda_f(self) -> wp.array:
+        if self.has_linesearch:
+            return (
+                self.linesearch_batch_body_lambda[:, self.dims.slice_f]
+                if self.dims.N_f > 0
+                else None
+            )
 
     @cached_property
     def pca_batch_body_u_float(self):
@@ -360,7 +386,7 @@ class EngineArrays:
         self.set_dt(dt)
 
         wp.copy(dest=self.body_f, src=state_in.body_f)
-        wp.copy(dest=self.body_q, src=state_out.body_q)
+        wp.copy(dest=self.body_q, src=state_in.body_q)
         wp.copy(dest=self.body_q_prev, src=state_in.body_q)
         wp.copy(dest=self.body_u, src=state_out.body_qd)
         wp.copy(dest=self.body_u_prev, src=state_in.body_qd)
@@ -557,18 +583,27 @@ def create_engine_arrays(
     contact_interaction = _empty(dims.N_n, ContactInteraction)
 
     # --- Arrays for linesearch ---
-    alpha = _ones(1)  # Always set defaultly to one
-    alphas_array = None
+    linesearch_steps = None
+    linesearch_batch_body_u = None
+    linesearch_batch_body_lambda = None
+    linesearch_batch_h = None
+    linesearch_batch_h_norm_sq = None
+    linesearch_minimal_index = None
+    if config.enable_linesearch:
+        step_count = config.linesearch_step_count
 
-    res_alpha = None
-    res_alpha_norm_sq = None
-    if dims.N_alpha > 0:
-        res_alpha = _zeros((dims.N_alpha, dims.N_u + dims.N_c))
-        res_alpha_norm_sq = _zeros(dims.N_alpha)
+        log_step_min = np.log10(config.linesearch_step_min)
+        log_step_max = np.log10(config.linesearch_step_max)
+        linesearch_steps_np = np.logspace(log_step_min, log_step_max, step_count)
+        closest_idx = np.argmin(np.abs(linesearch_steps_np - 1.0))
+        linesearch_steps_np[closest_idx] = 1.0
+        linesearch_steps = wp.from_numpy(linesearch_steps_np, dtype=wp.float32)
 
-        # Create default alpha values if not provide
-        alphas = [1.0 / (2**i) for i in range(dims.N_alpha)]
-        alphas_array = wp.array(alphas, dtype=wp.float32, device=device)
+        linesearch_batch_body_u = _zeros((step_count, dims.N_b), dtype=wp.spatial_vector)
+        linesearch_batch_body_lambda = _zeros((step_count, dims.N_c))
+        linesearch_batch_h = _zeros((step_count, dims.N_u + dims.N_c))
+        linesearch_batch_h_norm_sq = _zeros(step_count)
+        linesearch_minimal_index = _zeros(1, dtype=wp.int32)
 
     # --- Dense representation of the arrays---
     M_inv_dense = None
@@ -631,10 +666,12 @@ def create_engine_arrays(
         joint_constraint_data=joint_constraint_data,
         joint_constraint_offsets=joint_constraint_offsets,
         contact_interaction=contact_interaction,
-        alpha=alpha,
-        alphas=alphas_array,
-        h_alpha=res_alpha,
-        h_alpha_norm_sq=res_alpha_norm_sq,
+        linesearch_steps=linesearch_steps,
+        linesearch_batch_body_u=linesearch_batch_body_u,
+        linesearch_batch_body_lambda=linesearch_batch_body_lambda,
+        linesearch_batch_h=linesearch_batch_h,
+        linesearch_batch_h_norm_sq=linesearch_batch_h_norm_sq,
+        linesearch_minimal_index=linesearch_minimal_index,
         M_inv_dense=M_inv_dense,
         J_dense=J_dense,
         C_dense=C_dense,
