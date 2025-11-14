@@ -1,7 +1,6 @@
+import axion.tiled.tiled_kernels as tk
 import warp as wp
 import warp.context as wpc
-
-import axion.tiled.tiled_kernels as tk
 
 
 class TiledDot:
