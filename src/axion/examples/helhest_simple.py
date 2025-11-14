@@ -47,7 +47,8 @@ class Simulator(AbstractSimulator):
         contacts: newton.Contacts,
         dt: float,
     ):
-        self.mujoco_solver.step(current_state, next_state, self.model.control(), contacts, dt)
+        # self.mujoco_solver.step(current_state, next_state, self.model.control(), contacts, dt)
+        self.solver.integrate_bodies(self.model, current_state, next_state, dt)
 
     @override
     def control_policy(self, current_state: newton.State):
