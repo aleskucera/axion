@@ -328,6 +328,52 @@ def kernel_finalize_matvec(
         out_vec_z[i] = beta * vec_y[i] + alpha * a_times_x
 
 
+@wp.kernel
+def kernel_J_matvec_and_finalize(
+    # Inputs for J @ v
+    dyn_vec: wp.array(dtype=wp.spatial_vector),
+    J_values: wp.array(dtype=wp.spatial_vector, ndim=2),
+    constraint_body_idx: wp.array(dtype=wp.int32, ndim=2),
+    # Inputs for finalize
+    C_values: wp.array(dtype=wp.float32),
+    vec_x: wp.array(dtype=wp.float32),
+    vec_y: wp.array(dtype=wp.float32),
+    alpha: float,
+    beta: float,
+    regularization: float,
+    # Output array
+    out_vec_z: wp.array(dtype=wp.float32),
+):
+    """
+    Computes J @ dyn_vec and immediately uses it in the finalization step.
+    This fused kernel calculates:
+    z = beta * y + alpha * ( (J @ dyn_vec) + (C + reg) @ x )
+    """
+    constraint_idx = wp.tid()
+
+    # --- Part 1: Compute J @ dyn_vec for this constraint (from kernel_J_matvec) ---
+    body_1 = constraint_body_idx[constraint_idx, 0]
+    body_2 = constraint_body_idx[constraint_idx, 1]
+
+    J_1 = J_values[constraint_idx, 0]
+    J_2 = J_values[constraint_idx, 1]
+
+    j_m_inv_jt_x = 0.0
+    if body_1 >= 0:
+        j_m_inv_jt_x += wp.dot(J_1, dyn_vec[body_1])
+    if body_2 >= 0:
+        j_m_inv_jt_x += wp.dot(J_2, dyn_vec[body_2])
+
+    # --- Part 2: Use the result immediately (from kernel_finalize_matvec) ---
+    c_times_x = (C_values[constraint_idx] + regularization) * vec_x[constraint_idx]
+    a_times_x = j_m_inv_jt_x + c_times_x
+
+    if beta == 0.0:
+        out_vec_z[constraint_idx] = alpha * a_times_x
+    else:
+        out_vec_z[constraint_idx] = beta * vec_y[constraint_idx] + alpha * a_times_x
+
+
 class MatrixFreeSystemOperator(LinearOperator):
     """
     A matrix-free linear operator for the system A = J M⁻¹ Jᵀ + C.
@@ -431,37 +477,55 @@ class MatrixFreeSystemOperator(LinearOperator):
 
         # wp.record_event(self.events[3])
 
-        # --- Step 3: Compute v₃ = J @ v₂ ---
         wp.launch(
-            kernel=kernel_J_matvec,
+            kernel=kernel_J_matvec_and_finalize,
             dim=self.engine.dims.N_c,
             inputs=[
-                self._tmp_dyn_vec,
+                self._tmp_dyn_vec,  # This is v₂ = M⁻¹ @ Jᵀ @ x
                 self.engine.data.J_values,
                 self.engine.data.constraint_body_idx,
-            ],
-            outputs=[self._tmp_con_vec],
-            device=self.device,
-        )
-
-        # wp.record_event(self.events[4])
-
-        # --- Step 4: Compute z = beta * y + alpha * (v₃ + C @ x) ---
-        wp.launch(
-            kernel=kernel_finalize_matvec,
-            dim=self.engine.dims.N_c,
-            inputs=[
-                self._tmp_con_vec,  # This is J M⁻¹ Jᵀ @ x
                 self.engine.data.C_values,
-                x,  # original x vector
-                y,  # original y vector
-                alpha,  # alpha scalar
-                beta,  # beta scalar
+                x,
+                y,
+                alpha,
+                beta,
                 self.regularization,
             ],
             outputs=[z],
             device=self.device,
         )
+
+        # # --- Step 3: Compute v₃ = J @ v₂ ---
+        # wp.launch(
+        #     kernel=kernel_J_matvec,
+        #     dim=self.engine.dims.N_c,
+        #     inputs=[
+        #         self._tmp_dyn_vec,
+        #         self.engine.data.J_values,
+        #         self.engine.data.constraint_body_idx,
+        #     ],
+        #     outputs=[self._tmp_con_vec],
+        #     device=self.device,
+        # )
+
+        # wp.record_event(self.events[4])
+
+        # # --- Step 4: Compute z = beta * y + alpha * (v₃ + C @ x) ---
+        # wp.launch(
+        #     kernel=kernel_finalize_matvec,
+        #     dim=self.engine.dims.N_c,
+        #     inputs=[
+        #         self._tmp_con_vec,  # This is J M⁻¹ Jᵀ @ x
+        #         self.engine.data.C_values,
+        #         x,  # original x vector
+        #         y,  # original y vector
+        #         alpha,  # alpha scalar
+        #         beta,  # beta scalar
+        #         self.regularization,
+        #     ],
+        #     outputs=[z],
+        #     device=self.device,
+        # )
 
         # wp.record_event(self.events[5])
 
