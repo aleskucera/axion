@@ -9,6 +9,7 @@ import warp as wp
 from axion import AbstractSimulator
 from axion import EngineConfig
 from axion import ExecutionConfig
+from axion import JointMode
 from axion import LoggingConfig
 from axion import RenderingConfig
 from axion import SimulationConfig
@@ -35,10 +36,11 @@ class Simulator(AbstractSimulator):
             logging_config,
         )
         self.mujoco_solver = newton.solvers.SolverMuJoCo(self.model)
+        self.joint_target = wp.array(6 * [0.0] + [0.5, 0.5, 0.0], dtype=wp.float32)
 
     @override
     def control_policy(self, current_state: newton.State):
-        wp.copy(self.control.joint_target, wp.array(6 * [0.0] + [4.0, 4.0, 0.0], dtype=wp.float32))
+        wp.copy(self.control.joint_target, self.joint_target)
 
     @override
     def init_state_fn(
@@ -48,7 +50,8 @@ class Simulator(AbstractSimulator):
         contacts: newton.Contacts,
         dt: float,
     ):
-        self.mujoco_solver.step(current_state, next_state, self.model.control(), contacts, dt)
+        # self.mujoco_solver.step(current_state, next_state, self.model.control(), contacts, dt)
+        self.solver.integrate_bodies(self.model, current_state, next_state, dt)
 
     def build_model(self) -> newton.Model:
         """
@@ -58,6 +61,8 @@ class Simulator(AbstractSimulator):
         """
         FRICTION = 1.0
         RESTITUTION = 0.0
+        WHEEL_DENSITY = 300
+        CHASSIS_DENSITY = 800
 
         builder = self.builder
         builder.add_articulation(key="helhest")
@@ -75,21 +80,24 @@ class Simulator(AbstractSimulator):
 
         # Create main body (chassis)
         chassis = builder.add_body(
-            xform=wp.transform((-2.0, 0.0, 2.6), wp.quat_identity()), key="chassis"
+            xform=wp.transform((-2.0, 0.0, 1.0), wp.quat_identity()), key="chassis"
         )
         builder.add_shape_box(
             body=chassis,
-            hx=0.75,
-            hy=0.25,
-            hz=0.25,
+            hx=0.3,
+            hy=0.45,
+            hz=0.2,
             cfg=newton.ModelBuilder.ShapeConfig(
-                density=1200.0, mu=FRICTION, restitution=RESTITUTION
+                density=CHASSIS_DENSITY,
+                mu=FRICTION,
+                restitution=RESTITUTION,
             ),
         )
 
         # Left Wheel
-        left_wheel = builder.add_body(
-            xform=wp.transform((-1.25, -0.75, 2.6), wp.quat_identity()), key="left_wheel"
+        left_wheel = self.builder.add_body(
+            xform=wp.transform((-2.0, -0.75, 1.0), wp.quat_identity()),
+            key="left_wheel",
         )
         builder.add_shape_mesh(
             body=left_wheel,
@@ -105,7 +113,7 @@ class Simulator(AbstractSimulator):
             body=left_wheel,
             mesh=wheel_mesh_collision,
             cfg=newton.ModelBuilder.ShapeConfig(
-                density=1000.0,
+                density=WHEEL_DENSITY,
                 mu=FRICTION,
                 restitution=RESTITUTION,
                 is_visible=False,
@@ -113,8 +121,9 @@ class Simulator(AbstractSimulator):
         )
 
         # Right Wheel
-        right_wheel = builder.add_body(
-            xform=wp.transform((-1.25, 0.75, 2.6), wp.quat_identity()), key="right_wheel"
+        right_wheel = self.builder.add_body(
+            xform=wp.transform((-2.0, 0.75, 1.0), wp.quat_identity()),
+            key="right_wheel",
         )
         builder.add_shape_mesh(
             body=right_wheel,
@@ -131,7 +140,7 @@ class Simulator(AbstractSimulator):
             body=right_wheel,
             mesh=wheel_mesh_collision,
             cfg=newton.ModelBuilder.ShapeConfig(
-                density=1000.0,
+                density=WHEEL_DENSITY,
                 mu=FRICTION,
                 restitution=RESTITUTION,
                 is_visible=False,
@@ -139,8 +148,9 @@ class Simulator(AbstractSimulator):
         )
 
         # Back Wheel
-        back_wheel = builder.add_body(
-            xform=wp.transform((-3.25, 0.0, 2.6), wp.quat_identity()), key="back_wheel"
+        back_wheel = self.builder.add_body(
+            xform=wp.transform((-3.25, 0.0, 1.0), wp.quat_identity()),
+            key="back_wheel",
         )
         builder.add_shape_mesh(
             body=back_wheel,
@@ -157,7 +167,7 @@ class Simulator(AbstractSimulator):
             body=back_wheel,
             mesh=wheel_mesh_collision,
             cfg=newton.ModelBuilder.ShapeConfig(
-                density=1000.0,
+                density=WHEEL_DENSITY,
                 mu=FRICTION,
                 restitution=RESTITUTION,
                 thickness=0.0,
@@ -173,17 +183,27 @@ class Simulator(AbstractSimulator):
         builder.add_joint_revolute(
             parent=chassis,
             child=left_wheel,
-            parent_xform=wp.transform((0.75, -0.75, 0.0), wp.quat_identity()),
+            parent_xform=wp.transform((0.0, -0.75, 0.0), wp.quat_identity()),
             axis=(0.0, 1.0, 0.0),
-            mode=newton.JointMode.TARGET_VELOCITY,
+            target_ke=300.0,
+            target_kd=40.5,
+            custom_attributes={
+                "joint_target_ki": [0.5],
+                "joint_dof_mode": [JointMode.TARGET_VELOCITY],
+            },
         )
         # Right wheel revolute joint (velocity control)
         builder.add_joint_revolute(
             parent=chassis,
             child=right_wheel,
-            parent_xform=wp.transform((0.75, 0.75, 0.0), wp.quat_identity()),
+            parent_xform=wp.transform((0.0, 0.75, 0.0), wp.quat_identity()),
             axis=(0.0, 1.0, 0.0),
-            mode=newton.JointMode.TARGET_VELOCITY,
+            target_ke=300.0,
+            target_kd=40.5,
+            custom_attributes={
+                "joint_target_ki": [0.5],
+                "joint_dof_mode": [JointMode.TARGET_VELOCITY],
+            },
         )
         # Back wheel revolute joint (not actively driven)
         builder.add_joint_revolute(
@@ -191,19 +211,7 @@ class Simulator(AbstractSimulator):
             child=back_wheel,
             parent_xform=wp.transform((-1.5, 0.0, 0.0), wp.quat_identity()),
             axis=(0.0, 1.0, 0.0),
-            mode=newton.JointMode.NONE,
         )
-
-        # Set joint control gains
-        builder.joint_target_ke[-3] = 50.0
-        builder.joint_target_ke[-2] = 50.0
-        builder.joint_target_ke[-1] = 0.0
-        builder.joint_armature[-3] = 0.1
-        builder.joint_armature[-2] = 0.1
-        builder.joint_armature[-1] = 0.1
-        builder.joint_target_kd[-3] = 5.0
-        builder.joint_target_kd[-2] = 5.0
-        builder.joint_target_kd[-1] = 5.0
 
         # --- Add Static Obstacles and Ground ---
 
