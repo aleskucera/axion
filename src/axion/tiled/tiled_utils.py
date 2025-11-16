@@ -43,10 +43,8 @@ class TiledDot:
         else:
             raise ValueError("Unknown shape")
 
-        self.num_blocks = N // self.tile_size
-        self.extra_block = 1 if N % self.tile_size > 0 else 0
-        self.num_blocks_total = self.num_blocks + self.extra_block
-        self.partial_sums = wp.empty((M, self.num_blocks_total), dtype=wp.float32, device=device)
+        self.num_blocks = (N + self.tile_size - 1) // self.tile_size
+        self.partial_sums = wp.empty((M, self.num_blocks), dtype=wp.float32, device=device)
 
         atomic_sum_kernel: wp.Kernel = tk.create_atomic_sum_kernel()
         dot_kernel: wp.Kernel = tk.create_tiled_dot_kernel(self.tile_size)
@@ -54,33 +52,19 @@ class TiledDot:
         a = wp.empty((M, N), dtype=wp.float32, device=self.device)
         b = wp.empty((M, N), dtype=wp.float32, device=self.device)
         out = wp.empty(M, dtype=wp.float32, device=self.device)
-        if self.num_blocks > 0:
-            self.dot_launch: wp.Launch = wp.launch_tiled(
-                kernel=dot_kernel,
-                dim=(M, self.num_blocks),
-                inputs=[a, b],
-                outputs=[self.partial_sums],
-                block_dim=self.block_threads,
-                device=self.device,
-                record_cmd=True,
-            )
-        if self.extra_block:
-            self.dot_extra_launch: wp.Launch = wp.launch_tiled(
-                kernel=dot_kernel,
-                dim=(M, 1),
-                inputs=[
-                    a[:, self.tile_size * self.num_blocks :],
-                    b[:, self.tile_size * self.num_blocks :],
-                ],
-                outputs=[self.partial_sums[:, -1:]],
-                block_dim=self.block_threads,
-                device=self.device,
-                record_cmd=True,
-            )
-        if self.num_blocks > 0:
+        self.dot_launch: wp.Launch = wp.launch_tiled(
+            kernel=dot_kernel,
+            dim=(M, self.num_blocks),
+            inputs=[a, b],
+            outputs=[self.partial_sums],
+            block_dim=self.block_threads,
+            device=self.device,
+            record_cmd=True,
+        )
+        if self.num_blocks > 1:
             self.atomic_sum_launch: wp.Launch = wp.launch(
                 kernel=atomic_sum_kernel,
-                dim=(M, self.num_blocks_total),
+                dim=(M, self.num_blocks),
                 inputs=[self.partial_sums],
                 outputs=[out],
                 block_dim=self.block_threads,
@@ -110,19 +94,12 @@ class TiledDot:
             a = a.reshape((1, -1))
             b = b.reshape((1, -1))
 
-        if self.num_blocks > 0:
-            self.dot_launch.set_param_at_index(0, a)
-            self.dot_launch.set_param_at_index(1, b)
-            self.dot_launch.set_param_at_index(2, self.partial_sums)
-            self.dot_launch.launch()
+        self.dot_launch.set_param_at_index(0, a)
+        self.dot_launch.set_param_at_index(1, b)
+        self.dot_launch.set_param_at_index(2, self.partial_sums)
+        self.dot_launch.launch()
 
-        if self.extra_block:
-            self.dot_extra_launch.set_param_at_index(0, a[:, self.tile_size * self.num_blocks :])
-            self.dot_extra_launch.set_param_at_index(1, b[:, self.tile_size * self.num_blocks :])
-            self.dot_extra_launch.set_param_at_index(2, self.partial_sums[:, -1:])
-            self.dot_extra_launch.launch()
-
-        if self.num_blocks > 0:
+        if self.num_blocks > 1:
             self.atomic_sum_launch.set_param_at_index(0, self.partial_sums)
             self.atomic_sum_launch.set_param_at_index(1, out)
             self.atomic_sum_launch.launch()
@@ -198,42 +175,27 @@ class TiledSum:
         else:
             raise ValueError("Unknown shape")
 
-        self.num_blocks = N // self.tile_size
-        self.extra_block = 1 if N % self.tile_size > 0 else 0
-        self.num_blocks_total = self.num_blocks + self.extra_block
-        self.partial_sums = wp.empty((M, self.num_blocks_total), dtype=wp.float32, device=device)
+        self.num_blocks = (N + self.tile_size - 1) // self.tile_size
+        self.partial_sums = wp.empty((M, self.num_blocks), dtype=wp.float32, device=device)
 
         atomic_sum_kernel: wp.Kernel = tk.create_atomic_sum_kernel()
         sum_kerenl: wp.Kernel = tk.create_tiled_sum_kernel(self.tile_size)
 
         a = wp.empty((M, N), dtype=wp.float32, device=self.device)
         out = wp.empty(M, dtype=wp.float32, device=self.device)
-        if self.num_blocks > 0:
-            self.dot_launch: wp.Launch = wp.launch_tiled(
-                kernel=sum_kerenl,
-                dim=(M, self.num_blocks),
-                inputs=[a],
-                outputs=[self.partial_sums],
-                block_dim=self.block_threads,
-                device=self.device,
-                record_cmd=True,
-            )
-        if self.extra_block:
-            self.dot_extra_launch: wp.Launch = wp.launch_tiled(
-                kernel=sum_kerenl,
-                dim=(M, 1),
-                inputs=[
-                    a[:, self.tile_size * self.num_blocks :],
-                ],
-                outputs=[self.partial_sums[:, -1:]],
-                block_dim=self.block_threads,
-                device=self.device,
-                record_cmd=True,
-            )
-        if self.num_blocks > 0:
+        self.dot_launch: wp.Launch = wp.launch_tiled(
+            kernel=sum_kerenl,
+            dim=(M, self.num_blocks),
+            inputs=[a],
+            outputs=[self.partial_sums],
+            block_dim=self.block_threads,
+            device=self.device,
+            record_cmd=True,
+        )
+        if self.num_blocks > 1:
             self.atomic_sum_launch: wp.Launch = wp.launch(
                 kernel=atomic_sum_kernel,
-                dim=(M, self.num_blocks_total),
+                dim=(M, self.num_blocks),
                 inputs=[self.partial_sums],
                 outputs=[out],
                 block_dim=self.block_threads,
@@ -260,17 +222,11 @@ class TiledSum:
         if self.unsqueeze:
             a = a.reshape((1, -1))
 
-        if self.num_blocks > 0:
-            self.dot_launch.set_param_at_index(0, a)
-            self.dot_launch.set_param_at_index(1, self.partial_sums)
-            self.dot_launch.launch()
+        self.dot_launch.set_param_at_index(0, a)
+        self.dot_launch.set_param_at_index(1, self.partial_sums)
+        self.dot_launch.launch()
 
-        if self.extra_block:
-            self.dot_extra_launch.set_param_at_index(0, a[:, self.tile_size * self.num_blocks :])
-            self.dot_extra_launch.set_param_at_index(1, self.partial_sums[:, -1:])
-            self.dot_extra_launch.launch()
-
-        if self.num_blocks > 0:
+        if self.num_blocks > 1:
             self.atomic_sum_launch.set_param_at_index(0, self.partial_sums)
             self.atomic_sum_launch.set_param_at_index(1, out)
             self.atomic_sum_launch.launch()
