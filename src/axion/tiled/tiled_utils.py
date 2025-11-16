@@ -79,7 +79,7 @@ class TiledDot:
         Args:
             a: First input array.
             b: Second input array.
-            out: Output array to store the result.
+            out: 1D output array to store the result.
         """
 
         assert (
@@ -130,7 +130,7 @@ class TiledSqrNorm(TiledDot):
 
         Args:
             a: Input array.
-            out: Output array to store the result.
+            out: 1D output array to store the result.
         """
         self.compute_dot(a, a, out)
 
@@ -208,7 +208,7 @@ class TiledSum:
         Computes the sum of the input array: out = sum(a) along the last axis.
         Args:
             a: Input array.
-            out: Output array to store the result.
+            out: 1D output array to store the result.
         """
 
         assert (
