@@ -15,151 +15,12 @@ This operator is designed to be used with iterative linear solvers like Conjugat
 Residual (CR) or Conjugate Gradient (CG), allowing the system to be solved
 without ever forming the potentially very large and dense matrix A explicitly.
 """
+
 import warp as wp
-import warp.context as wpc
 from axion.types import SpatialInertia
 from axion.types import to_spatial_momentum
+from axion.tiled import TiledSum
 from warp.optim.linear import LinearOperator
-
-
-def create_spatial_tiled_sum_kernel(tile_size: int):
-    """
-    FACTORY FUNCTION: Creates a specialized tiled sum kernel for a given tile_size.
-    The tile_size is a compile-time constant for the returned kernel.
-    """
-
-    @wp.kernel
-    def spatial_tiled_sum_kernel(
-        inp: wp.array(dtype=wp.spatial_vector, ndim=2),
-        out: wp.array(dtype=wp.spatial_vector, ndim=2),
-    ):
-        i, j = wp.tid()
-        # tile_load uses the compile-time constant 'tile_size' from the factory closure
-        tile = wp.tile_load(inp, (1, tile_size), (i, j * tile_size))
-        tile = wp.tile_sum(tile)
-        tile = wp.tile_reshape(tile, shape=(1, 1))
-        wp.tile_store(out, tile, offset=(i, j))
-
-    return spatial_tiled_sum_kernel
-
-
-@wp.kernel
-def spatial_atomic_sum_kernel(
-    inp: wp.array(dtype=wp.spatial_vector, ndim=2),
-    result: wp.array(dtype=wp.spatial_vector, ndim=1),
-):
-    i, j = wp.tid()
-    wp.atomic_add(result, i, inp[i, j])
-
-
-class TiledSpatialVectorSum:
-    def __init__(
-        self,
-        shape: int | tuple | list,
-        tile_size: int = 256,
-        block_threads: int = 512,
-        device: wpc.Device | str = "cuda",
-    ):
-        self.shape = shape
-        self.tile_size = tile_size
-        self.block_threads = block_threads
-        self.device = device
-
-        if isinstance(self.shape, int):
-            self.unsqueeze = True
-            self.shape = (self.shape,)
-            N = self.shape[0]
-            M = 1
-        elif len(self.shape) == 1:
-            self.unsqueeze = True
-            N = self.shape[0]
-            M = 1
-        elif len(self.shape) == 2:
-            self.unsqueeze = False
-            M, N = self.shape
-        else:
-            raise ValueError("Unknown shape")
-
-        self.num_blocks = N // self.tile_size
-        self.extra_block = 1 if N % self.tile_size > 0 else 0
-        self.num_blocks_total = self.num_blocks + self.extra_block
-        self.partial_sums = wp.empty(
-            (M, self.num_blocks_total), dtype=wp.spatial_vector, device=device
-        )
-
-        sum_kernel: wp.Kernel = create_spatial_tiled_sum_kernel(self.tile_size)
-
-        a = wp.empty((M, N), dtype=wp.spatial_vector, device=self.device)
-        out = wp.empty(M, dtype=wp.spatial_vector, device=self.device)
-        if self.num_blocks > 0:
-            self.dot_launch: wp.Launch = wp.launch_tiled(
-                kernel=sum_kernel,
-                dim=(M, self.num_blocks),
-                inputs=[a],
-                outputs=[self.partial_sums],
-                block_dim=self.block_threads,
-                device=self.device,
-                record_cmd=True,
-            )
-        if self.extra_block:
-            self.dot_extra_launch: wp.Launch = wp.launch_tiled(
-                kernel=sum_kernel,
-                dim=(M, 1),
-                inputs=[
-                    a[:, self.tile_size * self.num_blocks :],
-                ],
-                outputs=[self.partial_sums[:, -1:]],
-                block_dim=self.block_threads,
-                device=self.device,
-                record_cmd=True,
-            )
-        if self.num_blocks > 0:
-            self.atomic_sum_launch: wp.Launch = wp.launch(
-                kernel=spatial_atomic_sum_kernel,
-                dim=(M, self.num_blocks_total),
-                inputs=[self.partial_sums],
-                outputs=[out],
-                block_dim=self.block_threads,
-                device=self.device,
-                record_cmd=True,
-            )
-
-    def compute(self, a: wp.array, out: wp.array):
-        """
-        Computes the sum of the input array: out = sum(a) along the last axis.
-        Args:
-            a: Input array.
-            out: Output array to store the result.
-        """
-
-        assert (
-            a.shape == self.shape
-        ), f"Shapes do not match. a.shape = {a.shape}, expected {self.shape}"
-        assert a.shape[0] == out.shape[0] or (
-            a.ndim == 1 and out.shape[0] == 1
-        ), f"Inupt and output dimensions do not match. a.shape = {a.shape}, out.shape = {out.shape}"
-
-        # Use wp.zeros to initialize instead of fill_() to be CUDA graph compatible
-        self.partial_sums.zero_()
-        if self.unsqueeze:
-            a = a.reshape((1, -1))
-
-        if self.num_blocks > 0:
-            self.dot_launch.set_param_at_index(0, a)
-            self.dot_launch.set_param_at_index(1, self.partial_sums)
-            self.dot_launch.launch()
-
-        if self.extra_block:
-            self.dot_extra_launch.set_param_at_index(0, a[:, self.tile_size * self.num_blocks :])
-            self.dot_extra_launch.set_param_at_index(1, self.partial_sums[:, -1:])
-            self.dot_extra_launch.launch()
-
-        if self.num_blocks > 0:
-            self.atomic_sum_launch.set_param_at_index(0, self.partial_sums)
-            self.atomic_sum_launch.set_param_at_index(1, out)
-            self.atomic_sum_launch.launch()
-        else:
-            wp.copy(out, self.partial_sums[:, 0])
 
 
 @wp.kernel
@@ -418,8 +279,9 @@ class MatrixFreeSystemOperator(LinearOperator):
             self._tmp_dyn_vec = wp.zeros(engine.dims.N_b, dtype=wp.spatial_vector)
             self._tmp_con_vec = wp.zeros(engine.dims.N_c, dtype=wp.float32)
 
-        self.tiled_reducer = TiledSpatialVectorSum(
+        self.tiled_reducer = TiledSum(
             shape=(engine.dims.N_b, self.scatter_buffer_size),
+            dtype=wp.spatial_vector,
             tile_size=reducer_tile_size,
             block_threads=reducer_block_threads,
             device=engine.device,

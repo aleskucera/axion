@@ -1,10 +1,10 @@
 import warp as wp
 
 
-def create_atomic_sum_kernel():
+def create_atomic_sum_kernel(dtype: type):
     @wp.kernel
     def atomic_sum_kernel(
-        inp: wp.array(dtype=wp.float32, ndim=2), result: wp.array(dtype=wp.float32, ndim=1)
+        inp: wp.array(dtype=dtype, ndim=2), result: wp.array(dtype=dtype, ndim=1)
     ):
         i, j = wp.tid()
         wp.atomic_add(result, i, inp[i, j])
@@ -12,11 +12,9 @@ def create_atomic_sum_kernel():
     return atomic_sum_kernel
 
 
-def create_tiled_sum_kernel(tile_size: int):
+def create_tiled_sum_kernel(tile_size: int, dtype: type):
     @wp.kernel
-    def tiled_sum_kernel(
-        inp: wp.array(dtype=wp.float32, ndim=2), out: wp.array(dtype=wp.float32, ndim=2)
-    ):
+    def tiled_sum_kernel(inp: wp.array(dtype=dtype, ndim=2), out: wp.array(dtype=dtype, ndim=2)):
         i, j = wp.tid()
         tile = wp.tile_load(inp, (1, tile_size), (i, j * tile_size))
         tile = wp.tile_sum(tile)
@@ -26,12 +24,12 @@ def create_tiled_sum_kernel(tile_size: int):
     return tiled_sum_kernel
 
 
-def create_tiled_dot_kernel(tile_size: int):
+def create_tiled_dot_kernel(tile_size: int, dtype: type):
     @wp.kernel
     def tiled_dot_kernel(
-        a: wp.array(dtype=wp.float32, ndim=2),
-        b: wp.array(dtype=wp.float32, ndim=2),
-        result: wp.array(dtype=wp.float32, ndim=2),
+        a: wp.array(dtype=dtype, ndim=2),
+        b: wp.array(dtype=dtype, ndim=2),
+        result: wp.array(dtype=dtype, ndim=2),
     ):
         i, j = wp.tid()
         start_j = j * tile_size
