@@ -32,19 +32,22 @@ for i in range(len(M_N)):
     M_N[i] = (int(M_N[i][0]), int(M_N[i][1]))
 dot_instances = {
     f"{M}x{N}": {
-        f"{ts}x{bt}": tu.TiledDot((M, M), tile_size=ts, block_threads=bt) for ts, bt in TS_BT
+        f"{ts}x{bt}": tu.TiledDot((M, M), dtype=wp.float32, tile_size=ts, block_threads=bt)
+        for ts, bt in TS_BT
     }
     for M, N in M_N
 }
 sum_instances = {
     f"{M}x{N}": {
-        f"{ts}x{bt}": tu.TiledSum((M, M), tile_size=ts, block_threads=bt) for ts, bt in TS_BT
+        f"{ts}x{bt}": tu.TiledSum((M, M), dtype=wp.float32, tile_size=ts, block_threads=bt)
+        for ts, bt in TS_BT
     }
     for M, N in M_N
 }
 sq_norm_instances = {
     f"{M}x{N}": {
-        f"{ts}x{bt}": tu.TiledSqrNorm((M, M), tile_size=ts, block_threads=bt) for ts, bt in TS_BT
+        f"{ts}x{bt}": tu.TiledSqrNorm((M, M), dtype=wp.float32, tile_size=ts, block_threads=bt)
+        for ts, bt in TS_BT
     }
     for M, N in M_N
 }

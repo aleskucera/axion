@@ -7,6 +7,7 @@ class TiledDot:
     def __init__(
         self,
         shape: int | tuple | list,
+        dtype: type = wp.float32,
         tile_size: int = 1024,
         block_threads: int = 512,
         device: wpc.Device | str = "cuda",
@@ -17,6 +18,7 @@ class TiledDot:
         Args:
             shape: Shape of the input arrays. Can be N or (M, N). Where N is the
                    length of the vectors and M is the batch size.
+            dtype: Data type of the input arrays. Defaults to wp.float32.
             tile_size: Size of the tiles. Defaults to 1024.
             block_threads: Number of threads per block. Defaults to 512.
             device: Device to run the computation on. Defaults to "cuda". Can be
@@ -24,6 +26,7 @@ class TiledDot:
         """
 
         self.shape = shape
+        self.dtype = dtype
         self.tile_size = tile_size
         self.block_threads = block_threads
         self.device = device
@@ -44,14 +47,14 @@ class TiledDot:
             raise ValueError("Unknown shape")
 
         self.num_blocks = (N + self.tile_size - 1) // self.tile_size
-        self.partial_sums = wp.empty((M, self.num_blocks), dtype=wp.float32, device=device)
+        self.partial_sums = wp.empty((M, self.num_blocks), dtype=self.dtype, device=self.device)
 
-        atomic_sum_kernel: wp.Kernel = tk.create_atomic_sum_kernel()
-        dot_kernel: wp.Kernel = tk.create_tiled_dot_kernel(self.tile_size)
+        atomic_sum_kernel: wp.Kernel = tk.create_atomic_sum_kernel(self.dtype)
+        dot_kernel: wp.Kernel = tk.create_tiled_dot_kernel(self.tile_size, self.dtype)
 
-        a = wp.empty((M, N), dtype=wp.float32, device=self.device)
-        b = wp.empty((M, N), dtype=wp.float32, device=self.device)
-        out = wp.empty(M, dtype=wp.float32, device=self.device)
+        a = wp.empty((M, N), dtype=self.dtype, device=self.device)
+        b = wp.empty((M, N), dtype=self.dtype, device=self.device)
+        out = wp.empty(M, dtype=self.dtype, device=self.device)
         self.dot_launch: wp.Launch = wp.launch_tiled(
             kernel=dot_kernel,
             dim=(M, self.num_blocks),
@@ -81,7 +84,7 @@ class TiledDot:
             b: Second input array.
             out: 1D output array to store the result.
         """
-
+        assert self.dtype == a.dtype == b.dtype == out.dtype, "Data types do not match."
         assert (
             a.shape == b.shape == self.shape
         ), f"Shapes do not match. a.shape = {a.shape}, b.shape = {b.shape}, expected {self.shape}"
@@ -89,7 +92,7 @@ class TiledDot:
             a.ndim == 1 and out.shape[0] == 1
         ), f"Input and output dimensions do not match. a.shape = {a.shape}, out.shape = {out.shape}"
 
-        out.fill_(0.0)
+        out.zero_()
         if self.unsqueeze:
             a = a.reshape((1, -1))
             b = b.reshape((1, -1))
@@ -108,20 +111,28 @@ class TiledDot:
 
 
 class TiledSqrNorm(TiledDot):
-    def __init__(self, shape, tile_size=1024, block_threads=512, device="cuda"):
+    def __init__(
+        self,
+        shape: int | tuple | list,
+        dtype: type = wp.float32,
+        tile_size: int = 1024,
+        block_threads: int = 512,
+        device: wpc.Device | str = "cuda",
+    ):
         """
         Tiled squared norm computation.
 
         Args:
             shape: Shape of the input array. Can be N or (M, N). Where N is the
                 length of the vectors and M is the batch size.
+            dtype: Data type of the input arrays. Defaults to wp.float32.
             tile_size: Size of the tiles. Defaults to 1024.
             block_threads: Number of threads per block. Defaults to 512.
             device: Device to run the computation on. Defaults to "cuda". Can be
                     a warp Device or a string.
         """
 
-        super().__init__(shape, tile_size, block_threads, device)
+        super().__init__(shape, dtype, tile_size, block_threads, device)
         self.compute_dot = super().compute
 
     def compute(self, a: wp.array, out: wp.array):
@@ -139,6 +150,7 @@ class TiledSum:
     def __init__(
         self,
         shape: int | tuple | list,
+        dtype: type = wp.float32,
         tile_size: int = 1024,
         block_threads: int = 512,
         device: wpc.Device | str = "cuda",
@@ -149,6 +161,7 @@ class TiledSum:
         Args:
             shape: Shape of the input array. Can be N or (M, N). Where N is the
                    length of the vectors and M is the batch size.
+            dtype: Data type of the input array. Defaults to wp.float32.
             tile_size: Size of the tiles. Defaults to 1024.
             block_threads: Number of threads per block. Defaults to 512.
             device: Device to run the computation on. Defaults to "cuda". Can be
@@ -156,6 +169,7 @@ class TiledSum:
         """
 
         self.shape = shape
+        self.dtype = dtype
         self.tile_size = tile_size
         self.block_threads = block_threads
         self.device = device
@@ -176,15 +190,15 @@ class TiledSum:
             raise ValueError("Unknown shape")
 
         self.num_blocks = (N + self.tile_size - 1) // self.tile_size
-        self.partial_sums = wp.empty((M, self.num_blocks), dtype=wp.float32, device=device)
+        self.partial_sums = wp.empty((M, self.num_blocks), dtype=self.dtype, device=self.device)
 
-        atomic_sum_kernel: wp.Kernel = tk.create_atomic_sum_kernel()
-        sum_kerenl: wp.Kernel = tk.create_tiled_sum_kernel(self.tile_size)
+        atomic_sum_kernel: wp.Kernel = tk.create_atomic_sum_kernel(self.dtype)
+        sum_kernel: wp.Kernel = tk.create_tiled_sum_kernel(self.tile_size, self.dtype)
 
-        a = wp.empty((M, N), dtype=wp.float32, device=self.device)
-        out = wp.empty(M, dtype=wp.float32, device=self.device)
+        a = wp.empty((M, N), dtype=self.dtype, device=self.device)
+        out = wp.empty(M, dtype=self.dtype, device=self.device)
         self.dot_launch: wp.Launch = wp.launch_tiled(
-            kernel=sum_kerenl,
+            kernel=sum_kernel,
             dim=(M, self.num_blocks),
             inputs=[a],
             outputs=[self.partial_sums],
@@ -211,6 +225,7 @@ class TiledSum:
             out: 1D output array to store the result.
         """
 
+        assert self.dtype == a.dtype == out.dtype, "Data types do not match."
         assert (
             a.shape == self.shape
         ), f"Shapes do not match. a.shape = {a.shape}, expected {self.shape}"
@@ -218,7 +233,7 @@ class TiledSum:
             a.ndim == 1 and out.shape[0] == 1
         ), f"Inupt and output dimensions do not match. a.shape = {a.shape}, out.shape = {out.shape}"
 
-        out.fill_(0.0)
+        out.zero_()
         if self.unsqueeze:
             a = a.reshape((1, -1))
 
