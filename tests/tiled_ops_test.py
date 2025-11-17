@@ -12,9 +12,9 @@ TESTS = 30
 for i in tqdm(range(TESTS)):
     for N in Ns:
         for M in Ms:
-            tiled_dot = tu.TiledDot((M, N), TS)
-            tiled_norm = tu.TiledSqrNorm((M, N), TS)
-            tiled_sum = tu.TiledSum((M, N), TS)
+            tiled_dot = tu.TiledDot((M, N), wp.float32, TS)
+            tiled_norm = tu.TiledSqrNorm((M, N), wp.float32, TS)
+            tiled_sum = tu.TiledSum((M, N), wp.float32, TS)
 
             a_np = np.random.rand(M, N).astype(np.float32) * 2 - 1
             b_np = np.random.rand(M, N).astype(np.float32) * 2 - 1
@@ -40,9 +40,9 @@ for i in tqdm(range(TESTS)):
                 res_tiled.numpy(), res_np, atol=1e-3
             ), f"\nMismatch:\nTiled: {res_tiled}\nNumpy: {res_np}\nat: iteration {i}, M={M}, N={N}"
 
-        tiled_dot = tu.TiledDot(N, TS)
-        tiled_norm = tu.TiledSqrNorm(N, TS)
-        tiled_sum = tu.TiledSum(N, TS)
+        tiled_dot = tu.TiledDot(N, wp.float32, TS)
+        tiled_norm = tu.TiledSqrNorm(N, wp.float32, TS)
+        tiled_sum = tu.TiledSum(N, wp.float32, TS)
 
         a_np = np.random.rand(N).astype(np.float32) * 2 - 1
         b_np = np.random.rand(N).astype(np.float32) * 2 - 1
