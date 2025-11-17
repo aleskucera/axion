@@ -15,6 +15,9 @@ from axion import RenderingConfig
 from axion import SimulationConfig
 from omegaconf import DictConfig
 
+import os
+os.environ['PYOPENGL_PLATFORM'] = 'glx'
+
 CONFIG_PATH = files("axion").joinpath("examples").joinpath("conf")
 ASSETS_DIR = files("axion").joinpath("examples").joinpath("assets")
 
