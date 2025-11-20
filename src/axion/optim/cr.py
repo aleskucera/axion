@@ -2,8 +2,6 @@ from typing import Any
 from typing import Optional
 
 import warp as wp
-from axion.logging import HDF5Logger
-from axion.logging import NullLogger
 from warp.optim.linear import LinearOperator
 from warp.utils import array_inner
 
@@ -56,13 +54,12 @@ def _cr_kernel_2_fixed(
     Ap[i] = Az[i] + beta * Ap[i]
 
 
-def cr_solver(
+def cr(
     A: LinearOperator,
     b: wp.array,
     x: wp.array,
     iters: int,
-    preconditioner: Optional[LinearOperator] = None,
-    logger: Optional[HDF5Logger | NullLogger] = NullLogger,
+    M: Optional[LinearOperator] = None,
 ) -> Optional[float]:
     """
     Computes an approximate solution to a symmetric, positive-definite linear system
@@ -90,11 +87,11 @@ def cr_solver(
     # Notations below follow the Conjugate Residual method pseudo-code.
     # z := M^-1 r
     # y := M^-1 Ap
-    if preconditioner is None:
+    if M is None:
         z = wp.clone(r)
     else:
         z = wp.zeros_like(r)
-        preconditioner.matvec(r, z, z, alpha=1.0, beta=0.0)
+        M.matvec(r, z, z, alpha=1.0, beta=0.0)
 
     Az = wp.zeros_like(b)
     A.matvec(z, Az, Az, alpha=1.0, beta=0.0)
@@ -102,7 +99,7 @@ def cr_solver(
     p = wp.clone(z)
     Ap = wp.clone(Az)
 
-    if preconditioner is None:
+    if M is None:
         y = Ap
     else:
         y = wp.zeros_like(Ap)
@@ -120,8 +117,8 @@ def cr_solver(
         # The value from the previous iteration becomes the "old" value for this one.
         wp.copy(dest=zAz_old, src=zAz_new)
 
-        if preconditioner is not None:
-            preconditioner.matvec(Ap, y, y, alpha=1.0, beta=0.0)
+        if M is not None:
+            M.matvec(Ap, y, y, alpha=1.0, beta=0.0)
         else:
             wp.copy(dest=y, src=Ap)
 
@@ -148,8 +145,3 @@ def cr_solver(
             device=device,
             inputs=[zAz_old, zAz_new, z, p, Az, Ap],
         )
-
-        if not isinstance(logger, NullLogger):
-            with logger.scope(f"linear_iter_{i:02d}"):
-                logger.log_wp_dataset("x", x)
-                logger.log_wp_dataset("residual", r)

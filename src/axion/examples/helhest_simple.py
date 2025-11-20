@@ -1,3 +1,4 @@
+import os
 from importlib.resources import files
 from typing import override
 
@@ -15,11 +16,12 @@ from axion import RenderingConfig
 from axion import SimulationConfig
 from omegaconf import DictConfig
 
-import os
-os.environ['PYOPENGL_PLATFORM'] = 'glx'
+os.environ["PYOPENGL_PLATFORM"] = "glx"
 
 CONFIG_PATH = files("axion").joinpath("examples").joinpath("conf")
 ASSETS_DIR = files("axion").joinpath("examples").joinpath("assets")
+
+NUM_WORLDS = 2
 
 
 class Simulator(AbstractSimulator):
@@ -40,7 +42,14 @@ class Simulator(AbstractSimulator):
         )
 
         self.mujoco_solver = newton.solvers.SolverMuJoCo(self.model, njmax=40)
-        self.joint_target = wp.array(6 * [0.0] + [0.5, 0.5, 0.0], dtype=wp.float32)
+        # self.joint_target = wp.array(6 * [0.0] + [0.5, 0.5, 0.0], dtype=wp.float32)
+
+        robot_joint_target = np.concatenate(
+            [np.zeros(6), np.array([0.5, 0.5, 0.0], dtype=wp.float32)]
+        )
+
+        joint_target = np.tile(robot_joint_target, NUM_WORLDS)
+        self.joint_target = wp.from_numpy(joint_target, dtype=wp.float32)
 
     @override
     def init_state_fn(
@@ -194,7 +203,7 @@ class Simulator(AbstractSimulator):
             target_kd=40.5,
             custom_attributes={
                 "joint_target_ki": [0.5],
-                "joint_dof_mode": [JointMode.NONE],
+                "joint_dof_mode": [JointMode.TARGET_VELOCITY],
             },
         )
         # Right wheel revolute joint (velocity control)
@@ -207,7 +216,7 @@ class Simulator(AbstractSimulator):
             target_kd=40.5,
             custom_attributes={
                 "joint_target_ki": [0.5],
-                "joint_dof_mode": [JointMode.NONE],
+                "joint_dof_mode": [JointMode.TARGET_VELOCITY],
             },
         )
         # Back wheel revolute joint (not actively driven)
@@ -251,8 +260,10 @@ class Simulator(AbstractSimulator):
             )
         )
 
-        # Finalize and return the model
-        model = self.builder.finalize()
+        final_builder = newton.ModelBuilder()
+        final_builder.replicate(self.builder, num_worlds=NUM_WORLDS)
+
+        model = final_builder.finalize()
         return model
 
 
