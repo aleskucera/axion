@@ -224,6 +224,6 @@ def compute_dbody_qd_from_dbody_lambda(
             data.JT_delta_lambda,
             data.h.d_spatial,
         ],
-        outputs=[data.dbody_u_spatial],
+        outputs=[data.dbody_u],
         device=device,
     )

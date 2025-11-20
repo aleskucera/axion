@@ -1,6 +1,5 @@
 from dataclasses import dataclass
 from functools import cached_property
-from typing import Optional
 
 import numpy as np
 import warp as wp
@@ -57,7 +56,7 @@ class EngineArrays:
     body_q_prev: wp.array  # Positions at previous time step
     body_u: wp.array  # Velocities
     body_u_prev: wp.array  # Velocities at previous time step
-    _dbody_u: wp.array  # Change in body velocities
+    dbody_u: wp.array  # Change in body velocities
 
     s_n: wp.array  # Scale for normal impulse
     s_n_prev: wp.array  # Scale for normal impulse at previous newton step
@@ -75,8 +74,8 @@ class EngineArrays:
 
     linesearch_steps: wp.array = None
     linesearch_batch_body_u: wp.array = None
-    linesearch_batch_body_lambda: wp.array = None
-    linesearch_batch_h: wp.array = None
+    _linesearch_batch_body_lambda: wp.array = None
+    _linesearch_batch_h: wp.array = None
     linesearch_batch_h_norm_sq: wp.array = None
     linesearch_minimal_index: wp.array = None
 
@@ -85,8 +84,8 @@ class EngineArrays:
     C_dense: wp.array = None
 
     pca_batch_body_u: wp.array = None
-    pca_batch_body_lambda: wp.array = None
-    pca_batch_h: wp.array = None
+    _pca_batch_body_lambda: wp.array = None
+    _pca_batch_h: wp.array = None
     pca_batch_h_norm: wp.array = None
 
     optim_h: wp.array = None
@@ -108,7 +107,7 @@ class EngineArrays:
     @cached_property
     def J_values(self) -> ConstraintView:
         """Jacobian values view."""
-        return ConstraintView(self._J_values, self.dims)
+        return ConstraintView(self._J_values, self.dims, axis=0)
 
     @cached_property
     def C_values(self) -> ConstraintView:
@@ -131,140 +130,27 @@ class EngineArrays:
 
     @cached_property
     def constraint_body_idx(self) -> ConstraintView:
-        return ConstraintView(self._constraint_body_idx, self.dims)
+        return ConstraintView(self._constraint_body_idx, self.dims, axis=0)
 
-    # 3. Dynamics Views
-
-    @cached_property
-    def dbody_u(self) -> wp.array:
-        """Flat delta velocities (N_u)."""
-        return self._dbody_u
-
-    @property
-    def dbody_u_spatial(self) -> wp.array:
-        """Delta velocities viewed as spatial vectors (N_b, 6)."""
-        return wp.array(self._dbody_u, shape=self.dims.N_b, dtype=wp.spatial_vector)
+    # 3. Linesearch Batch Views
 
     @cached_property
-    def linesearch_batch_h_d(self) -> wp.array:
-        if self.has_linesearch:
-            return self.linesearch_batch_h[:, : self.dims.N_u]
+    def linesearch_batch_h(self) -> SystemView:
+        return SystemView(self._linesearch_batch_h, self.dims)
 
     @cached_property
-    def linesearch_batch_h_d_v(self) -> wp.array:
-        """Linesearch residual g as spatial vectors."""
-        if self.has_linesearch:
-            return wp.array(
-                self.linesearch_batch_h_d.contiguous(),
-                shape=(self.linesearch_batch_h.shape[0], self.dims.N_b),
-                dtype=wp.spatial_vector,
-            )
+    def linesearch_batch_body_lambda(self) -> ConstraintView:
+        return ConstraintView(self._linesearch_batch_body_lambda, self.dims)
+
+    # 4. PCA Batch Views
 
     @cached_property
-    def linesearch_batch_h_c(self) -> wp.array:
-        if self.has_linesearch:
-            return self.linesearch_batch_h[:, self.dims.N_u :]
+    def pca_batch_h(self) -> SystemView:
+        return SystemView(self._pca_batch_h, self.dims)
 
     @cached_property
-    def linesearch_batch_h_j(self) -> wp.array:
-        if self.has_linesearch:
-            return self.linesearch_batch_h[:, self.dims.slice_j] if self.dims.N_j > 0 else None
-
-    @cached_property
-    def linesearch_batch_h_n(self) -> wp.array:
-        if self.has_linesearch:
-            return self.linesearch_batch_h[:, self.dims.slice_n] if self.dims.N_n > 0 else None
-
-    @cached_property
-    def linesearch_batch_h_f(self) -> wp.array:
-        if self.has_linesearch:
-            return self.linesearch_batch_h[:, self.dims.slice_f] if self.dims.N_f > 0 else None
-
-    @cached_property
-    def linesearch_batch_body_lambda_j(self) -> wp.array:
-        if self.has_linesearch:
-            return (
-                self.linesearch_batch_body_lambda[:, self.dims.slice_j]
-                if self.dims.N_j > 0
-                else None
-            )
-
-    @cached_property
-    def linesearch_batch_body_lambda_n(self) -> wp.array:
-        if self.has_linesearch:
-            return (
-                self.linesearch_batch_body_lambda[:, self.dims.slice_n]
-                if self.dims.N_n > 0
-                else None
-            )
-
-    @cached_property
-    def linesearch_batch_body_lambda_f(self) -> wp.array:
-        if self.has_linesearch:
-            return (
-                self.linesearch_batch_body_lambda[:, self.dims.slice_f]
-                if self.dims.N_f > 0
-                else None
-            )
-
-    @cached_property
-    def pca_batch_body_u_float(self):
-        if self.allocated_pca_arrays:
-            return wp.array(
-                self.pca_batch_body_u,
-                shape=(self.pca_batch_body_u.shape[0], self.dims.N_u),
-                dtype=wp.float32,
-            )
-
-    @cached_property
-    def pca_batch_h_d(self) -> wp.array:
-        if self.allocated_pca_arrays:
-            return self.pca_batch_h[:, : self.dims.N_u]
-
-    @cached_property
-    def pca_batch_h_d_v(self) -> wp.array:
-        """Linesearch residual g as spatial vectors."""
-        if self.allocated_pca_arrays:
-            return wp.array(
-                self.pca_batch_h_d.contiguous(),
-                shape=(self.pca_batch_h.shape[0], self.dims.N_b),
-                dtype=wp.spatial_vector,
-            )
-
-    @cached_property
-    def pca_batch_h_c(self) -> wp.array:
-        if self.allocated_pca_arrays:
-            return self.pca_batch_h[:, self.dims.N_u :]
-
-    @cached_property
-    def pca_batch_h_j(self) -> wp.array:
-        if self.allocated_pca_arrays:
-            return self.pca_batch_h[:, self.dims.slice_j] if self.dims.N_j > 0 else None
-
-    @cached_property
-    def pca_batch_h_n(self) -> wp.array:
-        if self.allocated_pca_arrays:
-            return self.pca_batch_h[:, self.dims.slice_n] if self.dims.N_n > 0 else None
-
-    @cached_property
-    def pca_batch_h_f(self) -> wp.array:
-        if self.allocated_pca_arrays:
-            return self.pca_batch_h[:, self.dims.slice_f] if self.dims.N_f > 0 else None
-
-    @cached_property
-    def pca_batch_body_lambda_j(self) -> wp.array:
-        if self.allocated_pca_arrays:
-            return self.pca_batch_body_lambda[:, self.dims.slice_j] if self.dims.N_j > 0 else None
-
-    @cached_property
-    def pca_batch_body_lambda_n(self) -> wp.array:
-        if self.allocated_pca_arrays:
-            return self.pca_batch_body_lambda[:, self.dims.slice_n] if self.dims.N_n > 0 else None
-
-    @cached_property
-    def pca_batch_body_lambda_f(self) -> wp.array:
-        if self.allocated_pca_arrays:
-            return self.pca_batch_body_lambda[:, self.dims.slice_f] if self.dims.N_f > 0 else None
+    def pca_batch_body_lambda(self) -> ConstraintView:
+        return ConstraintView(self._pca_batch_body_lambda, self.dims)
 
     @property
     def has_linesearch(self) -> bool:
@@ -432,21 +318,6 @@ class EngineArrays:
             device=self.device,
         )
 
-    def clear_working_buffers(self):
-        """Clears non-persistent, working arrays."""
-        self._h.zero_()
-        self._J_values.zero_()
-        self._C_values.zero_()
-        self.JT_delta_lambda.zero_()
-        self.b.zero_()
-        self._dbody_u.zero_()
-        self._dbody_lambda.zero_()
-
-        if self.has_linesearch:
-            self.h_alpha.zero_()
-            self.h_alpha_norm_sq.zero_()
-            self.best_alpha_idx.zero_()
-
 
 def create_engine_arrays(
     dims: EngineDimensions,
@@ -499,7 +370,7 @@ def create_engine_arrays(
     constraint_body_idx = _zeros((dims.N_c, 2), wp.int32)
 
     JT_delta_lambda = _zeros(dims.N_b, wp.spatial_vector)
-    dbody_u = _zeros(dims.N_u)
+    dbody_u = _zeros(dims.N_b, wp.spatial_vector)
     dbody_lambda = _zeros(dims.N_c)
 
     b = _zeros(dims.N_c)
@@ -580,13 +451,13 @@ def create_engine_arrays(
         body_q_prev=body_q_prev,
         body_u=body_u,
         body_u_prev=body_u_prev,
+        dbody_u=dbody_u,
         _body_lambda=body_lambda,
         _body_lambda_prev=body_lambda_prev,
         s_n=s_n,
         s_n_prev=s_n_prev,
         _constraint_body_idx=constraint_body_idx,
         JT_delta_lambda=JT_delta_lambda,
-        _dbody_u=dbody_u,
         _dbody_lambda=dbody_lambda,
         b=b,
         body_M=body_M,
@@ -598,16 +469,16 @@ def create_engine_arrays(
         contact_interaction=contact_interaction,
         linesearch_steps=linesearch_steps,
         linesearch_batch_body_u=linesearch_batch_body_u,
-        linesearch_batch_body_lambda=linesearch_batch_body_lambda,
-        linesearch_batch_h=linesearch_batch_h,
+        _linesearch_batch_body_lambda=linesearch_batch_body_lambda,
+        _linesearch_batch_h=linesearch_batch_h,
         linesearch_batch_h_norm_sq=linesearch_batch_h_norm_sq,
         linesearch_minimal_index=linesearch_minimal_index,
         M_inv_dense=M_inv_dense,
         J_dense=J_dense,
         C_dense=C_dense,
         pca_batch_body_u=pca_batch_body_u,
-        pca_batch_body_lambda=pca_batch_body_lambda,
-        pca_batch_h=pca_batch_h,
+        _pca_batch_body_lambda=pca_batch_body_lambda,
+        _pca_batch_h=pca_batch_h,
         pca_batch_h_norm=pca_batch_h_norm,
         optim_h=optim_h,
         optim_trajectory=optim_trajectory,

@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from typing import Generic
 from typing import Optional
+from typing import Tuple
 from typing import TypeVar
 
 import warp as wp
@@ -11,45 +12,77 @@ from .engine_dims import EngineDimensions
 T = TypeVar("T")
 
 
-@dataclass
+@dataclass(frozen=True)
 class ConstraintView(Generic[T]):
     """
-    A lightweight wrapper around a Warp array that provides automatic
-    slicing for Joint (j), Normal (n), and Friction (f) constraints.
+    Wrapper for constraint data that handles slicing for j/n/f parts.
+    Supports specifying which axis contains the stacked constraints.
     """
 
     data: wp.array
     dims: EngineDimensions
+    axis: int = -1  # Default to last dimension (works for flat 1D and stacked Batches)
+
+    def _slice_at_axis(self, s: slice) -> Optional[wp.array]:
+        """
+        Slices self.data at self.axis using slice s.
+        Replaces Ellipsis usage with explicit slice tuples for compatibility.
+        """
+        # 1. Return None if the slice is empty (e.g. no joints)
+        if s.start == s.stop:
+            return None
+
+        # 2. Normalise bounds (handle negative axis)
+        ndim = self.data.ndim
+        target_axis = self.axis % ndim
+
+        # 3. Construct explicit indexer tuple: (:, :, ..., s, ..., :)
+        #    Pre-axis: slice(None) for 0 to target_axis
+        #    At-axis:  s
+        #    Post-axis: slice(None) for target_axis+1 to ndim
+
+        pre_slice = (slice(None),) * target_axis
+        post_slice = (slice(None),) * (ndim - target_axis - 1)
+
+        indexer = pre_slice + (s,) + post_slice
+
+        return self.data[indexer]
 
     @property
     def full(self) -> wp.array:
-        """Returns the underlying raw array."""
         return self.data
 
     @property
     def j(self) -> Optional[wp.array]:
-        """Slice for Joint constraints."""
-        return self.data[self.dims.slice_j] if self.dims.N_j > 0 else None
+        return self._slice_at_axis(self.dims.slice_j)
 
     @property
     def n(self) -> Optional[wp.array]:
-        """Slice for Normal contact constraints."""
-        return self.data[self.dims.slice_n] if self.dims.N_n > 0 else None
+        return self._slice_at_axis(self.dims.slice_n)
 
     @property
     def f(self) -> Optional[wp.array]:
-        """Slice for Friction constraints."""
-        return self.data[self.dims.slice_f] if self.dims.N_f > 0 else None
+        return self._slice_at_axis(self.dims.slice_f)
 
     def zero_(self):
-        """Helper to clear the underlying data."""
         self.data.zero_()
 
 
-@dataclass
+@dataclass(frozen=True)
 class SystemView(Generic[T]):
+    """
+    Wraps (..., N_u + N_c) arrays.
+    Always assumes the split dimension is the last one.
+    """
+
     data: wp.array
     dims: EngineDimensions
+
+    def _get_split_slice(self, start, stop) -> Tuple[slice]:
+        """Helper to generate tuple slice for last dimension."""
+        ndim = self.data.ndim
+        # (:, :, ..., start:stop)
+        return (slice(None),) * (ndim - 1) + (slice(start, stop),)
 
     @property
     def full(self) -> wp.array:
@@ -57,25 +90,32 @@ class SystemView(Generic[T]):
 
     @property
     def d(self) -> wp.array:
-        """Dynamics part (first N_u elements)."""
-        return self.data[: self.dims.N_u]
+        """Dynamics part (..., :N_u)."""
+        indexer = self._get_split_slice(None, self.dims.N_u)
+        return self.data[indexer]
 
     @property
     def d_spatial(self) -> wp.array:
         """
-        Dynamics part viewed as spatial vectors (N_b, 6).
-        Useful for h_d_v.
+        Dynamics part reinterpreted as spatial vectors.
+        Shape change: (..., N_u) -> (..., N_b) [dtype=spatial]
         """
-        # Matches your original h_d_v logic
-        return wp.array(self.d, shape=self.dims.N_b, dtype=wp.spatial_vector)
+        d_data = self.d
+
+        # Calculate new shape: preserve batch dims, set last dim to N_b
+        base_shape = d_data.shape[:-1]
+        new_shape = base_shape + (self.dims.N_b,)
+
+        return wp.array(d_data, shape=new_shape, dtype=wp.spatial_vector)
 
     @property
-    def c(self) -> ConstraintView:
+    def c(self) -> ConstraintView[T]:
         """
-        Constraint part (remaining N_c elements).
-        Returns a ConstraintView so you can do .c.j, .c.n, etc.
+        Constraint part (..., N_u:).
+        Returns a View configured for axis=-1 (the natural ends of the system vector).
         """
-        return ConstraintView(self.data[self.dims.N_u :], self.dims)
+        indexer = self._get_split_slice(self.dims.N_u, None)
+        return ConstraintView(self.data[indexer], self.dims, axis=-1)
 
     def zero_(self):
         self.data.zero_()

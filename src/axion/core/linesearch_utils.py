@@ -194,7 +194,7 @@ def compute_linesearch_batch_variables(
         dim=(B, dims.N_b),
         inputs=[
             data.body_u,
-            data.dbody_u_spatial,
+            data.dbody_u,
             data.linesearch_steps,
         ],
         outputs=[data.linesearch_batch_body_u],
@@ -209,7 +209,7 @@ def compute_linesearch_batch_variables(
             data.dbody_lambda.full,
             data.linesearch_steps,
         ],
-        outputs=[data.linesearch_batch_body_lambda],
+        outputs=[data.linesearch_batch_body_lambda.full],
         device=device,
     )
 
@@ -226,7 +226,7 @@ def update_variables_without_linesearch(
         kernel=compute_body_u_without_linesearch_kernel,
         dim=dims.N_b,
         inputs=[
-            data.dbody_u_spatial,
+            data.dbody_u,
         ],
         outputs=[data.body_u],
         device=device,
@@ -251,7 +251,7 @@ def compute_linesearch_batch_h(
 ):
     device = data.device
 
-    data.linesearch_batch_h.zero_()
+    data.linesearch_batch_h.full.zero_()
     data.linesearch_batch_h_norm_sq.zero_()
 
     B = data.linesearch_batch_body_u.shape[0]
@@ -268,7 +268,7 @@ def compute_linesearch_batch_h(
             data.dt,
             data.g_accel,
         ],
-        outputs=[data.linesearch_batch_h_d_v],
+        outputs=[data.linesearch_batch_h.d_spatial],
         device=device,
     )
 
@@ -278,15 +278,15 @@ def compute_linesearch_batch_h(
         dim=(B, dims.N_j),
         inputs=[
             data.linesearch_batch_body_u,
-            data.linesearch_batch_body_lambda_j,
+            data.linesearch_batch_body_lambda.j,
             data.joint_constraint_data,
             data.dt,
             config.joint_stabilization_factor,
             config.joint_compliance,
         ],
         outputs=[
-            data.linesearch_batch_h_d_v,
-            data.linesearch_batch_h_j,
+            data.linesearch_batch_h.d_spatial,
+            data.linesearch_batch_h.c.j,
         ],
         device=device,
     )
@@ -298,7 +298,7 @@ def compute_linesearch_batch_h(
         inputs=[
             data.linesearch_batch_body_u,
             data.body_u_prev,
-            data.linesearch_batch_body_lambda_n,
+            data.linesearch_batch_body_lambda.n,
             data.contact_interaction,
             data.body_M_inv,
             data.dt,
@@ -308,21 +308,21 @@ def compute_linesearch_batch_h(
             config.contact_compliance,
         ],
         outputs=[
-            data.linesearch_batch_h_d_v,
-            data.linesearch_batch_h_n,
+            data.linesearch_batch_h.d_spatial,
+            data.linesearch_batch_h.c.n,
         ],
         device=device,
     )
-
+    print("Here")
     # Evaluate residual for friction constraints
     wp.launch(
         kernel=batch_friction_residual_kernel,
         dim=(B, dims.N_n),
         inputs=[
             data.linesearch_batch_body_u,
-            data.linesearch_batch_body_lambda_f,
-            data.body_lambda_f_prev,
-            data.body_lambda_n_prev,
+            data.linesearch_batch_body_lambda.f,
+            data.body_lambda_prev.f,
+            data.body_lambda_prev.n,
             data.s_n_prev,
             data.contact_interaction,
             config.friction_fb_alpha,
@@ -330,8 +330,8 @@ def compute_linesearch_batch_h(
             config.friction_compliance,
         ],
         outputs=[
-            data.linesearch_batch_h_d_v,
-            data.linesearch_batch_h_f,
+            data.linesearch_batch_h.d_spatial,
+            data.linesearch_batch_h.c.f,
         ],
         device=device,
     )
@@ -344,13 +344,13 @@ def select_minimal_residual_variables(
     dims: EngineDimensions,
 ):
     device = data.device
-    B = data.linesearch_batch_h.shape[0]
+    B = data.linesearch_batch_h.full.shape[0]
 
     # Compute norm squared for each batch using Warp kernels
     wp.launch(
         kernel=compute_batch_h_norm_squared_kernel,
         dim=B,
-        inputs=[data.linesearch_batch_h],
+        inputs=[data.linesearch_batch_h.full],
         outputs=[data.linesearch_batch_h_norm_sq],
         device=device,
     )
@@ -380,7 +380,7 @@ def select_minimal_residual_variables(
         kernel=copy_batch_row_body_lambda_kernel,
         dim=dims.N_c,
         inputs=[
-            data.linesearch_batch_body_lambda,
+            data.linesearch_batch_body_lambda.full,
             data.linesearch_minimal_index,
         ],
         outputs=[data.body_lambda.full],
