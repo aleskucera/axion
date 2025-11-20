@@ -177,8 +177,8 @@ class MatrixFreeSystemOperator(LinearOperator):
             dim=self.engine.dims.N_c,
             inputs=[
                 x,
-                self.engine.data.J_values,
-                self.engine.data.constraint_body_idx,
+                self.engine.data.J_values.full,
+                self.engine.data.constraint_body_idx.full,
                 self.engine.data.world_M_inv,
             ],
             outputs=[self._tmp_dyn_vec_buffer],
@@ -196,9 +196,9 @@ class MatrixFreeSystemOperator(LinearOperator):
             dim=self.engine.dims.N_c,
             inputs=[
                 self._tmp_dyn_vec,  # This is v₂ = M⁻¹ @ Jᵀ @ x
-                self.engine.data.J_values,
-                self.engine.data.constraint_body_idx,
-                self.engine.data.C_values,
+                self.engine.data.J_values.full,
+                self.engine.data.constraint_body_idx.full,
+                self.engine.data.C_values.full,
                 x,
                 y,
                 alpha,

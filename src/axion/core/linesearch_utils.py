@@ -194,7 +194,7 @@ def compute_linesearch_batch_variables(
         dim=(B, dims.N_b),
         inputs=[
             data.body_u,
-            data.dbody_u_v,
+            data.dbody_u_spatial,
             data.linesearch_steps,
         ],
         outputs=[data.linesearch_batch_body_u],
@@ -205,8 +205,8 @@ def compute_linesearch_batch_variables(
         kernel=compute_linesearch_batch_body_lambda_kernel,
         dim=(B, dims.N_c),
         inputs=[
-            data.body_lambda,
-            data.dbody_lambda,
+            data.body_lambda.full,
+            data.dbody_lambda.full,
             data.linesearch_steps,
         ],
         outputs=[data.linesearch_batch_body_lambda],
@@ -226,7 +226,7 @@ def update_variables_without_linesearch(
         kernel=compute_body_u_without_linesearch_kernel,
         dim=dims.N_b,
         inputs=[
-            data.dbody_u_v,
+            data.dbody_u_spatial,
         ],
         outputs=[data.body_u],
         device=device,
@@ -236,9 +236,9 @@ def update_variables_without_linesearch(
         kernel=compute_body_lambda_without_linesearch_kernel,
         dim=dims.N_c,
         inputs=[
-            data.dbody_lambda,
+            data.dbody_lambda.full,
         ],
-        outputs=[data.body_lambda],
+        outputs=[data.body_lambda.full],
         device=device,
     )
 
@@ -383,7 +383,7 @@ def select_minimal_residual_variables(
             data.linesearch_batch_body_lambda,
             data.linesearch_minimal_index,
         ],
-        outputs=[data.body_lambda],
+        outputs=[data.body_lambda.full],
         device=device,
     )
 

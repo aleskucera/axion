@@ -149,10 +149,10 @@ class AxionEngine(SolverBase):
         with self.logger.timed_block(*step_events["initial_guess"]):
             self.init_state_fn(state_in, state_out, contacts, dt)
             self.data.update_state_data(self.model, state_in, state_out, contacts, dt)
-            self.data.body_lambda.zero_()
+            self.data._body_lambda.zero_()
 
         for i in range(self.config.newton_iters):
-            wp.copy(dest=self.data.body_lambda_prev, src=self.data.body_lambda)
+            wp.copy(dest=self.data._body_lambda_prev, src=self.data._body_lambda)
             wp.copy(dest=self.data.s_n_prev, src=self.data.s_n)
 
             newton_iter_events = self.logger.engine_event_pairs[
@@ -173,7 +173,7 @@ class AxionEngine(SolverBase):
                 ret = wp.optim.linear.cr(
                     A=self.A_op,
                     b=self.data.b,
-                    x=self.data.dbody_lambda,
+                    x=self.data.dbody_lambda.full,
                     atol=2e-5,
                     maxiter=20,
                     M=self.preconditioner,

@@ -91,9 +91,9 @@ class JacobiPreconditioner(LinearOperator):
             dim=self.engine.dims.N_c,
             inputs=[
                 self.engine.data.world_M_inv,
-                self.engine.data.J_values,
-                self.engine.data.C_values,
-                self.engine.data.constraint_body_idx,
+                self.engine.data.J_values.full,
+                self.engine.data.C_values.full,
+                self.engine.data.constraint_body_idx.full,
             ],
             outputs=[self._P_inv_diag],
             device=self.device,
