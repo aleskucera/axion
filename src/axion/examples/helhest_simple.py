@@ -21,7 +21,7 @@ os.environ["PYOPENGL_PLATFORM"] = "glx"
 CONFIG_PATH = files("axion").joinpath("examples").joinpath("conf")
 ASSETS_DIR = files("axion").joinpath("examples").joinpath("assets")
 
-NUM_WORLDS = 2
+NUM_WORLDS = 4
 
 
 class Simulator(AbstractSimulator):
@@ -41,7 +41,7 @@ class Simulator(AbstractSimulator):
             logging_config,
         )
 
-        self.mujoco_solver = newton.solvers.SolverMuJoCo(self.model, njmax=40)
+        # self.mujoco_solver = newton.solvers.SolverMuJoCo(self.model, njmax=40)
         # self.joint_target = wp.array(6 * [0.0] + [0.5, 0.5, 0.0], dtype=wp.float32)
 
         robot_joint_target = np.concatenate(
@@ -64,7 +64,6 @@ class Simulator(AbstractSimulator):
 
     @override
     def control_policy(self, current_state: newton.State):
-        # For axion
         wp.copy(self.control.joint_target, self.joint_target)
 
     def build_model(self) -> newton.Model:

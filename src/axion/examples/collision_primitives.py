@@ -103,7 +103,7 @@ class Simulator(AbstractSimulator):
 
         self.builder.add_shape_sphere(
             body=ball4,
-            radius=0.2,
+            radius=0.4,
             cfg=newton.ModelBuilder.ShapeConfig(
                 density=DENSITY,
                 ke=KE,

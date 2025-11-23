@@ -174,9 +174,7 @@ class BatchedModel:
         with wp.ScopedDevice(self.device):
             self.shape_body = wp.zeros((model.num_worlds, self.shape_count), dtype=wp.int32)
             self.shape_thickness = model.shape_thickness.reshape((model.num_worlds, -1))
-            self.shape_material_mu = model.shape_material_restitution.reshape(
-                (model.num_worlds, -1)
-            )
+            self.shape_material_mu = model.shape_material_mu.reshape((model.num_worlds, -1))
             self.shape_material_restitution = model.shape_material_restitution.reshape(
                 (model.num_worlds, -1)
             )

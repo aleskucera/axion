@@ -4,10 +4,6 @@ from typing import Optional
 import warp as wp
 from axion.tiled import TiledDot
 from warp.optim.linear import LinearOperator
-from warp.utils import array_inner
-
-# No need to auto-generate adjoint code for linear solvers
-wp.set_module_options({"enable_backward": False})
 
 
 @wp.kernel

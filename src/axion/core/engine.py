@@ -150,7 +150,7 @@ class AxionEngine(SolverBase):
         # Control block
         with self.logger.timed_block(*step_events["control"]):
             newton.eval_ik(self.model, state_in, state_in.joint_q, state_in.joint_qd)
-            # apply_control(self.model, state_in, dt, control)
+            apply_control(self.model, state_in, dt, control)
 
         # Initial guess block
         with self.logger.timed_block(*step_events["initial_guess"]):
