@@ -28,98 +28,98 @@ def scaled_fisher_burmeister(
 
 @wp.kernel
 def fill_joint_constraint_body_idx_kernel(
-    joint_constraints: wp.array(dtype=JointConstraintData),
-    joint_constraint_body_idx: wp.array(dtype=wp.int32, ndim=2),
+    joint_constraints: wp.array(dtype=JointConstraintData, ndim=2),
+    joint_constraint_body_idx: wp.array(dtype=wp.int32, ndim=3),
 ):
-    constraint_idx = wp.tid()
+    world_idx, constraint_idx = wp.tid()
 
-    if constraint_idx >= len(joint_constraints):
+    if world_idx >= joint_constraints.shape[0] or constraint_idx >= joint_constraints.shape[1]:
         return
 
-    c = joint_constraints[constraint_idx]
-    joint_constraint_body_idx[constraint_idx, 0] = c.parent_idx
-    joint_constraint_body_idx[constraint_idx, 1] = c.child_idx
+    c = joint_constraints[world_idx, constraint_idx]
+    joint_constraint_body_idx[world_idx, constraint_idx, 0] = c.parent_idx
+    joint_constraint_body_idx[world_idx, constraint_idx, 1] = c.child_idx
 
 
 @wp.kernel
 def fill_contact_constraint_body_idx_kernel(
-    contact_interaction: wp.array(dtype=ContactInteraction),
-    contact_constraint_body_idx: wp.array(dtype=wp.int32, ndim=2),
+    contact_interaction: wp.array(dtype=ContactInteraction, ndim=2),
+    contact_constraint_body_idx: wp.array(dtype=wp.int32, ndim=3),
 ):
-    contact_idx = wp.tid()
+    world_idx, contact_idx = wp.tid()
 
-    if contact_idx >= len(contact_interaction):
+    if world_idx >= contact_interaction.shape[0] or contact_idx >= contact_interaction.shape[1]:
         return
 
-    interaction = contact_interaction[contact_idx]
-    contact_constraint_body_idx[contact_idx, 0] = interaction.body_a_idx
-    contact_constraint_body_idx[contact_idx, 1] = interaction.body_b_idx
+    interaction = contact_interaction[world_idx, contact_idx]
+    contact_constraint_body_idx[world_idx, contact_idx, 0] = interaction.body_a_idx
+    contact_constraint_body_idx[world_idx, contact_idx, 1] = interaction.body_b_idx
 
 
 @wp.kernel
 def fill_friction_constraint_body_idx_kernel(
-    contact_interaction: wp.array(dtype=ContactInteraction),
-    friction_constraint_body_idx: wp.array(dtype=wp.int32, ndim=2),
+    contact_interaction: wp.array(dtype=ContactInteraction, ndim=2),
+    friction_constraint_body_idx: wp.array(dtype=wp.int32, ndim=3),
 ):
-    constraint_idx = wp.tid()
+    world_idx, constraint_idx = wp.tid()
     contact_idx = constraint_idx // 2
 
-    if contact_idx >= len(contact_interaction):
+    if world_idx >= contact_interaction.shape[0] or contact_idx >= contact_interaction.shape[1]:
         return
 
-    interaction = contact_interaction[contact_idx]
-    friction_constraint_body_idx[constraint_idx, 0] = interaction.body_a_idx
-    friction_constraint_body_idx[constraint_idx, 1] = interaction.body_b_idx
+    interaction = contact_interaction[world_idx, contact_idx]
+    friction_constraint_body_idx[world_idx, constraint_idx, 0] = interaction.body_a_idx
+    friction_constraint_body_idx[world_idx, constraint_idx, 1] = interaction.body_b_idx
 
 
 @wp.kernel
 def fill_joint_constraint_active_mask_kernel(
-    joint_constraints: wp.array(dtype=JointConstraintData),
-    joint_constraint_active_mask: wp.array(dtype=wp.float32),
+    joint_constraints: wp.array(dtype=JointConstraintData, ndim=2),
+    joint_constraint_active_mask: wp.array(dtype=wp.float32, ndim=2),
 ):
-    constraint_idx = wp.tid()
+    world_idx, constraint_idx = wp.tid()
 
-    if constraint_idx >= len(joint_constraints):
+    if world_idx >= joint_constraints.shape[0] or constraint_idx >= joint_constraints.shape[1]:
         return
 
-    c = joint_constraints[constraint_idx]
+    c = joint_constraints[world_idx, constraint_idx]
 
     if c.is_active:
-        joint_constraint_active_mask[constraint_idx] = 1.0
+        joint_constraint_active_mask[world_idx, constraint_idx] = 1.0
     else:
-        joint_constraint_active_mask[constraint_idx] = 0.0
+        joint_constraint_active_mask[world_idx, constraint_idx] = 0.0
 
 
 @wp.kernel
 def fill_contact_constraint_active_mask_kernel(
-    contact_interaction: wp.array(dtype=ContactInteraction),
-    contact_constraint_active_mask: wp.array(dtype=wp.float32),
+    contact_interaction: wp.array(dtype=ContactInteraction, ndim=2),
+    contact_constraint_active_mask: wp.array(dtype=wp.float32, ndim=2),
 ):
-    contact_idx = wp.tid()
+    world_idx, contact_idx = wp.tid()
 
-    if contact_idx >= len(contact_interaction):
+    if world_idx >= contact_interaction.shape[0] or contact_idx >= contact_interaction.shape[1]:
         return
 
-    interaction = contact_interaction[contact_idx]
+    interaction = contact_interaction[world_idx, contact_idx]
     if interaction.is_active:
-        contact_constraint_active_mask[contact_idx] = 1.0
+        contact_constraint_active_mask[world_idx, contact_idx] = 1.0
     else:
-        contact_constraint_active_mask[contact_idx] = 0.0
+        contact_constraint_active_mask[world_idx, contact_idx] = 0.0
 
 
 @wp.kernel
 def fill_friction_constraint_active_mask_kernel(
-    contact_interaction: wp.array(dtype=ContactInteraction),
-    friction_constraint_active_mask: wp.array(dtype=wp.float32),
+    contact_interaction: wp.array(dtype=ContactInteraction, ndim=2),
+    friction_constraint_active_mask: wp.array(dtype=wp.float32, ndim=2),
 ):
-    constraint_idx = wp.tid()
+    world_idx, constraint_idx = wp.tid()
     contact_idx = constraint_idx // 2
 
-    if contact_idx >= len(contact_interaction):
+    if world_idx >= contact_interaction.shape[0] or contact_idx >= contact_interaction.shape[1]:
         return
 
-    interaction = contact_interaction[contact_idx]
+    interaction = contact_interaction[world_idx, contact_idx]
     if interaction.is_active:
-        friction_constraint_active_mask[constraint_idx] = 1.0
+        friction_constraint_active_mask[world_idx, constraint_idx] = 1.0
     else:
-        friction_constraint_active_mask[constraint_idx] = 0.0
+        friction_constraint_active_mask[world_idx, constraint_idx] = 0.0

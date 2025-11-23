@@ -2,6 +2,7 @@ from typing import Any
 from typing import Optional
 
 import warp as wp
+from axion.tiled import TiledDot
 from warp.optim.linear import LinearOperator
 from warp.utils import array_inner
 
@@ -10,48 +11,48 @@ wp.set_module_options({"enable_backward": False})
 
 
 @wp.kernel
-def _cr_kernel_1_fixed(
+def _cr_kernel_1(
     zAz_old: wp.array(dtype=Any),
     y_Ap: wp.array(dtype=Any),
-    x: wp.array(dtype=Any),
-    r: wp.array(dtype=Any),
-    z: wp.array(dtype=Any),
-    p: wp.array(dtype=Any),
-    Ap: wp.array(dtype=Any),
-    y: wp.array(dtype=Any),
+    x: wp.array(dtype=Any, ndim=2),
+    r: wp.array(dtype=Any, ndim=2),
+    z: wp.array(dtype=Any, ndim=2),
+    p: wp.array(dtype=Any, ndim=2),
+    Ap: wp.array(dtype=Any, ndim=2),
+    y: wp.array(dtype=Any, ndim=2),
 ):
     """Graph-compatible CR kernel part 1: Updates x, r, and z."""
-    i = wp.tid()
+    world_idx, i = wp.tid()
 
     # Unconditionally compute alpha, with a safe division
     alpha = zAz_old.dtype(0.0)
-    if y_Ap[0] > 0.0:
-        alpha = zAz_old[0] / y_Ap[0]
+    if y_Ap[world_idx] > 0.0:
+        alpha = zAz_old[world_idx] / y_Ap[world_idx]
 
-    x[i] = x[i] + alpha * p[i]
-    r[i] = r[i] - alpha * Ap[i]
-    z[i] = z[i] - alpha * y[i]
+    x[world_idx, i] = x[world_idx, i] + alpha * p[world_idx, i]
+    r[world_idx, i] = r[world_idx, i] - alpha * Ap[world_idx, i]
+    z[world_idx, i] = z[world_idx, i] - alpha * y[world_idx, i]
 
 
 @wp.kernel
-def _cr_kernel_2_fixed(
+def _cr_kernel_2(
     zAz_old: wp.array(dtype=Any),
     zAz_new: wp.array(dtype=Any),
-    z: wp.array(dtype=Any),
-    p: wp.array(dtype=Any),
-    Az: wp.array(dtype=Any),
-    Ap: wp.array(dtype=Any),
+    z: wp.array(dtype=Any, ndim=2),
+    p: wp.array(dtype=Any, ndim=2),
+    Az: wp.array(dtype=Any, ndim=2),
+    Ap: wp.array(dtype=Any, ndim=2),
 ):
     """Graph-compatible CR kernel part 2: Updates p and Ap."""
-    i = wp.tid()
+    world_idx, i = wp.tid()
 
     # Unconditionally compute beta, with a safe division
     beta = zAz_old.dtype(0.0)
-    if zAz_old[0] > 0.0:
-        beta = zAz_new[0] / zAz_old[0]
+    if zAz_old[world_idx] > 0.0:
+        beta = zAz_new[world_idx] / zAz_old[world_idx]
 
-    p[i] = z[i] + beta * p[i]
-    Ap[i] = Az[i] + beta * Ap[i]
+    p[world_idx, i] = z[world_idx, i] + beta * p[world_idx, i]
+    Ap[world_idx, i] = Az[world_idx, i] + beta * Ap[world_idx, i]
 
 
 def cr(
@@ -75,7 +76,15 @@ def cr(
 
     device = A.device
     scalar_dtype = wp.types.type_scalar_type(A.dtype)
-    vec_dim = x.shape[0]
+    num_worlds = x.shape[0]
+    vec_dim = x.shape[1]
+
+    tiled_dot = TiledDot(
+        shape=(num_worlds, 1, vec_dim),
+        dtype=scalar_dtype,
+        tile_size=1024,
+        device=device,
+    )
 
     # ============== 1. Initialization ==========================================
     # This part runs once before the main loop.
@@ -105,12 +114,17 @@ def cr(
         y = wp.zeros_like(Ap)
 
     # Scalar values stored in single-element arrays
-    zAz_old = wp.empty(n=1, dtype=scalar_dtype, device=device)
-    zAz_new = wp.empty(n=1, dtype=scalar_dtype, device=device)
-    y_Ap = wp.empty(n=1, dtype=scalar_dtype, device=device)
+    zAz_old = wp.empty(shape=(num_worlds), dtype=scalar_dtype, device=device)
+    zAz_new = wp.empty(shape=(num_worlds), dtype=scalar_dtype, device=device)
+    y_Ap = wp.empty(shape=(num_worlds), dtype=scalar_dtype, device=device)
 
     # Initial dot product: zAz = dot(z, Az)
-    array_inner(z, Az, out=zAz_new)
+    tiled_dot.compute(
+        z.reshape((num_worlds, 1, vec_dim)),
+        Az.reshape((num_worlds, 1, vec_dim)),
+        zAz_new.reshape((num_worlds, 1)),
+    )
+    # array_inner(z, Az, out=zAz_new)
 
     # ============== 2. Fixed Iteration Loop ====================================
     for i in range(iters):
@@ -123,12 +137,17 @@ def cr(
             wp.copy(dest=y, src=Ap)
 
         # dot(y, Ap) is the denominator for alpha
-        array_inner(y, Ap, out=y_Ap)
+        tiled_dot.compute(
+            y.reshape((num_worlds, 1, vec_dim)),
+            Ap.reshape((num_worlds, 1, vec_dim)),
+            y_Ap.reshape((num_worlds, 1)),
+        )
+        # array_inner(y, Ap, out=y_Ap)
 
         # Always use the robust CR update kernel
         wp.launch(
-            kernel=_cr_kernel_1_fixed,
-            dim=vec_dim,
+            kernel=_cr_kernel_1,
+            dim=(num_worlds, vec_dim),
             device=device,
             inputs=[zAz_old, y_Ap, x, r, z, p, Ap, y],
         )
@@ -136,12 +155,17 @@ def cr(
         # Az = A * z
         A.matvec(z, Az, Az, alpha=1.0, beta=0.0)
         # zAz_new = dot(z, Az)
-        array_inner(z, Az, out=zAz_new)
+        tiled_dot.compute(
+            z.reshape((num_worlds, 1, vec_dim)),
+            Az.reshape((num_worlds, 1, vec_dim)),
+            zAz_new.reshape((num_worlds, 1)),
+        )
+        # array_inner(z, Az, out=zAz_new)
 
         # Update p, Ap (this part is the same for both)
         wp.launch(
-            kernel=_cr_kernel_2_fixed,
-            dim=vec_dim,
+            kernel=_cr_kernel_2,
+            dim=(num_worlds, vec_dim),
             device=device,
             inputs=[zAz_old, zAz_new, z, p, Az, Ap],
         )

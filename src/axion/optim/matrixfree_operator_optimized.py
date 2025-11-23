@@ -25,88 +25,92 @@ from warp.optim.linear import LinearOperator
 @wp.kernel
 def kernel_invM_Jt_matvec_scatter(
     # Inputs
-    x: wp.array(dtype=wp.float32),
-    J_values: wp.array(dtype=wp.spatial_vector, ndim=2),
-    constraint_body_idx: wp.array(dtype=wp.int32, ndim=2),
-    body_M_inv: wp.array(dtype=SpatialInertia),
+    x: wp.array(dtype=wp.float32, ndim=2),
+    J_values: wp.array(dtype=wp.spatial_vector, ndim=3),
+    constraint_body_idx: wp.array(dtype=wp.int32, ndim=3),
+    body_M_inv: wp.array(dtype=SpatialInertia, ndim=2),
     # Output array
-    out_vec_2d: wp.array(dtype=wp.spatial_vector, ndim=2),
+    out_vec_buffer: wp.array(dtype=wp.spatial_vector, ndim=3),
 ):
-    constraint_idx = wp.tid()
+    world_idx, constraint_idx = wp.tid()
 
     # Initialize a random state for this thread
     state = wp.rand_init(seed=constraint_idx)
     # Randomly select a sub-bin to write to
-    sub_bin_index = wp.randi(state, 0, out_vec_2d.shape[1])
+    sub_bin_index = wp.randi(state, 0, out_vec_buffer.shape[-1])
 
-    body_1 = constraint_body_idx[constraint_idx, 0]
-    body_2 = constraint_body_idx[constraint_idx, 1]
+    body_1 = constraint_body_idx[world_idx, constraint_idx, 0]
+    body_2 = constraint_body_idx[world_idx, constraint_idx, 1]
 
-    J_1 = J_values[constraint_idx, 0]
-    J_2 = J_values[constraint_idx, 1]
-    x_i = x[constraint_idx]
+    J_1 = J_values[world_idx, constraint_idx, 0]
+    J_2 = J_values[world_idx, constraint_idx, 1]
+    x_i = x[world_idx, constraint_idx]
 
     if body_1 >= 0:
         # Calculate the momentum contribution from this constraint
         jt_x_1 = x_i * J_1
         # Convert momentum to velocity change (v = M⁻¹ * p)
         # and atomically add it to the output velocity vector
-        m_inv_1 = body_M_inv[body_1]
+        m_inv_1 = body_M_inv[world_idx, body_1]
         delta_v_1 = to_spatial_momentum(m_inv_1, jt_x_1)
-        wp.atomic_add(out_vec_2d, body_1, sub_bin_index, delta_v_1)
+        wp.atomic_add(out_vec_buffer, world_idx, body_1, sub_bin_index, delta_v_1)
 
     if body_2 >= 0:
         # Repeat for the second body
         jt_x_2 = x_i * J_2
-        m_inv_2 = body_M_inv[body_2]
+        m_inv_2 = body_M_inv[world_idx, body_2]
         delta_v_2 = to_spatial_momentum(m_inv_2, jt_x_2)
-        wp.atomic_add(out_vec_2d, body_2, sub_bin_index, delta_v_2)
+        wp.atomic_add(out_vec_buffer, world_idx, body_2, sub_bin_index, delta_v_2)
 
 
 @wp.kernel
 def kernel_J_matvec_and_finalize(
     # Inputs for J @ v
-    dyn_vec: wp.array(dtype=wp.spatial_vector),
-    J_values: wp.array(dtype=wp.spatial_vector, ndim=2),
-    constraint_body_idx: wp.array(dtype=wp.int32, ndim=2),
+    dyn_vec: wp.array(dtype=wp.spatial_vector, ndim=2),
+    J_values: wp.array(dtype=wp.spatial_vector, ndim=3),
+    constraint_body_idx: wp.array(dtype=wp.int32, ndim=3),
     # Inputs for finalize
-    C_values: wp.array(dtype=wp.float32),
-    vec_x: wp.array(dtype=wp.float32),
-    vec_y: wp.array(dtype=wp.float32),
+    C_values: wp.array(dtype=wp.float32, ndim=2),
+    vec_x: wp.array(dtype=wp.float32, ndim=2),
+    vec_y: wp.array(dtype=wp.float32, ndim=2),
     alpha: float,
     beta: float,
     regularization: float,
     # Output array
-    out_vec_z: wp.array(dtype=wp.float32),
+    out_vec_z: wp.array(dtype=wp.float32, ndim=2),
 ):
     """
     Computes J @ dyn_vec and immediately uses it in the finalization step.
     This fused kernel calculates:
     z = beta * y + alpha * ( (J @ dyn_vec) + (C + reg) @ x )
     """
-    constraint_idx = wp.tid()
+    world_idx, constraint_idx = wp.tid()
 
     # --- Part 1: Compute J @ dyn_vec for this constraint (from kernel_J_matvec) ---
-    body_1 = constraint_body_idx[constraint_idx, 0]
-    body_2 = constraint_body_idx[constraint_idx, 1]
+    body_1 = constraint_body_idx[world_idx, constraint_idx, 0]
+    body_2 = constraint_body_idx[world_idx, constraint_idx, 1]
 
-    J_1 = J_values[constraint_idx, 0]
-    J_2 = J_values[constraint_idx, 1]
+    J_1 = J_values[world_idx, constraint_idx, 0]
+    J_2 = J_values[world_idx, constraint_idx, 1]
 
     j_m_inv_jt_x = 0.0
     if body_1 >= 0:
-        j_m_inv_jt_x += wp.dot(J_1, dyn_vec[body_1])
+        j_m_inv_jt_x += wp.dot(J_1, dyn_vec[world_idx, body_1])
     if body_2 >= 0:
-        j_m_inv_jt_x += wp.dot(J_2, dyn_vec[body_2])
+        j_m_inv_jt_x += wp.dot(J_2, dyn_vec[world_idx, body_2])
 
     # --- Part 2: Use the result immediately (from kernel_finalize_matvec) ---
-    c_times_x = (C_values[constraint_idx] + regularization) * vec_x[constraint_idx]
+    c_times_x = (C_values[world_idx, constraint_idx] + regularization) * vec_x[
+        world_idx, constraint_idx
+    ]
     a_times_x = j_m_inv_jt_x + c_times_x
 
     if beta == 0.0:
-        out_vec_z[constraint_idx] = alpha * a_times_x
+        out_vec_z[world_idx, constraint_idx] = alpha * a_times_x
     else:
-        out_vec_z[constraint_idx] = beta * vec_y[constraint_idx] + alpha * a_times_x
+        out_vec_z[world_idx, constraint_idx] = (
+            beta * vec_y[world_idx, constraint_idx] + alpha * a_times_x
+        )
 
 
 class MatrixFreeSystemOperator(LinearOperator):
@@ -135,7 +139,7 @@ class MatrixFreeSystemOperator(LinearOperator):
                     masses, constraint info, etc.).
         """
         super().__init__(
-            shape=(engine.dims.N_c, engine.dims.N_c),
+            shape=(engine.dims.N_w, engine.dims.N_c, engine.dims.N_c),
             dtype=wp.float32,
             device=engine.device,
             matvec=None,
@@ -147,14 +151,16 @@ class MatrixFreeSystemOperator(LinearOperator):
         # Pre-allocate temporary buffers for intermediate calculations.
         with wp.ScopedDevice(self.device):
             self._tmp_dyn_vec_buffer = wp.zeros(
-                shape=(engine.dims.N_b, self.scatter_buffer_size),
+                shape=(engine.dims.N_w, engine.dims.N_b, self.scatter_buffer_size),
                 dtype=wp.spatial_vector,
             )
-            self._tmp_dyn_vec = wp.zeros(engine.dims.N_b, dtype=wp.spatial_vector)
-            self._tmp_con_vec = wp.zeros(engine.dims.N_c, dtype=wp.float32)
+            self._tmp_dyn_vec = wp.zeros(
+                (engine.dims.N_w, engine.dims.N_b), dtype=wp.spatial_vector
+            )
+            self._tmp_con_vec = wp.zeros((engine.dims.N_w, engine.dims.N_c), dtype=wp.float32)
 
         self.tiled_reducer = TiledSum(
-            shape=(engine.dims.N_b, self.scatter_buffer_size),
+            shape=(engine.dims.N_w, engine.dims.N_b, self.scatter_buffer_size),
             dtype=wp.spatial_vector,
             tile_size=reducer_tile_size,
             block_threads=reducer_block_threads,
@@ -174,7 +180,7 @@ class MatrixFreeSystemOperator(LinearOperator):
         # wp.record_event(self.events[0])
         wp.launch(
             kernel=kernel_invM_Jt_matvec_scatter,
-            dim=self.engine.dims.N_c,
+            dim=(self.engine.dims.N_w, self.engine.dims.N_c),
             inputs=[
                 x,
                 self.engine.data.J_values.full,
@@ -193,7 +199,7 @@ class MatrixFreeSystemOperator(LinearOperator):
 
         wp.launch(
             kernel=kernel_J_matvec_and_finalize,
-            dim=self.engine.dims.N_c,
+            dim=(self.engine.dims.N_w, self.engine.dims.N_c),
             inputs=[
                 self._tmp_dyn_vec,  # This is v₂ = M⁻¹ @ Jᵀ @ x
                 self.engine.data.J_values.full,

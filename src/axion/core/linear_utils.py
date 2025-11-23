@@ -5,7 +5,6 @@ from axion.constraints import joint_constraint_kernel
 from axion.constraints import unconstrained_dynamics_kernel
 from axion.types import SpatialInertia
 from axion.types import to_spatial_momentum
-from newton import Model
 
 from .engine_config import EngineConfig
 from .engine_data import EngineArrays
@@ -14,78 +13,78 @@ from .engine_dims import EngineDimensions
 
 @wp.kernel
 def update_system_rhs_kernel(
-    body_M_inv: wp.array(dtype=SpatialInertia),
-    J_values: wp.array(dtype=wp.spatial_vector, ndim=2),
-    h_d: wp.array(dtype=wp.spatial_vector),
-    h_c: wp.array(dtype=wp.float32),
-    constraint_body_idx: wp.array(dtype=wp.int32, ndim=2),
+    body_M_inv: wp.array(dtype=SpatialInertia, ndim=2),
+    J_values: wp.array(dtype=wp.spatial_vector, ndim=3),
+    h_d: wp.array(dtype=wp.spatial_vector, ndim=2),
+    h_c: wp.array(dtype=wp.float32, ndim=2),
+    constraint_body_idx: wp.array(dtype=wp.int32, ndim=3),
     # Output array
-    b: wp.array(dtype=wp.float32),
+    b: wp.array(dtype=wp.float32, ndim=2),
 ):
-    constraint_idx = wp.tid()
+    world_idx, constraint_idx = wp.tid()
 
-    body_1 = constraint_body_idx[constraint_idx, 0]
-    body_2 = constraint_body_idx[constraint_idx, 1]
+    body_1 = constraint_body_idx[world_idx, constraint_idx, 0]
+    body_2 = constraint_body_idx[world_idx, constraint_idx, 1]
 
-    M_inv_1 = body_M_inv[body_1]
-    M_inv_2 = body_M_inv[body_2]
+    M_inv_1 = body_M_inv[world_idx, body_1]
+    M_inv_2 = body_M_inv[world_idx, body_2]
 
-    J_1 = J_values[constraint_idx, 0]
-    J_2 = J_values[constraint_idx, 1]
+    J_1 = J_values[world_idx, constraint_idx, 0]
+    J_2 = J_values[world_idx, constraint_idx, 1]
 
     # Calculate (J_i * M^-1 * h_d)
-    a_contrib = wp.dot(J_1, to_spatial_momentum(M_inv_1, h_d[body_1]))
-    b_contrib = wp.dot(J_2, to_spatial_momentum(M_inv_2, h_d[body_2]))
+    a_contrib = wp.dot(J_1, to_spatial_momentum(M_inv_1, h_d[world_idx, body_1]))
+    b_contrib = wp.dot(J_2, to_spatial_momentum(M_inv_2, h_d[world_idx, body_2]))
     JHinvg = a_contrib + b_contrib
 
     # b = J * M^-1 * h_d - h_c
-    b[constraint_idx] = JHinvg - h_c[constraint_idx]
+    b[world_idx, constraint_idx] = JHinvg - h_c[world_idx, constraint_idx]
 
 
 @wp.kernel
 def compute_JT_dbody_lambda_kernel(
-    J_values: wp.array(dtype=wp.spatial_vector, ndim=2),
-    dbody_lambda: wp.array(dtype=wp.float32),
-    constraint_body_idx: wp.array(dtype=wp.int32, ndim=2),
+    J_values: wp.array(dtype=wp.spatial_vector, ndim=3),
+    dbody_lambda: wp.array(dtype=wp.float32, ndim=2),
+    constraint_body_idx: wp.array(dtype=wp.int32, ndim=3),
     # Output array
-    JT_dbody_lambda: wp.array(dtype=wp.spatial_vector),
+    JT_dbody_lambda: wp.array(dtype=wp.spatial_vector, ndim=2),
 ):
-    constraint_idx = wp.tid()
+    world_idx, constraint_idx = wp.tid()
 
-    body_1 = constraint_body_idx[constraint_idx, 0]
-    body_2 = constraint_body_idx[constraint_idx, 1]
+    body_1 = constraint_body_idx[world_idx, constraint_idx, 0]
+    body_2 = constraint_body_idx[world_idx, constraint_idx, 1]
 
-    J_1 = J_values[constraint_idx, 0]
-    J_2 = J_values[constraint_idx, 1]
-    dlambda = dbody_lambda[constraint_idx]
+    J_1 = J_values[world_idx, constraint_idx, 0]
+    J_2 = J_values[world_idx, constraint_idx, 1]
+    dlambda = dbody_lambda[world_idx, constraint_idx]
 
     if body_1 >= 0:
-        JT_dbody_lambda[body_1] += dlambda * J_1
+        JT_dbody_lambda[world_idx, body_1] += dlambda * J_1
 
     if body_2 >= 0:
-        JT_dbody_lambda[body_2] += dlambda * J_2
+        JT_dbody_lambda[world_idx, body_2] += dlambda * J_2
 
 
 @wp.kernel
 def compute_dbody_u_kernel(
-    body_M_inv: wp.array(dtype=SpatialInertia),
-    JT_dbody_lambda: wp.array(dtype=wp.spatial_vector),
-    h_d: wp.array(dtype=wp.spatial_vector),
+    body_M_inv: wp.array(dtype=SpatialInertia, ndim=2),
+    JT_dbody_lambda: wp.array(dtype=wp.spatial_vector, ndim=2),
+    h_d: wp.array(dtype=wp.spatial_vector, ndim=2),
     # Output array
-    dbody_u: wp.array(dtype=wp.spatial_vector),
+    dbody_u: wp.array(dtype=wp.spatial_vector, ndim=2),
 ):
-    body_idx = wp.tid()
+    world_idx, body_idx = wp.tid()
 
-    if body_idx >= body_M_inv.shape[0]:
+    if body_idx >= body_M_inv.shape[1]:
         return
 
-    dbody_u[body_idx] = to_spatial_momentum(
-        body_M_inv[body_idx], (JT_dbody_lambda[body_idx] - h_d[body_idx])
+    dbody_u[world_idx, body_idx] = to_spatial_momentum(
+        body_M_inv[world_idx, body_idx],
+        (JT_dbody_lambda[world_idx, body_idx] - h_d[world_idx, body_idx]),
     )
 
 
 def compute_linear_system(
-    model: Model,
     data: EngineArrays,
     config: EngineConfig,
     dims: EngineDimensions,
@@ -101,7 +100,7 @@ def compute_linear_system(
 
     wp.launch(
         kernel=unconstrained_dynamics_kernel,
-        dim=dims.N_b,
+        dim=(dims.N_w, dims.N_b),
         inputs=[
             data.body_u,
             data.body_u_prev,
@@ -116,7 +115,7 @@ def compute_linear_system(
 
     wp.launch(
         kernel=joint_constraint_kernel,
-        dim=dims.N_j,
+        dim=(dims.N_w, dims.N_j),
         inputs=[
             data.body_u,
             data.body_lambda.j,
@@ -136,7 +135,7 @@ def compute_linear_system(
 
     wp.launch(
         kernel=contact_constraint_kernel,
-        dim=dims.N_n,
+        dim=(dims.N_w, dims.N_n),
         inputs=[
             data.body_u,
             data.body_u_prev,
@@ -161,7 +160,7 @@ def compute_linear_system(
 
     wp.launch(
         kernel=friction_constraint_kernel,
-        dim=dims.N_n,
+        dim=(dims.N_w, dims.N_n),
         inputs=[
             data.body_u,
             data.body_lambda.f,
@@ -184,7 +183,7 @@ def compute_linear_system(
 
     wp.launch(
         kernel=update_system_rhs_kernel,
-        dim=dims.N_c,
+        dim=(dims.N_w, dims.N_c),
         inputs=[
             data.world_M_inv,
             data.J_values.full,
@@ -206,7 +205,7 @@ def compute_dbody_qd_from_dbody_lambda(
 
     wp.launch(
         kernel=compute_JT_dbody_lambda_kernel,
-        dim=dims.N_c,
+        dim=(dims.N_w, dims.N_c),
         inputs=[
             data.J_values.full,
             data.dbody_lambda.full,
@@ -218,7 +217,7 @@ def compute_dbody_qd_from_dbody_lambda(
 
     wp.launch(
         kernel=compute_dbody_u_kernel,
-        dim=dims.N_b,
+        dim=(dims.N_w, dims.N_b),
         inputs=[
             data.world_M_inv,
             data.JT_delta_lambda,

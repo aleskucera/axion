@@ -3,8 +3,8 @@ from axion.constraints import batch_contact_residual_kernel
 from axion.constraints import batch_friction_residual_kernel
 from axion.constraints import batch_joint_residual_kernel
 from axion.constraints import batch_unconstrained_dynamics_kernel
-from newton import Model
 
+from .batched_model import BatchedModel
 from .engine_config import EngineConfig
 from .engine_data import EngineArrays
 from .engine_dims import EngineDimensions
@@ -29,16 +29,16 @@ def compute_linesearch_batch_body_lambda_kernel(
 
 @wp.kernel
 def compute_body_lambda_without_linesearch_kernel(
-    dbody_lambda: wp.array(dtype=wp.float32),
+    dbody_lambda: wp.array(dtype=wp.float32, ndim=2),
     # Outputs
-    body_lambda: wp.array(dtype=wp.float32),
+    body_lambda: wp.array(dtype=wp.float32, ndim=2),
 ):
-    con_idx = wp.tid()
+    world_idx, con_idx = wp.tid()
 
-    lambda_ = body_lambda[con_idx]
-    dlambda = dbody_lambda[con_idx]
+    lambda_ = body_lambda[world_idx, con_idx]
+    dlambda = dbody_lambda[world_idx, con_idx]
 
-    body_lambda[con_idx] = lambda_ + dlambda
+    body_lambda[world_idx, con_idx] = lambda_ + dlambda
 
 
 @wp.kernel
@@ -60,16 +60,16 @@ def compute_linesearch_batch_body_u_kernel(
 
 @wp.kernel
 def compute_body_u_without_linesearch_kernel(
-    dbody_u: wp.array(dtype=wp.spatial_vector),
+    dbody_u: wp.array(dtype=wp.spatial_vector, ndim=2),
     # Outputs
-    body_u: wp.array(dtype=wp.spatial_vector),
+    body_u: wp.array(dtype=wp.spatial_vector, ndim=2),
 ):
-    body_idx = wp.tid()
+    world_idx, body_idx = wp.tid()
 
-    u = body_u[body_idx]
-    du = dbody_u[body_idx]
+    u = body_u[world_idx, body_idx]
+    du = dbody_u[world_idx, body_idx]
 
-    body_u[body_idx] = u + du
+    body_u[world_idx, body_idx] = u + du
 
 
 @wp.kernel
@@ -135,31 +135,31 @@ def find_minimal_residual_index_kernel(
 
 @wp.kernel
 def update_body_q_kernel(
-    body_u: wp.array(dtype=wp.spatial_vector),
-    body_q_prev: wp.array(dtype=wp.transform),
-    body_com: wp.array(dtype=wp.vec3),
+    body_u: wp.array(dtype=wp.spatial_vector, ndim=2),
+    body_q_prev: wp.array(dtype=wp.transform, ndim=2),
+    body_com: wp.array(dtype=wp.vec3, ndim=2),
     dt: wp.float32,
-    body_q: wp.array(dtype=wp.transform),
+    body_q: wp.array(dtype=wp.transform, ndim=2),
 ):
-    body_idx = wp.tid()
+    world_idx, body_idx = wp.tid()
 
-    v = wp.spatial_top(body_u[body_idx])
-    w = wp.spatial_bottom(body_u[body_idx])
+    v = wp.spatial_top(body_u[world_idx, body_idx])
+    w = wp.spatial_bottom(body_u[world_idx, body_idx])
 
-    x_prev = wp.transform_get_translation(body_q_prev[body_idx])
-    r_prev = wp.transform_get_rotation(body_q_prev[body_idx])
+    x_prev = wp.transform_get_translation(body_q_prev[world_idx, body_idx])
+    r_prev = wp.transform_get_rotation(body_q_prev[world_idx, body_idx])
 
-    com = body_com[body_idx]
+    com = body_com[world_idx, body_idx]
     x_com = x_prev + wp.quat_rotate(r_prev, com)
 
     x = x_com + v * dt
     r = wp.normalize(r_prev + wp.quat(w, 0.0) * r_prev * 0.5 * dt)
 
-    body_q[body_idx] = wp.transform(x - wp.quat_rotate(r, com), r)
+    body_q[world_idx, body_idx] = wp.transform(x - wp.quat_rotate(r, com), r)
 
 
 def update_body_q(
-    model: Model,
+    model: BatchedModel,
     data: EngineArrays,
     config: EngineConfig,
     dims: EngineDimensions,
@@ -168,7 +168,7 @@ def update_body_q(
 
     wp.launch(
         kernel=update_body_q_kernel,
-        dim=dims.N_b,
+        dim=(dims.N_w, dims.N_b),
         inputs=[
             data.body_u,
             data.body_q_prev,
@@ -181,7 +181,6 @@ def update_body_q(
 
 
 def compute_linesearch_batch_variables(
-    model: Model,
     data: EngineArrays,
     config: EngineConfig,
     dims: EngineDimensions,
@@ -215,7 +214,6 @@ def compute_linesearch_batch_variables(
 
 
 def update_variables_without_linesearch(
-    model: Model,
     data: EngineArrays,
     config: EngineConfig,
     dims: EngineDimensions,
@@ -224,7 +222,7 @@ def update_variables_without_linesearch(
 
     wp.launch(
         kernel=compute_body_u_without_linesearch_kernel,
-        dim=dims.N_b,
+        dim=(dims.N_w, dims.N_b),
         inputs=[
             data.dbody_u,
         ],
@@ -234,7 +232,7 @@ def update_variables_without_linesearch(
 
     wp.launch(
         kernel=compute_body_lambda_without_linesearch_kernel,
-        dim=dims.N_c,
+        dim=(dims.N_w, dims.N_c),
         inputs=[
             data.dbody_lambda.full,
         ],
@@ -244,7 +242,6 @@ def update_variables_without_linesearch(
 
 
 def compute_linesearch_batch_h(
-    model: Model,
     data: EngineArrays,
     config: EngineConfig,
     dims: EngineDimensions,
@@ -338,7 +335,6 @@ def compute_linesearch_batch_h(
 
 
 def select_minimal_residual_variables(
-    model: Model,
     data: EngineArrays,
     config: EngineConfig,
     dims: EngineDimensions,
@@ -389,14 +385,13 @@ def select_minimal_residual_variables(
 
 
 def perform_linesearch(
-    model: Model,
     data: EngineArrays,
     config: EngineConfig,
     dims: EngineDimensions,
 ):
     if config.enable_linesearch:
-        compute_linesearch_batch_variables(model, data, config, dims)
-        compute_linesearch_batch_h(model, data, config, dims)
-        select_minimal_residual_variables(model, data, config, dims)
+        compute_linesearch_batch_variables(data, config, dims)
+        compute_linesearch_batch_h(data, config, dims)
+        select_minimal_residual_variables(data, config, dims)
     else:
-        update_variables_without_linesearch(model, data, config, dims)
+        update_variables_without_linesearch(data, config, dims)

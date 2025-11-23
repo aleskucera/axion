@@ -11,13 +11,14 @@ from axion.types import contact_interaction_kernel
 from axion.types import ContactInteraction
 from axion.types import joint_constraint_data_kernel
 from axion.types import JointConstraintData
-from axion.types import spatial_inertia_kernel
 from axion.types import SpatialInertia
-from axion.types import transform_spatial_inertia_to_world_kernel
+from axion.types import world_spatial_inertia_kernel
 from newton import Contacts
 from newton import Model
 from newton import State
 
+from .batched_model import BatchedContacts
+from .batched_model import BatchedModel
 from .data_views import ConstraintView
 from .data_views import SystemView
 from .engine_config import EngineConfig
@@ -107,7 +108,7 @@ class EngineArrays:
     @cached_property
     def J_values(self) -> ConstraintView:
         """Jacobian values view."""
-        return ConstraintView(self._J_values, self.dims, axis=0)
+        return ConstraintView(self._J_values, self.dims, axis=-2)
 
     @cached_property
     def C_values(self) -> ConstraintView:
@@ -130,7 +131,7 @@ class EngineArrays:
 
     @cached_property
     def constraint_body_idx(self) -> ConstraintView:
-        return ConstraintView(self._constraint_body_idx, self.dims, axis=0)
+        return ConstraintView(self._constraint_body_idx, self.dims, axis=-2)
 
     # 3. Linesearch Batch Views
 
@@ -161,27 +162,6 @@ class EngineArrays:
     def allocated_pca_arrays(self) -> bool:
         return self.pca_batch_body_u is not None
 
-    def set_body_M(self, model: Model):
-        wp.launch(
-            kernel=spatial_inertia_kernel,
-            dim=self.dims.N_b,
-            inputs=[
-                model.body_mass,
-                model.body_inertia,
-            ],
-            outputs=[self.body_M],
-        )
-
-        wp.launch(
-            kernel=spatial_inertia_kernel,
-            dim=self.dims.N_b,
-            inputs=[
-                model.body_inv_mass,
-                model.body_inv_inertia,
-            ],
-            outputs=[self.body_M_inv],
-        )
-
     def set_g_accel(self, model: Model):
         assert (
             self.g_accel is None
@@ -194,9 +174,11 @@ class EngineArrays:
     def update_state_data(
         self,
         model: Model,
+        batched_model: BatchedModel,
         state_in: State,
         state_out: State,
         contacts: Contacts,
+        batched_contacts: BatchedContacts,
         dt: float,
     ):
         self.set_dt(dt)
@@ -208,12 +190,12 @@ class EngineArrays:
         wp.copy(dest=self.body_u_prev, src=state_in.body_qd)
 
         wp.launch(
-            kernel=transform_spatial_inertia_to_world_kernel,
-            dim=model.body_count,
+            kernel=world_spatial_inertia_kernel,
+            dim=(batched_model.num_worlds, batched_model.body_count),
             inputs=[
                 self.body_q,
-                model.body_com,
-                self.body_M,
+                batched_model.body_mass,
+                batched_model.body_inertia,
             ],
             outputs=[
                 self.world_M,
@@ -222,12 +204,12 @@ class EngineArrays:
         )
 
         wp.launch(
-            kernel=transform_spatial_inertia_to_world_kernel,
-            dim=model.body_count,
+            kernel=world_spatial_inertia_kernel,
+            dim=(batched_model.num_worlds, batched_model.body_count),
             inputs=[
                 self.body_q,
-                model.body_com,
-                self.body_M_inv,
+                batched_model.body_inv_mass,
+                batched_model.body_inv_inertia,
             ],
             outputs=[
                 self.world_M_inv,
@@ -237,22 +219,22 @@ class EngineArrays:
 
         wp.launch(
             kernel=contact_interaction_kernel,
-            dim=model.rigid_contact_max,
+            dim=(batched_model.num_worlds, batched_contacts.max_contacts),
             inputs=[
                 self.body_q,
-                model.body_com,
-                model.shape_body,
-                model.shape_thickness,
-                model.shape_material_mu,
-                model.shape_material_restitution,
-                contacts.rigid_contact_count,
-                contacts.rigid_contact_point0,
-                contacts.rigid_contact_point1,
-                contacts.rigid_contact_normal,
-                contacts.rigid_contact_shape0,
-                contacts.rigid_contact_shape1,
-                contacts.rigid_contact_thickness0,
-                contacts.rigid_contact_thickness1,
+                batched_model.body_com,
+                batched_model.shape_body,
+                batched_model.shape_thickness,
+                batched_model.shape_material_mu,
+                batched_model.shape_material_restitution,
+                batched_contacts.contact_count,
+                batched_contacts.contact_point0,
+                batched_contacts.contact_point1,
+                batched_contacts.contact_normal,
+                batched_contacts.contact_shape0,
+                batched_contacts.contact_shape1,
+                batched_contacts.contact_thickness0,
+                batched_contacts.contact_thickness1,
             ],
             outputs=[
                 self.contact_interaction,
@@ -262,18 +244,18 @@ class EngineArrays:
 
         wp.launch(
             kernel=joint_constraint_data_kernel,
-            dim=model.joint_count,
+            dim=(batched_model.num_worlds, batched_model.joint_count),
             inputs=[
                 self.body_q,
-                model.body_com,
-                model.joint_type,
-                model.joint_enabled,
-                model.joint_parent,
-                model.joint_child,
-                model.joint_X_p,
-                model.joint_X_c,
-                model.joint_qd_start,
-                model.joint_axis,
+                batched_model.body_com,
+                batched_model.joint_type,
+                batched_model.joint_enabled,
+                batched_model.joint_parent,
+                batched_model.joint_child,
+                batched_model.joint_X_p,
+                batched_model.joint_X_c,
+                batched_model.joint_qd_start,
+                batched_model.joint_axis,
                 self.joint_constraint_offsets,
             ],
             outputs=[
@@ -284,7 +266,7 @@ class EngineArrays:
 
         wp.launch(
             kernel=fill_joint_constraint_body_idx_kernel,
-            dim=self.dims.N_j,
+            dim=(batched_model.num_worlds, self.dims.N_j),
             inputs=[
                 self.joint_constraint_data,
             ],
@@ -296,7 +278,7 @@ class EngineArrays:
 
         wp.launch(
             kernel=fill_contact_constraint_body_idx_kernel,
-            dim=self.dims.N_n,
+            dim=(batched_model.num_worlds, self.dims.N_n),
             inputs=[
                 self.contact_interaction,
             ],
@@ -308,7 +290,7 @@ class EngineArrays:
 
         wp.launch(
             kernel=fill_friction_constraint_body_idx_kernel,
-            dim=self.dims.N_f,
+            dim=(batched_model.num_worlds, self.dims.N_f),
             inputs=[
                 self.contact_interaction,
             ],
@@ -342,79 +324,83 @@ def create_engine_arrays(
     """
 
     def _zeros(shape, dtype=wp.float32, ndim=None):
-        return wp.zeros(shape, dtype=dtype, device=device, ndim=ndim)
+        return wp.zeros(shape, dtype=dtype, device=device, ndim=ndim).contiguous()
 
     def _ones(shape, dtype=wp.float32, ndim=None):
-        return wp.ones(shape, dtype=dtype, device=device, ndim=ndim)
+        return wp.ones(shape, dtype=dtype, device=device, ndim=ndim).contiguous()
 
     def _empty(shape, dtype, device=device):
-        return wp.empty(shape, dtype=dtype, device=device)
+        return wp.empty(shape, dtype=dtype, device=device).contiguous()
 
-    # Allocate core arrays
-    h = _zeros(dims.N_u + dims.N_c)
-    J_values = _zeros((dims.N_c, 2), wp.spatial_vector)
-    C_values = _zeros(dims.N_c)
+    # ---- Core arrays using tuple shapes ----
+    h = _zeros((dims.N_w, dims.N_u + dims.N_c))
+    J_values = _zeros((dims.N_w, dims.N_c, 2), wp.spatial_vector)
+    C_values = _zeros((dims.N_w, dims.N_c))
 
-    body_f = _zeros(dims.N_b, wp.spatial_vector)
-    body_q = _zeros(dims.N_b, wp.transform)
-    body_q_prev = _zeros(dims.N_b, wp.transform)
-    body_u = _zeros(dims.N_b, wp.spatial_vector)
-    body_u_prev = _zeros(dims.N_b, wp.spatial_vector)
+    body_f = _zeros((dims.N_w, dims.N_b), wp.spatial_vector)
+    body_q = _zeros((dims.N_w, dims.N_b), wp.transform)
+    body_q_prev = _zeros((dims.N_w, dims.N_b), wp.transform)
+    body_u = _zeros((dims.N_w, dims.N_b), wp.spatial_vector)
+    body_u_prev = _zeros((dims.N_w, dims.N_b), wp.spatial_vector)
 
-    body_lambda = _zeros(dims.N_c)
-    body_lambda_prev = _zeros(dims.N_c)
+    body_lambda = _zeros((dims.N_w, dims.N_c))
+    body_lambda_prev = _zeros((dims.N_w, dims.N_c))
 
-    s_n = _zeros(dims.N_n)
-    s_n_prev = _zeros(dims.N_n)
+    s_n = _zeros((dims.N_w, dims.N_n))
+    s_n_prev = _zeros((dims.N_w, dims.N_n))
 
-    constraint_body_idx = _zeros((dims.N_c, 2), wp.int32)
+    constraint_body_idx = _zeros((dims.N_w, dims.N_c, 2), wp.int32)
 
-    JT_delta_lambda = _zeros(dims.N_b, wp.spatial_vector)
-    dbody_u = _zeros(dims.N_b, wp.spatial_vector)
-    dbody_lambda = _zeros(dims.N_c)
+    JT_delta_lambda = _zeros((dims.N_w, dims.N_b), wp.spatial_vector)
+    dbody_u = _zeros((dims.N_w, dims.N_b), wp.spatial_vector)
+    dbody_lambda = _zeros((dims.N_w, dims.N_c))
 
-    b = _zeros(dims.N_c)
+    b = _zeros((dims.N_w, dims.N_c))
 
-    body_M = _empty(dims.N_b, SpatialInertia)
-    body_M_inv = _empty(dims.N_b, SpatialInertia)
-    world_M = _empty(dims.N_b, SpatialInertia)
-    world_M_inv = _empty(dims.N_b, SpatialInertia)
+    body_M = _empty((dims.N_w, dims.N_b), SpatialInertia)
+    body_M_inv = _empty((dims.N_w, dims.N_b), SpatialInertia)
+    world_M = _empty((dims.N_w, dims.N_b), SpatialInertia)
+    world_M_inv = _empty((dims.N_w, dims.N_b), SpatialInertia)
 
-    joint_constraint_data = _empty(dims.N_j, JointConstraintData)
-    contact_interaction = _empty(dims.N_n, ContactInteraction)
+    joint_constraint_data = _empty((dims.N_w, dims.N_j), JointConstraintData)
+    contact_interaction = _empty((dims.N_w, dims.N_n), ContactInteraction)
 
-    # --- Arrays for linesearch ---
+    # ---- Linesearch Arrays ----
     linesearch_steps = None
     linesearch_batch_body_u = None
     linesearch_batch_body_lambda = None
     linesearch_batch_h = None
     linesearch_batch_h_norm_sq = None
     linesearch_minimal_index = None
+
     if config.enable_linesearch:
         step_count = config.linesearch_step_count
 
         log_step_min = np.log10(config.linesearch_step_min)
         log_step_max = np.log10(config.linesearch_step_max)
-        linesearch_steps_np = np.logspace(log_step_min, log_step_max, step_count)
-        closest_idx = np.argmin(np.abs(linesearch_steps_np - 1.0))
-        linesearch_steps_np[closest_idx] = 1.0
-        linesearch_steps = wp.from_numpy(linesearch_steps_np, dtype=wp.float32)
+        ls_steps_np = np.logspace(log_step_min, log_step_max, step_count)
 
-        linesearch_batch_body_u = _zeros((step_count, dims.N_b), dtype=wp.spatial_vector)
-        linesearch_batch_body_lambda = _zeros((step_count, dims.N_c))
-        linesearch_batch_h = _zeros((step_count, dims.N_u + dims.N_c))
-        linesearch_batch_h_norm_sq = _zeros(step_count)
-        linesearch_minimal_index = _zeros(1, dtype=wp.int32)
+        # force one step to be 1.0
+        closest = np.argmin(np.abs(ls_steps_np - 1.0))
+        ls_steps_np[closest] = 1.0
+        linesearch_steps = wp.from_numpy(ls_steps_np, dtype=wp.float32)
 
-    # --- Dense representation of the arrays---
+        linesearch_batch_body_u = _zeros((step_count, dims.N_w, dims.N_b), wp.spatial_vector)
+        linesearch_batch_body_lambda = _zeros((step_count, dims.N_w, dims.N_c))
+        linesearch_batch_h = _zeros((step_count, dims.N_w, dims.N_u + dims.N_c))
+        linesearch_batch_h_norm_sq = _zeros((step_count, dims.N_w))
+        linesearch_minimal_index = _zeros((dims.N_w,), wp.int32)
+
+    # ---- Dense Representation ----
     M_inv_dense = None
     J_dense = None
     C_dense = None
     if allocate_dense:
-        M_inv_dense = _zeros((dims.N_u, dims.N_u))
-        J_dense = _zeros((dims.N_c, dims.N_u))
-        C_dense = _zeros((dims.N_c, dims.N_c))
+        M_inv_dense = _zeros((dims.N_w, dims.N_u, dims.N_u))
+        J_dense = _zeros((dims.N_w, dims.N_c, dims.N_u))
+        C_dense = _zeros((dims.N_w, dims.N_c, dims.N_c))
 
+    # ---- PCA Storage Buffers ----
     (
         optim_h,
         optim_trajectory,
@@ -422,22 +408,18 @@ def create_engine_arrays(
         pca_batch_body_lambda,
         pca_batch_h,
         pca_batch_h_norm,
-    ) = (
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-    )
+    ) = (None, None, None, None, None, None)
+
     if allocate_pca:
         pca_batch_size = pca_grid_res * pca_grid_res
-        optim_h = _zeros((config.newton_iters, dims.N_u + dims.N_c))
-        optim_trajectory = _zeros((config.newton_iters, dims.N_u + dims.N_c))
-        pca_batch_body_u = _zeros((pca_batch_size, dims.N_b), dtype=wp.spatial_vector)
-        pca_batch_body_lambda = _zeros((pca_batch_size, dims.N_c))
-        pca_batch_h = _zeros((pca_batch_size, dims.N_u + dims.N_c))
-        pca_batch_h_norm = _zeros(pca_batch_size)
+
+        optim_h = _zeros((config.newton_iters, dims.N_w, dims.N_u + dims.N_c))
+        optim_trajectory = _zeros((config.newton_iters, dims.N_w, dims.N_u + dims.N_c))
+
+        pca_batch_body_u = _zeros((pca_batch_size, dims.N_w, dims.N_b), wp.spatial_vector)
+        pca_batch_body_lambda = _zeros((pca_batch_size, dims.N_w, dims.N_c))
+        pca_batch_h = _zeros((pca_batch_size, dims.N_w, dims.N_u + dims.N_c))
+        pca_batch_h_norm = _zeros((pca_batch_size, dims.N_w))
 
     return EngineArrays(
         dims=dims,

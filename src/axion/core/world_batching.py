@@ -8,8 +8,8 @@ def compute_contact_world_indices(
     contact_count: wp.array(dtype=wp.int32),
     contact_shape0: wp.array(dtype=wp.int32),
     contact_shape1: wp.array(dtype=wp.int32),
-    world_counters: wp.array(dtype=wp.int32),
     # OUTPUT: This array holds the assigned column index for every contact
+    world_counters: wp.array(dtype=wp.int32),
     out_write_slots: wp.array(dtype=wp.int32),
 ):
     contact_idx = wp.tid()

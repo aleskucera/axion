@@ -92,7 +92,7 @@ class SystemView(Generic[T]):
     def d(self) -> wp.array:
         """Dynamics part (..., :N_u)."""
         indexer = self._get_split_slice(None, self.dims.N_u)
-        return self.data[indexer]
+        return self.data[indexer].contiguous()
 
     @property
     def d_spatial(self) -> wp.array:

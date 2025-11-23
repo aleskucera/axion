@@ -5,16 +5,19 @@ import newton
 import numpy as np
 import scipy
 import warp as wp
+from axion.optim import cr
 from axion.optim import JacobiPreconditioner
 from axion.optim import MatrixFreeSystemOperator
 from axion.optim import MatrixSystemOperator
-from axion.types import compute_joint_constraint_offsets
+from axion.types import compute_joint_constraint_offsets_batched
 from newton import Contacts
 from newton import Control
 from newton import Model
 from newton import State
 from newton.solvers import SolverBase
 
+from .batched_model import BatchedContacts
+from .batched_model import BatchedModel
 from .control_utils import apply_control
 from .engine_config import AxionEngineConfig
 from .engine_data import create_engine_arrays
@@ -73,15 +76,18 @@ class AxionEngine(SolverBase):
         self.init_state_fn = init_state_fn
         self.logger = logger
         self.config = config
+        self.batched_model = BatchedModel(model)
+        self.batched_contacts = BatchedContacts(model, max_contacts_per_world=20)
 
-        joint_constraint_offsets, num_constraints = compute_joint_constraint_offsets(
-            model.joint_type,
+        joint_constraint_offsets, num_constraints = compute_joint_constraint_offsets_batched(
+            self.batched_model.joint_type,
         )
 
         self.dims = EngineDimensions(
-            body_count=self.model.body_count,
-            contact_count=self.model.rigid_contact_max,
-            joint_count=self.model.joint_count,
+            num_worlds=self.batched_model.num_worlds,
+            body_count=self.batched_model.body_count,
+            contact_count=self.batched_contacts.max_contacts,
+            joint_count=self.batched_model.joint_count,
             linesearch_step_count=self.config.linesearch_step_count,
             joint_constraint_count=num_constraints,
         )
@@ -109,7 +115,6 @@ class AxionEngine(SolverBase):
 
         self.preconditioner = JacobiPreconditioner(self)
 
-        self.data.set_body_M(model)
         self.data.set_g_accel(model)
 
     def _copy_computed_state_to_trajectory(self, iter: int):
@@ -140,15 +145,25 @@ class AxionEngine(SolverBase):
     ):
         step_events = self.logger.step_event_pairs[self.logger.current_step_in_segment]
 
+        self.batched_contacts.load_contact_data(contacts)
+
         # Control block
         with self.logger.timed_block(*step_events["control"]):
             newton.eval_ik(self.model, state_in, state_in.joint_q, state_in.joint_qd)
-            apply_control(self.model, state_in, dt, control)
+            # apply_control(self.model, state_in, dt, control)
 
         # Initial guess block
         with self.logger.timed_block(*step_events["initial_guess"]):
             self.init_state_fn(state_in, state_out, contacts, dt)
-            self.data.update_state_data(self.model, state_in, state_out, contacts, dt)
+            self.data.update_state_data(
+                self.model,
+                self.batched_model,
+                state_in,
+                state_out,
+                contacts,
+                self.batched_contacts,
+                dt,
+            )
             self.data._body_lambda.zero_()
 
         for i in range(self.config.newton_iters):
@@ -161,7 +176,7 @@ class AxionEngine(SolverBase):
 
             # System linearization block
             with self.logger.timed_block(*newton_iter_events["system_linearization"]):
-                compute_linear_system(self.model, self.data, self.config, self.dims, dt)
+                compute_linear_system(self.data, self.config, self.dims, dt)
 
             if not self.config.matrixfree_representation:
                 self.A_op.update()
@@ -170,32 +185,25 @@ class AxionEngine(SolverBase):
             # Linear system solve block
             with self.logger.timed_block(*newton_iter_events["linear_system_solve"]):
                 self.data.dbody_lambda.zero_()
-                ret = wp.optim.linear.cr(
+                cr(
                     A=self.A_op,
                     b=self.data.b,
                     x=self.data.dbody_lambda.full,
-                    atol=2e-5,
-                    maxiter=20,
+                    iters=20,
                     M=self.preconditioner,
-                    check_every=0,
-                    use_cuda_graph=True,
                 )
-                final_iteration = ret[0]
-                residual_norm_squared = ret[1]
-                absolute_tolerance_squared = ret[2]
-
                 compute_dbody_qd_from_dbody_lambda(self.data, self.config, self.dims)
 
             # Linesearch block
             with self.logger.timed_block(*newton_iter_events["linesearch"]):
-                perform_linesearch(self.model, self.data, self.config, self.dims)
+                perform_linesearch(self.data, self.config, self.dims)
 
             self.logger.log_newton_iteration_data(self, i)
-            self._copy_computed_state_to_trajectory(i)
+            # self._copy_computed_state_to_trajectory(i)
 
-        self.logger.log_residual_norm_landscape(self)
+        # self.logger.log_residual_norm_landscape(self)
 
-        update_body_q(self.model, self.data, self.config, self.dims)
+        update_body_q(self.batched_model, self.data, self.config, self.dims)
         wp.copy(dest=state_out.body_qd, src=self.data.body_u)
         wp.copy(dest=state_out.body_q, src=self.data.body_q)
 
