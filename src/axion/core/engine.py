@@ -6,6 +6,7 @@ import numpy as np
 import scipy
 import warp as wp
 from axion.optim import cr
+from axion.optim import CRSolver
 from axion.optim import JacobiPreconditioner
 from axion.optim import MatrixFreeSystemOperator
 from axion.optim import MatrixSystemOperator
@@ -115,6 +116,12 @@ class AxionEngine(SolverBase):
 
         self.preconditioner = JacobiPreconditioner(self)
 
+        self.cr_solver = CRSolver(
+            num_worlds=self.dims.num_worlds,
+            vec_dim=self.dims.N_c,
+            dtype=wp.float32,
+            device=self.device,
+        )
         self.data.set_g_accel(model)
 
     def _copy_computed_state_to_trajectory(self, iter: int):
@@ -185,7 +192,14 @@ class AxionEngine(SolverBase):
             # Linear system solve block
             with self.logger.timed_block(*newton_iter_events["linear_system_solve"]):
                 self.data.dbody_lambda.zero_()
-                cr(
+                # cr(
+                #     A=self.A_op,
+                #     b=self.data.b,
+                #     x=self.data.dbody_lambda.full,
+                #     iters=20,
+                #     M=self.preconditioner,
+                # )
+                self.cr_solver.solve(
                     A=self.A_op,
                     b=self.data.b,
                     x=self.data.dbody_lambda.full,

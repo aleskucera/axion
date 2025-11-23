@@ -17,7 +17,7 @@ os.environ["PYOPENGL_PLATFORM"] = "glx"
 CONFIG_PATH = files("axion").joinpath("examples").joinpath("conf")
 
 
-NUM_WORLDS = 12
+NUM_WORLDS = 48
 
 
 class Simulator(AbstractSimulator):
