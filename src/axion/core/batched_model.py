@@ -36,7 +36,40 @@ def batch_joint_qd_start_kernel(
     world_idx = joint_idx // joint_count_per_world
     slot = joint_idx % joint_count_per_world
 
-    batched_joint_qd_start[world_idx, slot] = joint_qd_start[joint_idx] % joint_dof_count_per_world
+    batched_joint_qd_start[world_idx, slot] = joint_qd_start[joint_idx] % (
+        joint_dof_count_per_world - 1
+    )
+
+
+@wp.kernel
+def batch_joint_bodies_kernel(
+    joint_count_per_world: wp.int32,
+    body_count_per_world: wp.int32,
+    joint_parent: wp.array(dtype=wp.int32),
+    joint_child: wp.array(dtype=wp.int32),
+    # OUTPUT
+    batched_joint_parent: wp.array(dtype=wp.int32, ndim=2),
+    batched_joint_child: wp.array(dtype=wp.int32, ndim=2),
+):
+    joint_idx = wp.tid()
+
+    if joint_idx >= joint_parent.shape[0]:
+        return
+
+    world_idx = joint_idx // joint_count_per_world
+    slot = joint_idx % joint_count_per_world
+
+    parent_idx = joint_parent[joint_idx]
+    if parent_idx >= 0:
+        batched_joint_parent[world_idx, slot] = parent_idx % body_count_per_world
+    else:
+        batched_joint_parent[world_idx, slot] = parent_idx
+
+    child_idx = joint_child[joint_idx]
+    if child_idx >= 0:
+        batched_joint_child[world_idx, slot] = child_idx % body_count_per_world
+    else:
+        batched_joint_child[world_idx, slot] = child_idx
 
 
 @wp.kernel
@@ -55,7 +88,11 @@ def batch_shape_body_kernel(
     world_idx = shape_idx // shape_count_per_world
     slot = shape_idx % shape_count_per_world
 
-    batched_shape_body[world_idx, slot] = shape_body[shape_idx] % body_count_per_world
+    body_idx = shape_body[shape_idx]
+    if body_idx >= 0:
+        batched_shape_body[world_idx, slot] = body_idx % body_count_per_world
+    else:
+        batched_shape_body[world_idx, slot] = body_idx
 
 
 class BatchedModel:
@@ -70,24 +107,25 @@ class BatchedModel:
         self.joint_dof_count = model.joint_dof_count // model.num_worlds
         self.joint_coord_count = model.joint_coord_count // model.num_worlds
 
-        self.body_com = model.body_com.reshape((model.num_worlds, -1))
-        self.body_inertia = model.body_inertia.reshape((model.num_worlds, -1))
-        self.body_inv_inertia = model.body_inv_inertia.reshape((model.num_worlds, -1))
-        self.body_mass = model.body_mass.reshape((model.num_worlds, -1))
-        self.body_inv_mass = model.body_inv_mass.reshape((model.num_worlds, -1))
+        with wp.ScopedDevice(self.device):
+            self.body_com = model.body_com.reshape((model.num_worlds, -1))
+            self.body_inertia = model.body_inertia.reshape((model.num_worlds, -1))
+            self.body_inv_inertia = model.body_inv_inertia.reshape((model.num_worlds, -1))
+            self.body_mass = model.body_mass.reshape((model.num_worlds, -1))
+            self.body_inv_mass = model.body_inv_mass.reshape((model.num_worlds, -1))
 
-        self.joint_X_c = model.joint_X_c.reshape((model.num_worlds, -1))
-        self.joint_X_p = model.joint_X_p.reshape((model.num_worlds, -1))
-        self.joint_axis = model.joint_axis.reshape((model.num_worlds, -1))
-        self.joint_child = model.joint_child.reshape((model.num_worlds, -1))
-        self.joint_parent = model.joint_parent.reshape((model.num_worlds, -1))
-        self.joint_dof_dim = model.joint_dof_dim.reshape((model.num_worlds, -1))
-        self.joint_enabled = model.joint_enabled.reshape((model.num_worlds, -1))
-        self.joint_target_ke = model.joint_target_ke.reshape((model.num_worlds, -1))
-        self.joint_target_kd = model.joint_target_kd.reshape((model.num_worlds, -1))
-        self.joint_type = model.joint_type.reshape((model.num_worlds, -1))
-        self.joint_q_start = wp.zeros((model.num_worlds, self.joint_count), dtype=wp.int32)
-        self.joint_qd_start = wp.zeros((model.num_worlds, self.joint_count), dtype=wp.int32)
+            self.joint_X_c = model.joint_X_c.reshape((model.num_worlds, -1))
+            self.joint_X_p = model.joint_X_p.reshape((model.num_worlds, -1))
+            self.joint_axis = model.joint_axis.reshape((model.num_worlds, -1))
+            self.joint_dof_dim = model.joint_dof_dim.reshape((model.num_worlds, -1))
+            self.joint_enabled = model.joint_enabled.reshape((model.num_worlds, -1))
+            self.joint_target_ke = model.joint_target_ke.reshape((model.num_worlds, -1))
+            self.joint_target_kd = model.joint_target_kd.reshape((model.num_worlds, -1))
+            self.joint_type = model.joint_type.reshape((model.num_worlds, -1))
+            self.joint_q_start = wp.zeros((model.num_worlds, self.joint_count), dtype=wp.int32)
+            self.joint_qd_start = wp.zeros((model.num_worlds, self.joint_count), dtype=wp.int32)
+            self.joint_parent = wp.zeros((model.num_worlds, self.joint_count), dtype=wp.int32)
+            self.joint_child = wp.zeros((model.num_worlds, self.joint_count), dtype=wp.int32)
 
         wp.launch(
             kernel=batch_joint_q_start_kernel,
@@ -117,12 +155,31 @@ class BatchedModel:
             device=self.device,
         )
 
-        self.shape_body = wp.zeros((model.num_worlds, self.shape_count), dtype=wp.int32)
-        self.shape_thickness = model.shape_thickness.reshape((model.num_worlds, -1))
-        self.shape_material_mu = model.shape_material_restitution.reshape((model.num_worlds, -1))
-        self.shape_material_restitution = model.shape_material_restitution.reshape(
-            (model.num_worlds, -1)
+        wp.launch(
+            kernel=batch_joint_bodies_kernel,
+            dim=self.model.joint_count,
+            inputs=[
+                self.joint_count,
+                self.body_count,
+                model.joint_parent,
+                model.joint_child,
+            ],
+            outputs=[
+                self.joint_parent,
+                self.joint_child,
+            ],
+            device=self.device,
         )
+
+        with wp.ScopedDevice(self.device):
+            self.shape_body = wp.zeros((model.num_worlds, self.shape_count), dtype=wp.int32)
+            self.shape_thickness = model.shape_thickness.reshape((model.num_worlds, -1))
+            self.shape_material_mu = model.shape_material_restitution.reshape(
+                (model.num_worlds, -1)
+            )
+            self.shape_material_restitution = model.shape_material_restitution.reshape(
+                (model.num_worlds, -1)
+            )
 
         wp.launch(
             kernel=batch_shape_body_kernel,
@@ -187,10 +244,18 @@ def batch_contact_data_kernel(
     batched_contact_point0[world_idx, slot] = contact_point0[contact_idx]
     batched_contact_point1[world_idx, slot] = contact_point1[contact_idx]
     batched_contact_normal[world_idx, slot] = contact_normal[contact_idx]
-    batched_contact_shape0[world_idx, slot] = contact_shape0[contact_idx] % num_shapes_per_world
-    batched_contact_shape1[world_idx, slot] = contact_shape1[contact_idx] % num_shapes_per_world
     batched_contact_thickness0[world_idx, slot] = contact_thickness0[contact_idx]
     batched_contact_thickness1[world_idx, slot] = contact_thickness1[contact_idx]
+
+    if shape_0 >= 0:
+        batched_contact_shape0[world_idx, slot] = shape_0 % num_shapes_per_world
+    else:
+        batched_contact_shape0[world_idx, slot] = shape_0
+
+    if shape_1 >= 0:
+        batched_contact_shape1[world_idx, slot] = shape_1 % num_shapes_per_world
+    else:
+        batched_contact_shape1[world_idx, slot] = shape_1
 
 
 class BatchedContacts:
@@ -260,5 +325,5 @@ class BatchedContacts:
             device=self.device,
         )
 
-        if contacts.rigid_contact_count.numpy()[0] > 0:
-            print("Contaaaaaaaaaaaaaaaaaact!")
+        # if contacts.rigid_contact_count.numpy()[0] > 0:
+        #     print("Contact")
