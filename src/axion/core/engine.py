@@ -203,7 +203,7 @@ class AxionEngine(SolverBase):
                     A=self.A_op,
                     b=self.data.b,
                     x=self.data.dbody_lambda.full,
-                    iters=20,
+                    iters=self.config.linear_iters,
                     M=self.preconditioner,
                 )
                 compute_dbody_qd_from_dbody_lambda(self.data, self.config, self.dims)
