@@ -24,10 +24,10 @@ def joint_constraint_kernel(
     lambda_j = body_lambda_j[world_idx, constraint_idx]
 
     if not c.is_active:
-        h_j[world_idx, constraint_idx] = lambda_j
+        h_j[world_idx, constraint_idx] = 0.0
         J_hat_j_values[world_idx, constraint_idx, 0] = wp.spatial_vector()
         J_hat_j_values[world_idx, constraint_idx, 1] = wp.spatial_vector()
-        C_j_values[world_idx, constraint_idx] = 1.0
+        C_j_values[world_idx, constraint_idx] = 0.0
         return
 
     u_c = body_u[world_idx, c.child_idx]

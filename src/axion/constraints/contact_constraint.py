@@ -73,10 +73,10 @@ def contact_constraint_kernel(
     if not interaction.is_active:
         # The constraint residual is simply the impulse (h = λ),
         # which drives it to zero if unconstrained.
-        h_n[world_idx, contact_idx] = lambda_n
+        h_n[world_idx, contact_idx] = 0.0
         J_hat_n_values[world_idx, contact_idx, 0] = wp.spatial_vector()
         J_hat_n_values[world_idx, contact_idx, 1] = wp.spatial_vector()
-        C_n_values[world_idx, contact_idx] = 1.0
+        C_n_values[world_idx, contact_idx] = 0.0
         return
 
     # Unpack body indices for clarity

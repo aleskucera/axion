@@ -85,14 +85,14 @@ def friction_constraint_kernel(
 
     if not interaction.is_active or mu * impulse_n_prev <= 1e-3:
         # Unconstrained: h = λ, C = 1, J = 0
-        h_f[world_idx, constr_idx1] = body_lambda_f[world_idx, constr_idx1]
-        h_f[world_idx, constr_idx2] = body_lambda_f[world_idx, constr_idx2]
+        h_f[world_idx, constr_idx1] = 0.0
+        h_f[world_idx, constr_idx2] = 0.0
         J_hat_f_values[world_idx, constr_idx1, 0] = wp.spatial_vector()
         J_hat_f_values[world_idx, constr_idx2, 0] = wp.spatial_vector()
         J_hat_f_values[world_idx, constr_idx1, 1] = wp.spatial_vector()
         J_hat_f_values[world_idx, constr_idx2, 1] = wp.spatial_vector()
-        C_f_values[world_idx, constr_idx1] = 1.0
-        C_f_values[world_idx, constr_idx2] = 1.0
+        C_f_values[world_idx, constr_idx1] = 0.0
+        C_f_values[world_idx, constr_idx2] = 0.0
         return
 
     # --- 2. Gather Inputs for the Friction Model ---

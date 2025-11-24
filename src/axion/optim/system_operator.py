@@ -28,11 +28,16 @@ def kernel_invM_Jt_matvec_scatter(
     x: wp.array(dtype=wp.float32, ndim=2),
     J_values: wp.array(dtype=wp.spatial_vector, ndim=3),
     constraint_body_idx: wp.array(dtype=wp.int32, ndim=3),
+    constraint_active_mask: wp.array(dtype=wp.float32, ndim=2),
     body_M_inv: wp.array(dtype=SpatialInertia, ndim=2),
     # Output array
     out_vec_buffer: wp.array(dtype=wp.spatial_vector, ndim=3),
 ):
     world_idx, constraint_idx = wp.tid()
+
+    is_active = constraint_active_mask[world_idx, constraint_idx]
+    if is_active == 0.0:
+        return
 
     # Initialize a random state for this thread
     state = wp.rand_init(seed=constraint_idx)
@@ -69,6 +74,7 @@ def kernel_J_matvec_and_finalize(
     dyn_vec: wp.array(dtype=wp.spatial_vector, ndim=2),
     J_values: wp.array(dtype=wp.spatial_vector, ndim=3),
     constraint_body_idx: wp.array(dtype=wp.int32, ndim=3),
+    constraint_active_mask: wp.array(dtype=wp.float32, ndim=2),
     # Inputs for finalize
     C_values: wp.array(dtype=wp.float32, ndim=2),
     vec_x: wp.array(dtype=wp.float32, ndim=2),
@@ -86,30 +92,35 @@ def kernel_J_matvec_and_finalize(
     """
     world_idx, constraint_idx = wp.tid()
 
-    # --- Part 1: Compute J @ dyn_vec for this constraint (from kernel_J_matvec) ---
-    body_1 = constraint_body_idx[world_idx, constraint_idx, 0]
-    body_2 = constraint_body_idx[world_idx, constraint_idx, 1]
+    is_active = constraint_active_mask[world_idx, constraint_idx]
 
-    J_1 = J_values[world_idx, constraint_idx, 0]
-    J_2 = J_values[world_idx, constraint_idx, 1]
+    # The result of A @ x.
+    # Default is 0.0 (implied for inactive constraints)
+    Ax_i = 0.0
 
-    j_m_inv_jt_x = 0.0
-    if body_1 >= 0:
-        j_m_inv_jt_x += wp.dot(J_1, dyn_vec[world_idx, body_1])
-    if body_2 >= 0:
-        j_m_inv_jt_x += wp.dot(J_2, dyn_vec[world_idx, body_2])
+    if is_active > 0.0:
+        body_1 = constraint_body_idx[world_idx, constraint_idx, 0]
+        body_2 = constraint_body_idx[world_idx, constraint_idx, 1]
+        J_1 = J_values[world_idx, constraint_idx, 0]
+        J_2 = J_values[world_idx, constraint_idx, 1]
 
-    # --- Part 2: Use the result immediately (from kernel_finalize_matvec) ---
-    c_times_x = (C_values[world_idx, constraint_idx] + regularization) * vec_x[
-        world_idx, constraint_idx
-    ]
-    a_times_x = j_m_inv_jt_x + c_times_x
+        j_m_inv_jt_x = 0.0
+        if body_1 >= 0:
+            j_m_inv_jt_x += wp.dot(J_1, dyn_vec[world_idx, body_1])
+        if body_2 >= 0:
+            j_m_inv_jt_x += wp.dot(J_2, dyn_vec[world_idx, body_2])
 
+        c_times_x = (C_values[world_idx, constraint_idx] + regularization) * vec_x[
+            world_idx, constraint_idx
+        ]
+        Ax_i = j_m_inv_jt_x + c_times_x
+
+    # Final composition.
     if beta == 0.0:
-        out_vec_z[world_idx, constraint_idx] = alpha * a_times_x
+        out_vec_z[world_idx, constraint_idx] = alpha * Ax_i
     else:
         out_vec_z[world_idx, constraint_idx] = (
-            beta * vec_y[world_idx, constraint_idx] + alpha * a_times_x
+            beta * vec_y[world_idx, constraint_idx] + alpha * Ax_i
         )
 
 
@@ -185,6 +196,7 @@ class SystemOperator(LinearOperator):
                 x,
                 self.engine.data.J_values.full,
                 self.engine.data.constraint_body_idx.full,
+                self.engine.data.constraint_active_mask.full,
                 self.engine.data.world_M_inv,
             ],
             outputs=[self._tmp_dyn_vec_buffer],
@@ -204,6 +216,7 @@ class SystemOperator(LinearOperator):
                 self._tmp_dyn_vec,  # This is v₂ = M⁻¹ @ Jᵀ @ x
                 self.engine.data.J_values.full,
                 self.engine.data.constraint_body_idx.full,
+                self.engine.data.constraint_active_mask.full,
                 self.engine.data.C_values.full,
                 x,
                 y,

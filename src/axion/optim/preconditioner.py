@@ -13,6 +13,7 @@ def compute_inv_diag_kernel(
     J_values: wp.array(dtype=wp.spatial_vector, ndim=3),
     C_values: wp.array(dtype=wp.float32, ndim=2),
     constraint_body_idx: wp.array(dtype=wp.int32, ndim=3),
+    constraint_active_mask: wp.array(dtype=wp.float32, ndim=2),
     # Output array
     P_inv_diag: wp.array(dtype=wp.float32, ndim=2),
 ):
@@ -21,6 +22,10 @@ def compute_inv_diag_kernel(
     The result P_inv_diag[i] = 1.0 / A[i,i] is stored.
     """
     world_idx, constraint_idx = wp.tid()
+
+    is_active = constraint_active_mask[world_idx, constraint_idx]
+    if is_active == 0.0:
+        return
 
     body_1 = constraint_body_idx[world_idx, constraint_idx, 0]
     body_2 = constraint_body_idx[world_idx, constraint_idx, 1]
@@ -45,6 +50,7 @@ def compute_inv_diag_kernel(
 @wp.kernel
 def apply_preconditioner_kernel(
     P_inv_diag: wp.array(dtype=wp.float32, ndim=2),
+    constraint_active_mask: wp.array(dtype=wp.float32, ndim=2),
     vec_x: wp.array(dtype=wp.float32, ndim=2),
     vec_y: wp.array(dtype=wp.float32, ndim=2),
     alpha: float,
@@ -52,13 +58,23 @@ def apply_preconditioner_kernel(
     out_vec_z: wp.array(dtype=wp.float32, ndim=2),
 ):
     """Applies the Jacobi preconditioner: z = beta*y + alpha * P⁻¹ * x"""
-    world_idx, i = wp.tid()
-    preconditioned_x = P_inv_diag[world_idx, i] * vec_x[world_idx, i]
+    world_idx, constraint_idx = wp.tid()
 
+    is_active = constraint_active_mask[world_idx, constraint_idx]
+
+    # Calculate the preconditioned value (M⁻¹ x)
+    # If inactive, the result of the matrix operation is 0.0
+    preconditioned_x = 0.0
+    if is_active > 0.0:
+        preconditioned_x = P_inv_diag[world_idx, constraint_idx] * vec_x[world_idx, constraint_idx]
+
+    # Combine with beta * y and write to output.
     if beta == 0.0:
-        out_vec_z[world_idx, i] = alpha * preconditioned_x
+        out_vec_z[world_idx, constraint_idx] = alpha * preconditioned_x
     else:
-        out_vec_z[world_idx, i] = beta * vec_y[world_idx, i] + alpha * preconditioned_x
+        out_vec_z[world_idx, constraint_idx] = (
+            beta * vec_y[world_idx, constraint_idx] + alpha * preconditioned_x
+        )
 
 
 class JacobiPreconditioner(LinearOperator):
@@ -96,6 +112,7 @@ class JacobiPreconditioner(LinearOperator):
                 self.engine.data.J_values.full,
                 self.engine.data.C_values.full,
                 self.engine.data.constraint_body_idx.full,
+                self.engine.data.constraint_active_mask.full,
             ],
             outputs=[self._P_inv_diag],
             device=self.device,
@@ -109,6 +126,14 @@ class JacobiPreconditioner(LinearOperator):
         wp.launch(
             kernel=apply_preconditioner_kernel,
             dim=(self.engine.dims.N_w, self.engine.dims.N_c),
-            inputs=[self._P_inv_diag, x, y, alpha, beta, z],
+            inputs=[
+                self._P_inv_diag,
+                self.engine.data.constraint_active_mask.full,
+                x,
+                y,
+                alpha,
+                beta,
+                z,
+            ],
             device=self.device,
         )
