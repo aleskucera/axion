@@ -1,3 +1,4 @@
+import os
 from importlib.resources import files
 from typing import override
 
@@ -7,13 +8,13 @@ import warp as wp
 from axion import AbstractSimulator
 from axion import EngineConfig
 from axion import ExecutionConfig
+from axion import JointMode
 from axion import LoggingConfig
 from axion import RenderingConfig
 from axion import SimulationConfig
 from omegaconf import DictConfig
 
-import os
-os.environ['PYOPENGL_PLATFORM'] = 'glx'
+os.environ["PYOPENGL_PLATFORM"] = "glx"
 
 CONFIG_PATH = files("axion").joinpath("examples").joinpath("conf")
 
@@ -58,9 +59,12 @@ class Simulator(AbstractSimulator):
             axis=wp.vec3(0.0, 1.0, 0.0),
             parent_xform=wp.transform(p=wp.vec3(0.0, 0.0, 5.0), q=rot),
             child_xform=wp.transform(p=wp.vec3(-hx, 0.0, 0.0), q=wp.quat_identity()),
-            mode=newton.JointMode.NONE,
             target_ke=1000.0,
             target_kd=50.0,
+            custom_attributes={
+                "joint_target_ki": [0.5],
+                "joint_dof_mode": [JointMode.TARGET_VELOCITY],
+            },
         )
         self.builder.add_joint_revolute(
             parent=link_0,
@@ -68,15 +72,24 @@ class Simulator(AbstractSimulator):
             axis=wp.vec3(0.0, 1.0, 0.0),
             parent_xform=wp.transform(p=wp.vec3(hx, 0.0, 0.0), q=wp.quat_identity()),
             child_xform=wp.transform(p=wp.vec3(-hx, 0.0, 0.0), q=wp.quat_identity()),
-            mode=newton.JointMode.NONE,
             target_ke=500.0,
             target_kd=5.0,
             armature=0.1,
+            custom_attributes={
+                "joint_target_ki": [0.5],
+                "joint_dof_mode": [JointMode.TARGET_VELOCITY],
+            },
         )
 
         self.builder.add_ground_plane()
 
-        model = self.builder.finalize()
+        final_builder = newton.ModelBuilder()
+        final_builder.replicate(
+            self.builder,
+            num_worlds=self.simulation_config.num_worlds,
+        )
+
+        model = final_builder.finalize()
         return model
 
 

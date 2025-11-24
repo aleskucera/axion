@@ -4,8 +4,11 @@ from functools import cached_property
 import numpy as np
 import warp as wp
 import warp.context as wpc
+from axion.constraints import fill_contact_constraint_active_mask_kernel
 from axion.constraints import fill_contact_constraint_body_idx_kernel
+from axion.constraints import fill_friction_constraint_active_mask_kernel
 from axion.constraints import fill_friction_constraint_body_idx_kernel
+from axion.constraints import fill_joint_constraint_active_mask_kernel
 from axion.constraints import fill_joint_constraint_body_idx_kernel
 from axion.types import contact_interaction_kernel
 from axion.types import ContactInteraction
@@ -51,6 +54,7 @@ class EngineArrays:
     _dbody_lambda: wp.array  # Change in constraint impulses
 
     _constraint_body_idx: wp.array  # Indices of bodies involved in constraints
+    _constraint_active_mask: wp.array
 
     body_f: wp.array  # External forces
     body_q: wp.array  # Positions
@@ -65,8 +69,6 @@ class EngineArrays:
     JT_delta_lambda: wp.array  # J^T * delta_body_lambda
     b: wp.array  # RHS vector for linear system
 
-    body_M: wp.array
-    body_M_inv: wp.array
     world_M: wp.array
     world_M_inv: wp.array
     joint_constraint_data: wp.array
@@ -132,6 +134,10 @@ class EngineArrays:
     @cached_property
     def constraint_body_idx(self) -> ConstraintView:
         return ConstraintView(self._constraint_body_idx, self.dims, axis=-2)
+
+    @cached_property
+    def constraint_active_mask(self) -> ConstraintView:
+        return ConstraintView(self._constraint_active_mask, self.dims)
 
     # 3. Linesearch Batch Views
 
@@ -300,6 +306,42 @@ class EngineArrays:
             device=self.device,
         )
 
+        wp.launch(
+            kernel=fill_joint_constraint_active_mask_kernel,
+            dim=(batched_model.num_worlds, self.dims.N_j),
+            inputs=[
+                self.joint_constraint_data,
+            ],
+            outputs=[
+                self.constraint_active_mask.j,
+            ],
+            device=self.device,
+        )
+
+        wp.launch(
+            kernel=fill_contact_constraint_active_mask_kernel,
+            dim=(batched_model.num_worlds, self.dims.N_n),
+            inputs=[
+                self.contact_interaction,
+            ],
+            outputs=[
+                self.constraint_active_mask.n,
+            ],
+            device=self.device,
+        )
+
+        wp.launch(
+            kernel=fill_friction_constraint_active_mask_kernel,
+            dim=(batched_model.num_worlds, self.dims.N_f),
+            inputs=[
+                self.contact_interaction,
+            ],
+            outputs=[
+                self.constraint_active_mask.f,
+            ],
+            device=self.device,
+        )
+
 
 def create_engine_arrays(
     dims: EngineDimensions,
@@ -350,6 +392,7 @@ def create_engine_arrays(
     s_n_prev = _zeros((dims.N_w, dims.N_n))
 
     constraint_body_idx = _zeros((dims.N_w, dims.N_c, 2), wp.int32)
+    constraint_active_mask = _zeros((dims.N_w, dims.N_c), wp.float32)
 
     JT_delta_lambda = _zeros((dims.N_w, dims.N_b), wp.spatial_vector)
     dbody_u = _zeros((dims.N_w, dims.N_b), wp.spatial_vector)
@@ -357,8 +400,6 @@ def create_engine_arrays(
 
     b = _zeros((dims.N_w, dims.N_c))
 
-    body_M = _empty((dims.N_w, dims.N_b), SpatialInertia)
-    body_M_inv = _empty((dims.N_w, dims.N_b), SpatialInertia)
     world_M = _empty((dims.N_w, dims.N_b), SpatialInertia)
     world_M_inv = _empty((dims.N_w, dims.N_b), SpatialInertia)
 
@@ -439,11 +480,10 @@ def create_engine_arrays(
         s_n=s_n,
         s_n_prev=s_n_prev,
         _constraint_body_idx=constraint_body_idx,
+        _constraint_active_mask=constraint_active_mask,
         JT_delta_lambda=JT_delta_lambda,
         _dbody_lambda=dbody_lambda,
         b=b,
-        body_M=body_M,
-        body_M_inv=body_M_inv,
         world_M=world_M,
         world_M_inv=world_M_inv,
         joint_constraint_data=joint_constraint_data,

@@ -259,12 +259,9 @@ class EngineLogger:
                     self.hdf5_logger.log_wp_dataset("J_dense", engine.data.J_dense)
                     self.hdf5_logger.log_wp_dataset("C_dense", engine.data.C_dense)
 
-                    if not engine.config.matrixfree_representation:
-                        self.hdf5_logger.log_wp_dataset("A", self.A_op._A)
-                    else:
-                        A_np = get_system_matrix_numpy(engine.data, engine.config, engine.dims)
-                        self.hdf5_logger.log_np_dataset("A", A_np)
-                        self.hdf5_logger.log_scalar("cond_number", np.linalg.cond(A_np))
+                    A_np = get_system_matrix_numpy(engine.data, engine.config, engine.dims)
+                    self.hdf5_logger.log_np_dataset("A", A_np)
+                    self.hdf5_logger.log_scalar("cond_number", np.linalg.cond(A_np))
 
     def log_residual_norm_landscape(self, engine: AxionEngine):
         if not self.config.enable_hdf5_logging or not self.config.log_residual_norm_landscape:

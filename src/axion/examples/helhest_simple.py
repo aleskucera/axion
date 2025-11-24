@@ -21,8 +21,6 @@ os.environ["PYOPENGL_PLATFORM"] = "glx"
 CONFIG_PATH = files("axion").joinpath("examples").joinpath("conf")
 ASSETS_DIR = files("axion").joinpath("examples").joinpath("assets")
 
-NUM_WORLDS = 4
-
 
 class Simulator(AbstractSimulator):
     def __init__(
@@ -48,7 +46,7 @@ class Simulator(AbstractSimulator):
             [np.zeros(6), np.array([0.5, 0.5, 0.0], dtype=wp.float32)]
         )
 
-        joint_target = np.tile(robot_joint_target, NUM_WORLDS)
+        joint_target = np.tile(robot_joint_target, self.simulation_config.num_worlds)
         self.joint_target = wp.from_numpy(joint_target, dtype=wp.float32)
 
     @override
@@ -260,7 +258,10 @@ class Simulator(AbstractSimulator):
         )
 
         final_builder = newton.ModelBuilder()
-        final_builder.replicate(self.builder, num_worlds=NUM_WORLDS)
+        final_builder.replicate(
+            self.builder,
+            num_worlds=self.simulation_config.num_worlds,
+        )
 
         model = final_builder.finalize()
         return model

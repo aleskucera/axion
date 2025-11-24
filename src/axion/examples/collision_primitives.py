@@ -16,8 +16,6 @@ os.environ["PYOPENGL_PLATFORM"] = "glx"
 
 CONFIG_PATH = files("axion").joinpath("examples").joinpath("conf")
 
-NUM_WORLDS = 2
-
 
 class Simulator(AbstractSimulator):
     def __init__(
@@ -143,11 +141,19 @@ class Simulator(AbstractSimulator):
 
         self.builder.add_ground_plane(
             cfg=newton.ModelBuilder.ShapeConfig(
-                ke=10, kd=10, kf=0.0, mu=FRICTION, restitution=RESTITUTION
+                ke=10,
+                kd=10,
+                kf=0.0,
+                mu=FRICTION,
+                restitution=RESTITUTION,
             )
         )
+
         final_builder = newton.ModelBuilder()
-        final_builder.replicate(self.builder, num_worlds=NUM_WORLDS)
+        final_builder.replicate(
+            self.builder,
+            num_worlds=self.simulation_config.num_worlds,
+        )
 
         model = final_builder.finalize()
         return model

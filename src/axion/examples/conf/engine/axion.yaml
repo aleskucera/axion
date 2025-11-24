@@ -16,4 +16,4 @@ contact_fb_alpha: 0.5
 contact_fb_beta: 1.0
 friction_fb_alpha: 1.0
 friction_fb_beta: 1.0
-matrixfree_representation: True
+max_contacts_per_world: 20

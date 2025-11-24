@@ -113,7 +113,7 @@ def kernel_J_matvec_and_finalize(
         )
 
 
-class MatrixFreeSystemOperator(LinearOperator):
+class SystemOperator(LinearOperator):
     """
     A matrix-free linear operator for the system A = J M⁻¹ Jᵀ + C.
 

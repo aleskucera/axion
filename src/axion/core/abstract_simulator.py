@@ -30,6 +30,7 @@ class SimulationConfig:
 
     duration_seconds: float = 3.0
     target_timestep_seconds: float = 1e-3
+    num_worlds: int = 1
 
 
 @dataclass

@@ -2,3 +2,4 @@
 _target_: axion.SimulationConfig
 duration_seconds: 4.0
 target_timestep_seconds: 8e-3
+num_worlds: 16

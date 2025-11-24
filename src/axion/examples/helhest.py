@@ -1,3 +1,4 @@
+import os
 from importlib.resources import files
 from typing import override
 
@@ -15,8 +16,7 @@ from axion import RenderingConfig
 from axion import SimulationConfig
 from omegaconf import DictConfig
 
-import os
-os.environ['PYOPENGL_PLATFORM'] = 'glx'
+os.environ["PYOPENGL_PLATFORM"] = "glx"
 
 CONFIG_PATH = files("axion").joinpath("examples").joinpath("conf")
 ASSETS_DIR = files("axion").joinpath("examples").joinpath("assets")
@@ -38,8 +38,11 @@ class Simulator(AbstractSimulator):
             engine_config,
             logging_config,
         )
-        self.mujoco_solver = newton.solvers.SolverMuJoCo(self.model)
-        self.joint_target = wp.array(6 * [0.0] + [0.5, 0.5, 0.0], dtype=wp.float32)
+        robot_joint_target = np.concatenate(
+            [np.zeros(6), np.array([0.5, 0.5, 0.0], dtype=wp.float32)]
+        )
+        joint_target = np.tile(robot_joint_target, self.simulation_config.num_worlds)
+        self.joint_target = wp.from_numpy(joint_target, dtype=wp.float32)
 
     @override
     def control_policy(self, current_state: newton.State):
@@ -249,8 +252,13 @@ class Simulator(AbstractSimulator):
             )
         )
 
-        # Finalize and return the model
-        model = builder.finalize()
+        final_builder = newton.ModelBuilder()
+        final_builder.replicate(
+            self.builder,
+            num_worlds=self.simulation_config.num_worlds,
+        )
+
+        model = final_builder.finalize()
         return model
 
 
