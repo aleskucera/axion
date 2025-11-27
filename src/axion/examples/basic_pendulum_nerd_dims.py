@@ -4,6 +4,10 @@ from typing import override
 import hydra
 import newton
 import warp as wp
+# -------monkey-patch-adapter-approach-----
+from axion.adapters import sim_adapter
+wp.sim = sim_adapter
+#-----------------------------------------
 from axion.core.control_utils import JointMode
 from axion import AbstractSimulator
 from axion import EngineConfig
@@ -12,6 +16,12 @@ from axion import LoggingConfig
 from axion import RenderingConfig
 from axion import SimulationConfig
 from omegaconf import DictConfig
+
+import torch
+import yaml
+import numpy as np
+#from third_party.nerd.envs.neural_environment import NeruralEnvironment
+from nerd.envs.neural_environment import NeuralEnvironment
 
 import os
 os.environ['PYOPENGL_PLATFORM'] = 'glx'
@@ -39,6 +49,18 @@ class Simulator(AbstractSimulator):
     @override
     def control_policy(self, state: newton.State):
         wp.copy(self.control.joint_f, wp.array([0.0, 800.0], dtype=wp.float32))
+
+
+    @override
+    def init_state_fn(
+        self,
+        current_state: newton.State,
+        next_state: newton.State,
+        contacts: newton.Contacts,
+        dt: float,
+    ):
+        # self.mujoco_solver.step(current_state, next_state, self.model.control(), contacts, dt)
+        self.solver.integrate_bodies(self.model, current_state, next_state, dt)
 
     def build_model(self) -> newton.Model:
         chain_width = 1.5
@@ -98,6 +120,8 @@ class Simulator(AbstractSimulator):
         model = self.builder.finalize()
         return model
 
+def initialize_nerd():
+    pass
 
 @hydra.main(config_path=str(CONFIG_PATH), config_name="helhest", version_base=None)
 def basic_pendulum_example(cfg: DictConfig):

@@ -37,6 +37,17 @@ class Simulator(AbstractSimulator):
         )
 
     @override
+    def init_state_fn(
+        self,
+        current_state: newton.State,
+        next_state: newton.State,
+        contacts: newton.Contacts,
+        dt: float,
+    ):
+        # self.mujoco_solver.step(current_state, next_state, self.model.control(), contacts, dt)
+        self.solver.integrate_bodies(self.model, current_state, next_state, dt)
+
+    @override
     def control_policy(self, state: newton.State):
         wp.copy(self.control.joint_f, wp.array([0.0, 800.0], dtype=wp.float32))
 

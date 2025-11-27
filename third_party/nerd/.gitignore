@@ -1,0 +1,8 @@
+.history
+.vscode
+__pycache__/
+.idea/
+*.npy
+*.zip
+*.usd
+*.usda
