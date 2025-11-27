@@ -39,11 +39,8 @@ class Simulator(AbstractSimulator):
             logging_config,
         )
 
-        # self.mujoco_solver = newton.solvers.SolverMuJoCo(self.model, njmax=40)
-        # self.joint_target = wp.array(6 * [0.0] + [0.5, 0.5, 0.0], dtype=wp.float32)
-
         robot_joint_target = np.concatenate(
-            [np.zeros(6), np.array([400.0, 400.0, 0.0], dtype=wp.float32)]
+            [np.zeros(6), np.array([-300.0, 300.0, 0.0], dtype=wp.float32)]
         )
 
         joint_target = np.tile(robot_joint_target, self.simulation_config.num_worlds)
@@ -71,10 +68,10 @@ class Simulator(AbstractSimulator):
 
         This method constructs the three-wheeled vehicle, obstacles, and ground plane.
         """
-        FRICTION = 0.8
+        FRICTION = 0.5
         RESTITUTION = 0.0
         WHEEL_DENSITY = 300
-        CHASSIS_DENSITY = 800
+        CHASSIS_DENSITY = 1200
 
         wheel_m = openmesh.read_trimesh(f"{ASSETS_DIR}/helhest/wheel2.obj")
         mesh_points = np.array(wheel_m.points())
@@ -180,7 +177,7 @@ class Simulator(AbstractSimulator):
             half_height=0.1,
             cfg=newton.ModelBuilder.ShapeConfig(
                 density=WHEEL_DENSITY,
-                mu=0.5,
+                mu=0.1,
                 restitution=RESTITUTION,
                 thickness=0.0,
                 is_visible=False,

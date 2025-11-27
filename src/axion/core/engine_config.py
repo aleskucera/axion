@@ -109,6 +109,7 @@ class FeatherstoneEngineConfig(EngineConfig):
 class MuJoCoEngineConfig(EngineConfig):
     separate_worlds: bool | None = None
     njmax: int | None = None
+    nconmax: int | None = None
     iterations: int = 20
     ls_iterations: int = 10
     solver: int | str = "cg"
@@ -121,7 +122,6 @@ class MuJoCoEngineConfig(EngineConfig):
     actuator_gears: dict[str, float] | None = None
     update_data_interval: int = 1
     save_to_mjcf: str | None = None
-    contact_stiffness_time_const: float = 0.02
     ls_parallel: bool = False
     use_mujoco_contacts: bool = True
     joint_solimp_limit: tuple[float, float, float, float, float] | None = None

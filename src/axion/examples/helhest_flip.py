@@ -43,7 +43,7 @@ class Simulator(AbstractSimulator):
         # self.joint_target = wp.array(6 * [0.0] + [0.5, 0.5, 0.0], dtype=wp.float32)
 
         robot_joint_target = np.concatenate(
-            [np.zeros(6), np.array([400.0, 400.0, 0.0], dtype=wp.float32)]
+            [np.zeros(6), np.array([1500.0, 1500.0, 0.0], dtype=wp.float32)]
         )
 
         joint_target = np.tile(robot_joint_target, self.simulation_config.num_worlds)
@@ -63,7 +63,6 @@ class Simulator(AbstractSimulator):
     @override
     def control_policy(self, current_state: newton.State):
         wp.copy(self.control.joint_f, self.joint_target)
-        # pass
 
     def build_model(self) -> newton.Model:
         """
@@ -86,7 +85,7 @@ class Simulator(AbstractSimulator):
         # --- Build the Vehicle ---
         # Create main body (chassis)
         chassis = self.builder.add_body(
-            xform=wp.transform((-2.0, 0.0, 1.0), wp.quat_identity()), key="chassis"
+            xform=wp.transform((-3.0, 0.0, 1.0), wp.quat_identity()), key="chassis"
         )
         self.builder.add_shape_box(
             body=chassis,
@@ -102,7 +101,7 @@ class Simulator(AbstractSimulator):
 
         # Left Wheel
         left_wheel = self.builder.add_body(
-            xform=wp.transform((-2.0, -0.75, 1.0), wp.quat_identity()),
+            xform=wp.transform((-3.0, -0.75, 1.0), wp.quat_identity()),
             key="left_wheel",
         )
         self.builder.add_shape_mesh(
@@ -131,7 +130,7 @@ class Simulator(AbstractSimulator):
 
         # Right Wheel
         right_wheel = self.builder.add_body(
-            xform=wp.transform((-2.0, 0.75, 1.0), wp.quat_identity()),
+            xform=wp.transform((-3.0, 0.75, 1.0), wp.quat_identity()),
             key="right_wheel",
         )
         self.builder.add_shape_mesh(
@@ -160,7 +159,7 @@ class Simulator(AbstractSimulator):
 
         # Back Wheel
         back_wheel = self.builder.add_body(
-            xform=wp.transform((-3.25, 0.0, 1.0), wp.quat_identity()),
+            xform=wp.transform((-1.5, 0.0, 1.0), wp.quat_identity()),
             key="back_wheel",
         )
         self.builder.add_shape_mesh(
@@ -221,7 +220,7 @@ class Simulator(AbstractSimulator):
         self.builder.add_joint_revolute(
             parent=chassis,
             child=back_wheel,
-            parent_xform=wp.transform((-1.5, 0.0, 0.0), wp.quat_identity()),
+            parent_xform=wp.transform((1.5, 0.0, 0.0), wp.quat_identity()),
             axis=(0.0, 1.0, 0.0),
         )
 

@@ -94,6 +94,10 @@ class EngineArrays:
     optim_h: wp.array = None
     optim_trajectory: wp.array = None
 
+    _h_history: wp.array = None
+    _body_lambda_history: wp.array = None
+    body_u_history: wp.array = None
+
     g_accel: wp.array = None
 
     # 1. System Views (Combined Dynamics + Constraints)
@@ -158,6 +162,14 @@ class EngineArrays:
     @cached_property
     def pca_batch_body_lambda(self) -> ConstraintView:
         return ConstraintView(self._pca_batch_body_lambda, self.dims)
+
+    @cached_property
+    def h_history(self) -> SystemView:
+        return SystemView(self._optim_h, self.dims)
+
+    @cached_property
+    def body_lambda_history(self) -> SystemView:
+        return ConstraintView(self._body_lambda_history, self.dims)
 
     @property
     def has_linesearch(self) -> bool:
@@ -443,19 +455,21 @@ def create_engine_arrays(
 
     # ---- PCA Storage Buffers ----
     (
-        optim_h,
-        optim_trajectory,
+        h_history,
+        body_u_history,
+        body_lambda_history,
         pca_batch_body_u,
         pca_batch_body_lambda,
         pca_batch_h,
         pca_batch_h_norm,
-    ) = (None, None, None, None, None, None)
+    ) = (None, None, None, None, None, None, None)
 
     if allocate_pca:
         pca_batch_size = pca_grid_res * pca_grid_res
 
-        optim_h = _zeros((config.newton_iters, dims.N_w, dims.N_u + dims.N_c))
-        optim_trajectory = _zeros((config.newton_iters, dims.N_w, dims.N_u + dims.N_c))
+        h_history = _zeros((config.newton_iters, dims.N_w, dims.N_u + dims.N_c))
+        body_u_history = _zeros((config.newton_iters, dims.N_w, dims.N_b), dtype=wp.spatial_vector)
+        body_lambda_history = _zeros((config.newton_iters, dims.N_w, dims.N_c))
 
         pca_batch_body_u = _zeros((pca_batch_size, dims.N_w, dims.N_b), wp.spatial_vector)
         pca_batch_body_lambda = _zeros((pca_batch_size, dims.N_w, dims.N_c))
@@ -498,10 +512,11 @@ def create_engine_arrays(
         M_inv_dense=M_inv_dense,
         J_dense=J_dense,
         C_dense=C_dense,
+        _h_history=h_history,
+        body_u_history=body_u_history,
+        _body_lambda_history=body_lambda_history,
         pca_batch_body_u=pca_batch_body_u,
         _pca_batch_body_lambda=pca_batch_body_lambda,
         _pca_batch_h=pca_batch_h,
         pca_batch_h_norm=pca_batch_h_norm,
-        optim_h=optim_h,
-        optim_trajectory=optim_trajectory,
     )

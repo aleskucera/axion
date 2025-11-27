@@ -13,6 +13,74 @@ from .engine_data import EngineArrays
 from .engine_dims import EngineDimensions
 
 
+@wp.kernel
+def copy_h_to_history(
+    h: wp.array(dtype=wp.float32),
+    h_history: wp.array(dtype=wp.float32),
+):
+    world_idx, h_idx = wp.tid()
+
+    h_history[world_idx, h_idx] = h[world_idx, h_idx]
+
+
+@wp.kernel
+def copy_body_u_to_history(
+    body_u: wp.array(dtype=wp.spatial_vector),
+    body_u_history: wp.array(dtype=wp.spatial_vector),
+):
+    world_idx, body_idx = wp.tid()
+
+    body_u_history[world_idx, body_idx] = body_u[world_idx, body_idx]
+
+
+@wp.kernel
+def copy_body_lambda_to_history(
+    body_lambda: wp.array(dtype=wp.float32),
+    body_lambda_history: wp.array(dtype=wp.float32),
+):
+    world_idx, constraint_idx = wp.tid()
+
+    body_lambda_history[world_idx, constraint_idx] = body_lambda[world_idx, constraint_idx]
+
+
+def copy_state_to_history(
+    newton_iteration: int,
+    data: EngineArrays,
+    config: EngineConfig,
+    dims: EngineDimensions,
+):
+    device = data.device
+
+    # Evaluate residual for unconstrained dynamics
+    wp.launch(
+        kernel=copy_h_to_history,
+        dim=(config.newton_iters, dims.N_w, dims.N_u + dims.N_c),
+        inputs=[
+            data._h_history[newton_iteration, :, :],
+        ],
+        outputs=[data._h],
+        device=device,
+    )
+    wp.launch(
+        kernel=copy_body_u_to_history,
+        dim=(config.newton_iters, dims.N_w, dims.N_b),
+        inputs=[
+            data.body_u_history[newton_iteration, :, :],
+        ],
+        outputs=[data.body_u],
+        device=device,
+    )
+    wp.launch(
+        kernel=copy_body_lambda_to_history,
+        dim=(config.newton_iters, dims.N_w, dims.N_c),
+        inputs=[
+            data._body_lambda[newton_iteration, :, :],
+        ],
+        outputs=[data._body_lambda],
+        device=device,
+    )
+
+
 def perform_pca(
     trajectory_data: torch.Tensor,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:

@@ -1,6 +1,6 @@
 # @package engine
 _target_: axion.XPBDEngineConfig
-iterations: 20
+iterations: 50
 soft_body_relaxation: 0.9
 soft_contact_relaxation: 0.9
 joint_linear_relaxation: 0.7
@@ -8,4 +8,4 @@ joint_angular_relaxation: 0.4
 rigid_contact_relaxation: 0.8
 rigid_contact_con_weighting: true
 angular_damping: 0.0
-enable_restitution: false
+enable_restitution: true

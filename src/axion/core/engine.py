@@ -5,6 +5,7 @@ import newton
 import warp as wp
 from axion.optim import CRSolver
 from axion.optim import JacobiPreconditioner
+from axion.optim import SystemLinearData
 from axion.optim import SystemOperator
 from axion.types import compute_joint_constraint_offsets_batched
 from newton import Contacts
@@ -88,7 +89,8 @@ class AxionEngine(SolverBase):
         )
 
         self.A_op = SystemOperator(
-            engine=self,
+            data=SystemLinearData.from_engine(self),
+            device=self.device,
             regularization=self.config.regularization,
         )
 

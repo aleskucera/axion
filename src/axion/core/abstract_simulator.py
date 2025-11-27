@@ -157,7 +157,7 @@ class AbstractSimulator(ABC):
             raise ValueError(f"Unsupported rendering type: {self.rendering_config.vis_type}")
 
         self.viewer.set_model(self.model)
-        self.viewer.set_world_offsets((4.0, 4.0, 0.0))
+        self.viewer.set_world_offsets((20.0, 20.0, 0.0))
 
         self.cuda_graph: Optional[wp.Graph] = None
 

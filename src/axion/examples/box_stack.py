@@ -37,14 +37,14 @@ class Simulator(AbstractSimulator):
     def build_model(self) -> newton.Model:
         FRICTION = 1.0
         RESTITUTION = 0.0
-        DENSITY = 500.0
-        KE = 200.0
-        KD = 50.0
+        DENSITY = 1500.0
+        KE = 60000.0
+        KD = 5000.0
         KF = 200.0
 
         box1_hx = 0.2
         box2_hx = 0.8
-        box3_hx = 3.2
+        box3_hx = 1.6
 
         box1 = self.builder.add_body(
             xform=wp.transform((0.0, 0.0, box1_hx), wp.quat_identity()), key="box1"
@@ -109,9 +109,9 @@ class Simulator(AbstractSimulator):
 
         self.builder.add_ground_plane(
             cfg=newton.ModelBuilder.ShapeConfig(
-                ke=10,
-                kd=10,
-                kf=0.0,
+                ke=KE,
+                kd=KD,
+                kf=KF,
                 mu=FRICTION,
                 restitution=RESTITUTION,
             )

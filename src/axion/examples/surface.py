@@ -3,6 +3,8 @@ from importlib.resources import files
 
 import hydra
 import newton
+import numpy as np
+import openmesh
 import warp as wp
 from axion import AbstractSimulator
 from axion import EngineConfig
@@ -15,6 +17,7 @@ from omegaconf import DictConfig
 os.environ["PYOPENGL_PLATFORM"] = "glx"
 
 CONFIG_PATH = files("axion").joinpath("examples").joinpath("conf")
+ASSETS_DIR = files("axion").joinpath("examples").joinpath("assets")
 
 
 class Simulator(AbstractSimulator):
@@ -36,7 +39,18 @@ class Simulator(AbstractSimulator):
 
     def build_model(self) -> newton.Model:
         FRICTION = 0.8
-        RESTITUTION = 0.999
+        RESTITUTION = 0.2
+
+        surface_m = openmesh.read_trimesh(f"{ASSETS_DIR}/surface.obj")
+        # mesh_points = np.array(wheel_m.points())
+        mesh_indices = np.array(surface_m.face_vertex_indices(), dtype=np.int32).flatten()
+        # surface_mesh = newton.Mesh(mesh_points, mesh_indices)
+
+        scale = np.array([3.0, 3.0, 4.0])
+        mesh_points = np.array(surface_m.points()) * scale + np.array([0.0, 0.0, 0.01])
+
+        surface_mesh = newton.Mesh(mesh_points, mesh_indices)
+        self.builder.add_articulation(key="surface")
 
         ball1 = self.builder.add_body(
             xform=wp.transform((0.0, 0.0, 2.0), wp.quat_identity()), key="ball1"
@@ -47,8 +61,8 @@ class Simulator(AbstractSimulator):
             radius=1.0,
             cfg=newton.ModelBuilder.ShapeConfig(
                 density=10.0,
-                ke=6000.0,
-                kd=1000.0,
+                ke=2000.0,
+                kd=10.0,
                 kf=200.0,
                 mu=FRICTION,
                 restitution=RESTITUTION,
@@ -60,12 +74,20 @@ class Simulator(AbstractSimulator):
 
         self.builder.add_ground_plane(
             cfg=newton.ModelBuilder.ShapeConfig(
-                ke=6000.0,
-                kd=1000.0,
-                kf=200.0,
+                ke=10.0,
+                kd=10.0,
+                kf=0.0,
                 mu=FRICTION,
                 restitution=RESTITUTION,
             )
+        )
+        self.builder.add_shape_mesh(
+            body=-1,
+            mesh=surface_mesh,
+            cfg=newton.ModelBuilder.ShapeConfig(
+                density=0.0,
+                has_shape_collision=True,
+            ),
         )
 
         final_builder = newton.ModelBuilder()
