@@ -45,6 +45,10 @@ class JacobianOperator:
             6 * self.num_bodies,
         )
 
+        self.j_stream = wp.Stream(self.device)
+        self.gc_stream = wp.Stream(self.device)
+        self.bc_stream = wp.Stream(self.device)
+
     def _init_sparse_matrices(self):
         # Dense matrix shape (num_joint_constraints, 6 * num_bodies)
         J_j_block_shape = (1, 6)
@@ -139,9 +143,14 @@ class JacobianOperator:
         if z.ptr != y.ptr and beta != 0.0:
             wp.copy(src=y, dest=z)
 
-        wp.sparse.bsr_mv(self.J_j, x, z[self.j_slice], alpha, beta)
-        wp.sparse.bsr_mv(self.J_gc, x, z[self.gc_slice], alpha, beta)
-        wp.sparse.bsr_mv(self.J_bc, x, z[self.bc_slice], alpha, beta)
+        with wp.ScopedStream(self.j_stream):
+            wp.sparse.bsr_mv(self.J_j, x, z[self.j_slice], alpha, beta)
+
+        with wp.ScopedStream(self.gc_stream):
+            wp.sparse.bsr_mv(self.J_gc, x, z[self.gc_slice], alpha, beta)
+
+        with wp.ScopedStream(self.bc_stream):
+            wp.sparse.bsr_mv(self.J_bc, x, z[self.bc_slice], alpha, beta)
 
 
 def bsr_to_dense(bsr):
@@ -224,31 +233,6 @@ def test_operator_dense_equivalence():
         print("✔ Matching matvec")
     else:
         print("✘ Mismatch")
-
-
-def matrix_creation_showcase():
-    rows = wp.array([0, 1, 2], dtype=wp.int32)  # Row indices
-    cols = wp.array([0, 1, 2], dtype=wp.int32)  # Column indices
-    vals = wp.array(
-        [
-            [[0], [1], [2], [3], [4], [5]],
-            [[0], [1], [2], [3], [4], [5]],
-            [[0], [1], [2], [3], [4], [5]],
-        ],
-        dtype=wp.float32,
-    )  # Block values
-
-    # Create BSR matrix
-    A = bsr_from_triplets(
-        rows_of_blocks=3,  # Number of rows of blocks
-        cols_of_blocks=3,  # Number of columns of blocks
-        rows=rows,  # Row indices
-        columns=cols,  # Column indices
-        values=vals,  # Block values
-        prune_numerical_zeros=False,
-    )
-
-    print(A.values.numpy())
 
 
 if __name__ == "__main__":
