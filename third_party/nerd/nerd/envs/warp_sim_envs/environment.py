@@ -311,6 +311,7 @@ class Environment:
             up_vector["xyz".index(self.up_axis.lower())] = 1.0
         else:
             up_vector = self.up_axis
+        print("Up vector=", up_vector)
         builder = wp.sim.ModelBuilder(up_vector=up_vector, gravity=self.gravity)
         builder.rigid_mesh_contact_max = self.rigid_mesh_contact_max
         builder.rigid_contact_margin = self.rigid_contact_margin

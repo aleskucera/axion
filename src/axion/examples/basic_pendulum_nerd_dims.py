@@ -17,15 +17,21 @@ from axion import RenderingConfig
 from axion import SimulationConfig
 from omegaconf import DictConfig
 
+# NeRD imports:
 import torch
 import yaml
 import numpy as np
+from pathlib import Path
 #from third_party.nerd.envs.neural_environment import NeruralEnvironment
 from nerd.envs.neural_environment import NeuralEnvironment
+from nerd.utils.torch_utils import num_params_torch_model
+# Repository base directory (project root)
+# `parents[3]` from this file resolves to the repository root: /<repo>/
+base_dir = Path(__file__).resolve().parents[3]
+print(base_dir)
 
 import os
 os.environ['PYOPENGL_PLATFORM'] = 'glx'
-
 CONFIG_PATH = files("axion").joinpath("examples").joinpath("conf")
 
 
@@ -121,7 +127,47 @@ class Simulator(AbstractSimulator):
         return model
 
 def initialize_nerd():
-    pass
+    """
+    Initializes the neural integrator from NeRD.
+    Uses the PendulumWithContactEnvironment specifically.
+    """
+    # Configuration
+    device = 'cuda:0'
+    model_path = base_dir /'third_party'/ 'nerd'/ 'nerd' /'pretrained_models' / 'NeRD_models' / 'Pendulum' / 'model' / 'nn' / 'model.pt'
+    num_envs = 1
+    num_steps = 5000
+    seed = 42
+    
+    #set_random_seed(seed)
+    
+    # Load pretrained NeRD model
+    print("Loading pretrained NeRD model...")
+    neural_model, robot_name = torch.load(str(model_path), map_location=device, weights_only=False)
+    print(f'Number of Model Parameters: {num_params_torch_model(neural_model)}')
+    neural_model.to(device)
+    
+    # Load model configuration
+    train_dir = (model_path.parent.parent).resolve()
+    cfg_path = train_dir / 'cfg.yaml'
+    print(cfg_path)
+    with open(cfg_path, 'r') as f:
+        cfg = yaml.load(f, Loader=yaml.SafeLoader)
+    neural_integrator_cfg = cfg["env"]["neural_integrator_cfg"]
+
+    env_cfg = {
+        "env_name": "PendulumWithContact",
+        "num_envs": num_envs,
+        "render": False,  # Enable visualization
+        "warp_env_cfg": {
+            "seed": seed
+        },
+        "neural_integrator_cfg": neural_integrator_cfg,
+        "neural_model": neural_model,
+        "default_env_mode": "neural",  # Use NeRD model
+        "device": device
+    }
+    
+    neural_env = NeuralEnvironment(**env_cfg)
 
 @hydra.main(config_path=str(CONFIG_PATH), config_name="helhest", version_base=None)
 def basic_pendulum_example(cfg: DictConfig):
@@ -130,6 +176,8 @@ def basic_pendulum_example(cfg: DictConfig):
     exec_config: ExecutionConfig = hydra.utils.instantiate(cfg.execution)
     logging_config: LoggingConfig = hydra.utils.instantiate(cfg.logging)
     engine_config: EngineConfig = hydra.utils.instantiate(cfg.engine)
+
+    initialize_nerd()
 
     simulator = Simulator(
         sim_config=sim_config,

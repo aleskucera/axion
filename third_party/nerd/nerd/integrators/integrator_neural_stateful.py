@@ -20,7 +20,10 @@ base_dir = os.path.abspath(
 )
 sys.path.append(base_dir)
 
-from warp.sim.model import Model, State
+# -------monkey-patch-adapter-approach-----
+from axion.adapters.sim_adapter import Model, State
+#-----------------------------------------
+#from warp.sim.model import Model, State
 from collections import deque
 import torch
 

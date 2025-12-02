@@ -24,8 +24,12 @@ sys.path.append(base_dir)
 import numpy as np
 
 import warp as wp
-import warp.sim
-from warp.sim.collide import get_box_vertex
+# -------monkey-patch-adapter-approach-----
+from axion.adapters import sim_adapter
+wp.sim = sim_adapter
+#-----------------------------------------
+#import warp.sim
+#from warp.sim.collide import get_box_vertex
 from envs.warp_sim_envs import Environment
 from envs.abstract_contact import AbstractContact
 from utils import warp_utils
@@ -33,7 +37,7 @@ from utils.time_report import TimeReport, TimeProfiler
 
 @wp.kernel(enable_backward=False)
 def generate_contact_pairs(
-    geo: warp.sim.ModelShapeGeometry,
+    geo: wp.sim.ModelShapeGeometry,
     shape_shape_collision: wp.array(dtype=bool),
     num_shapes_per_env: int,
     num_contacts_per_env: int,
@@ -107,7 +111,7 @@ def generate_contact_pairs(
         if geo_type == wp.sim.GEO_BOX:
             # add box corner points
             for j in range(8):
-                p = get_box_vertex(j, geo_scale)
+                p = wp.sim.get_box_vertex(j, geo_scale)
                 contact_shape0[contact_idx] = shape_offset + i
                 contact_shape1[contact_idx] = ground_shape_index
                 contact_point0[contact_idx] = wp.transform_point(shape_tf, p)
@@ -135,7 +139,7 @@ def collision_detection_ground(
     body_q: wp.array(dtype=wp.transform),
     shape_X_bs: wp.array(dtype=wp.transform),
     shape_body: wp.array(dtype=int),
-    geo: warp.sim.ModelShapeGeometry,
+    geo: wp.sim.ModelShapeGeometry,
     ground_shape_index: int,
     contact_shape0: wp.array(dtype=int),
     contact_point0: wp.array(dtype=wp.vec3),

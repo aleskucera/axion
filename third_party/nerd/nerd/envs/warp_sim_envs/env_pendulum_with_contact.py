@@ -17,7 +17,10 @@ import numpy as np
 from scipy.spatial.transform import Rotation
 
 import warp as wp
-
+# -------monkey-patch-adapter-approach-----
+from axion.adapters import sim_adapter
+wp.sim = sim_adapter
+#------------------------------------------
 from envs.warp_sim_envs import Environment, IntegratorType
 from envs.warp_sim_envs.utils import update_ground_plane
 
