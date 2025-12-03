@@ -9,10 +9,10 @@ J is block diagonal matrix
 import numpy as np
 import warp as wp
 
-NUM_BODIES = 3200
-CONSTRAINTS_PER_BODY = 32
+NUM_BODIES = 1600
+CONSTRAINTS_PER_BODY = 16
 TILE_SIZE = 128
-BODIES_IN_TILE = 4  # (constriants_per_body // tile_size)
+BODIES_IN_TILE = 8  # (constriants_per_body // tile_size)
 NUM_CONSTRAINTS = NUM_BODIES * CONSTRAINTS_PER_BODY
 
 wp.init()
@@ -21,9 +21,9 @@ wp.init()
 @wp.kernel
 def kernel_Jt_matvec_scatter(
     x: wp.array(dtype=wp.float32),  # (num_constraints)
-    J_values: wp.array(dtype=wp.float32),  # (num_constraints)
+    J_values: wp.array(dtype=wp.spatial_vector),  # (num_constraints)
     constraint_body_idx: wp.array(dtype=wp.int32),  # (num_constraints)
-    out: wp.array(dtype=wp.float32),  # (num_bodies)
+    out: wp.array(dtype=wp.spatial_vector),  # (num_bodies)
 ):
     constraint_idx = wp.tid()
 
@@ -31,39 +31,11 @@ def kernel_Jt_matvec_scatter(
     wp.atomic_add(out, body_idx, J_values[constraint_idx] * x[constraint_idx])
 
 
-# @wp.kernel
-# def kernel_Jt_matvec_tiled(
-#     x: wp.array(dtype=wp.float32),  # (num_constraints)
-#     J_values: wp.array(dtype=wp.float32),  # (num_constraints)
-#     constraint_body_idx: wp.array(dtype=wp.int32),  # (num_constraints)
-#     out: wp.array(dtype=wp.float32),  # (num_bodies)
-# ):
-#     body_idx = wp.tid()
-#
-#     constraint_offset = body_idx * CONSTRAINTS_PER_BODY
-#     J_body_tile = wp.tile_load(
-#         J_values,
-#         CONSTRAINTS_PER_BODY,
-#         offset=constraint_offset,
-#     )
-#
-#     x_body_tile = wp.tile_load(
-#         x,
-#         CONSTRAINTS_PER_BODY,
-#         offset=constraint_offset,
-#     )
-#
-#     mul_tile = wp.tile_map(wp.mul, J_body_tile, x_body_tile)
-#     out_tile = wp.tile_sum(mul_tile)
-#     wp.tile_store(out, out_tile, offset=body_idx)
-
-
 @wp.kernel
 def kernel_Jt_matvec_tiled(
     x: wp.array(dtype=wp.float32),  # (num_constraints)
-    J_values: wp.array(dtype=wp.float32),  # (num_constraints)
-    constraint_body_idx: wp.array(dtype=wp.int32),  # (num_constraints)
-    out: wp.array(dtype=wp.float32),  # (num_bodies)
+    J_values: wp.array(dtype=wp.spatial_vector),  # (num_constraints)
+    out: wp.array(dtype=wp.spatial_vector),  # (num_bodies)
 ):
     tid = wp.tid()
 
@@ -98,7 +70,7 @@ def main():
     x_host = np.random.randn(NUM_CONSTRAINTS).astype(np.float32)
 
     # J_values: each block of constraints-per-body rows belongs to one body
-    J_values_host = np.random.randn(NUM_CONSTRAINTS).astype(np.float32)
+    J_values_host = np.random.randn(NUM_CONSTRAINTS * 6).astype(np.float32)
 
     # constraint_body_idx must match the tiled layout: [0,0,...,1,1,...,2,2,...]
     constraint_body_idx_host = np.repeat(
@@ -109,11 +81,11 @@ def main():
     # 2. Upload to Warp
     # -----------------------------
     x = wp.array(x_host, dtype=wp.float32)
-    J_values = wp.array(J_values_host, dtype=wp.float32)
+    J_values = wp.array(J_values_host.reshape(NUM_CONSTRAINTS, 6), dtype=wp.spatial_vector)
     constraint_body_idx = wp.array(constraint_body_idx_host, dtype=wp.int32)
 
-    out_scatter = wp.zeros(NUM_BODIES, dtype=wp.float32)
-    out_tiled = wp.zeros(NUM_BODIES, dtype=wp.float32)
+    out_scatter = wp.zeros(NUM_BODIES, dtype=wp.spatial_vector)
+    out_tiled = wp.zeros(NUM_BODIES, dtype=wp.spatial_vector)
 
     # -----------------------------
     # 3. Launch both kernels
@@ -127,16 +99,15 @@ def main():
     # wp.launch_tiled(
     #     kernel_Jt_matvec_tiled,
     #     dim=NUM_BODIES,
-    #     inputs=[x, J_values, constraint_body_idx, out_tiled],
+    #     inputs=[x, J_values_v, out_tiled],
     #     block_dim=CONSTRAINTS_PER_BODY,
     # )
 
     tiled_launch_dim = NUM_BODIES * CONSTRAINTS_PER_BODY // TILE_SIZE
-    print(tiled_launch_dim)
     wp.launch_tiled(
         kernel_Jt_matvec_tiled,
         dim=tiled_launch_dim,
-        inputs=[x, J_values, constraint_body_idx, out_tiled],
+        inputs=[x, J_values, out_tiled],
         block_dim=TILE_SIZE,
     )
 

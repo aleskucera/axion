@@ -9,7 +9,7 @@ J is block diagonal matrix
 import numpy as np
 import warp as wp
 
-NUM_BODIES = 10000
+NUM_BODIES = 4000
 CONSTRAINTS_PER_BODY = 32
 NUM_CONSTRAINTS = NUM_BODIES * CONSTRAINTS_PER_BODY
 
