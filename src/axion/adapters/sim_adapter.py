@@ -34,15 +34,8 @@ class GeoTypeAdapter:
 
     def __len__(self):
         return self.model.shape_count
-
-# Reuse the original Warp struct definition
-@wp.struct
-class ModelShapeGeometry:
-    type: wp.array(dtype=wp.int32)
-    is_solid: wp.array(dtype=wp.uint8)
-    thickness: wp.array(dtype=float)
-    source: wp.array(dtype=wp.uint64)
-    scale: wp.array(dtype=wp.vec3)
+    
+###################################################################################################
 
 class ModelAdapter:
     """
@@ -56,7 +49,28 @@ class ModelAdapter:
     def __init__(self, inner_model):
         self.inner = inner_model
         self.num_envs = 1  # emulate Warp environments
+        
+        # Legacy joint arrays
+        self.joint_act = np.zeros((self.num_envs, self.inner.joint_dof_count), dtype=float) # FIX: hardcoded to zeros!!!
+        #self.joint_axis_dim = np.ones(self.inner.joint_count, dtype=int)    # FIX: For simplicity, 1 DOF per joint is assumed only
+        #self.joint_axis_start = np.arange(self.inner.joint_dof_count)  # for compatibility
+
+        # Shape collision flags
         self.shape_shape_collision = np.ones(self.inner.shape_count, dtype=bool)
+
+    def add_builder(self, builder, xform=None, separate_collision_group=True, **kwargs):
+        """
+        Forward to inner ModelBuilder and update legacy arrays
+        """
+        self.inner.add_builder(builder.inner, xform)
+        
+        # Update shape_shape_collision
+        new_shape_count = builder.inner.shape_count if hasattr(builder, "inner") else builder.shape_count
+        extra = np.ones(new_shape_count, dtype=bool)
+        self.shape_shape_collision = np.concatenate([self.shape_shape_collision, extra])
+        
+        # Emulate num_envs increment
+        self.num_envs += 1
 
     def __getattr__(self, name):
         return getattr(self.inner, name)
@@ -64,40 +78,7 @@ class ModelAdapter:
     @property
     def geo_types(self):
         return GeoTypeAdapter(self.inner)
-
-###################################################################################################
-
-class Model:
-    """Adapter for wp.sim.Model -> newton.Model"""
-    def __init__(self, *args, **kwargs):
-        self.inner = newton.Model(*args, **kwargs)
-        self.num_envs = 1  # start with one "environment"
-
-    def add_builder(self, builder, xform=None, separate_collision_group=True, **kwargs):
-        self.inner.add_builder(builder.inner, xform)
-        new_shape_count = builder.inner.shape_count if hasattr(builder, "inner") else builder.shape_count
-        extra = np.ones(new_shape_count, dtype=bool)
-        self.shape_shape_collision = np.concatenate([self.shape_shape_collision, extra])
-        # emulate num_envs increment
-        self.num_envs += 1
-
-
-    def __getattr__(self, name):
-        # forward all other attributes to inner
-        return getattr(self.inner, name)
-
-class State:
-    """Adapter for wp.sim.State -> newton.State"""
-    def __init__(self, *args, **kwargs):
-        self.inner = newton.State(*args, **kwargs)
-
-class Control:
-    """Adapter for wp.sim.Control -> newton.Control"""
-    def __init__(self, *args, **kwargs):
-        self.inner = newton.Control(*args, **kwargs)
-
-###################################################################################################
-
+    
 class ModelBuilder:
     """Adapter for wp.sim.ModelBuilder -> newton.ModelBuilder"""
     def __init__(self, *args, **kwargs):
@@ -142,6 +123,34 @@ class ModelBuilder:
 
 ###################################################################################################
 
+class Model:
+    """Adapter for wp.sim.Model -> newton.Model"""
+    def __init__(self, *args, **kwargs):
+        self.inner = newton.Model(*args, **kwargs)
+        self.num_envs = 1  # start with one "environment"
+
+    def __getattr__(self, name):
+        # forward all other attributes to inner
+        return getattr(self.inner, name)
+
+class State:
+    """Adapter for wp.sim.State -> newton.State"""
+    def __init__(self, *args, **kwargs):
+        self.inner = newton.State(*args, **kwargs)
+
+class Control:
+    """Adapter for wp.sim.Control -> newton.Control"""
+    def __init__(self, *args, **kwargs):
+        print("_____________Control via wrapper was created_____________--")
+        self.inner = newton.Control(*args, **kwargs)
+        self.joint_act = np.zeros(self.inner.joint_f.shape, dtype=float) # FIX: zero control input
+
+    def __getattr__(self, name):
+        # forward all other attributes to the inner Newton object
+        return getattr(self.inner, name)
+
+###################################################################################################
+
 class Mesh:
     """Adapter for wp.sim.Mesh -> newton.Mesh"""
     def __init__(
@@ -170,14 +179,13 @@ class Mesh:
 
 ###################################################################################################
 
-
-class JOINT_REVOLUTE:
-    """Adapter for wp.sim.JOINT_REVOLUTE -> newton.JointType.REVOLUTE"""
-    def __init__(self):
-        self.inner = newton.JointType.REVOLUTE
+# map legacy JOINT types to Newton JointType, and define Warp constants
+JOINT_REVOLUTE = wp.constant(int(newton.JointType.REVOLUTE))
+JOINT_FREE     = wp.constant(int(newton.JointType.FREE))
+JOINT_DISTANCE = wp.constant(int(newton.JointType.DISTANCE))
+JOINT_BALL = wp.constant(int(newton.JointType.BALL))
 
 ###################################################################################################
-
 
 @wp.kernel
 def integrate_particles(
@@ -480,7 +488,14 @@ class SimRendererOpenGL:
 
     def close(self):
         return self.viewer.close()
-    
+
+###################################################################################################
+
+class eval_fk:
+    """Adapter for wp.sim.eval_fk -> newton.eval_fk"""
+    def __init__(self, *args, **kwargs):
+        self.inner = newton.eval_fk(*args, **kwargs)
+
 ########################################################
 #-----------------Fake-submodules-----------------------
 ########################################################

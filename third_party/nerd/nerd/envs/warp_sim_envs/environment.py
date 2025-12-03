@@ -641,16 +641,17 @@ class Environment:
                 joint_torques=control_out,
                 body_f=body_f,
             )
+
         return control_out
 
     @property
     def control_input(self):
         # points to the actuation input of the control
-        return self.control.joint_act
+        return self.control.joint_f # PATCH: from .joint_act
     
     @property
     def joint_act(self):
-        return self.control.joint_act
+        return self.control.joint_f # PATCH: from .joint_act
     
     @property
     def joint_act_dim(self):

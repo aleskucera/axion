@@ -27,7 +27,6 @@ import warp as wp
 # -------monkey-patch-adapter-approach-----
 from axion.adapters import sim_adapter
 wp.sim = sim_adapter
-MODEL_NUM_ENVS = 1
 #-----------------------------------------
 #import warp.sim
 #from warp.sim.collide import get_box_vertex
@@ -247,7 +246,7 @@ class AbstractContactEnvironment():
     def initialize_contacts(self, model: wp.sim.Model):
         # compute number of contact pairs per env
         # NOTE: only work for ground env for now
-        num_shapes_per_env = (model.shape_count - 1) // MODEL_NUM_ENVS
+        num_shapes_per_env = (model.shape_count - 1) // model.num_envs
         num_contacts_per_env = 0
         print("-----------Does model have inner?------------", hasattr(model, "inner"))
         geo_types = model.shape_type.numpy()
@@ -272,7 +271,7 @@ class AbstractContactEnvironment():
         
         self.abstract_contacts = AbstractContact(
             num_contacts_per_env = num_contacts_per_env,
-            num_envs = MODEL_NUM_ENVS,
+            num_envs = model.num_envs,
             model = model, 
             device = warp_utils.device_to_torch(model.device)
         )
@@ -280,7 +279,7 @@ class AbstractContactEnvironment():
         # Generate contact points once at the beginning of the simulation
         wp.launch(
             generate_contact_pairs,
-            dim=MODEL_NUM_ENVS,
+            dim=model.num_envs,
             inputs=[
                 model.shape_type,
                 model.shape_scale,

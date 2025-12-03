@@ -22,6 +22,7 @@ sys.path.append(base_dir)
 
 import numpy as np
 import warp as wp
+import newton 
 # -------monkey-patch-adapter-approach-----
 from axion.adapters import sim_adapter
 wp.sim = sim_adapter
@@ -39,11 +40,9 @@ import torch
 from typing import Optional
 
 @wp.kernel
-def determine_angular_dofs(
-    joint_type: wp.array(dtype=int),
+def determine_angular_dofs_newton(
+    joint_type: wp.array(dtype=int),  # Newton joint type
     joint_q_start: wp.array(dtype=int),
-    joint_axis_start: wp.array(dtype=int),
-    joint_axis_dim: wp.array(dtype=int, ndim=2),
     joint_limit_lower: wp.array(dtype=float),
     joint_limit_upper: wp.array(dtype=float),
     # outputs
@@ -53,32 +52,30 @@ def determine_angular_dofs(
 ):
     joint_id = wp.tid()
     q_start = joint_q_start[joint_id]
-    axis_start = joint_axis_start[joint_id]
     type = joint_type[joint_id]
-    if type == wp.sim.JOINT_FREE or type == wp.sim.JOINT_DISTANCE:
+
+    # Use Newton DOF info or constants
+    if type == newton.JointType.FREE or type == newton.JointType.DISTANCE:
         joint_q_end[joint_id] = q_start + 7
         for i in range(7):
-            # quaternions do not count as angular dofs
             is_angular[q_start + i] = False
-    elif type == wp.sim.JOINT_BALL:
+    elif type == newton.JointType.BALL:
         joint_q_end[joint_id] = q_start + 4
         for i in range(4):
-            # quaternions do not count as angular dofs
             is_angular[q_start + i] = False
     else:
-        lin_axis_count = joint_axis_dim[joint_id, 0]
-        ang_axis_count = joint_axis_dim[joint_id, 1]
+        # Linear DOFs = 1 per axis, angular DOFs = 1 per axis (adjust if needed)
+        lin_axis_count = 1  # FIX: does not have to be true for all joint types
+        ang_axis_count = 1  # FIX: does not have to be true for all joint types
         joint_q_end[joint_id] = q_start + lin_axis_count + ang_axis_count
         for i in range(lin_axis_count):
             is_angular[q_start + i] = False
-        ang_start = q_start + lin_axis_count
         for i in range(ang_axis_count):
-            is_angular[ang_start + i] = True
-
-            lower = joint_limit_lower[axis_start]
-            upper = joint_limit_upper[axis_start]
+            is_angular[q_start + lin_axis_count + i] = True
+            lower = joint_limit_lower[q_start + lin_axis_count + i]
+            upper = joint_limit_upper[q_start + lin_axis_count + i]
             if upper - lower > 2.0 * wp.pi:
-                is_continuous[ang_start + i] = True
+                is_continuous[q_start + lin_axis_count + i] = True
 
 @wp.kernel
 def compute_states_body(
@@ -258,13 +255,11 @@ class NeuralIntegrator(Integrator):
         )
         # determine which dofs are angular and continuous
         wp.launch(
-            determine_angular_dofs,
+            determine_angular_dofs_newton,
             dim=self.num_joints_per_env,
             inputs=[
                 self.model.joint_type,
                 self.model.joint_q_start,
-                self.model.joint_axis_start,
-                self.model.joint_axis_dim,
                 self.model.joint_limit_lower,
                 self.model.joint_limit_upper,
             ],
