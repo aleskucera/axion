@@ -4,6 +4,7 @@ from typing import override
 import hydra
 import newton
 import warp as wp
+from axion.core.control_utils import JointMode
 from axion import AbstractSimulator
 from axion import EngineConfig
 from axion import ExecutionConfig
@@ -36,6 +37,17 @@ class Simulator(AbstractSimulator):
         )
 
     @override
+    def init_state_fn(
+        self,
+        current_state: newton.State,
+        next_state: newton.State,
+        contacts: newton.Contacts,
+        dt: float,
+    ):
+        # self.mujoco_solver.step(current_state, next_state, self.model.control(), contacts, dt)
+        self.solver.integrate_bodies(self.model, current_state, next_state, dt)
+
+    @override
     def control_policy(self, state: newton.State):
         wp.copy(self.control.joint_f, wp.array([0.0, 800.0], dtype=wp.float32))
 
@@ -58,9 +70,12 @@ class Simulator(AbstractSimulator):
             axis=wp.vec3(0.0, 1.0, 0.0),
             parent_xform=wp.transform(p=wp.vec3(0.0, 0.0, 5.0), q=rot),
             child_xform=wp.transform(p=wp.vec3(-hx, 0.0, 0.0), q=wp.quat_identity()),
-            mode=newton.JointMode.NONE,
             target_ke=1000.0,
             target_kd=50.0,
+            custom_attributes={
+                "joint_target_ki": [0.5],
+                "joint_dof_mode": [JointMode.NONE],
+            },
         )
         self.builder.add_joint_revolute(
             parent=link_0,
@@ -68,9 +83,12 @@ class Simulator(AbstractSimulator):
             axis=wp.vec3(0.0, 1.0, 0.0),
             parent_xform=wp.transform(p=wp.vec3(hx, 0.0, 0.0), q=wp.quat_identity()),
             child_xform=wp.transform(p=wp.vec3(-hx, 0.0, 0.0), q=wp.quat_identity()),
-            mode=newton.JointMode.NONE,
             target_ke=500.0,
             target_kd=5.0,
+            custom_attributes={
+                "joint_target_ki": [0.5],
+                "joint_dof_mode": [JointMode.NONE],
+            },
             armature=0.1,
         )
 

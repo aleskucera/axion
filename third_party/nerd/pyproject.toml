@@ -1,0 +1,7 @@
+[project]
+name = "nerd"
+version = "0.1.0"   # made up
+
+dependencies = [
+    "opencv-python" # for visualization
+]

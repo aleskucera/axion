@@ -1,3 +1,6 @@
 [submodule "third_party/newton"]
 	path = third_party/newton
 	url = https://github.com/newton-physics/newton.git
+[submodule "third_party/nerd"]
+	path = third_party/nerd
+	url = https://github.com/NVlabs/neural-robot-dynamics.git
