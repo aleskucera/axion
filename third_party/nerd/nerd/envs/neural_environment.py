@@ -54,7 +54,8 @@ class NeuralEnvironment():
         # neural environment arguments
         default_env_mode = 'neural',
         device = 'cuda:0',
-        render = False
+        render = False,
+        custom_articulation_builder = None
     ):
 
         # Handle dict arguments
@@ -63,6 +64,10 @@ class NeuralEnvironment():
 
         if warp_env_cfg is None:
             warp_env_cfg = {}
+
+        # Pass custom_articulation_builder through warp_env_cfg if provided
+        if custom_articulation_builder is not None:
+            warp_env_cfg['custom_articulation_builder'] = custom_articulation_builder
 
         # create abstract contact environment
         print_info(f'[NeuralEnvironment] Creating abstract contact environment: {env_name}.')

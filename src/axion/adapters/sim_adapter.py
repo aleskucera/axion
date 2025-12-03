@@ -1,10 +1,146 @@
 import newton
 import warp as wp
+import types
+import numpy as np
+
+import types
+import newton
+
+# --- Warp-style GEO constants for legacy code ---
+# Warp-style constants
+GEO_SPHERE = 0
+GEO_CAPSULE = 1
+GEO_BOX = 2
+GEO_CYLINDER = 3
+# Add others if needed
+
+
+# Map Newton.GeoType -> Warp GEO constants
+NEWTON_TO_WARP_GEOTYPE = {
+    newton.GeoType.SPHERE: GEO_SPHERE,
+    newton.GeoType.CAPSULE: GEO_CAPSULE,
+    newton.GeoType.BOX: GEO_BOX,
+    newton.GeoType.CYLINDER: GEO_CYLINDER,
+}
+
+# Shape properties of geometry
+@wp.struct
+class ModelShapeGeometry:
+    type: wp.array(dtype=wp.int32)  # The type of geometry (GEO_SPHERE, GEO_BOX, etc.)
+    is_solid: wp.array(dtype=wp.uint8)  # Indicates whether the shape is solid or hollow
+    thickness: wp.array(
+        dtype=float
+    )  # The thickness of the shape (used for collision detection, and inertia computation of hollow shapes)
+    source: wp.array(dtype=wp.uint64)  # Pointer to the source geometry (in case of a mesh, zero otherwise)
+    scale: wp.array(dtype=wp.vec3)  # The 3D scale of the shape
+
+
+# --- GeoTypeAdapter: converts Newton enums to Warp GEO constants ---
+class GeoTypeAdapter:
+    def __init__(self, model):
+        self.model = model
+
+    def __getitem__(self, idx):
+        newton_type = self.model.shape_type[idx]
+        return NEWTON_TO_WARP_GEOTYPE.get(newton_type, newton_type)
+
+    def __len__(self):
+        return self.model.shape_count
+
+class ShapeGeoAdapter:
+    """
+    Adapter to emulate wp.sim.ModelShapeGeometry for legacy Warp kernels,
+    backed by Newton's per-attribute arrays.
+    """
+
+    def __init__(self, model):
+        self.model = model
+
+        # Map Warp fields to Newton arrays
+        self.type = model.shape_type
+        self.is_solid = model.shape_is_solid  # bool array in Newton
+        self.thickness = getattr(model, "shape_thickness", None)
+        self.source = model.shape_source_ptr
+        self.scale = model.shape_scale
+
+    def __warp_struct__(self):
+        # Return a Warp struct instance for GPU kernels
+        return ModelShapeGeometry(
+            type=self.type,
+            is_solid=self.is_solid,
+            thickness=self.thickness,
+            source=self.source,
+            scale=self.scale,
+        )
+
+    def __getitem__(self, idx):
+        # Optional: support geo[i] access
+        return {
+            "type": self.type[idx],
+            "is_solid": self.is_solid[idx],
+            "thickness": self.thickness[idx] if self.thickness is not None else 0.0,
+            "source": self.source[idx],
+            "scale": self.scale[idx],
+        }
+
+    def __len__(self):
+        return len(self.model.shape_type)
+
+# Reuse the original Warp struct definition
+@wp.struct
+class ModelShapeGeometry:
+    type: wp.array(dtype=wp.int32)
+    is_solid: wp.array(dtype=wp.uint8)
+    thickness: wp.array(dtype=float)
+    source: wp.array(dtype=wp.uint64)
+    scale: wp.array(dtype=wp.vec3)
+
+class ModelAdapter:
+    """
+    Adapter for wp.sim.Model -> newton.Model
+    Provides:
+        - num_envs
+        - shape_geo (for legacy kernels)
+        - shape_shape_collision
+        - geo_types (Warp-style constants)
+    """
+    def __init__(self, inner_model):
+        self.inner = inner_model
+        self.num_envs = 1  # emulate Warp environments
+        self.shape_shape_collision = np.ones(self.inner.shape_count, dtype=bool)
+
+    def __getattr__(self, name):
+        return getattr(self.inner, name)
+
+    @property
+    def shape_geo(self):
+        # optional: adapter for shape_geo, see previous examples
+        return ShapeGeoAdapter(self.inner).__warp_struct__()
+    
+    @property
+    def geo_types(self):
+        return GeoTypeAdapter(self.inner)
+
+###################################################################################################
 
 class Model:
     """Adapter for wp.sim.Model -> newton.Model"""
     def __init__(self, *args, **kwargs):
         self.inner = newton.Model(*args, **kwargs)
+        self.num_envs = 1  # start with one "environment"
+
+    def add_builder(self, builder, xform=None, separate_collision_group=True, **kwargs):
+        self.inner.add_builder(builder.inner, xform)
+        new_shape_count = builder.inner.shape_count if hasattr(builder, "inner") else builder.shape_count
+        extra = np.ones(new_shape_count, dtype=bool)
+        self.shape_shape_collision = np.concatenate([self.shape_shape_collision, extra])
+        # emulate num_envs increment
+        self.num_envs += 1
+
+
+    def __getattr__(self, name):
+        # forward all other attributes to inner
+        return getattr(self.inner, name)
 
 class State:
     """Adapter for wp.sim.State -> newton.State"""
@@ -16,6 +152,8 @@ class Control:
     def __init__(self, *args, **kwargs):
         self.inner = newton.Control(*args, **kwargs)
 
+###################################################################################################
+
 class ModelBuilder:
     """Adapter for wp.sim.ModelBuilder -> newton.ModelBuilder"""
     def __init__(self, *args, **kwargs):
@@ -25,6 +163,19 @@ class ModelBuilder:
             kwargs["up_axis"] = axis
 
         self.inner = newton.ModelBuilder(*args, **kwargs)
+
+    def __getattr__(self, name):
+        """Forward any unknown attribute to the inner Newton builder."""
+        return getattr(self.inner, name)
+    
+    def add_builder(self, builder, xform=None,
+                update_num_env_count=True,
+                separate_collision_group=True):
+
+        # (1) ignore update_num_env_count — Newton doesn't have env counts
+        # (2) ignore separate_collision_group — Newton has no collision group concept
+        # (3) forward call to newton
+        return self.inner.add_builder(builder, xform)
 
     @staticmethod
     def _convert_up_vector(v):
@@ -37,7 +188,15 @@ class ModelBuilder:
         elif abs(y) > abs(x) and abs(y) > abs(z):
             return newton.Axis.Y
         else:
-            return newton.Axis.Z  
+            return newton.Axis.Z
+
+    def finalize(self, *args, **kwargs):
+        # Call Newton's builder finalize
+        model = self.inner.finalize(*args, **kwargs)
+        # Wrap the resulting model in a Python adapter for Warp compatibility
+        return ModelAdapter(model)  
+
+###################################################################################################
 
 class Mesh:
     """Adapter for wp.sim.Mesh -> newton.Mesh"""
@@ -65,10 +224,16 @@ class Mesh:
             color=color,
         )
 
+###################################################################################################
+
+
 class JOINT_REVOLUTE:
     """Adapter for wp.sim.JOINT_REVOLUTE -> newton.JointType.REVOLUTE"""
     def __init__(self):
         self.inner = newton.JointType.REVOLUTE
+
+###################################################################################################
+
 
 @wp.kernel
 def integrate_particles(
@@ -204,6 +369,22 @@ def integrate_bodies(
     body_q_new[tid] = q_new
     body_qd_new[tid] = qd_new
 
+@wp.func
+def get_box_vertex(point_id: int, upper: wp.vec3):
+    # box vertex numbering:
+    #    6---7
+    #    |\  |\       y
+    #    | 2-+-3      |
+    #    4-+-5 |   z \|
+    #     \|  \|      o---x
+    #      0---1
+    # get the vertex of the box given its ID (0-7)
+    sign_x = float(point_id % 2) * 2.0 - 1.0
+    sign_y = float((point_id // 2) % 2) * 2.0 - 1.0
+    sign_z = float((point_id // 4) % 2) * 2.0 - 1.0
+    return wp.vec3(sign_x * upper[0], sign_y * upper[1], sign_z * upper[2])
+
+###################################################################################################
 
 class Integrator:
     """
@@ -295,29 +476,71 @@ class Integrator:
             control (Control): The control input. Defaults to `None` which means the control values from the :class:`Model` are used.
         """
         raise NotImplementedError()
-    
-@wp.func
-def get_box_vertex(point_id: int, upper: wp.vec3):
-    # box vertex numbering:
-    #    6---7
-    #    |\  |\       y
-    #    | 2-+-3      |
-    #    4-+-5 |   z \|
-    #     \|  \|      o---x
-    #      0---1
-    # get the vertex of the box given its ID (0-7)
-    sign_x = float(point_id % 2) * 2.0 - 1.0
-    sign_y = float((point_id // 2) % 2) * 2.0 - 1.0
-    sign_z = float((point_id // 4) % 2) * 2.0 - 1.0
-    return wp.vec3(sign_x * upper[0], sign_y * upper[1], sign_z * upper[2])
 
-# Shape properties of geometry
-@wp.struct
-class ModelShapeGeometry:
-    type: wp.array(dtype=wp.int32)  # The type of geometry (GEO_SPHERE, GEO_BOX, etc.)
-    is_solid: wp.array(dtype=wp.uint8)  # Indicates whether the shape is solid or hollow
-    thickness: wp.array(
-        dtype=float
-    )  # The thickness of the shape (used for collision detection, and inertia computation of hollow shapes)
-    source: wp.array(dtype=wp.uint64)  # Pointer to the source geometry (in case of a mesh, zero otherwise)
-    scale: wp.array(dtype=wp.vec3)  # The 3D scale of the shape
+###################################################################################################
+
+class FeatherstoneIntegrator:
+    """Adapter for wp.sim.FeatherstoneIntegrator -> newton.solvers.SolverFeatherstone"""
+    
+    def __init__(self, *args, **kwargs):
+        # --- Remap Warp → Newton keyword changes ---
+        if "update_mass_matrix_every" in kwargs:
+            kwargs["update_mass_matrix_interval"] = kwargs.pop("update_mass_matrix_every")
+
+        self.inner = newton.solvers.SolverFeatherstone(*args, **kwargs)
+
+###################################################################################################
+
+class SimRendererOpenGL:
+    """Adapter for wp.sim.render.SimRendererOpenGL -> newton.viewer.ViewerGL"""
+
+    def __init__(self, model, sim_name,
+                 up_axis="Z",
+                 show_rigid_contact_points=False,
+                 contact_points_radius=0.01,
+                 show_joints=False,
+                 **opengl_render_settings):
+        
+        # Store Warp-style parameters (for reference or future extensions)
+        self.model = model
+        self.sim_name = sim_name
+        self.up_axis = up_axis
+        self.show_rigid_contact_points = show_rigid_contact_points
+        self.contact_points_radius = contact_points_radius
+        self.show_joints = show_joints
+
+        # Extract only the parameters ViewerGL accepts
+        width = opengl_render_settings.get("width", 1920)
+        height = opengl_render_settings.get("height", 1080)
+        vsync = opengl_render_settings.get("vsync", False)
+        headless = opengl_render_settings.get("headless", False)
+
+        # Create the low-level Newton viewer
+        self.viewer = newton.viewer.ViewerGL(
+            width=width,
+            height=height,
+            vsync=vsync,
+            headless=headless
+        )
+
+    def render(self, *args, **kwargs):
+        # Warp passes model/state; Newton just calls render()
+        # You can extend this to visualize joints/contact points manually
+        return self.viewer.render(self.model, *args, **kwargs)
+
+    def update(self, *args, **kwargs):
+        # Newton uses step() internally
+        if hasattr(self.viewer, "update"):
+            return self.viewer.update(*args, **kwargs)
+        return self.viewer.step(*args, **kwargs)
+
+    def close(self):
+        return self.viewer.close()
+    
+########################################################
+#-----------------Fake-submodules-----------------------
+########################################################
+
+render = types.SimpleNamespace(
+    SimRendererOpenGL=SimRendererOpenGL
+)

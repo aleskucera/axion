@@ -28,14 +28,137 @@ sys.path.append(base_dir)
 import torch
 import yaml
 import numpy as np
+import newton
+import warp as wp
+from axion.core.control_utils import JointMode
 from pathlib import Path
-
 
 from nerd.envs.neural_environment import NeuralEnvironment
 from nerd.utils.torch_utils import num_params_torch_model
 from nerd.utils.python_utils import set_random_seed
 
 base_dir = Path(__file__).resolve().parents[3]
+
+def create_model_builder_with_custom_attributes():
+    builder = newton.ModelBuilder()
+
+    # --- Add custom attributes to the model class ---
+
+    # integral constant (PID control)
+    builder.add_custom_attribute(
+        newton.ModelBuilder.CustomAttribute(
+            name="joint_target_ki",
+            frequency=newton.ModelAttributeFrequency.JOINT_DOF,
+            dtype=wp.float32,
+            default=0.0,  # Explicit default value
+            assignment=newton.ModelAttributeAssignment.MODEL,
+        )
+    )
+
+    # previous instance of the control error (PID control)
+    builder.add_custom_attribute(
+        newton.ModelBuilder.CustomAttribute(
+            name="joint_err_prev",
+            frequency=newton.ModelAttributeFrequency.JOINT_DOF,
+            dtype=wp.float32,
+            default=0.0,
+            assignment=newton.ModelAttributeAssignment.CONTROL,
+        )
+    )
+
+    # cummulative error of the integral part (PID control)
+    builder.add_custom_attribute(
+        newton.ModelBuilder.CustomAttribute(
+            name="joint_err_i",
+            frequency=newton.ModelAttributeFrequency.JOINT_DOF,
+            dtype=wp.float32,
+            default=0.0,
+            assignment=newton.ModelAttributeAssignment.CONTROL,
+        )
+    )
+
+    builder.add_custom_attribute(
+        newton.ModelBuilder.CustomAttribute(
+            name="joint_dof_mode",
+            frequency=newton.ModelAttributeFrequency.JOINT_DOF,
+            dtype=wp.int32,
+            default=JointMode.NONE,
+            assignment=newton.ModelAttributeAssignment.MODEL,
+        )
+    )
+
+    builder.add_custom_attribute(
+        newton.ModelBuilder.CustomAttribute(
+            name="joint_target",
+            frequency=newton.ModelAttributeFrequency.JOINT_DOF,
+            dtype=wp.float32,
+            default=0,
+            assignment=newton.ModelAttributeAssignment.CONTROL,
+        )
+    )
+    
+    return builder
+
+
+def create_custom_pendulum_builder():
+    builder = create_model_builder_with_custom_attributes()
+    
+    chain_width = 1.5
+    shape_ke = 1.0e4
+    shape_kd = 1.0e3
+    shape_kf = 1.0e4
+
+    hx = chain_width*0.5
+
+    link_0 = builder.add_body(armature=0.1)
+    link_config = newton.ModelBuilder.ShapeConfig(density=500.0, ke = shape_ke, kd = shape_kd, kf = shape_kf)
+    capsule_shape_transform = wp.transform(p=wp.vec3(0.0, 0.0, 0.0), q=wp.quat_from_axis_angle(wp.vec3(0.0, 1.0, 0.0), -wp.pi/2))
+    builder.add_shape_capsule(link_0,
+                                    xform= capsule_shape_transform,
+                                    radius=0.1, 
+                                    half_height=chain_width*0.5,
+                                    cfg = link_config)
+
+    link_1 = builder.add_body(armature=0.1)
+    builder.add_shape_capsule(link_1,
+                                xform = capsule_shape_transform,
+                                radius=0.1, 
+                                half_height=chain_width*0.5,
+                                cfg = link_config)
+
+    rot = wp.quat_from_axis_angle(wp.vec3(0.0, 0.0, 1.0), -wp.pi * 0.5)
+    builder.add_joint_revolute(
+        parent=-1,
+        child=link_0,
+        axis=wp.vec3(0.0, 1.0, 0.0),
+        parent_xform=wp.transform(p=wp.vec3(0.0, 0.0, 5.0), q=rot),
+        child_xform=wp.transform(p=wp.vec3(-hx, 0.0, 0.0), q=wp.quat_identity()),
+        target_ke=1000.0,
+        target_kd=50.0,
+        custom_attributes={
+            "joint_target_ki": [0.5],
+            "joint_dof_mode": [JointMode.NONE],
+        },
+    )
+    builder.add_joint_revolute(
+        parent=link_0,
+        child=link_1,
+        axis=wp.vec3(0.0, 1.0, 0.0),
+        parent_xform=wp.transform(p=wp.vec3(hx, 0.0, 0.0), q=wp.quat_identity()),
+        child_xform=wp.transform(p=wp.vec3(-hx, 0.0, 0.0), q=wp.quat_identity()),
+        target_ke=500.0,
+        target_kd=5.0,
+        custom_attributes={
+            "joint_target_ki": [0.5],
+            "joint_dof_mode": [JointMode.NONE],
+        },
+        armature=0.1,
+    )
+
+    builder.add_ground_plane()
+
+    return builder
+
 
 if __name__ == '__main__':
     # Configuration
@@ -61,6 +184,11 @@ if __name__ == '__main__':
         cfg = yaml.load(f, Loader=yaml.SafeLoader)
     neural_integrator_cfg = cfg["env"]["neural_integrator_cfg"]
     
+    # Create the custom articulation builder
+    custom_articulation_builder = create_custom_pendulum_builder()
+    print(f"Custom pendulum created: {custom_articulation_builder.body_count} bodies, "
+          f"{custom_articulation_builder.joint_count} joints")
+
     # Initialize environment with visualization
     print("Initializing PendulumWithContactEnvironment with visualization...")
     env_cfg = {
@@ -73,7 +201,8 @@ if __name__ == '__main__':
         "neural_integrator_cfg": neural_integrator_cfg,
         "neural_model": neural_model,
         "default_env_mode": "neural",  # Use NeRD model
-        "device": device
+        "device": device,
+        "custom_articulation_builder": custom_articulation_builder  # Pass custom builder
     }
     
     neural_env = NeuralEnvironment(**env_cfg)

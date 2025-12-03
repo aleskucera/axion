@@ -343,6 +343,14 @@ class NeuralIntegrator(Integrator):
             "Cannot simulate via neural integrator as "
             "a neural model has not been setup yet."
         )
+
+        # Debug print to verify neural integrator is being used
+        if not hasattr(self, '_simulate_call_count'):
+            self._simulate_call_count = 0
+        self._simulate_call_count += 1
+        if self._simulate_call_count == 1:
+            print(f"[NeuralIntegrator] simulate() called - Using neural model for simulation")
+
         self._update_states(model, state_in, control.joint_act)
 
         torch_stream = wp.stream_to_torch(model.device)
