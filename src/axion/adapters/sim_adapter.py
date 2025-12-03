@@ -23,18 +23,6 @@ NEWTON_TO_WARP_GEOTYPE = {
     newton.GeoType.CYLINDER: GEO_CYLINDER,
 }
 
-# Shape properties of geometry
-@wp.struct
-class ModelShapeGeometry:
-    type: wp.array(dtype=wp.int32)  # The type of geometry (GEO_SPHERE, GEO_BOX, etc.)
-    is_solid: wp.array(dtype=wp.uint8)  # Indicates whether the shape is solid or hollow
-    thickness: wp.array(
-        dtype=float
-    )  # The thickness of the shape (used for collision detection, and inertia computation of hollow shapes)
-    source: wp.array(dtype=wp.uint64)  # Pointer to the source geometry (in case of a mesh, zero otherwise)
-    scale: wp.array(dtype=wp.vec3)  # The 3D scale of the shape
-
-
 # --- GeoTypeAdapter: converts Newton enums to Warp GEO constants ---
 class GeoTypeAdapter:
     def __init__(self, model):
@@ -46,45 +34,6 @@ class GeoTypeAdapter:
 
     def __len__(self):
         return self.model.shape_count
-
-class ShapeGeoAdapter:
-    """
-    Adapter to emulate wp.sim.ModelShapeGeometry for legacy Warp kernels,
-    backed by Newton's per-attribute arrays.
-    """
-
-    def __init__(self, model):
-        self.model = model
-
-        # Map Warp fields to Newton arrays
-        self.type = model.shape_type
-        self.is_solid = model.shape_is_solid  # bool array in Newton
-        self.thickness = getattr(model, "shape_thickness", None)
-        self.source = model.shape_source_ptr
-        self.scale = model.shape_scale
-
-    def __warp_struct__(self):
-        # Return a Warp struct instance for GPU kernels
-        return ModelShapeGeometry(
-            type=self.type,
-            is_solid=self.is_solid,
-            thickness=self.thickness,
-            source=self.source,
-            scale=self.scale,
-        )
-
-    def __getitem__(self, idx):
-        # Optional: support geo[i] access
-        return {
-            "type": self.type[idx],
-            "is_solid": self.is_solid[idx],
-            "thickness": self.thickness[idx] if self.thickness is not None else 0.0,
-            "source": self.source[idx],
-            "scale": self.scale[idx],
-        }
-
-    def __len__(self):
-        return len(self.model.shape_type)
 
 # Reuse the original Warp struct definition
 @wp.struct
@@ -112,11 +61,6 @@ class ModelAdapter:
     def __getattr__(self, name):
         return getattr(self.inner, name)
 
-    @property
-    def shape_geo(self):
-        # optional: adapter for shape_geo, see previous examples
-        return ShapeGeoAdapter(self.inner).__warp_struct__()
-    
     @property
     def geo_types(self):
         return GeoTypeAdapter(self.inner)

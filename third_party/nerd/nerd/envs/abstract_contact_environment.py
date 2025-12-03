@@ -38,7 +38,11 @@ from utils.time_report import TimeReport, TimeProfiler
 
 @wp.kernel(enable_backward=False)
 def generate_contact_pairs(
-    geo: wp.sim.ModelShapeGeometry,
+    #---------monkey-patch---------------
+    shape_type: wp.array(dtype=int),
+    shape_scale: wp.array(dtype=wp.vec3),
+    shape_thickness: wp.array(dtype=float),
+    #-------------------------------------
     shape_shape_collision: wp.array(dtype=bool),
     num_shapes_per_env: int,
     num_contacts_per_env: int,
@@ -70,9 +74,9 @@ def generate_contact_pairs(
             # filter out visual meshes
             continue
 
-        geo_type = geo.type[shape_offset + i]
-        geo_scale = geo.scale[shape_offset + i]
-        geo_thickness = geo.thickness[shape_offset + i]
+        geo_type = shape_type[shape_offset + i]
+        geo_scale = shape_scale[shape_offset + i]
+        geo_thickness = shape_thickness[shape_offset + i]
         shape_tf = shape_X_bs[shape_offset + i]
 
         if geo_type == wp.sim.GEO_SPHERE:
@@ -140,7 +144,9 @@ def collision_detection_ground(
     body_q: wp.array(dtype=wp.transform),
     shape_X_bs: wp.array(dtype=wp.transform),
     shape_body: wp.array(dtype=int),
-    geo: wp.sim.ModelShapeGeometry,
+    #---------monkey-patch---------------
+    shape_thickness: wp.array(dtype=float),
+    #-------------------------------------
     ground_shape_index: int,
     contact_shape0: wp.array(dtype=int),
     contact_point0: wp.array(dtype=wp.vec3),
@@ -180,8 +186,8 @@ def collision_detection_ground(
 
     # compute contact offsets
     T_world_to_body0 = wp.transform_inverse(body_q[body])
-    thickness_body0 = geo.thickness[shape]
-    thickness_ground = geo.thickness[ground_shape_index]
+    thickness_body0 = shape_thickness[shape]
+    thickness_ground = shape_thickness[ground_shape_index]
     contact_offset0[contact_id] = wp.transform_vector(
         T_world_to_body0, 
         -thickness_body0 * contact_normal[contact_id]
@@ -244,7 +250,7 @@ class AbstractContactEnvironment():
         num_shapes_per_env = (model.shape_count - 1) // MODEL_NUM_ENVS
         num_contacts_per_env = 0
         print("-----------Does model have inner?------------", hasattr(model, "inner"))
-        geo_types = model.shape_geo.type.numpy()
+        geo_types = model.shape_type.numpy()
         shape_body = model.shape_body.numpy()
         for i in range(num_shapes_per_env):
             # static shapes are ignored, e.g. ground
@@ -276,7 +282,9 @@ class AbstractContactEnvironment():
             generate_contact_pairs,
             dim=MODEL_NUM_ENVS,
             inputs=[
-                model.shape_geo,
+                model.shape_type,
+                model.shape_scale,
+                model.shape_thickness,
                 wp.from_numpy(np.array(model.shape_shape_collision, dtype=bool)),
                 num_shapes_per_env,
                 num_contacts_per_env,
@@ -319,7 +327,7 @@ class AbstractContactEnvironment():
                     state.body_q,
                     model.shape_transform,
                     model.shape_body,
-                    model.shape_geo,
+                    model.shape_thickness,
                     model.shape_count - 1,  # ground plane index
                     model.rigid_contact_shape0,
                     model.rigid_contact_point0,
