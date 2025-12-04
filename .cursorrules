@@ -1,0 +1,251 @@
+1. Think it through.
+2. Explain your thinking.
+3. Do not do anything else than what is asked.
+4. Do not delete any code without explanation and good reason.
+5. All code, symbol names and alike must be in English.
+6. Any comments you add must be in English.
+
+Here is my current file structure:
+├── docs
+│   ├── advanced
+│   │   ├── differentiable.md
+│   │   ├── gpu.md
+│   │   └── performance.md
+│   ├── developer
+│   │   ├── architecture.md
+│   │   ├── contributing.md
+│   │   └── testing.md
+│   ├── gen_ref_pages.py
+│   ├── getting-started
+│   │   ├── configuration.md
+│   │   ├── first-simulation.md
+│   │   ├── installation.md
+│   │   └── quickstart.md
+│   ├── implementation
+│   │   ├── engine.md
+│   │   ├── logging.md
+│   │   └── parameters.md
+│   ├── index.md
+│   └── theory
+│       ├── constraints.md
+│       ├── core-concepts.md
+│       ├── gauss-least-constraint.md
+│       ├── non-linear-system.md
+│       ├── notation.md
+│       └── numerical-solution.md
+├── pyproject.toml
+├── README.md
+├── src
+│   └── axion
+│       ├── adapters
+│       │   └── __pycache__
+│       │       └── sim_adapter.cpython-312.pyc
+│       ├── constraints
+│       │   ├── contact_constraint.py
+│       │   ├── dynamics_constraint.py
+│       │   ├── friction_constraint.py
+│       │   ├── __init__.py
+│       │   ├── joint_constraint.py
+│       │   ├── __pycache__
+│       │   │   ├── contact_constraint.cpython-312.pyc
+│       │   │   ├── dynamics_constraint.cpython-312.pyc
+│       │   │   ├── friction_constraint.cpython-312.pyc
+│       │   │   ├── __init__.cpython-312.pyc
+│       │   │   ├── joint_constraint.cpython-312.pyc
+│       │   │   └── utils.cpython-312.pyc
+│       │   └── utils.py
+│       ├── core
+│       │   ├── abstract_simulator.py
+│       │   ├── control_utils.py
+│       │   ├── dense_utils.py
+│       │   ├── engine_config.py
+│       │   ├── engine_data.py
+│       │   ├── engine_dims.py
+│       │   ├── engine_logger.py
+│       │   ├── engine.py
+│       │   ├── general_utils.py
+│       │   ├── __init__.py
+│       │   ├── linear_utils.py
+│       │   ├── linesearch_utils.py
+│       │   ├── pca_utils.py
+│       │   └── __pycache__
+│       │       ├── abstract_simulator.cpython-312.pyc
+│       │       ├── control_utils.cpython-312.pyc
+│       │       ├── dense_utils.cpython-312.pyc
+│       │       ├── engine_config.cpython-312.pyc
+│       │       ├── engine.cpython-312.pyc
+│       │       ├── engine_data.cpython-312.pyc
+│       │       ├── engine_dims.cpython-312.pyc
+│       │       ├── engine_logger.cpython-312.pyc
+│       │       ├── general_utils.cpython-312.pyc
+│       │       ├── __init__.cpython-312.pyc
+│       │       ├── linear_utils.cpython-312.pyc
+│       │       ├── linesearch_utils.cpython-312.pyc
+│       │       ├── logging_utils.cpython-312.pyc
+│       │       └── pca_utils.cpython-312.pyc
+│       ├── examples
+│       │   ├── assets
+│       │   │   ├── carter
+│       │   │   │   ├── meshes
+│       │   │   │   │   ├── caster_wheel.obj
+│       │   │   │   │   ├── chassis.obj
+│       │   │   │   │   ├── pivot.obj
+│       │   │   │   │   └── side_wheel.obj
+│       │   │   │   └── urdf
+│       │   │   │       └── carter.urdf
+│       │   │   ├── cube.obj
+│       │   │   ├── cylinder.mtl
+│       │   │   ├── cylinder.obj
+│       │   │   ├── helhest
+│       │   │   │   ├── wheel2.mtl
+│       │   │   │   ├── wheel2.obj
+│       │   │   │   ├── wheel_collision.mtl
+│       │   │   │   ├── wheel_collision.obj
+│       │   │   │   └── wheel.obj
+│       │   │   ├── sphere.gif
+│       │   │   ├── sphere.mp4
+│       │   │   ├── surface.mtl
+│       │   │   └── surface.obj
+│       │   ├── ball_bounce.py
+│       │   ├── basic_joints.py
+│       │   ├── basic_pendulum.py
+│       │   ├── basic_shape.py
+│       │   ├── box_stack.py
+│       │   ├── collision_primitives.py
+│       │   ├── conf
+│       │   │   ├── config.yaml
+│       │   │   ├── engine
+│       │   │   │   ├── axion.yaml
+│       │   │   │   ├── featherstone.yaml
+│       │   │   │   ├── mujoco.yaml
+│       │   │   │   └── xpbd.yaml
+│       │   │   ├── execution
+│       │   │   │   ├── cuda_graph.yaml
+│       │   │   │   └── no_graph.yaml
+│       │   │   ├── helhest.yaml
+│       │   │   ├── logging
+│       │   │   │   ├── disabled.yaml
+│       │   │   │   ├── hdf5.yaml
+│       │   │   │   └── timing.yaml
+│       │   │   ├── rendering
+│       │   │   │   ├── gl.yaml
+│       │   │   │   ├── headless.yaml
+│       │   │   │   └── usd.yaml
+│       │   │   └── simulation
+│       │   │       ├── base.yaml
+│       │   │       └── helhest.yaml
+│       │   ├── helhest.py
+│       │   ├── helhest_simple.py
+│       │   ├── __init__.py
+│       │   └── __pycache__
+│       │       ├── _assets.cpython-312.pyc
+│       │       ├── ball_bounce.cpython-312.pyc
+│       │       ├── collision_primitives.cpython-312.pyc
+│       │       ├── helhest.cpython-312.pyc
+│       │       ├── helhest_simple.cpython-312.pyc
+│       │       └── __init__.cpython-312.pyc
+│       ├── __init__.py
+│       ├── logging
+│       │   ├── hdf5_logger.py
+│       │   ├── hdf5_reader.py
+│       │   ├── __init__.py
+│       │   ├── null_logger.py
+│       │   └── __pycache__
+│       │       ├── hdf5_logger.cpython-312.pyc
+│       │       ├── hdf5_reader.cpython-312.pyc
+│       │       ├── __init__.cpython-312.pyc
+│       │       └── null_logger.cpython-312.pyc
+│       ├── nn_prediction
+│       │   ├── cli_usage.md
+│       │   ├── example_usage.py
+│       │   ├── EXTRACTION_SUMMARY.md
+│       │   ├── __init__.py
+│       │   ├── integrators
+│       │   │   ├── __init__.py
+│       │   │   ├── __pycache__
+│       │   │   │   ├── __init__.cpython-311.pyc
+│       │   │   │   ├── __init__.cpython-312.pyc
+│       │   │   │   ├── state_processor.cpython-311.pyc
+│       │   │   │   └── state_processor.cpython-312.pyc
+│       │   │   └── state_processor.py
+│       │   ├── models
+│       │   │   ├── base_models.py
+│       │   │   ├── __init__.py
+│       │   │   ├── models.py
+│       │   │   ├── model_transformer.py
+│       │   │   ├── model_utils.py
+│       │   │   └── __pycache__
+│       │   │       ├── base_models.cpython-311.pyc
+│       │   │       ├── base_models.cpython-312.pyc
+│       │   │       ├── __init__.cpython-311.pyc
+│       │   │       ├── __init__.cpython-312.pyc
+│       │   │       ├── models.cpython-311.pyc
+│       │   │       ├── models.cpython-312.pyc
+│       │   │       ├── model_transformer.cpython-311.pyc
+│       │   │       ├── model_transformer.cpython-312.pyc
+│       │   │       ├── model_utils.cpython-311.pyc
+│       │   │       └── model_utils.cpython-312.pyc
+│       │   ├── nerd_predictor.py
+│       │   ├── __pycache__
+│       │   │   ├── __init__.cpython-312.pyc
+│       │   │   └── nerd_predictor.cpython-312.pyc
+│       │   ├── README.md
+│       │   ├── trained_models
+│       │   │   └── NeRD_pretrained
+│       │   │       └── pendulum
+│       │   │           ├── cfg.yaml
+│       │   │           └── model.pt
+│       │   └── utils
+│       │       ├── commons.py
+│       │       ├── __init__.py
+│       │       ├── __pycache__
+│       │       │   ├── commons.cpython-311.pyc
+│       │       │   ├── commons.cpython-312.pyc
+│       │       │   ├── __init__.cpython-311.pyc
+│       │       │   ├── __init__.cpython-312.pyc
+│       │       │   ├── running_mean_std.cpython-311.pyc
+│       │       │   ├── running_mean_std.cpython-312.pyc
+│       │       │   ├── torch_utils.cpython-311.pyc
+│       │       │   └── torch_utils.cpython-312.pyc
+│       │       ├── running_mean_std.py
+│       │       └── torch_utils.py
+│       ├── optim
+│       │   ├── cr.py
+│       │   ├── __init__.py
+│       │   ├── matrixfree_operator_optimized.py
+│       │   ├── matrixfree_operator.py
+│       │   ├── matrix_operator.py
+│       │   ├── preconditioner.py
+│       │   └── __pycache__
+│       │       ├── cr.cpython-312.pyc
+│       │       ├── __init__.cpython-312.pyc
+│       │       ├── matrixfree_operator.cpython-312.pyc
+│       │       ├── matrixfree_operator_optimized.cpython-312.pyc
+│       │       ├── matrix_operator.cpython-312.pyc
+│       │       └── preconditioner.cpython-312.pyc
+│       ├── __pycache__
+│       │   └── __init__.cpython-312.pyc
+│       ├── tiled
+│       │   ├── __init__.py
+│       │   ├── __pycache__
+│       │   │   ├── __init__.cpython-312.pyc
+│       │   │   ├── tiled_kernels.cpython-312.pyc
+│       │   │   └── tiled_utils.cpython-312.pyc
+│       │   ├── tiled_kernels.py
+│       │   └── tiled_utils.py
+│       └── types
+│           ├── contact_interaction.py
+│           ├── __init__.py
+│           ├── joint_constraint_data.py
+│           ├── __pycache__
+│           │   ├── contact_interaction.cpython-312.pyc
+│           │   ├── generalized_mass.cpython-312.pyc
+│           │   ├── __init__.cpython-312.pyc
+│           │   ├── joint_constraint_data.cpython-312.pyc
+│           │   ├── joint_interaction.cpython-312.pyc
+│           │   ├── spatial_inertia.cpython-312.pyc
+│           │   └── utils.cpython-312.pyc
+│           ├── spatial_inertia.py
+│           └── utils.py
+├── uv.lock
+└── visualize_loss_landscape.py
