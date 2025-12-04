@@ -329,7 +329,7 @@ def main():
     bodies_in_tile = 4
 
     # Body counts to benchmark (must be divisible by bodies_in_tile)
-    body_counts = [8, 16, 32, 64, 128, 256, 512, 1_024, 2_048, 4_096, 8_192, 16_384]
+    body_counts = [8, 16, 32, 64, 128, 256, 512, 1_024, 2_048, 4_096, 8_192, 16_384, 32_768]
 
     # Filter to ensure divisibility
     body_counts = [n for n in body_counts if n % bodies_in_tile == 0]
