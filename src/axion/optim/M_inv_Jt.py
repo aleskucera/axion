@@ -68,6 +68,51 @@ def kernel_M_inv_Jct_matvec_scatter(
     wp.atomic_add(du, b_idx, m_inv * delta_impulse)
 
 
+def create_M_inv_Jct_matvec_indexed_tiled(
+    num_bodies: int,
+    constraints_per_body: int,
+    bodies_in_tile: int,
+):
+    assert (
+        num_bodies % bodies_in_tile == 0
+    ), "Number of bodies must be divisible by bodies in one tile."
+    tile_size = bodies_in_tile * constraints_per_body
+    num_constraints = num_bodies * constraints_per_body
+
+    @wp.kernel
+    def kernel_M_inv_Jct_matvec_indexed_tiled(
+        lambda_: wp.array(dtype=wp.float32),  # (num_constraints)
+        J: wp.array(dtype=wp.spatial_vector),  # (num_constraints)
+        body_to_constraints: wp.array(dtype=wp.int32),  # (num_constraints)
+        M_inv: wp.array(dtype=wp.spatial_matrix),  # (num_bodies)
+        u: wp.array(dtype=wp.spatial_vector),  # (num_bodies)
+    ):
+        tile_idx = wp.tid()
+        body_offset = tile_idx * bodies_in_tile
+        body_constr_offset = tile_idx * tile_size
+
+        constr_indices = wp.tile_load(
+            body_to_constraints,
+            tile_size,
+            offset=body_constr_offset,
+            storage="shared",
+        )
+        jacobian_tile = wp.tile_load_indexed(J, indices=constr_indices, shape=(tile_size,))
+        lambda_tile = wp.tile_load_indexed(lambda_, indices=constr_indices, shape=(tile_size,))
+        m_inv_tile = wp.tile_load(M_inv, bodies_in_tile, offset=body_offset, storage="shared")
+
+        impulse_tile = wp.tile_map(wp.mul, jacobian_tile, lambda_tile)
+        impulse_by_body = wp.tile_reshape(
+            impulse_tile, shape=(bodies_in_tile, constraints_per_body)
+        )
+        total_impulse_per_body = wp.tile_reduce(wp.add, impulse_by_body, axis=1)
+
+        u_tile = wp.tile_map(wp.mul, m_inv_tile, total_impulse_per_body)
+        wp.tile_store(u, u_tile, offset=tile_idx * bodies_in_tile)
+
+    return kernel_M_inv_Jct_matvec_indexed_tiled
+
+
 def create_M_inv_Jct_matvec_tiled(
     num_bodies: int,
     constraints_per_body: int,
@@ -99,7 +144,7 @@ def create_M_inv_Jct_matvec_tiled(
         total_impulse_per_body = wp.tile_reduce(wp.add, impulse_by_body, axis=1)
 
         body_offset = tile_idx * bodies_in_tile
-        m_inv_tile = wp.tile_load(M_inv, bodies_in_tile, offset=body_offset)
+        m_inv_tile = wp.tile_load(M_inv, bodies_in_tile, offset=body_offset, storage="shared")
         u_tile = wp.tile_map(wp.mul, m_inv_tile, total_impulse_per_body)
         wp.tile_store(u, u_tile, offset=tile_idx * bodies_in_tile)
 
@@ -146,6 +191,7 @@ def main():
         np.arange(num_bodies, dtype=np.int32),
         contact_constraints_per_body,
     )
+    contact_body_to_constraints_np = np.arange(num_contact_constraints, dtype=np.int32)
 
     # Create a padded map for contacts: [body_idx, -1]
     contact_map_padded = np.full((num_contact_constraints, 2), -1, dtype=np.int32)
@@ -172,6 +218,7 @@ def main():
 
     joint_constraint_to_body = wp.array(joint_constraint_to_body_np, dtype=wp.int32)
     contact_constraint_to_body = wp.array(contact_constraint_to_body_np, dtype=wp.int32)
+    contact_body_to_constraints = wp.array(contact_body_to_constraints_np, dtype=wp.int32)
     constraint_to_body_all = wp.array(constraint_to_body_all_np, dtype=wp.int32)
 
     du_j_scatter = wp.zeros(num_bodies, dtype=wp.spatial_vector)
@@ -215,6 +262,13 @@ def main():
         constraints_per_body=contact_constraints_per_body,
         bodies_in_tile=bodies_in_tile,
     )
+
+    kernel_Minv_Jct_matvec_indexed_tiled = create_M_inv_Jct_matvec_indexed_tiled(
+        num_bodies=num_bodies,
+        constraints_per_body=contact_constraints_per_body,
+        bodies_in_tile=bodies_in_tile,
+    )
+
     with wp.ScopedStream(stream_j):
         wp.launch(
             kernel_M_inv_Jjt_matvec_scatter,
@@ -225,10 +279,17 @@ def main():
         wp.record_event(event_j_tiled)
 
     with wp.ScopedStream(stream_c):
+        # wp.launch_tiled(
+        #     kernel=kernel_Minv_Jct_matvec_tiled,
+        #     dim=num_tiles,
+        #     inputs=[dlambda_c, J_c, M_inv],
+        #     outputs=[du_c_tiled],
+        #     block_dim=tile_size,
+        # )
         wp.launch_tiled(
-            kernel=kernel_Minv_Jct_matvec_tiled,
+            kernel=kernel_Minv_Jct_matvec_indexed_tiled,
             dim=num_tiles,
-            inputs=[dlambda_c, J_c, M_inv],
+            inputs=[dlambda_c, J_c, contact_body_to_constraints, M_inv],
             outputs=[du_c_tiled],
             block_dim=tile_size,
         )

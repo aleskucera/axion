@@ -195,6 +195,22 @@ def run_benchmark_tiled(data, kernel_tiled, tile_block_dim, stream_j, stream_c, 
                     block_dim=tile_block_dim,
                 )
 
+            # d["j"]["du"].zero_()
+            # wp.launch(
+            #     kernel_M_inv_Jjt_matvec_scatter,
+            #     dim=d["j"]["dim"],
+            #     inputs=[d["j"]["dlambda"], d["j"]["J"], d["j"]["map"], M_inv],
+            #     outputs=[d["j"]["du"]],
+            # )
+            #
+            # wp.launch_tiled(
+            #     kernel_tiled,
+            #     dim=d["tiled_dim"],
+            #     inputs=[d["c"]["dlambda"], d["c"]["J"], M_inv],
+            #     outputs=[d["c"]["du"]],
+            #     block_dim=tile_block_dim,
+            # )
+
     return measure_performance(graph_body, ops_per_graph=ops_per_graph)
 
 
@@ -206,12 +222,12 @@ def run_benchmark_tiled(data, kernel_tiled, tile_block_dim, stream_j, stream_c, 
 def run_suite():
     # Benchmark Config
     bodies_in_tile = 8
-    j_per_body = 2
+    j_per_body = 10
     c_per_body = 32 * 3
     ops_per_graph = 10  # Number of kernel launches per graph submission
 
     # Sweep Config
-    body_counts = [128, 512, 1024, 2048, 4096, 8192, 16384, 32768]
+    body_counts = [128, 512, 1024, 2048, 4096, 8192, 16384]  # 32768]
 
     # Kernel Creation (Only need to create the tiled kernel once)
     # Note: create_M_inv_Jct_matvec_tiled logic depends on how you implemented the factory.
@@ -244,7 +260,9 @@ def run_suite():
 
         # 3. Run Benchmarks
         t_uni = run_benchmark_unified(data, ops_per_graph) * 1000.0
+        time.sleep(0.1)
         t_sca = run_benchmark_scatter(data, stream_j, stream_c, ops_per_graph) * 1000.0
+        time.sleep(0.1)
         t_til = (
             run_benchmark_tiled(
                 data, kernel_tiled_instance, tile_block_dim, stream_j, stream_c, ops_per_graph
