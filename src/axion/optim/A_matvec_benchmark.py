@@ -115,18 +115,16 @@ def run_benchmark_case(num_bodies, j_per_body, c_per_body, block_size):
             block_dim=block_size * max(j_per_body, c_per_body),
         )
         # Phase 2: Apply
-        with wp.ScopedStream(stream_j):
-            wp.launch(
-                kernels.kernel_apply_joints,
-                dim=num_joints,
-                inputs=[v_body, J_j_flat, map_j, C_j, x_j, z_j],
-            )
-        with wp.ScopedStream(stream_c):
-            wp.launch(
-                k_apply_c,
-                dim=num_contacts,
-                inputs=[v_body, J_c, C_c, x_c, z_c],
-            )
+        wp.launch(
+            kernels.kernel_apply_joints,
+            dim=num_joints,
+            inputs=[v_body, J_j_flat, map_j, C_j, x_j, z_j],
+        )
+        wp.launch(
+            k_apply_c,
+            dim=num_contacts,
+            inputs=[v_body, J_c, C_c, x_c, z_c],
+        )
 
     def run_baseline():
         # Reset Accumulator
@@ -171,7 +169,7 @@ def main():
     block_size = 8
 
     # Sweep Configuration
-    problem_sizes = [512, 1024, 2048, 4096, 8196, 16384]
+    problem_sizes = [4, 16, 32, 64, 256, 512, 1024, 2048, 4096, 8196, 16384]
 
     print("===============================================================")
     print(f"BENCHMARKING A*x (Joints={j_per_body}/body, Contacts={c_per_body}/body)")
