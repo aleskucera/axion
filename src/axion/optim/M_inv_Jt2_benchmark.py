@@ -62,7 +62,7 @@ def measure_graph_throughput(launch_lambda, graph_batch_size=10, measure_launche
 
 def run_benchmark_case(num_bodies, j_per_body, c_per_body, bodies_in_tile):
 
-    num_joints = num_bodies * (j_per_body // 2)  # e.g. 4 joints/body avg
+    num_joints = int(num_bodies * (j_per_body / 2.0 * 0.9))  # e.g. 4 joints/body avg
     num_contacts = num_bodies * c_per_body  # Max contacts
 
     # ---------------------------
@@ -219,7 +219,7 @@ def run_benchmark_case(num_bodies, j_per_body, c_per_body, bodies_in_tile):
 
 def main():
     # Configuration
-    j_per_body = 8
+    j_per_body = 16
     c_per_body = 16
     bodies_in_tile = 8
 
