@@ -9,17 +9,31 @@ import warp as wp
 wp.init()
 
 
-def measure_throughput(launch_lambda, iterations=50):
-    # Warmup
+def measure_graph_throughput(launch_lambda, graph_batch_size=50, measure_launches=20):
+    """
+    Benchmarks using CUDA Graphs to hide Python/Driver overhead.
+    Records 'graph_batch_size' calls into one graph, then launches that graph 'measure_launches' times.
+    """
+    # 1. Warmup (compile kernels)
     launch_lambda()
     wp.synchronize()
 
+    # 2. Capture Graph (Batch of N calls)
+    with wp.ScopedCapture() as cap:
+        for _ in range(graph_batch_size):
+            launch_lambda()
+    graph = cap.graph
+
+    # 3. Benchmark
+    wp.synchronize()
     t0 = time.time()
-    for _ in range(iterations):
-        launch_lambda()
+    for _ in range(measure_launches):
+        wp.capture_launch(graph)
     wp.synchronize()
     t1 = time.time()
-    return (t1 - t0) / iterations * 1000.0
+
+    total_calls = graph_batch_size * measure_launches
+    return ((t1 - t0) / total_calls) * 1000.0
 
 
 def run_benchmark_case(num_bodies, j_per_body, c_per_body, block_size):
@@ -87,7 +101,9 @@ def run_benchmark_case(num_bodies, j_per_body, c_per_body, block_size):
     k_gather = kernels.create_body_gather_kernel(block_size, j_per_body, c_per_body)
     k_apply_c = kernels.create_apply_contacts_kernel(c_per_body)
 
+    # We pass variables explicitly to closure (optional, but good practice)
     def run_optimized():
+        # Phase 1: Body Gather (Fused)
         wp.launch_tiled(
             k_gather,
             dim=[num_bodies // block_size],
@@ -95,6 +111,7 @@ def run_benchmark_case(num_bodies, j_per_body, c_per_body, block_size):
             outputs=[v_body],
             block_dim=block_size * max(j_per_body, c_per_body),
         )
+        # Phase 2: Apply
         wp.launch(
             kernels.kernel_apply_joints,
             dim=num_joints,
@@ -103,7 +120,9 @@ def run_benchmark_case(num_bodies, j_per_body, c_per_body, block_size):
         wp.launch(k_apply_c, dim=num_contacts, inputs=[v_body, J_c, C_c, x_c, z_c])
 
     def run_baseline():
+        # Reset Accumulator
         v_body.zero_()
+        # Phase 1: Scatter (Atomic)
         wp.launch(
             kernels.kernel_baseline_scatter_joints,
             dim=num_joints,
@@ -114,6 +133,7 @@ def run_benchmark_case(num_bodies, j_per_body, c_per_body, block_size):
             dim=num_contacts,
             inputs=[x_c, J_c, M_inv, v_body, c_per_body],
         )
+        # Phase 2: Apply
         wp.launch(
             kernels.kernel_apply_joints,
             dim=num_joints,
@@ -122,15 +142,14 @@ def run_benchmark_case(num_bodies, j_per_body, c_per_body, block_size):
         wp.launch(k_apply_c, dim=num_contacts, inputs=[v_body, J_c, C_c, x_c, z_c])
 
     # ---------------------------
-    # 4. MEASURE
+    # 4. MEASURE (With CUDA Graphs)
     # ---------------------------
-    # Just verify correctness on the smallest case or first run, skip inside loop for speed
-    # (Assuming correctness was verified by previous script)
 
-    t_base = measure_throughput(run_baseline)
-    t_opt = measure_throughput(run_optimized)
+    # Using 50 internal iterations per graph launch to saturate the GPU
+    t_base = measure_graph_throughput(run_baseline, graph_batch_size=50, measure_launches=10)
+    t_opt = measure_graph_throughput(run_optimized, graph_batch_size=50, measure_launches=10)
 
-    # Cleanup to prevent VRAM OOM on large sweeps
+    # Cleanup VRAM
     del M_inv, J_j_flat, J_c, x_j, x_c, W_j_flat, W_c_flat
 
     return t_base, t_opt
@@ -139,11 +158,11 @@ def run_benchmark_case(num_bodies, j_per_body, c_per_body, block_size):
 def main():
     # Settings
     j_per_body = 16
-    c_per_body = 32
+    c_per_body = 32  # Higher contact count to stress atomics
     block_size = 8
 
     # Sweep Configuration
-    problem_sizes = [1024, 2048, 4096, 8192, 16384]
+    problem_sizes = [512, 1024, 2048, 4096, 8196, 16384]
 
     print("===============================================================")
     print(f"BENCHMARKING A*x (Joints={j_per_body}/body, Contacts={c_per_body}/body)")
@@ -169,7 +188,6 @@ def main():
 
         except Exception as e:
             print(f"{nb:<10} | FAILED: {e}")
-            # Append nan to keep array lengths consistent for plotting
             results_base.append(None)
             results_opt.append(None)
             results_speedup.append(None)
