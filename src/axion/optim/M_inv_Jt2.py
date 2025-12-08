@@ -9,26 +9,26 @@ wp.init()
 # =================================================================================
 @wp.kernel
 def kernel_unified_scatter(
-    dlambda: wp.array(dtype=wp.float32),
+    lambda_: wp.array(dtype=wp.float32),
     J: wp.array(dtype=wp.spatial_vector, ndim=2),
     constraint_to_body: wp.array(dtype=wp.int32, ndim=2),
     M_inv: wp.array(dtype=wp.spatial_matrix),
-    du: wp.array(dtype=wp.spatial_vector),
+    u: wp.array(dtype=wp.spatial_vector),
 ):
     c_idx = wp.tid()
-    lam = dlambda[c_idx]
+    lam = lambda_[c_idx]
 
     # Body 0
     b0 = constraint_to_body[c_idx, 0]
     if b0 >= 0:
         impulse0 = J[c_idx, 0] * lam
-        wp.atomic_add(du, b0, M_inv[b0] * impulse0)
+        wp.atomic_add(u, b0, M_inv[b0] * impulse0)
 
     # Body 1
     b1 = constraint_to_body[c_idx, 1]
     if b1 >= 0:
         impulse1 = J[c_idx, 1] * lam
-        wp.atomic_add(du, b1, M_inv[b1] * impulse1)
+        wp.atomic_add(u, b1, M_inv[b1] * impulse1)
 
 
 # =================================================================================
@@ -36,35 +36,35 @@ def kernel_unified_scatter(
 # =================================================================================
 @wp.kernel
 def kernel_scatter_joints(
-    dlambda: wp.array(dtype=wp.float32),
+    lambda_: wp.array(dtype=wp.float32),
     J: wp.array(dtype=wp.spatial_vector, ndim=2),
     constraint_to_body: wp.array(dtype=wp.int32, ndim=2),
     M_inv: wp.array(dtype=wp.spatial_matrix),
-    du: wp.array(dtype=wp.spatial_vector),
+    u: wp.array(dtype=wp.spatial_vector),
 ):
     c_idx = wp.tid()
-    lam = dlambda[c_idx]
+    lam = lambda_[c_idx]
 
     b0 = constraint_to_body[c_idx, 0]
     b1 = constraint_to_body[c_idx, 1]
 
-    wp.atomic_add(du, b0, M_inv[b0] * (J[c_idx, 0] * lam))
-    wp.atomic_add(du, b1, M_inv[b1] * (J[c_idx, 1] * lam))
+    wp.atomic_add(u, b0, M_inv[b0] * (J[c_idx, 0] * lam))
+    wp.atomic_add(u, b1, M_inv[b1] * (J[c_idx, 1] * lam))
 
 
 @wp.kernel
 def kernel_scatter_contacts(
-    dlambda: wp.array(dtype=wp.float32),
+    lambda_: wp.array(dtype=wp.float32),
     J: wp.array(dtype=wp.spatial_vector),
     constraint_to_body: wp.array(dtype=wp.int32),
     M_inv: wp.array(dtype=wp.spatial_matrix),
-    du: wp.array(dtype=wp.spatial_vector),
+    u: wp.array(dtype=wp.spatial_vector),
 ):
     c_idx = wp.tid()
-    lam = dlambda[c_idx]
+    lam = lambda_[c_idx]
     b0 = constraint_to_body[c_idx]
 
-    wp.atomic_add(du, b0, M_inv[b0] * (J[c_idx] * lam))
+    wp.atomic_add(u, b0, M_inv[b0] * (J[c_idx] * lam))
 
 
 # =================================================================================
@@ -120,7 +120,7 @@ def create_tiled_joint_solver(bodies_in_tile, constraints_per_body):
         lambda_padded: wp.array(dtype=wp.float32),
         W_flat: wp.array(dtype=wp.spatial_vector),
         body_to_constraints: wp.array(dtype=wp.int32),
-        du: wp.array(dtype=wp.spatial_vector),
+        u: wp.array(dtype=wp.spatial_vector),
     ):
         tile_idx = wp.tid()
         tile_offset = tile_idx * tile_size
@@ -134,12 +134,12 @@ def create_tiled_joint_solver(bodies_in_tile, constraints_per_body):
         lam_tile = wp.tile_load_indexed(lambda_padded, indices=lam_indices, shape=(tile_size,))
         W_tile = wp.tile_load_indexed(W_flat, indices=J_indices, shape=(tile_size,))
 
-        dv_tile = wp.tile_map(wp.mul, W_tile, lam_tile)
+        u_tile = wp.tile_map(wp.mul, W_tile, lam_tile)
 
-        dv_matrix = wp.tile_reshape(dv_tile, shape=(bodies_in_tile, constraints_per_body))
-        dv_sum = wp.tile_reduce(wp.add, dv_matrix, axis=1)
+        u_matrix = wp.tile_reshape(u_tile, shape=(bodies_in_tile, constraints_per_body))
+        u_sum = wp.tile_reduce(wp.add, u_matrix, axis=1)
 
-        wp.tile_store(du, dv_sum, offset=(tile_idx * bodies_in_tile,))
+        wp.tile_store(u, u_sum, offset=(tile_idx * bodies_in_tile,))
 
     return solve_joints
 
@@ -151,7 +151,7 @@ def create_tiled_contact_solver(bodies_in_tile, constraints_per_body):
     def solve_contacts(
         lambda_: wp.array(dtype=wp.float32),
         W: wp.array(dtype=wp.spatial_vector),
-        du: wp.array(dtype=wp.spatial_vector),
+        u: wp.array(dtype=wp.spatial_vector),
     ):
         tile_idx = wp.tid()
         offset = tile_idx * tile_size
@@ -159,12 +159,12 @@ def create_tiled_contact_solver(bodies_in_tile, constraints_per_body):
         lam_tile = wp.tile_load(lambda_, shape=(tile_size,), offset=(offset,))
         W_tile = wp.tile_load(W, shape=(tile_size,), offset=(offset,))
 
-        dv_tile = wp.tile_map(wp.mul, W_tile, lam_tile)
+        u_tile = wp.tile_map(wp.mul, W_tile, lam_tile)
 
-        dv_matrix = wp.tile_reshape(dv_tile, shape=(bodies_in_tile, constraints_per_body))
-        dv_sum = wp.tile_reduce(wp.add, dv_matrix, axis=1)
+        u_matrix = wp.tile_reshape(u_tile, shape=(bodies_in_tile, constraints_per_body))
+        u_sum = wp.tile_reduce(wp.add, u_matrix, axis=1)
 
-        wp.tile_store(du, dv_sum, offset=(tile_idx * bodies_in_tile,))
+        wp.tile_store(u, u_sum, offset=(tile_idx * bodies_in_tile,))
 
     return solve_contacts
 
