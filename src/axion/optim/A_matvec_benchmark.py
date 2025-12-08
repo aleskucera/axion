@@ -101,6 +101,9 @@ def run_benchmark_case(num_bodies, j_per_body, c_per_body, block_size):
     k_gather = kernels.create_body_gather_kernel(block_size, j_per_body, c_per_body)
     k_apply_c = kernels.create_apply_contacts_kernel(c_per_body)
 
+    stream_j = wp.Stream()
+    stream_c = wp.Stream()
+
     # We pass variables explicitly to closure (optional, but good practice)
     def run_optimized():
         # Phase 1: Body Gather (Fused)
@@ -112,12 +115,18 @@ def run_benchmark_case(num_bodies, j_per_body, c_per_body, block_size):
             block_dim=block_size * max(j_per_body, c_per_body),
         )
         # Phase 2: Apply
-        wp.launch(
-            kernels.kernel_apply_joints,
-            dim=num_joints,
-            inputs=[v_body, J_j_flat, map_j, C_j, x_j, z_j],
-        )
-        wp.launch(k_apply_c, dim=num_contacts, inputs=[v_body, J_c, C_c, x_c, z_c])
+        with wp.ScopedStream(stream_j):
+            wp.launch(
+                kernels.kernel_apply_joints,
+                dim=num_joints,
+                inputs=[v_body, J_j_flat, map_j, C_j, x_j, z_j],
+            )
+        with wp.ScopedStream(stream_c):
+            wp.launch(
+                k_apply_c,
+                dim=num_contacts,
+                inputs=[v_body, J_c, C_c, x_c, z_c],
+            )
 
     def run_baseline():
         # Reset Accumulator
