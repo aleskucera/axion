@@ -74,9 +74,9 @@ class Simulator(AbstractSimulator):
         RESTITUTION = 0.0
         WHEEL_DENSITY = 300
         CHASSIS_DENSITY = 800
-        KE = 60000.0
-        KD = 30000.0
-        KF = 500.0
+        KE = 80000.0
+        KD = 40000.0
+        KF = 600.0
 
         wheel_m = openmesh.read_trimesh(f"{ASSETS_DIR}/helhest/wheel2.obj")
         mesh_points = np.array(wheel_m.points())

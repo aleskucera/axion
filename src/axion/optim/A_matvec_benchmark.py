@@ -9,7 +9,7 @@ import warp as wp
 wp.init()
 
 
-def measure_graph_throughput(launch_lambda, graph_batch_size=50, measure_launches=20):
+def measure_graph_throughput(launch_lambda, graph_batch_size=10, measure_launches=20):
     """
     Benchmarks using CUDA Graphs to hide Python/Driver overhead.
     Records 'graph_batch_size' calls into one graph, then launches that graph 'measure_launches' times.
@@ -101,9 +101,6 @@ def run_benchmark_case(num_bodies, j_per_body, c_per_body, block_size):
     k_gather = kernels.create_body_gather_kernel(block_size, j_per_body, c_per_body)
     k_apply_c = kernels.create_apply_contacts_kernel(c_per_body)
 
-    stream_j = wp.Stream()
-    stream_c = wp.Stream()
-
     # We pass variables explicitly to closure (optional, but good practice)
     def run_optimized():
         # Phase 1: Body Gather (Fused)
@@ -153,8 +150,8 @@ def run_benchmark_case(num_bodies, j_per_body, c_per_body, block_size):
     # ---------------------------
 
     # Using 50 internal iterations per graph launch to saturate the GPU
-    t_base = measure_graph_throughput(run_baseline, graph_batch_size=50, measure_launches=10)
-    t_opt = measure_graph_throughput(run_optimized, graph_batch_size=50, measure_launches=10)
+    t_base = measure_graph_throughput(run_baseline, graph_batch_size=20, measure_launches=20)
+    t_opt = measure_graph_throughput(run_optimized, graph_batch_size=20, measure_launches=20)
 
     # Cleanup VRAM
     del M_inv, J_j_flat, J_c, x_j, x_c, W_j_flat, W_c_flat
@@ -164,9 +161,9 @@ def run_benchmark_case(num_bodies, j_per_body, c_per_body, block_size):
 
 def main():
     # Settings
-    j_per_body = 16
-    c_per_body = 32  # Higher contact count to stress atomics
-    block_size = 8
+    j_per_body = 32
+    c_per_body = 39  # Higher contact count to stress atomics
+    block_size = 4
 
     # Sweep Configuration
     problem_sizes = [4, 16, 32, 64, 256, 512, 1024, 2048, 4096, 8196, 16384]

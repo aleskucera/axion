@@ -62,7 +62,7 @@ class Simulator(AbstractSimulator):
         # wp.copy(self.control.joint_target, self.joint_target)
 
     def build_model(self) -> newton.Model:
-        FRICTION = 0.8
+        FRICTION = 1.0
         RESTITUTION = 0.0
         WHEEL_DENSITY = 300
         CHASSIS_DENSITY = 800

@@ -135,6 +135,8 @@ class XPBDEngineConfig(EngineConfig):
     joint_linear_relaxation: float = 0.7
     joint_angular_relaxation: float = 0.4
     rigid_contact_relaxation: float = 0.8
+    joint_linear_compliance: float = 0.01
+    joint_angular_compliance: float = 0.01
     rigid_contact_con_weighting: bool = True
     angular_damping: float = 0.0
     enable_restitution: bool = False
