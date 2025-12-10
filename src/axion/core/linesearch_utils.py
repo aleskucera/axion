@@ -310,7 +310,6 @@ def compute_linesearch_batch_h(
         ],
         device=device,
     )
-    print("Here")
     # Evaluate residual for friction constraints
     wp.launch(
         kernel=batch_friction_residual_kernel,

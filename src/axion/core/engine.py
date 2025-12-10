@@ -3,11 +3,20 @@ from typing import Optional
 
 import newton
 import warp as wp
+from axion.constraints import fill_contact_constraint_active_mask_kernel
+from axion.constraints import fill_contact_constraint_body_idx_kernel
+from axion.constraints import fill_friction_constraint_active_mask_kernel
+from axion.constraints import fill_friction_constraint_body_idx_kernel
+from axion.constraints import fill_joint_constraint_active_mask_kernel
+from axion.constraints import fill_joint_constraint_body_idx_kernel
 from axion.optim import CRSolver
 from axion.optim import JacobiPreconditioner
 from axion.optim import SystemLinearData
 from axion.optim import SystemOperator
 from axion.types import compute_joint_constraint_offsets_batched
+from axion.types import contact_interaction_kernel
+from axion.types import joint_constraint_data_kernel
+from axion.types import world_spatial_inertia_kernel
 from newton import Contacts
 from newton import Control
 from newton import Model
@@ -123,6 +132,222 @@ class AxionEngine(SolverBase):
                 dest_offset=(iter * (self.dims.N_u + self.dims.N_c)),
             )
 
+    def _apply_control(self, state: State, control: Control):
+        newton.eval_ik(self.model, state, state.joint_q, state.joint_qd)
+        apply_control(self.model, state, self.data.dt, control)
+        wp.copy(dest=self.data.body_f, src=state.body_f)
+
+    def _initialize_variables(self, state_in: State, state_out: State, contacts: Contacts):
+        self.init_state_fn(state_in, state_out, contacts, self.data.dt)
+
+        wp.copy(dest=self.data.body_q, src=state_out.body_q)
+        wp.copy(dest=self.data.body_u, src=state_out.body_qd)
+        wp.copy(dest=self.data.body_q_prev, src=state_in.body_q)
+        wp.copy(dest=self.data.body_u_prev, src=state_in.body_qd)
+
+        self.data._body_lambda.zero_()
+        self.data._body_lambda_prev.zero_()
+
+    def _update_mass_matrix(self):
+        wp.launch(
+            kernel=world_spatial_inertia_kernel,
+            dim=(self.batched_model.num_worlds, self.batched_model.body_count),
+            inputs=[
+                self.data.body_q,
+                self.batched_model.body_mass,
+                self.batched_model.body_inertia,
+            ],
+            outputs=[
+                self.data.world_M,
+            ],
+            device=self.device,
+        )
+
+        wp.launch(
+            kernel=world_spatial_inertia_kernel,
+            dim=(self.batched_model.num_worlds, self.batched_model.body_count),
+            inputs=[
+                self.data.body_q,
+                self.batched_model.body_inv_mass,
+                self.batched_model.body_inv_inertia,
+            ],
+            outputs=[
+                self.data.world_M_inv,
+            ],
+            device=self.device,
+        )
+
+    def _initialize_constraints(self, contacts: Contacts):
+        self.batched_contacts.load_contact_data(contacts)
+
+        wp.launch(
+            kernel=contact_interaction_kernel,
+            dim=(self.batched_model.num_worlds, self.batched_contacts.max_contacts),
+            inputs=[
+                self.data.body_q,
+                self.batched_model.body_com,
+                self.batched_model.shape_body,
+                self.batched_model.shape_thickness,
+                self.batched_model.shape_material_mu,
+                self.batched_model.shape_material_restitution,
+                self.batched_contacts.contact_count,
+                self.batched_contacts.contact_point0,
+                self.batched_contacts.contact_point1,
+                self.batched_contacts.contact_normal,
+                self.batched_contacts.contact_shape0,
+                self.batched_contacts.contact_shape1,
+                self.batched_contacts.contact_thickness0,
+                self.batched_contacts.contact_thickness1,
+            ],
+            outputs=[
+                self.data.contact_interaction,
+            ],
+            device=self.device,
+        )
+
+        wp.launch(
+            kernel=joint_constraint_data_kernel,
+            dim=(self.batched_model.num_worlds, self.batched_model.joint_count),
+            inputs=[
+                self.data.body_q,
+                self.batched_model.body_com,
+                self.batched_model.joint_type,
+                self.batched_model.joint_enabled,
+                self.batched_model.joint_parent,
+                self.batched_model.joint_child,
+                self.batched_model.joint_X_p,
+                self.batched_model.joint_X_c,
+                self.batched_model.joint_qd_start,
+                self.batched_model.joint_axis,
+                self.data.joint_constraint_offsets,
+            ],
+            outputs=[
+                self.data.joint_constraint_data,
+            ],
+            device=self.device,
+        )
+
+        wp.launch(
+            kernel=fill_joint_constraint_body_idx_kernel,
+            dim=(self.batched_model.num_worlds, self.dims.N_j),
+            inputs=[
+                self.data.joint_constraint_data,
+            ],
+            outputs=[
+                self.data.constraint_body_idx.j,
+            ],
+            device=self.device,
+        )
+
+        wp.launch(
+            kernel=fill_contact_constraint_body_idx_kernel,
+            dim=(self.batched_model.num_worlds, self.dims.N_n),
+            inputs=[
+                self.data.contact_interaction,
+            ],
+            outputs=[
+                self.data.constraint_body_idx.n,
+            ],
+            device=self.device,
+        )
+
+        wp.launch(
+            kernel=fill_friction_constraint_body_idx_kernel,
+            dim=(self.batched_model.num_worlds, self.dims.N_f),
+            inputs=[
+                self.data.contact_interaction,
+            ],
+            outputs=[
+                self.data.constraint_body_idx.f,
+            ],
+            device=self.device,
+        )
+
+        wp.launch(
+            kernel=fill_joint_constraint_active_mask_kernel,
+            dim=(self.batched_model.num_worlds, self.dims.N_j),
+            inputs=[
+                self.data.joint_constraint_data,
+            ],
+            outputs=[
+                self.data.constraint_active_mask.j,
+            ],
+            device=self.device,
+        )
+
+        wp.launch(
+            kernel=fill_contact_constraint_active_mask_kernel,
+            dim=(self.batched_model.num_worlds, self.dims.N_n),
+            inputs=[
+                self.data.contact_interaction,
+            ],
+            outputs=[
+                self.data.constraint_active_mask.n,
+            ],
+            device=self.device,
+        )
+
+        wp.launch(
+            kernel=fill_friction_constraint_active_mask_kernel,
+            dim=(self.batched_model.num_worlds, self.dims.N_f),
+            inputs=[
+                self.data.contact_interaction,
+            ],
+            outputs=[
+                self.data.constraint_active_mask.f,
+            ],
+            device=self.device,
+        )
+
+    def _update_constraint_positional_errors(self):
+        # TODO: Not necessary, must optimize this
+        wp.launch(
+            kernel=contact_interaction_kernel,
+            dim=(self.batched_model.num_worlds, self.batched_contacts.max_contacts),
+            inputs=[
+                self.data.body_q,
+                self.batched_model.body_com,
+                self.batched_model.shape_body,
+                self.batched_model.shape_thickness,
+                self.batched_model.shape_material_mu,
+                self.batched_model.shape_material_restitution,
+                self.batched_contacts.contact_count,
+                self.batched_contacts.contact_point0,
+                self.batched_contacts.contact_point1,
+                self.batched_contacts.contact_normal,
+                self.batched_contacts.contact_shape0,
+                self.batched_contacts.contact_shape1,
+                self.batched_contacts.contact_thickness0,
+                self.batched_contacts.contact_thickness1,
+            ],
+            outputs=[
+                self.data.contact_interaction,
+            ],
+            device=self.device,
+        )
+
+        wp.launch(
+            kernel=joint_constraint_data_kernel,
+            dim=(self.batched_model.num_worlds, self.batched_model.joint_count),
+            inputs=[
+                self.data.body_q,
+                self.batched_model.body_com,
+                self.batched_model.joint_type,
+                self.batched_model.joint_enabled,
+                self.batched_model.joint_parent,
+                self.batched_model.joint_child,
+                self.batched_model.joint_X_p,
+                self.batched_model.joint_X_c,
+                self.batched_model.joint_qd_start,
+                self.batched_model.joint_axis,
+                self.data.joint_constraint_offsets,
+            ],
+            outputs=[
+                self.data.joint_constraint_data,
+            ],
+            device=self.device,
+        )
+
     def step(
         self,
         state_in: State,
@@ -133,26 +358,17 @@ class AxionEngine(SolverBase):
     ):
         step_events = self.logger.step_event_pairs[self.logger.current_step_in_segment]
 
-        self.batched_contacts.load_contact_data(contacts)
+        self.data.set_dt(dt)
 
         # Control block
         with self.logger.timed_block(*step_events["control"]):
-            newton.eval_ik(self.model, state_in, state_in.joint_q, state_in.joint_qd)
-            apply_control(self.model, state_in, dt, control)
+            self._apply_control(state_in, control)
 
         # Initial guess block
         with self.logger.timed_block(*step_events["initial_guess"]):
-            self.init_state_fn(state_in, state_out, contacts, dt)
-            self.data.update_state_data(
-                self.model,
-                self.batched_model,
-                state_in,
-                state_out,
-                contacts,
-                self.batched_contacts,
-                dt,
-            )
-            self.data._body_lambda.zero_()
+            self._initialize_variables(state_in, state_out, contacts)
+            self._update_mass_matrix()
+            self._initialize_constraints(contacts)
 
         for i in range(self.config.newton_iters):
             wp.copy(dest=self.data._body_lambda_prev, src=self.data._body_lambda)
@@ -183,12 +399,13 @@ class AxionEngine(SolverBase):
             # Linesearch block
             with self.logger.timed_block(*newton_iter_events["linesearch"]):
                 perform_linesearch(self.data, self.config, self.dims)
+                update_body_q(self.batched_model, self.data, self.config, self.dims)
+                self._update_mass_matrix()
 
             self.logger.log_newton_iteration_data(self, i)
             # self._copy_computed_state_to_trajectory(i)
 
         # self.logger.log_residual_norm_landscape(self)
 
-        update_body_q(self.batched_model, self.data, self.config, self.dims)
         wp.copy(dest=state_out.body_qd, src=self.data.body_u)
         wp.copy(dest=state_out.body_q, src=self.data.body_q)
