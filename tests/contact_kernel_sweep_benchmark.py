@@ -1,10 +1,16 @@
+import csv
+import os
+import statistics
 import time
+from itertools import product
 
 import numpy as np
 import warp as wp
 from axion.constraints import contact_constraint_kernel
 from axion.types import ContactInteraction
 from axion.types import SpatialInertia
+
+wp.init()
 
 
 def setup_data(
@@ -116,36 +122,34 @@ def setup_data(
     return data
 
 
-def run_benchmark(
+def time_kernel_once(device, kernel, kernel_args, dim):
+    # single launch with synchronization
+    wp.launch(kernel=kernel, dim=dim, inputs=kernel_args, device=device)
+    wp.synchronize()
+
+
+def measure(
     num_worlds,
     num_bodies,
     num_contacts,
-    num_iterations_total=1000,
-    num_iterations_in_graph=100,
+    kernel,
+    setup_fn,
+    device,
+    repeats=5,
+    iters_per_repeat=100,
+    warmup_iters=20,
     inactive_contact_ratio=0.0,
     fixed_body_ratio=0.0,
 ):
-    """Measures execution time of the kernel using standard launch vs. CUDA graph."""
-    if num_iterations_total % num_iterations_in_graph != 0:
-        raise ValueError("num_iterations_total must be divisible by num_iterations_in_graph")
-    num_graph_launches = num_iterations_total // num_iterations_in_graph
-
-    print(
-        f"\n--- Benchmarking: Worlds={num_worlds}, Bodies/World={num_bodies}, Contacts/World={num_contacts} ---"
-    )
-    print(f"    Scenario: Inactive={inactive_contact_ratio:.0%}, Fixed={fixed_body_ratio:.0%}")
-    print(
-        f"    Configuration: Total Iterations={num_iterations_total}, Graph Capture Size={num_iterations_in_graph}, Graph Launches={num_graph_launches}"
-    )
-
-    device = wp.get_device()
-    data = setup_data(
+    """Return dict with mean/median/std etc. (no CUDA graph)."""
+    # prepare data once per configuration
+    data = setup_fn(
         num_worlds,
         num_bodies,
         num_contacts,
         device,
-        inactive_contact_ratio,
-        fixed_body_ratio,
+        inactive_contact_ratio=inactive_contact_ratio,
+        fixed_body_ratio=fixed_body_ratio,
     )
     kernel_args = [
         data["body_u"],
@@ -165,136 +169,121 @@ def run_benchmark(
         data["s_n"],
     ]
 
-    # --- Standard Launch Benchmark ---
-    print(f"1. Benching Standard Kernel Launch ({num_iterations_total} launches)...")
-    # Warm-up a single launch
-    wp.launch(
-        kernel=contact_constraint_kernel,
-        dim=(num_worlds, num_contacts),
-        inputs=kernel_args,
-        device=device,
-    )
-    wp.synchronize()
+    dim = (num_worlds, num_contacts)
 
-    start_time = time.perf_counter()
-    for _ in range(num_iterations_total):
-        # In a real solver, outputs from one iteration feed into the next.
-        # Here we just zero one of the outputs to simulate work between launches.
+    # warm-up
+    for _ in range(warmup_iters):
         data["h_d"].zero_()
-        wp.launch(
-            kernel=contact_constraint_kernel,
-            dim=(num_worlds, num_contacts),
-            inputs=kernel_args,
-            device=device,
-        )
-    wp.synchronize()
-    standard_total_time = time.perf_counter() - start_time
-    standard_launch_ms = standard_total_time / num_iterations_total * 1000
-    print(f"   Avg. Time per iteration: {standard_launch_ms:.4f} ms")
-    print(f"   Total Time for {num_iterations_total} iterations: {standard_total_time*1000:.2f} ms")
+        time_kernel_once(device, kernel, kernel_args, dim)
 
-    # --- CUDA Graph Benchmark ---
-    if device.is_cuda:
-        print(
-            f"2. Benching CUDA Graph Launch ({num_graph_launches} launches of a {num_iterations_in_graph}-iteration graph)..."
-        )
-
-        # --- Graph Capture ---
-        print(f"   Capturing {num_iterations_in_graph} iterations into a graph...")
-        wp.capture_begin()
-        for _ in range(num_iterations_in_graph):
+    # timed repeats
+    per_repeat_avg_ms = []
+    per_repeat_median_ms = []
+    for r in range(repeats):
+        # zero output to mimic solver pipeline
+        # measure bundles of iters to reduce timer noise
+        start = time.perf_counter()
+        for _ in range(iters_per_repeat):
             data["h_d"].zero_()
-            wp.launch(
-                kernel=contact_constraint_kernel,
-                dim=(num_worlds, num_contacts),
-                inputs=kernel_args,
-                device=device,
+            wp.launch(kernel=kernel, dim=dim, inputs=kernel_args, device=device)
+        wp.synchronize()
+        delta = time.perf_counter() - start
+        avg_ms = delta / iters_per_repeat * 1000.0
+        per_repeat_avg_ms.append(avg_ms)
+
+    # robust summary stats
+    mean_ms = statistics.mean(per_repeat_avg_ms)
+    median_ms = statistics.median(per_repeat_avg_ms)
+    stdev_ms = statistics.stdev(per_repeat_avg_ms) if len(per_repeat_avg_ms) > 1 else 0.0
+
+    # normalized metrics
+    contacts_total = num_worlds * num_contacts
+    ns_per_contact = (mean_ms * 1e6) / contacts_total if contacts_total else float("inf")
+    ms_per_world = mean_ms / num_worlds if num_worlds else float("inf")
+    contacts_per_sec = (
+        1.0 / (mean_ms / 1000.0) * (num_contacts)
+    )  # contacts per second per world? careful interpretation
+
+    return {
+        "N_WORLDS": num_worlds,
+        "N_BODIES": num_bodies,
+        "N_CONTACTS": num_contacts,
+        "mean_ms": mean_ms,
+        "median_ms": median_ms,
+        "stdev_ms": stdev_ms,
+        "ns_per_contact": ns_per_contact,
+        "ms_per_world": ms_per_world,
+        "contacts_total": contacts_total,
+        "contacts_per_sec": contacts_per_sec,
+        "repeats": repeats,
+        "iters_per_repeat": iters_per_repeat,
+    }
+
+
+def sweep_and_save(
+    kernel,
+    setup_fn,
+    device,
+    sweep_ranges,
+    out_csv="bench_sweep_results.csv",
+    repeats=5,
+    iters_per_repeat=100,
+):
+    """sweep_ranges is dict: {'N_WORLDS':[...], 'N_BODIES':[...], 'N_CONTACTS':[...]}"""
+    keys = ["N_WORLDS", "N_BODIES", "N_CONTACTS"]
+    fieldnames = keys + [
+        "mean_ms",
+        "median_ms",
+        "stdev_ms",
+        "ns_per_contact",
+        "ms_per_world",
+        "contacts_total",
+        "contacts_per_sec",
+        "repeats",
+        "iters_per_repeat",
+    ]
+
+    # create CSV output
+    with open(out_csv, "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+
+        for nw, nb, nc in product(
+            sweep_ranges["N_WORLDS"], sweep_ranges["N_BODIES"], sweep_ranges["N_CONTACTS"]
+        ):
+            print(f"Measuring: Worlds={nw}, Bodies={nb}, Contacts={nc} ...")
+            res = measure(
+                nw,
+                nb,
+                nc,
+                kernel,
+                setup_fn,
+                device,
+                repeats=repeats,
+                iters_per_repeat=iters_per_repeat,
             )
-        graph = wp.capture_end()
-        print("   Graph capture complete.")
-
-        # Warm-up launch of the entire graph
-        wp.capture_launch(graph)
-        wp.synchronize()
-
-        # --- Timed Graph Launch ---
-        start_time = time.perf_counter()
-        for _ in range(num_graph_launches):
-            wp.capture_launch(graph)
-        wp.synchronize()
-        graph_total_time = time.perf_counter() - start_time
-
-        # Calculate the average time per equivalent single iteration
-        graph_equivalent_iter_ms = graph_total_time / num_iterations_total * 1000
-
-        # Calculate the average time per launch of the entire graph
-        avg_graph_launch_ms = graph_total_time / num_graph_launches * 1000
-
-        print(f"   Avg. Time per equivalent iteration: {graph_equivalent_iter_ms:.4f} ms")
-        print(
-            f"   Avg. Time per graph launch ({num_iterations_in_graph} iters): {avg_graph_launch_ms:.4f} ms"
-        )
-        print(
-            f"   Total Time for {num_graph_launches} graph launches: {graph_total_time*1000:.2f} ms"
-        )
-
-        if graph_equivalent_iter_ms > 1e-9:
-            speedup = standard_launch_ms / graph_equivalent_iter_ms
-            print(f"   Speedup from Graph (per iteration): {speedup:.2f}x")
-    else:
-        print("2. Skipping CUDA Graph benchmark (not on a CUDA-enabled device).")
-
-    print("-" * 70)
+            writer.writerow({k: res[k] for k in fieldnames})
+            f.flush()  # safe write in case it runs long
+    print(f"Saved results to {out_csv}")
 
 
 if __name__ == "__main__":
-    # Initialize Warp.
-    wp.init()
-    device_name = wp.get_device().name
-    print(f"Initialized Warp on device: {device_name}")
-    if not wp.get_device().is_cuda:
-        print(
-            "Warning: No CUDA device found. Performance will be low and CUDA graph test will be skipped."
-        )
+    device = wp.get_device()
+    print("Device:", device.name, "CUDA:", device.is_cuda)
+    # Example sweep ranges (tweak them to cover the regime you care about)
+    sweep_ranges = {
+        "N_WORLDS": [1, 2, 4, 8, 16, 32, 64],
+        "N_BODIES": [8, 16, 32, 64, 128],
+        "N_CONTACTS": [16, 64, 256, 512, 1024],
+    }
 
-    # Simulation parameters
-    N_WORLDS = 20
-    N_BODIES = 50
-    N_CONTACTS = 500
-
-    # Iteration parameters for the benchmark
-    TOTAL_ITERATIONS = 1000
-    ITERATIONS_PER_GRAPH = 50
-
-    # --- Baseline ---
-    run_benchmark(
-        num_worlds=N_WORLDS,
-        num_bodies=N_BODIES,
-        num_contacts=N_CONTACTS,
-        num_iterations_total=TOTAL_ITERATIONS,
-        num_iterations_in_graph=ITERATIONS_PER_GRAPH,
-        inactive_contact_ratio=0.0,
-        fixed_body_ratio=0.0,
-    )
-
-    # --- High Divergence (many inactive contacts) ---
-    run_benchmark(
-        num_worlds=N_WORLDS,
-        num_bodies=N_BODIES,
-        num_contacts=N_CONTACTS,
-        num_iterations_total=TOTAL_ITERATIONS,
-        num_iterations_in_graph=ITERATIONS_PER_GRAPH,
-        inactive_contact_ratio=0.5,
-        fixed_body_ratio=0.0,
-    )
-
-    # --- Fixed Body Scenario ---
-    run_benchmark(
-        num_worlds=N_WORLDS,
-        num_bodies=N_BODIES,
-        num_contacts=N_CONTACTS,
-        num_iterations_total=TOTAL_ITERATIONS,
-        num_iterations_in_graph=ITERATIONS_PER_GRAPH,
-        inactive_contact_ratio=0.0,
-        fixed_body_ratio=0.2,
+    # smaller defaults for quick iter; raise repeats/iters for higher confidence
+    sweep_and_save(
+        kernel=contact_constraint_kernel,
+        setup_fn=setup_data,
+        device=device,
+        sweep_ranges=sweep_ranges,
+        out_csv="bench_sweep_results.csv",
+        repeats=5,
+        iters_per_repeat=100,
     )
