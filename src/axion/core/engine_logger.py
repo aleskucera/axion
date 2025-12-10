@@ -186,66 +186,64 @@ class EngineLogger:
             # Log dynamics state
             if self.config.log_dynamics_state:
                 with self.hdf5_logger.scope("Dynamics state"):
-                    self.hdf5_logger.log_wp_dataset("h_d", engine.data.h_d)
+                    self.hdf5_logger.log_wp_dataset("h_d", engine.data.h.d)
                     self.hdf5_logger.log_wp_dataset("body_q", engine.data.body_q)
                     self.hdf5_logger.log_wp_dataset("body_u", engine.data.body_u)
                     self.hdf5_logger.log_wp_dataset("body_u_prev", engine.data.body_u_prev)
                     self.hdf5_logger.log_wp_dataset("body_f", engine.data.body_f)
-                    self.hdf5_logger.log_struct_array("body_M", engine.data.body_M)
-                    self.hdf5_logger.log_struct_array("body_M_inv", engine.data.body_M_inv)
                     self.hdf5_logger.log_struct_array("world_M", engine.data.world_M)
                     self.hdf5_logger.log_struct_array("world_M_inv", engine.data.world_M_inv)
 
             # Log joint constraints data
             if self.config.log_joint_constraint_data:
                 with self.hdf5_logger.scope("Joint constraint data"):
-                    self.hdf5_logger.log_wp_dataset("h_j", engine.data.h_j)
-                    self.hdf5_logger.log_wp_dataset("J_j_values", engine.data.J_j_values)
-                    self.hdf5_logger.log_wp_dataset("C_j_values", engine.data.C_j_values)
-                    self.hdf5_logger.log_wp_dataset("body_lambda_j", engine.data.body_lambda_j)
+                    self.hdf5_logger.log_wp_dataset("h", engine.data.h.c.j)
+                    self.hdf5_logger.log_wp_dataset("J_values", engine.data.J_values.j)
+                    self.hdf5_logger.log_wp_dataset("C_values", engine.data.C_values.j)
+                    self.hdf5_logger.log_wp_dataset("body_lambda", engine.data.body_lambda.j)
                     self.hdf5_logger.log_wp_dataset(
-                        "body_lambda_j_prev", engine.data.body_lambda_j_prev
+                        "body_lambda_prev", engine.data.body_lambda_prev.j
+                    )
+                    self.hdf5_logger.log_wp_dataset(
+                        "constraint_body_idx", engine.data.constraint_body_idx.j
                     )
                     self.hdf5_logger.log_struct_array(
                         "joint_constraint_data", engine.data.joint_constraint_data
-                    )
-                    self.hdf5_logger.log_wp_dataset(
-                        "joint_constraint_body_idx", engine.data.joint_constraint_body_idx
                     )
 
             # Log contact constraints data
             if self.config.log_contact_constraint_data:
                 with self.hdf5_logger.scope("Contact constraint data"):
-                    self.hdf5_logger.log_wp_dataset("h_n", engine.data.h_n)
-                    self.hdf5_logger.log_wp_dataset("s_n", engine.data.s_n)
-                    self.hdf5_logger.log_wp_dataset("J_n_values", engine.data.J_n_values)
-                    self.hdf5_logger.log_wp_dataset("C_n_values", engine.data.C_n_values)
-                    self.hdf5_logger.log_wp_dataset("body_lambda_n", engine.data.body_lambda_n)
+                    self.hdf5_logger.log_wp_dataset("h", engine.data.h.c.n)
+                    self.hdf5_logger.log_wp_dataset("s", engine.data.s_n)
+                    self.hdf5_logger.log_wp_dataset("J_values", engine.data.J_values.n)
+                    self.hdf5_logger.log_wp_dataset("C_values", engine.data.C_values.n)
+                    self.hdf5_logger.log_wp_dataset("body_lambda", engine.data.body_lambda.n)
                     self.hdf5_logger.log_wp_dataset(
-                        "body_lambda_n_prev", engine.data.body_lambda_n_prev
+                        "body_lambda_prev", engine.data.body_lambda_prev.n
+                    )
+                    self.hdf5_logger.log_wp_dataset(
+                        "constraint_body_idx", engine.data.constraint_body_idx.n
                     )
                     self.hdf5_logger.log_struct_array(
                         "contact_interaction", engine.data.contact_interaction
-                    )
-                    self.hdf5_logger.log_wp_dataset(
-                        "contact_constraint_body_idx", engine.data.contact_constraint_body_idx
                     )
 
             # Log friction constraints data
             if self.config.log_friction_constraint_data:
                 with self.hdf5_logger.scope("Friction constraint data"):
-                    self.hdf5_logger.log_wp_dataset("h_f", engine.data.h_f)
-                    self.hdf5_logger.log_wp_dataset("J_f_values", engine.data.J_f_values)
-                    self.hdf5_logger.log_wp_dataset("C_f_values", engine.data.C_f_values)
-                    self.hdf5_logger.log_wp_dataset("body_lambda_f", engine.data.body_lambda_f)
+                    self.hdf5_logger.log_wp_dataset("h", engine.data.h.c.f)
+                    self.hdf5_logger.log_wp_dataset("J_values", engine.data.J_values.f)
+                    self.hdf5_logger.log_wp_dataset("C_values", engine.data.C_values.f)
+                    self.hdf5_logger.log_wp_dataset("body_lambda", engine.data.body_lambda.f)
                     self.hdf5_logger.log_wp_dataset(
-                        "body_lambda_f_prev", engine.data.body_lambda_f_prev
+                        "body_lambda_prev", engine.data.body_lambda_prev.f
+                    )
+                    self.hdf5_logger.log_wp_dataset(
+                        "constraint_body_idx", engine.data.constraint_body_idx.f
                     )
                     self.hdf5_logger.log_struct_array(
                         "contact_interaction", engine.data.contact_interaction
-                    )
-                    self.hdf5_logger.log_wp_dataset(
-                        "friction_constraint_body_idx", engine.data.friction_constraint_body_idx
                     )
 
             # Log linear system data
@@ -253,7 +251,7 @@ class EngineLogger:
                 with self.hdf5_logger.scope("Linear system data"):
                     self.hdf5_logger.log_wp_dataset("b", engine.data.b)
                     self.hdf5_logger.log_wp_dataset("dbody_qd", engine.data.dbody_u)
-                    self.hdf5_logger.log_wp_dataset("dbody_lambda", engine.data.dbody_lambda)
+                    self.hdf5_logger.log_wp_dataset("dbody_lambda", engine.data.dbody_lambda.full)
 
                     update_dense_matrices(engine.data, engine.config, engine.dims)
 
@@ -261,12 +259,9 @@ class EngineLogger:
                     self.hdf5_logger.log_wp_dataset("J_dense", engine.data.J_dense)
                     self.hdf5_logger.log_wp_dataset("C_dense", engine.data.C_dense)
 
-                    if not engine.config.matrixfree_representation:
-                        self.hdf5_logger.log_wp_dataset("A", self.A_op._A)
-                    else:
-                        A_np = get_system_matrix_numpy(engine.data, engine.config, engine.dims)
-                        self.hdf5_logger.log_np_dataset("A", A_np)
-                        self.hdf5_logger.log_scalar("cond_number", np.linalg.cond(A_np))
+                    A_np = get_system_matrix_numpy(engine.data, engine.config, engine.dims)
+                    self.hdf5_logger.log_np_dataset("A", A_np)
+                    self.hdf5_logger.log_scalar("cond_number", np.linalg.cond(A_np))
 
     def log_residual_norm_landscape(self, engine: AxionEngine):
         if not self.config.enable_hdf5_logging or not self.config.log_residual_norm_landscape:

@@ -11,11 +11,16 @@ class EngineDimensions:
     """
 
     # --- Primary Inputs ---
+    num_worlds: int
     body_count: int
     contact_count: int
     joint_count: int
     linesearch_step_count: int
     joint_constraint_count: int
+
+    @cached_property
+    def N_w(self) -> int:
+        return self.num_worlds
 
     @cached_property
     def N_b(self) -> int:

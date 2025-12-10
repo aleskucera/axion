@@ -1,3 +1,4 @@
+import os
 from importlib.resources import files
 
 import hydra
@@ -11,8 +12,7 @@ from axion import RenderingConfig
 from axion import SimulationConfig
 from omegaconf import DictConfig
 
-import os
-os.environ['PYOPENGL_PLATFORM'] = 'glx'
+os.environ["PYOPENGL_PLATFORM"] = "glx"
 
 CONFIG_PATH = files("axion").joinpath("examples").joinpath("conf")
 
@@ -72,7 +72,13 @@ class Simulator(AbstractSimulator):
         self.builder.add_joint_free(parent=-1, child=body_capsule)
         self.builder.add_joint_free(parent=-1, child=body_box)
 
-        model = self.builder.finalize()
+        final_builder = newton.ModelBuilder()
+        final_builder.replicate(
+            self.builder,
+            num_worlds=self.simulation_config.num_worlds,
+        )
+
+        model = final_builder.finalize()
         return model
 
 

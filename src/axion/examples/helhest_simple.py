@@ -1,3 +1,4 @@
+import os
 from importlib.resources import files
 from typing import override
 
@@ -15,8 +16,7 @@ from axion import RenderingConfig
 from axion import SimulationConfig
 from omegaconf import DictConfig
 
-import os
-os.environ['PYOPENGL_PLATFORM'] = 'glx'
+os.environ["PYOPENGL_PLATFORM"] = "glx"
 
 CONFIG_PATH = files("axion").joinpath("examples").joinpath("conf")
 ASSETS_DIR = files("axion").joinpath("examples").joinpath("assets")
@@ -39,8 +39,15 @@ class Simulator(AbstractSimulator):
             logging_config,
         )
 
-        self.mujoco_solver = newton.solvers.SolverMuJoCo(self.model, njmax=40)
-        self.joint_target = wp.array(6 * [0.0] + [0.5, 0.5, 0.0], dtype=wp.float32)
+        # self.mujoco_solver = newton.solvers.SolverMuJoCo(self.model, njmax=40)
+        # self.joint_target = wp.array(6 * [0.0] + [0.5, 0.5, 0.0], dtype=wp.float32)
+
+        robot_joint_target = np.concatenate(
+            [np.zeros(6), np.array([400.0, 400.0, 0.0], dtype=wp.float32)]
+        )
+
+        joint_target = np.tile(robot_joint_target, self.simulation_config.num_worlds)
+        self.joint_target = wp.from_numpy(joint_target, dtype=wp.float32)
 
     @override
     def init_state_fn(
@@ -55,8 +62,8 @@ class Simulator(AbstractSimulator):
 
     @override
     def control_policy(self, current_state: newton.State):
-        # For axion
-        wp.copy(self.control.joint_target, self.joint_target)
+        wp.copy(self.control.joint_f, self.joint_target)
+        # pass
 
     def build_model(self) -> newton.Model:
         """
@@ -68,6 +75,9 @@ class Simulator(AbstractSimulator):
         RESTITUTION = 0.0
         WHEEL_DENSITY = 300
         CHASSIS_DENSITY = 800
+        KE = 60000.0
+        KD = 30000.0
+        KF = 500.0
 
         wheel_m = openmesh.read_trimesh(f"{ASSETS_DIR}/helhest/wheel2.obj")
         mesh_points = np.array(wheel_m.points())
@@ -90,6 +100,9 @@ class Simulator(AbstractSimulator):
                 density=CHASSIS_DENSITY,
                 mu=FRICTION,
                 restitution=RESTITUTION,
+                ke=KE,
+                kd=KD,
+                kf=KF,
             ),
         )
 
@@ -119,6 +132,9 @@ class Simulator(AbstractSimulator):
                 restitution=RESTITUTION,
                 thickness=0.0,
                 is_visible=False,
+                ke=KE,
+                kd=KD,
+                kf=KF,
             ),
         )
 
@@ -148,6 +164,9 @@ class Simulator(AbstractSimulator):
                 restitution=RESTITUTION,
                 thickness=0.0,
                 is_visible=False,
+                ke=KE,
+                kd=KD,
+                kf=KF,
             ),
         )
 
@@ -177,6 +196,9 @@ class Simulator(AbstractSimulator):
                 restitution=RESTITUTION,
                 thickness=0.0,
                 is_visible=False,
+                ke=KE,
+                kd=KD,
+                kf=KF,
             ),
         )
 
@@ -190,8 +212,8 @@ class Simulator(AbstractSimulator):
             child=left_wheel,
             parent_xform=wp.transform((0.0, -0.75, 0.0), wp.quat_identity()),
             axis=(0.0, 1.0, 0.0),
-            target_ke=400.0,
-            target_kd=40.5,
+            target_ke=None,  # 400
+            target_kd=4.5,  # 40.5
             custom_attributes={
                 "joint_target_ki": [0.5],
                 "joint_dof_mode": [JointMode.NONE],
@@ -203,8 +225,8 @@ class Simulator(AbstractSimulator):
             child=right_wheel,
             parent_xform=wp.transform((0.0, 0.75, 0.0), wp.quat_identity()),
             axis=(0.0, 1.0, 0.0),
-            target_ke=400.0,
-            target_kd=40.5,
+            target_ke=None,
+            target_kd=4.5,
             custom_attributes={
                 "joint_target_ki": [0.5],
                 "joint_dof_mode": [JointMode.NONE],
@@ -251,8 +273,13 @@ class Simulator(AbstractSimulator):
             )
         )
 
-        # Finalize and return the model
-        model = self.builder.finalize()
+        final_builder = newton.ModelBuilder()
+        final_builder.replicate(
+            self.builder,
+            num_worlds=self.simulation_config.num_worlds,
+        )
+
+        model = final_builder.finalize()
         return model
 
 

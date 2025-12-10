@@ -45,6 +45,46 @@ def compute_joint_constraint_offsets(joint_types: wp.array) -> tuple[wp.array, i
     return constraint_offsets_wp, total_constraints
 
 
+def compute_joint_constraint_offsets_batched(joint_types: wp.array):
+    """
+    joint_types: numpy array of shape (num_worlds, num_joints)
+    """
+
+    constraint_count_map = np.array(
+        [
+            5,  # PRISMATIC = 0
+            5,  # REVOLUTE  = 1
+            3,  # BALL      = 2
+            6,  # FIXED     = 3
+            0,  # FREE      = 4
+            1,  # DISTANCE  = 5
+            6,  # D6        = 6
+        ],
+        dtype=np.int32,
+    )
+
+    joint_types_np = joint_types.numpy()  # (num_worlds, num_joints)
+    # Map joint types → constraint counts
+    constraint_counts = constraint_count_map[joint_types_np]  # (num_worlds, num_joints)
+
+    # Total constraints for each batch
+    total_constraints = constraint_counts.sum(axis=1)  # (num_worlds,)
+
+    # Compute offsets per batch
+    # For each batch: offsets[i, :] = cumsum(counts[i, :]) - counts[i, 0]
+    constraint_offsets = np.zeros_like(constraint_counts)  # (num_worlds, num_joints)
+    constraint_offsets[:, 1:] = np.cumsum(constraint_counts[:, :-1], axis=1)
+
+    # Convert to wp.array (must flatten or provide device explicitly)
+    constraint_offsets_wp = wp.array(
+        constraint_offsets,
+        dtype=wp.int32,
+        device=joint_types.device,
+    )
+
+    return constraint_offsets_wp, total_constraints[0]
+
+
 @wp.func
 def compute_joint_kinematics(
     body_q: wp.transform,
@@ -59,8 +99,9 @@ def compute_joint_kinematics(
 
 @wp.func
 def formulate_translational_constraints(
-    joint_constraints: wp.array(dtype=JointConstraintData),
-    start_index: wp.int32,
+    joint_constraints: wp.array(dtype=JointConstraintData, ndim=2),
+    world_idx: wp.int32,
+    start_idx: wp.int32,
     parent_idx: wp.int32,
     child_idx: wp.int32,
     c_pos: wp.vec3,
@@ -77,31 +118,32 @@ def formulate_translational_constraints(
     c.J_child = wp.spatial_vector(1.0, 0.0, 0.0, 0.0, r_c[2], -r_c[1])
     c.J_parent = wp.spatial_vector(-1.0, 0.0, 0.0, 0.0, -r_p[2], r_p[1])
     c.value = c_pos.x
-    joint_constraints[start_index + 0] = c
+    joint_constraints[world_idx, start_idx + 0] = c
 
     # Constraint 1: Y translation
     c.J_child = wp.spatial_vector(0.0, 1.0, 0.0, -r_c[2], 0.0, r_c[0])
     c.J_parent = wp.spatial_vector(0.0, -1.0, 0.0, r_p[2], 0.0, -r_p[0])
     c.value = c_pos.y
-    joint_constraints[start_index + 1] = c
+    joint_constraints[world_idx, start_idx + 1] = c
 
     # Constraint 2: Z translation
     c.J_child = wp.spatial_vector(0.0, 0.0, 1.0, r_c[1], -r_c[0], 0.0)
     c.J_parent = wp.spatial_vector(0.0, 0.0, -1.0, -r_p[1], r_p[0], 0.0)
     c.value = c_pos.z
-    joint_constraints[start_index + 2] = c
+    joint_constraints[world_idx, start_idx + 2] = c
 
 
 @wp.func
 def formulate_revolute_constraints(
-    joint_constraints: wp.array(dtype=JointConstraintData),
-    start_index: wp.int32,
+    joint_constraints: wp.array(dtype=JointConstraintData, ndim=2),
+    world_idx: wp.int32,
+    start_idx: wp.int32,
     # kinematics and other data
     parent_idx: wp.int32,
     child_idx: wp.int32,
-    joint_qd_start: wp.array(dtype=wp.int32),
+    joint_qd_start: wp.array(dtype=wp.int32, ndim=2),
     joint_idx: wp.int32,
-    joint_axis: wp.array(dtype=wp.vec3),
+    joint_axis: wp.array(dtype=wp.vec3, ndim=2),
     c_pos: wp.vec3,
     r_c: wp.vec3,
     r_p: wp.vec3,
@@ -112,7 +154,8 @@ def formulate_revolute_constraints(
     # First, assemble the 3 translational constraints (ball-socket part)
     formulate_translational_constraints(
         joint_constraints,
-        start_index,
+        world_idx,
+        start_idx,
         parent_idx,
         child_idx,
         c_pos,
@@ -126,8 +169,8 @@ def formulate_revolute_constraints(
     c.parent_idx = parent_idx
     c.child_idx = child_idx
 
-    axis_start = joint_qd_start[joint_idx]
-    axis = joint_axis[axis_start]
+    axis_start = joint_qd_start[world_idx, joint_idx]
+    axis = joint_axis[world_idx, axis_start]
     axis_p_w = wp.quat_rotate(q_wp_rot, axis)
     b1_local, b2_local = orthogonal_basis(axis)
 
@@ -137,7 +180,7 @@ def formulate_revolute_constraints(
     b1_x_axis = wp.cross(axis_p_w, b1_c_w)
     c.J_child = wp.spatial_vector(wp.vec3(), -b1_x_axis)
     c.J_parent = wp.spatial_vector(wp.vec3(), b1_x_axis)
-    joint_constraints[start_index + 3] = c
+    joint_constraints[world_idx, start_idx + 3] = c
 
     # Constraint 4: Second rotational constraint
     b2_c_w = wp.quat_rotate(q_wc_rot, b2_local)
@@ -145,13 +188,14 @@ def formulate_revolute_constraints(
     b2_x_axis = wp.cross(axis_p_w, b2_c_w)
     c.J_child = wp.spatial_vector(wp.vec3(), -b2_x_axis)
     c.J_parent = wp.spatial_vector(wp.vec3(), b2_x_axis)
-    joint_constraints[start_index + 4] = c
+    joint_constraints[world_idx, start_idx + 4] = c
 
 
 @wp.func
 def formulate_ball_constraints(
-    joint_constraints: wp.array(dtype=JointConstraintData),
-    start_index: wp.int32,
+    joint_constraints: wp.array(dtype=JointConstraintData, ndim=2),
+    world_idx: wp.int32,
+    start_idx: wp.int32,
     # kinematics and other data
     parent_idx: wp.int32,
     child_idx: wp.int32,
@@ -162,7 +206,8 @@ def formulate_ball_constraints(
     """Assembles all 3 constraints for a Ball (Spherical) joint."""
     formulate_translational_constraints(
         joint_constraints,
-        start_index,
+        world_idx,
+        start_idx,
         parent_idx,
         child_idx,
         c_pos,
@@ -174,52 +219,54 @@ def formulate_ball_constraints(
 @wp.kernel
 def joint_constraint_data_kernel(
     # --- Inputs ---
-    body_q: wp.array(dtype=wp.transform),
-    body_com: wp.array(dtype=wp.vec3),
-    joint_type: wp.array(dtype=wp.int32),
-    joint_enabled: wp.array(dtype=wp.int32),
-    joint_parent: wp.array(dtype=wp.int32),
-    joint_child: wp.array(dtype=wp.int32),
-    joint_X_p: wp.array(dtype=wp.transform),
-    joint_X_c: wp.array(dtype=wp.transform),
-    joint_qd_start: wp.array(dtype=wp.int32),
-    joint_axis: wp.array(dtype=wp.vec3),
+    body_q: wp.array(dtype=wp.transform, ndim=2),
+    body_com: wp.array(dtype=wp.vec3, ndim=2),
+    joint_type: wp.array(dtype=wp.int32, ndim=2),
+    joint_enabled: wp.array(dtype=wp.int32, ndim=2),
+    joint_parent: wp.array(dtype=wp.int32, ndim=2),
+    joint_child: wp.array(dtype=wp.int32, ndim=2),
+    joint_X_p: wp.array(dtype=wp.transform, ndim=2),
+    joint_X_c: wp.array(dtype=wp.transform, ndim=2),
+    joint_qd_start: wp.array(dtype=wp.int32, ndim=2),
+    joint_axis: wp.array(dtype=wp.vec3, ndim=2),
     # Precomputed offsets
-    constraint_offsets: wp.array(dtype=wp.int32),
+    constraint_offsets: wp.array(dtype=wp.int32, ndim=2),
     # --- Output ---
-    joint_constraints: wp.array(dtype=JointConstraintData),
+    joint_constraints: wp.array(dtype=JointConstraintData, ndim=2),
 ):
-    joint_idx = wp.tid()
-    j_type = joint_type[joint_idx]
+    world_idx, joint_idx = wp.tid()
+    j_type = joint_type[world_idx, joint_idx]
 
     # Early exit for disabled or unsupported joints
-    if joint_enabled[joint_idx] == 0 or (j_type != JointType.REVOLUTE and j_type != JointType.BALL):
+    if joint_enabled[world_idx, joint_idx] == 0 or (
+        j_type != JointType.REVOLUTE and j_type != JointType.BALL
+    ):
         return
 
-    child_idx = joint_child[joint_idx]
+    child_idx = joint_child[world_idx, joint_idx]
     if child_idx < 0:
         return
 
     # --- Common Calculations ---
-    parent_idx = joint_parent[joint_idx]
-    start_index = constraint_offsets[joint_idx]
+    parent_idx = joint_parent[world_idx, joint_idx]
+    start_idx = constraint_offsets[world_idx, joint_idx]
 
     # Kinematics
-    body_q_c = body_q[child_idx]
+    body_q_c = body_q[world_idx, child_idx]
     body_q_p = wp.transform_identity()
     if parent_idx >= 0:
-        body_q_p = body_q[parent_idx]
+        body_q_p = body_q[world_idx, parent_idx]
 
-    child_com = body_com[child_idx]
+    child_com = body_com[world_idx, child_idx]
     parent_com = wp.vec3()
     if parent_idx >= 0:
-        parent_com = body_com[parent_idx]
+        parent_com = body_com[world_idx, parent_idx]
 
-    r_c = compute_joint_kinematics(body_q_c, joint_X_c[joint_idx], child_com)
-    r_p = compute_joint_kinematics(body_q_p, joint_X_p[joint_idx], parent_com)
+    r_c = compute_joint_kinematics(body_q_c, joint_X_c[world_idx, joint_idx], child_com)
+    r_p = compute_joint_kinematics(body_q_p, joint_X_p[world_idx, joint_idx], parent_com)
 
-    X_wc = body_q_c * joint_X_c[joint_idx]
-    X_wp = body_q_p * joint_X_p[joint_idx]
+    X_wc = body_q_c * joint_X_c[world_idx, joint_idx]
+    X_wp = body_q_p * joint_X_p[world_idx, joint_idx]
 
     c_pos = wp.transform_get_translation(X_wc) - wp.transform_get_translation(X_wp)
     q_wc_rot = wp.transform_get_rotation(X_wc)
@@ -229,7 +276,8 @@ def joint_constraint_data_kernel(
     if j_type == JointType.REVOLUTE:
         formulate_revolute_constraints(
             joint_constraints,
-            start_index,
+            world_idx,
+            start_idx,
             parent_idx,
             child_idx,
             joint_qd_start,
@@ -244,7 +292,8 @@ def joint_constraint_data_kernel(
     elif j_type == JointType.BALL:
         formulate_ball_constraints(
             joint_constraints,
-            start_index,
+            world_idx,
+            start_idx,
             parent_idx,
             child_idx,
             c_pos,

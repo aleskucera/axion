@@ -2,8 +2,9 @@
 _target_: axion.MuJoCoEngineConfig
 separate_worlds: null
 njmax: 100
-iterations: 20
-ls_iterations: 10
+nconmax: 10
+iterations: 50
+ls_iterations: 100
 solver: "newton"
 integrator: "implicitfast"
 cone: "elliptic"
@@ -14,7 +15,6 @@ default_actuator_gear: null
 actuator_gears: null
 update_data_interval: 1
 save_to_mjcf: null
-contact_stiffness_time_const: 0.0001
 ls_parallel: False
-use_mujoco_contacts: True
+use_mujoco_contacts: false
 joint_solimp_limit: null

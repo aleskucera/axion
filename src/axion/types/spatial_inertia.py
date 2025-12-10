@@ -61,13 +61,30 @@ def transform_spatial_inertia_to_world_kernel(
     R = wp.quat_to_matrix(orientation)
     transformed_inertia = R @ spatial_inertia.inertia @ wp.transpose(R)
 
-    # # Transform inertia to world frame using Newton's function
-    # transformed_inertia = transform_inertia(
-    #     spatial_inertia.m,
-    #     spatial_inertia.inertia,
-    #     com_world,
-    #     orientation,
-    # )
-
     # Store the result
     world_spatial_inertia[tid] = SpatialInertia(spatial_inertia.m, transformed_inertia)
+
+
+@wp.kernel
+def world_spatial_inertia_kernel(
+    body_q: wp.array(dtype=wp.transform, ndim=2),
+    body_mass: wp.array(dtype=wp.float32, ndim=2),
+    body_inertia: wp.array(dtype=wp.mat33, ndim=2),
+    # Outputs
+    world_spatial_inertia: wp.array(dtype=SpatialInertia, ndim=2),
+):
+    world_idx, body_idx = wp.tid()
+
+    # Get body transform and spatial inertia
+    transform = body_q[world_idx, body_idx]
+    m = body_mass[world_idx, body_idx]
+    I = body_inertia[world_idx, body_idx]
+
+    # Get orientation quaternion from transform
+    orientation = wp.transform_get_rotation(transform)
+
+    R = wp.quat_to_matrix(orientation)
+    I_w = R @ I @ wp.transpose(R)
+
+    # Store the result
+    world_spatial_inertia[world_idx, body_idx] = SpatialInertia(m, I_w)

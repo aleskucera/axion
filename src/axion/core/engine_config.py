@@ -39,7 +39,7 @@ class AxionEngineConfig(EngineConfig):
     linesearch_step_min: float = 1e-6
     linesearch_step_max: float = 10.0
 
-    matrixfree_representation: bool = True
+    max_contacts_per_world: int = 20
 
     def __post_init__(self):
         """Validate all configuration parameters."""
@@ -79,7 +79,7 @@ class AxionEngineConfig(EngineConfig):
 
         _validate_non_negative_float(self.regularization, "regularization")
 
-        # Validate feedback parameters (should be in [0, 1])
+        # Validate Fisher-Burmeister parameters (should be in [0, 1])
         _validate_unit_interval(self.contact_fb_alpha, "contact_fb_alpha")
         _validate_unit_interval(self.contact_fb_beta, "contact_fb_beta")
         _validate_unit_interval(self.friction_fb_alpha, "friction_fb_alpha")
@@ -89,6 +89,8 @@ class AxionEngineConfig(EngineConfig):
         _validate_positive_int(self.linesearch_step_count, "linesearch_step_count")
         _validate_non_negative_float(self.linesearch_step_min, "linesearch_step_min")
         _validate_non_negative_float(self.linesearch_step_max, "linesearch_step_max")
+
+        _validate_positive_int(self.max_contacts_per_world, "max_contacts_per_world")
 
         if self.linesearch_step_min >= self.linesearch_step_max:
             raise ValueError("linesearch_step_min must be < linesearch_step_max")
@@ -107,6 +109,7 @@ class FeatherstoneEngineConfig(EngineConfig):
 class MuJoCoEngineConfig(EngineConfig):
     separate_worlds: bool | None = None
     njmax: int | None = None
+    nconmax: int | None = None
     iterations: int = 20
     ls_iterations: int = 10
     solver: int | str = "cg"
@@ -119,7 +122,6 @@ class MuJoCoEngineConfig(EngineConfig):
     actuator_gears: dict[str, float] | None = None
     update_data_interval: int = 1
     save_to_mjcf: str | None = None
-    contact_stiffness_time_const: float = 0.02
     ls_parallel: bool = False
     use_mujoco_contacts: bool = True
     joint_solimp_limit: tuple[float, float, float, float, float] | None = None
@@ -133,6 +135,8 @@ class XPBDEngineConfig(EngineConfig):
     joint_linear_relaxation: float = 0.7
     joint_angular_relaxation: float = 0.4
     rigid_contact_relaxation: float = 0.8
+    joint_linear_compliance: float = 0.01
+    joint_angular_compliance: float = 0.01
     rigid_contact_con_weighting: bool = True
     angular_damping: float = 0.0
     enable_restitution: bool = False

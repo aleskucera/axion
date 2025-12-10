@@ -13,6 +13,74 @@ from .engine_data import EngineArrays
 from .engine_dims import EngineDimensions
 
 
+@wp.kernel
+def copy_h_to_history(
+    h: wp.array(dtype=wp.float32),
+    h_history: wp.array(dtype=wp.float32),
+):
+    world_idx, h_idx = wp.tid()
+
+    h_history[world_idx, h_idx] = h[world_idx, h_idx]
+
+
+@wp.kernel
+def copy_body_u_to_history(
+    body_u: wp.array(dtype=wp.spatial_vector),
+    body_u_history: wp.array(dtype=wp.spatial_vector),
+):
+    world_idx, body_idx = wp.tid()
+
+    body_u_history[world_idx, body_idx] = body_u[world_idx, body_idx]
+
+
+@wp.kernel
+def copy_body_lambda_to_history(
+    body_lambda: wp.array(dtype=wp.float32),
+    body_lambda_history: wp.array(dtype=wp.float32),
+):
+    world_idx, constraint_idx = wp.tid()
+
+    body_lambda_history[world_idx, constraint_idx] = body_lambda[world_idx, constraint_idx]
+
+
+def copy_state_to_history(
+    newton_iteration: int,
+    data: EngineArrays,
+    config: EngineConfig,
+    dims: EngineDimensions,
+):
+    device = data.device
+
+    # Evaluate residual for unconstrained dynamics
+    wp.launch(
+        kernel=copy_h_to_history,
+        dim=(config.newton_iters, dims.N_w, dims.N_u + dims.N_c),
+        inputs=[
+            data._h_history[newton_iteration, :, :],
+        ],
+        outputs=[data._h],
+        device=device,
+    )
+    wp.launch(
+        kernel=copy_body_u_to_history,
+        dim=(config.newton_iters, dims.N_w, dims.N_b),
+        inputs=[
+            data.body_u_history[newton_iteration, :, :],
+        ],
+        outputs=[data.body_u],
+        device=device,
+    )
+    wp.launch(
+        kernel=copy_body_lambda_to_history,
+        dim=(config.newton_iters, dims.N_w, dims.N_c),
+        inputs=[
+            data._body_lambda[newton_iteration, :, :],
+        ],
+        outputs=[data._body_lambda],
+        device=device,
+    )
+
+
 def perform_pca(
     trajectory_data: torch.Tensor,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
@@ -119,152 +187,6 @@ def create_pca_grid_batch(
     return pca_u, pca_lambda, alphas, betas, alpha_grid, beta_grid
 
 
-# def _store_loss_landscape_data(
-#     engine: "AxionEngine",
-#     loss_grid: np.ndarray,
-#     alphas: np.ndarray,
-#     betas: np.ndarray,
-#     trajectory_2d: np.ndarray,
-#     trajectory: torch.Tensor,
-#     trajectory_residuals: torch.Tensor,
-#     trajectory_residual_norms: torch.Tensor,
-#     v1: torch.Tensor,
-#     v2: torch.Tensor,
-#     S: torch.Tensor,
-#     x_center: torch.Tensor,
-#     grid_res: int,
-#     plot_scale: float,
-# ):
-#     """
-#     Stores loss landscape data to HDF5 for later visualization.
-#
-#     Args:
-#         engine: The AxionEngine instance containing logger.
-#         loss_grid: A 2D NumPy array of loss values evaluated on the grid.
-#         alphas: 1D array for the x-axis (coordinates along PC1).
-#         betas: 1D array for the y-axis (coordinates along PC2).
-#         trajectory_2d: A (N, 2) array of the projected optimizer trajectory points.
-#         trajectory: Complete optimization trajectory in high-dimensional space.
-#         trajectory_residuals: Residual norm for each point in the trajectory.
-#         v1: First principal component vector.
-#         v2: Second principal component vector.
-#         S: Singular values from PCA.
-#         x_center: Center point used for PCA plane.
-#         grid_res: Grid resolution used.
-#         plot_scale: Plot range scale factor used.
-#     """
-#     with engine.hdf5_logger.scope("loss_landscape_data"):
-#         # Store the core visualization data
-#         engine.hdf5_logger.log_np_dataset("loss_landscape_grid", loss_grid)
-#         engine.hdf5_logger.log_np_dataset("pca_alphas", alphas)
-#         engine.hdf5_logger.log_np_dataset("pca_betas", betas)
-#         engine.hdf5_logger.log_np_dataset("trajectory_2d_projected", trajectory_2d)
-#
-#         # Store PCA components and metadata
-#         engine.hdf5_logger.log_np_dataset("pca_v1", v1.cpu().numpy())
-#         engine.hdf5_logger.log_np_dataset("pca_v2", v2.cpu().numpy())
-#         engine.hdf5_logger.log_np_dataset("pca_singular_values", S.cpu().numpy())
-#         engine.hdf5_logger.log_np_dataset("pca_center_point", x_center.cpu().numpy())
-#
-#         # Store complete trajectory for additional analysis
-#         engine.hdf5_logger.log_np_dataset("optimization_trajectory", trajectory.cpu().numpy())
-#         engine.hdf5_logger.log_np_dataset(
-#             "trajectory_residuals", trajectory_residuals.cpu().numpy()
-#         )
-#         engine.hdf5_logger.log_np_dataset(
-#             "trajectory_residual_norms", trajectory_residual_norms.cpu().numpy()
-#         )
-#
-#         # Store metadata
-#         metadata = np.array(
-#             [
-#                 grid_res,  # Grid resolution
-#                 plot_scale,  # Plot range scale
-#                 len(trajectory),  # Number of Newton iterations
-#                 engine._step,  # Simulation step
-#             ]
-#         )
-#         engine.hdf5_logger.log_np_dataset("pca_metadata", metadata)
-#
-#     print(f"✓ Stored loss landscape data for step {engine._step}")
-#
-#
-# @torch.no_grad
-# def store_loss_landscape_data(
-#     engine: "AxionEngine",
-# ):
-#     """
-#     Orchestrates computing and storing the loss landscape data to HDF5.
-#
-#     This function computes the PCA, evaluates the loss on a grid in the PCA plane,
-#     and stores all necessary data for later visualization.
-#
-#     Args:
-#         engine: The main AxionEngine instance, which contains the config, data, and trajectory.
-#     """
-#     if not engine.data.allocated_pca_arrays:
-#         raise RuntimeError(
-#             "PCA arrays not allocated. Set 'visualize_loss_landscape=True' in engine config."
-#         )
-#
-#     trajectory = wp.to_torch(engine.data.optim_trajectory)
-#     trajectory_residuals = wp.to_torch(engine.data.optim_h)
-#     trajectory_residual_norms = torch.norm(trajectory_residuals, dim=1)
-#     if len(trajectory) < 2:
-#         raise ValueError(
-#             f"Trajectory has {len(trajectory)} points. PCA requires at least 2 points to find a direction. "
-#             "Ensure 'newton_iters' is >= 2."
-#         )
-#
-#     # 1. Get parameters and data from the engine
-#     cfg, dims, data = engine.config, engine.dims, engine.data
-#     grid_res = getattr(cfg, "pca_grid_res", 100)
-#     plot_scale = getattr(cfg, "pca_plot_range_scale", 3.0)
-#
-#     # Center the visualization plane on the final solution point
-#     x_center = trajectory[-1]
-#
-#     # 2. Perform PCA on the trajectory to find the two most important directions
-#     v1, v2, S = perform_pca(trajectory)
-#
-#     # 3. Project the high-dimensional trajectory into the 2D PCA space for plotting
-#     vecs_from_center = trajectory - x_center
-#     alpha_coords = vecs_from_center @ v1  # Project onto v1
-#     beta_coords = vecs_from_center @ v2  # Project onto v2
-#     trajectory_2d = torch.stack([alpha_coords, beta_coords], dim=1)
-#
-#     # 4. Create the batch of grid points in the high-dimensional space
-#     pca_u, pca_lambda, alphas, betas, alpha_grid, beta_grid = create_pca_grid_batch(
-#         x_center, v1, v2, S, grid_res, plot_scale, dims.N_u
-#     )
-#
-#     # Copy the grid points to the Warp arrays for computation
-#     wp.copy(dest=data.pca_batch_body_u, src=wp.from_torch(pca_u.contiguous()))
-#     wp.copy(dest=data.pca_batch_body_lambda, src=wp.from_torch(pca_lambda.contiguous()))
-#
-#     # 5. Compute the loss (residual norm) for every point on the grid
-#     pca_batch_h_norm = compute_pca_batch_h_norm(engine.model, data, cfg, dims)
-#     loss_landscape = pca_batch_h_norm.reshape(grid_res, grid_res)
-#
-#     # 6. Store all data for later visualization
-#     _store_loss_landscape_data(
-#         engine,
-#         loss_landscape.cpu().numpy(),
-#         alphas.cpu().numpy(),
-#         betas.cpu().numpy(),
-#         trajectory_2d.cpu().numpy(),
-#         trajectory,
-#         trajectory_residuals,
-#         trajectory_residual_norms,
-#         v1,
-#         v2,
-#         S,
-#         x_center,
-#         grid_res,
-#         plot_scale,
-#     )
-
-
 def compute_pca_batch_h_norm(
     model: Model,
     data: EngineArrays,
@@ -290,7 +212,7 @@ def compute_pca_batch_h_norm(
     """
     device = data.device
 
-    data.pca_batch_h.zero_()
+    data.pca_batch_h.full.zero_()
 
     B = data.pca_batch_body_u.shape[0]
 
@@ -306,7 +228,7 @@ def compute_pca_batch_h_norm(
             data.dt,
             data.g_accel,
         ],
-        outputs=[data.pca_batch_h_d_v],
+        outputs=[data.pca_batch_h.d_spatial],
         device=device,
     )
 
@@ -316,15 +238,15 @@ def compute_pca_batch_h_norm(
         dim=(B, dims.N_j),
         inputs=[
             data.pca_batch_body_u,
-            data.pca_batch_body_lambda_j,
+            data.pca_batch_body_lambda.j,
             data.joint_constraint_data,
             data.dt,
             config.joint_stabilization_factor,
             config.joint_compliance,
         ],
         outputs=[
-            data.pca_batch_h_d_v,
-            data.pca_batch_h_j,
+            data.pca_batch_h.d_spatial,
+            data.pca_batch_h.j,
         ],
         device=device,
     )
@@ -336,7 +258,7 @@ def compute_pca_batch_h_norm(
         inputs=[
             data.pca_batch_body_u,
             data.body_u_prev,
-            data.pca_batch_body_lambda_n,
+            data.pca_batch_body_lambda.n,
             data.contact_interaction,
             data.body_M_inv,
             data.dt,
@@ -346,8 +268,8 @@ def compute_pca_batch_h_norm(
             config.contact_compliance,
         ],
         outputs=[
-            data.pca_batch_h_d_v,
-            data.pca_batch_h_n,
+            data.pca_batch_h.d_spatial,
+            data.pca_batch_h.n,
         ],
         device=device,
     )
@@ -358,9 +280,9 @@ def compute_pca_batch_h_norm(
         dim=(B, dims.N_n),
         inputs=[
             data.pca_batch_body_u,
-            data.pca_batch_body_lambda_f,
-            data.body_lambda_f_prev,
-            data.body_lambda_n_prev,
+            data.pca_batch_body_lambda.f,
+            data.body_lambda_prev.f,
+            data.body_lambda_prev.n,
             data.s_n_prev,
             data.contact_interaction,
             config.friction_fb_alpha,
@@ -368,14 +290,14 @@ def compute_pca_batch_h_norm(
             config.friction_compliance,
         ],
         outputs=[
-            data.pca_batch_h_d_v,
-            data.pca_batch_h_f,
+            data.pca_batch_h.d_spatial,
+            data.pca_batch_h.f,
         ],
         device=device,
     )
 
     # Finally, compute the L2 norm of the full residual vector h for each item in the batch.
-    torch_h = wp.to_torch(data.pca_batch_h)
+    torch_h = wp.to_torch(data.pca_batch_h.full)
     torch_h_norm = torch.norm(torch_h, dim=1)  # The "loss" for each point on the grid
 
     # Copy the result back to its warp array (optional, but good practice)

@@ -1,3 +1,4 @@
+import os
 from importlib.resources import files
 
 import hydra
@@ -11,8 +12,7 @@ from axion import RenderingConfig
 from axion import SimulationConfig
 from omegaconf import DictConfig
 
-import os
-os.environ['PYOPENGL_PLATFORM'] = 'glx'
+os.environ["PYOPENGL_PLATFORM"] = "glx"
 
 CONFIG_PATH = files("axion").joinpath("examples").joinpath("conf")
 
@@ -36,7 +36,7 @@ class Simulator(AbstractSimulator):
 
     def build_model(self) -> newton.Model:
         FRICTION = 0.8
-        RESTITUTION = 0.99
+        RESTITUTION = 0.999
 
         ball1 = self.builder.add_body(
             xform=wp.transform((0.0, 0.0, 2.0), wp.quat_identity()), key="ball1"
@@ -47,8 +47,8 @@ class Simulator(AbstractSimulator):
             radius=1.0,
             cfg=newton.ModelBuilder.ShapeConfig(
                 density=10.0,
-                ke=2000.0,
-                kd=10.0,
+                ke=6000.0,
+                kd=1000.0,
                 kf=200.0,
                 mu=FRICTION,
                 restitution=RESTITUTION,
@@ -60,11 +60,21 @@ class Simulator(AbstractSimulator):
 
         self.builder.add_ground_plane(
             cfg=newton.ModelBuilder.ShapeConfig(
-                ke=10.0, kd=10.0, kf=0.0, mu=FRICTION, restitution=RESTITUTION
+                ke=6000.0,
+                kd=1000.0,
+                kf=200.0,
+                mu=FRICTION,
+                restitution=RESTITUTION,
             )
         )
 
-        model = self.builder.finalize()
+        final_builder = newton.ModelBuilder()
+        final_builder.replicate(
+            self.builder,
+            num_worlds=self.simulation_config.num_worlds,
+        )
+
+        model = final_builder.finalize()
         return model
 
 

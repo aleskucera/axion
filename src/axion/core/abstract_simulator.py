@@ -30,6 +30,7 @@ class SimulationConfig:
 
     duration_seconds: float = 3.0
     target_timestep_seconds: float = 1e-3
+    num_worlds: int = 1
 
 
 @dataclass
@@ -156,6 +157,7 @@ class AbstractSimulator(ABC):
             raise ValueError(f"Unsupported rendering type: {self.rendering_config.vis_type}")
 
         self.viewer.set_model(self.model)
+        self.viewer.set_world_offsets((20.0, 20.0, 0.0))
 
         self.cuda_graph: Optional[wp.Graph] = None
 
