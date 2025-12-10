@@ -25,6 +25,8 @@ from ..utils import torch_utils
 from ..utils.commons import CONTACT_DEPTH_UPPER_RATIO, MIN_CONTACT_EVENT_THRESHOLD
 
 # Try to import joint type constants from warp (if available at top level)
+# TO-DO: this older enum does not agree with the new newton jointType enum, fix! 
+# https://newton-physics.github.io/newton/api/_generated/newton.JointType.html#newton.JointType
 # Otherwise use our own constants matching Warp's values
 try:
     import warp as wp

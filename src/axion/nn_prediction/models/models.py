@@ -200,11 +200,11 @@ class ModelMixedInput(nn.Module):
 
         features = self.extract_input_features(input_dict)
         if self.is_rnn:
-            print("[INFO] Rnn used")
+            #print("[INFO] Rnn used")
             features = self.rnn(features)
 
         if self.is_transformer:
-            print("[INFO] Transformer used")
+            #print("[INFO] Transformer used")
             features = self.transformer_model(features)
                     
         output = self.model(features, deterministic = deterministic)

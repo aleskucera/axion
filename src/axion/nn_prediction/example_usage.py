@@ -52,7 +52,7 @@ def create_pendulum_predictor(model, cfg, device='cuda:0'):
         dof_q_per_env=2,      # 2 revolute joints, each with 1 angle
         dof_qd_per_env=2,     # 2 revolute joints, each with 1 angular velocity
         joint_act_dim=1,      # 1 actuator (typically on first joint)
-        num_contacts_per_env=4,  # 1 contact pair (pendulum tip to ground)
+        num_contacts_per_env=4,  #
         # Joint types: both are REVOLUTE
         joint_types=[2, 2],
         # Joint DOF start indices in q vector
@@ -82,15 +82,14 @@ def create_example_inputs(num_envs=1, device='cuda:0'):
     # Example: Double pendulum with first joint at 45 degrees, second at -30 degrees
     # States: [angle1, angle2, angular_vel1, angular_vel2]
     states = torch.zeros((num_envs, 4), device=device)
-    states[:, 0] = torch.tensor([np.deg2rad(45.0)], device=device)   # First joint angle
-    states[:, 1] = torch.tensor([np.deg2rad(-30.0)], device=device)  # Second joint angle
-    states[:, 2] = torch.tensor([0.5], device=device)               # First joint angular velocity
-    states[:, 3] = torch.tensor([-0.3], device=device)              # Second joint angular velocity
+    states[:, 0] = torch.tensor([np.deg2rad(-90.0)], device=device)   # First joint angle
+    states[:, 1] = torch.tensor([np.deg2rad(0.0)], device=device)  # Second joint angle
+    states[:, 2] = torch.tensor([0.0], device=device)               # First joint angular velocity
+    states[:, 3] = torch.tensor([0.0], device=device)              # Second joint angular velocity
     
-    # Joint actions (torque on first joint)
     joint_acts = torch.zeros((num_envs, 1), device=device)
-    # Example: small torque
-    joint_acts[:, 0] = torch.tensor([0.1], device=device)
+    control_action = 0.0
+    joint_acts[:, 0] = torch.tensor([control_action], device=device)
     
     # Root body pose [x, y, z, qx, qy, qz, qw]
     # For a simple pendulum, root is typically at origin with identity orientation
@@ -99,14 +98,13 @@ def create_example_inputs(num_envs=1, device='cuda:0'):
     root_body_q[:, 3:7] = torch.tensor([[0.0, 0.0, 0.0, 1.0]], device=device)  # quaternion (identity)
     
     # Contact information
-    # For pendulum, we typically have contact at the tip
-    num_contacts = 4
+    max_num_contacts_per_env = 4
     contacts = {
-        'contact_normals': torch.zeros((num_envs, num_contacts * 3), device=device),
-        'contact_depths': torch.ones((num_envs, num_contacts), device=device) * 10000.0,  # No contact (large depth)
-        'contact_thicknesses': torch.ones((num_envs, num_contacts), device=device) * 0.01,
-        'contact_points_0': torch.zeros((num_envs, num_contacts * 3), device=device),
-        'contact_points_1': torch.zeros((num_envs, num_contacts * 3), device=device),
+        'contact_normals': torch.zeros((num_envs, max_num_contacts_per_env * 3), device=device),
+        'contact_depths': torch.ones((num_envs, max_num_contacts_per_env), device=device) * 10000.0,  # No contact (large depth)
+        'contact_thicknesses': torch.ones((num_envs, max_num_contacts_per_env), device=device) * 0.01,
+        'contact_points_0': torch.zeros((num_envs, max_num_contacts_per_env * 3), device=device),
+        'contact_points_1': torch.zeros((num_envs, max_num_contacts_per_env * 3), device=device),
     }
     # Example: contact normal pointing upward (if in contact)
     contacts['contact_normals'][:, 0:3] = torch.tensor([[0.0, 1.0, 0.0]], device=device)
