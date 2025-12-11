@@ -4,18 +4,18 @@ enable_timing: false
 enable_hdf5_logging: true 
 
 # Timing options
-time_newton_iteration: true
-time_linearization: true
-time_linear_solve: true
-time_linesearch: true
+time_newton_iteration: false
+time_linearization: false 
+time_linear_solve: false 
+time_linesearch: false 
 
 # HDF5 logging options
 log_dynamics_state: true
 log_linear_system_data: true
 
 log_joint_constraint_data: true
-log_contact_constraint_data: true
-log_friction_constraint_data: true
+log_contact_constraint_data: true 
+log_friction_constraint_data: true 
 
 log_residual_norm_landscape: true
 pca_grid_res: 100

@@ -121,8 +121,8 @@ def contact_interaction_kernel(
     # interaction.penetration_depth = d
     interaction.penetration_depth = wp.dot(n, p_b - p_a)
 
-    if interaction.penetration_depth <= 0:
-        interaction.is_active = False
+    # if interaction.penetration_depth <= 0:
+    #     interaction.is_active = False
 
     interaction.basis_a.normal = wp.spatial_vector(n, wp.cross(r_a, n))
     interaction.basis_a.tangent1 = wp.spatial_vector(t1, wp.cross(r_a, t1))
@@ -155,7 +155,8 @@ def update_penetration_depth_kernel(
     if not interaction.is_active:
         return
 
-    # Get world-space contact points and lever arms (r_a, r_b)
+    n = wp.spatial_top(interaction.basis_a.normal)
+
     body_a = interaction.body_a_idx
     body_b = interaction.body_b_idx
 
@@ -164,18 +165,13 @@ def update_penetration_depth_kernel(
 
     if body_a >= 0:
         X_wb_a = body_q[world_idx, body_a]
-        n_a = wp.spatial_top(interaction.basis_a.normal)
-        r_a = interaction.contact_point_a
-        thickness_a = interaction.contact_thickness_a
-        offset_a = -thickness_a * n_a
-        p_a = wp.transform_point(X_wb_a, r_a) + offset_a
+        offset_a = -interaction.contact_thickness_a * n
+        p_a = wp.transform_point(X_wb_a, interaction.contact_point_a) + offset_a
+
     if body_b >= 0:
         X_wb_b = body_q[world_idx, body_b]
-        n_b = wp.spatial_top(interaction.basis_b.normal)
-        r_b = interaction.contact_point_b
-        thickness_b = interaction.contact_thickness_b
-        offset_b = -thickness_b * n_b
-        p_b = wp.transform_point(X_wb_b, r_b) + offset_b
+        offset_b = interaction.contact_thickness_b * n
+        p_b = wp.transform_point(X_wb_b, interaction.contact_point_b) + offset_b
 
-    # Write the complete struct to the output array
-    interactions[world_idx, contact_idx].penetration_depth = wp.dot(n_a, p_b - p_a)
+    # Update depth
+    interactions[world_idx, contact_idx].penetration_depth = wp.dot(n, p_b - p_a)

@@ -46,7 +46,7 @@ def batch_unconstrained_dynamics_kernel(
     h_d: wp.array(dtype=wp.spatial_vector, ndim=3),
 ):
     batch_idx, world_idx, body_idx = wp.tid()
-    if body_idx >= body_u.shape[1]:
+    if body_idx >= body_u.shape[0]:
         return
 
     M = body_M[world_idx, body_idx]

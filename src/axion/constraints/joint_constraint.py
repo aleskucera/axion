@@ -45,6 +45,7 @@ def joint_constraint_kernel(
     wp.atomic_add(h_d, world_idx, c.child_idx, -J_hat_child * lambda_j)
 
     h_j[world_idx, constraint_idx] = v_j + upsilon / dt * c.value + compliance * lambda_j
+    # h_j[world_idx, constraint_idx] = 10.0 * c.value + compliance * lambda_j
 
     J_hat_j_values[world_idx, constraint_idx, 0] = J_hat_parent
     J_hat_j_values[world_idx, constraint_idx, 1] = J_hat_child

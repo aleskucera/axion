@@ -16,6 +16,7 @@ from axion.optim import SystemOperator
 from axion.types import compute_joint_constraint_offsets_batched
 from axion.types import contact_interaction_kernel
 from axion.types import joint_constraint_data_kernel
+from axion.types import update_penetration_depth_kernel
 from axion.types import world_spatial_inertia_kernel
 from newton import Contacts
 from newton import Control
@@ -34,6 +35,7 @@ from .linear_utils import compute_dbody_qd_from_dbody_lambda
 from .linear_utils import compute_linear_system
 from .linesearch_utils import perform_linesearch
 from .linesearch_utils import update_body_q
+from .pca_utils import copy_state_to_history
 
 
 class AxionEngine(SolverBase):
@@ -113,24 +115,6 @@ class AxionEngine(SolverBase):
         )
 
         self.data.set_g_accel(model)
-
-    def _copy_computed_state_to_trajectory(self, iter: int):
-        if self.logger.uses_pca_arrays:
-            wp.copy(
-                dest=self.data.optim_trajectory,
-                src=self.data.body_u,
-                dest_offset=(iter * (self.dims.N_u + self.dims.N_c)),
-            )
-            wp.copy(
-                dest=self.data.optim_trajectory,
-                src=self.data.body_lambda,
-                dest_offset=(iter * (self.dims.N_u + self.dims.N_c) + self.dims.N_u),
-            )
-            wp.copy(
-                dest=self.data.optim_h,
-                src=self.data.h,
-                dest_offset=(iter * (self.dims.N_u + self.dims.N_c)),
-            )
 
     def _apply_control(self, state: State, control: Control):
         newton.eval_ik(self.model, state, state.joint_q, state.joint_qd)
@@ -302,25 +286,10 @@ class AxionEngine(SolverBase):
     def _update_constraint_positional_errors(self):
         # TODO: Not necessary, must optimize this
         wp.launch(
-            kernel=contact_interaction_kernel,
+            kernel=update_penetration_depth_kernel,
             dim=(self.batched_model.num_worlds, self.batched_contacts.max_contacts),
             inputs=[
                 self.data.body_q,
-                self.batched_model.body_com,
-                self.batched_model.shape_body,
-                self.batched_model.shape_thickness,
-                self.batched_model.shape_material_mu,
-                self.batched_model.shape_material_restitution,
-                self.batched_contacts.contact_count,
-                self.batched_contacts.contact_point0,
-                self.batched_contacts.contact_point1,
-                self.batched_contacts.contact_normal,
-                self.batched_contacts.contact_shape0,
-                self.batched_contacts.contact_shape1,
-                self.batched_contacts.contact_thickness0,
-                self.batched_contacts.contact_thickness1,
-            ],
-            outputs=[
                 self.data.contact_interaction,
             ],
             device=self.device,
@@ -403,9 +372,10 @@ class AxionEngine(SolverBase):
                 self._update_mass_matrix()
 
             self.logger.log_newton_iteration_data(self, i)
-            # self._copy_computed_state_to_trajectory(i)
+            if self.logger.uses_pca_arrays:
+                copy_state_to_history(i, self.data, self.config, self.dims)
 
-        # self.logger.log_residual_norm_landscape(self)
+        self.logger.log_residual_norm_landscape(self)
 
         wp.copy(dest=state_out.body_qd, src=self.data.body_u)
         wp.copy(dest=state_out.body_q, src=self.data.body_q)

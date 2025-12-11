@@ -54,6 +54,7 @@ class EngineArrays:
     s_n_prev: wp.array  # Scale for normal impulse at previous newton step
 
     JT_delta_lambda: wp.array  # J^T * delta_body_lambda
+    system_diag: wp.array  # diagonal of J @ M^{-1} @ J^T
     b: wp.array  # RHS vector for linear system
 
     world_M: wp.array
@@ -83,6 +84,7 @@ class EngineArrays:
 
     _h_history: wp.array = None
     _body_lambda_history: wp.array = None
+    body_q_history: wp.array = None
     body_u_history: wp.array = None
 
     g_accel: wp.array = None
@@ -229,6 +231,7 @@ def create_engine_arrays(
     constraint_active_mask = _zeros((dims.N_w, dims.N_c), wp.float32)
 
     JT_delta_lambda = _zeros((dims.N_w, dims.N_b), wp.spatial_vector)
+    system_diag = _zeros((dims.N_w, dims.N_b), wp.spatial_vector)
     dbody_u = _zeros((dims.N_w, dims.N_b), wp.spatial_vector)
     dbody_lambda = _zeros((dims.N_w, dims.N_c))
 
@@ -278,18 +281,20 @@ def create_engine_arrays(
     # ---- PCA Storage Buffers ----
     (
         h_history,
+        body_q_history,
         body_u_history,
         body_lambda_history,
         pca_batch_body_u,
         pca_batch_body_lambda,
         pca_batch_h,
         pca_batch_h_norm,
-    ) = (None, None, None, None, None, None, None)
+    ) = (None, None, None, None, None, None, None, None)
 
     if allocate_pca:
         pca_batch_size = pca_grid_res * pca_grid_res
 
         h_history = _zeros((config.newton_iters, dims.N_w, dims.N_u + dims.N_c))
+        body_q_history = _zeros((config.newton_iters, dims.N_w, dims.N_b), dtype=wp.transform)
         body_u_history = _zeros((config.newton_iters, dims.N_w, dims.N_b), dtype=wp.spatial_vector)
         body_lambda_history = _zeros((config.newton_iters, dims.N_w, dims.N_c))
 
@@ -318,6 +323,7 @@ def create_engine_arrays(
         _constraint_body_idx=constraint_body_idx,
         _constraint_active_mask=constraint_active_mask,
         JT_delta_lambda=JT_delta_lambda,
+        system_diag=system_diag,
         _dbody_lambda=dbody_lambda,
         b=b,
         world_M=world_M,
@@ -335,6 +341,7 @@ def create_engine_arrays(
         J_dense=J_dense,
         C_dense=C_dense,
         _h_history=h_history,
+        body_q_history=body_q_history,
         body_u_history=body_u_history,
         _body_lambda_history=body_lambda_history,
         pca_batch_body_u=pca_batch_body_u,

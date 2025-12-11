@@ -267,89 +267,131 @@ class EngineLogger:
         if not self.config.enable_hdf5_logging or not self.config.log_residual_norm_landscape:
             return
 
-        trajectory = wp.to_torch(engine.data.optim_trajectory)
-        trajectory_residuals = wp.to_torch(engine.data.optim_h)
-        trajectory_residual_norms = torch.norm(trajectory_residuals, dim=1)
-        if len(trajectory) < 2:
+        # 1. Reconstruct Trajectory from History Arrays
+        # The history arrays split the state into 'u' (velocities) and 'lambda' (constraint impulses).
+        # We must combine them to form the full optimization vector 'x = [u, lambda]'.
+
+        # Body Velocities (u)
+        # shape: (Steps, Worlds, BodyCount) of spatial_vectors (6 floats)
+        # wp.to_torch converts spatial_vector to a last dimension of 6
+        u_hist = wp.to_torch(engine.data.body_u_history)
+        steps, n_w, n_b, _ = u_hist.shape
+
+        # Flatten the spatial vectors: (Steps, Worlds, N_u) where N_u = BodyCount * 6
+        u_flat = u_hist.view(steps, n_w, n_b * 6)
+
+        # Constraint Impulses (lambda)
+        # shape: (Steps, Worlds, N_c)
+        lambda_hist = wp.to_torch(engine.data._body_lambda_history)
+
+        # Full Trajectory: Concatenate u and lambda along the DOF dimension (dim=2)
+        # shape: (Steps, Worlds, N_u + N_c)
+        trajectory_all = torch.cat([u_flat, lambda_hist], dim=2)
+
+        # Residuals (h)
+        # shape: (Steps, Worlds, N_u + N_c)
+        residuals_all = wp.to_torch(engine.data._h_history)
+
+        if steps < 2:
             raise ValueError(
-                f"Trajectory has {len(trajectory)} points. PCA requires at least 2 points to find a direction. "
+                f"Trajectory has {steps} points. PCA requires at least 2 points. "
                 "Ensure 'newton_iters' is >= 2."
             )
 
-        # 1. Get parameters and data from the engine
+        # 2. Compute Norms for Visualization
+        # Norms for entire history: (Steps, Worlds)
+        trajectory_residual_norms = torch.norm(residuals_all, dim=2)
+
+        # 3. Perform PCA (Batched over Worlds)
+        # v1, v2: (Worlds, Dofs) | S: (Worlds, 2)
+        v1, v2, S = perform_pca(trajectory_all)
+
+        # Center point is the final iterate for each world
+        x_center = trajectory_all[-1]  # (Worlds, Dofs)
+
+        # 4. Project Trajectory to 2D (per world)
+        # Calculate vector from center: (Steps, Worlds, Dofs)
+        vecs_from_center = trajectory_all - x_center.unsqueeze(0)
+
+        # Project onto Principal Components
+        # (Steps, Worlds, Dofs) * (1, Worlds, Dofs) -> Sum(dim=2) -> (Steps, Worlds)
+        alpha_coords = (vecs_from_center * v1.unsqueeze(0)).sum(dim=2)
+        beta_coords = (vecs_from_center * v2.unsqueeze(0)).sum(dim=2)
+
+        # Stack to (Steps, Worlds, 2)
+        trajectory_2d = torch.stack([alpha_coords, beta_coords], dim=2)
+
+        # 5. Create Grid Batch (for ALL worlds)
         grid_res = self.config.pca_grid_res
         plot_scale = self.config.pca_plot_range_scale
+        N_u = engine.dims.N_u
 
-        # Center the visualization plane on the final solution point
-        x_center = trajectory[-1]
-
-        # 2. Perform PCA on the trajectory to find the two most important directions
-        v1, v2, S = perform_pca(trajectory)
-
-        # 3. Project the high-dimensional trajectory into the 2D PCA space for plotting
-        vecs_from_center = trajectory - x_center
-        alpha_coords = vecs_from_center @ v1  # Project onto v1
-        beta_coords = vecs_from_center @ v2  # Project onto v2
-        trajectory_2d = torch.stack([alpha_coords, beta_coords], dim=1)
-
-        # 4. Create the batch of grid points in the high-dimensional space
-        pca_u, pca_lambda, alphas, betas, alpha_grid, beta_grid = create_pca_grid_batch(
-            x_center,
-            v1,
-            v2,
-            S,
-            grid_res,
-            plot_scale,
-            engine.dims.N_u,
+        # pca_u: (GridSize, N_w, N_u)
+        # pca_lambda: (GridSize, N_w, N_c)
+        # alphas, betas: (N_w, GridRes)
+        pca_u, pca_lambda, alphas, betas = create_pca_grid_batch(
+            x_center, v1, v2, S, grid_res, plot_scale, N_u
         )
 
-        # Copy the grid points to the Warp arrays for computation
-        wp.copy(dest=engine.data.pca_batch_body_u, src=wp.from_torch(pca_u.contiguous()))
-        wp.copy(dest=engine.data.pca_batch_body_lambda, src=wp.from_torch(pca_lambda.contiguous()))
+        # # 6. Populate Warp Arrays (Flattened for memory transfer)
+        # # Use float view for spatial_vector array `pca_batch_body_u`
+        # total_u_floats = pca_u.numel()
+        # dest_u_view = wp.array(
+        #     ptr=engine.data.pca_batch_body_u.ptr,
+        #     shape=(total_u_floats,),
+        #     dtype=wp.float32,
+        #     device=engine.device,
+        # )
+        # wp.copy(dest=dest_u_view, src=wp.from_torch(pca_u.flatten()))
+        #
+        # total_lambda_floats = pca_lambda.numel()
+        # dest_lambda_view = wp.array(
+        #     ptr=engine.data.pca_batch_body_lambda.ptr,
+        #     shape=(total_lambda_floats,),
+        #     dtype=wp.float32,
+        #     device=engine.device,
+        # )
+        # wp.copy(dest=dest_lambda_view, src=wp.from_torch(pca_lambda.flatten()))
+        #
+        # # 7. Compute Norms (GridSize, N_w)
+        # norm_results = compute_pca_batch_h_norm(
+        #     engine.model, engine.data, engine.config, engine.dims
+        # )
+        #
+        # # Reshape to (GridRes, GridRes, N_w) for easier slicing/plotting later
+        # residual_norm_grid = norm_results.reshape(grid_res, grid_res, n_w)
 
-        # 5. Compute the loss (residual norm) for every point on the grid
-        pca_batch_h_norm = compute_pca_batch_h_norm(
-            engine.model,
-            engine.data,
-            engine.config,
-            engine.dims,
-        )
-        residual_norm_landscape = pca_batch_h_norm.reshape(grid_res, grid_res)
-
-        # 6. Store all data to HDF5 file
+        # 8. Log Data
         with self.hdf5_logger.scope("residual_norm_landscape_data"):
-            # Store the core visualization data
-            self.hdf5_logger.log_np_dataset(
-                "residual_norm_grid", residual_norm_landscape.cpu().numpy()
-            )
-            self.hdf5_logger.log_np_dataset("pca_alphas", alphas.cpu().numpy())
-            self.hdf5_logger.log_np_dataset("pca_betas", betas.cpu().numpy())
-            self.hdf5_logger.log_np_dataset("trajectory_2d_projected", trajectory_2d.cpu().numpy())
+            # # Visualization Grid
+            # self.hdf5_logger.log_np_dataset("residual_norm_grid", residual_norm_grid.cpu().numpy())
+            # self.hdf5_logger.log_np_dataset("pca_alphas", alphas.cpu().numpy())
+            # self.hdf5_logger.log_np_dataset("pca_betas", betas.cpu().numpy())
+            #
+            # # Projected trajectory
+            # self.hdf5_logger.log_np_dataset("trajectory_2d_projected", trajectory_2d.cpu().numpy())
 
-            # Store PCA components and metadata
+            # PCA Components
             self.hdf5_logger.log_np_dataset("pca_v1", v1.cpu().numpy())
             self.hdf5_logger.log_np_dataset("pca_v2", v2.cpu().numpy())
             self.hdf5_logger.log_np_dataset("pca_singular_values", S.cpu().numpy())
             self.hdf5_logger.log_np_dataset("pca_center_point", x_center.cpu().numpy())
 
-            # Store complete trajectory for additional analysis
-            self.hdf5_logger.log_np_dataset("optimization_trajectory", trajectory.cpu().numpy())
+            # Full Trajectory Data (for reference/debugging)
+            self.hdf5_logger.log_np_dataset("optimization_trajectory", trajectory_all.cpu().numpy())
+            self.hdf5_logger.log_np_dataset("body_q_history", engine.data.body_q_history.numpy())
+            self.hdf5_logger.log_np_dataset("body_u_history", engine.data.body_u_history.numpy())
             self.hdf5_logger.log_np_dataset(
-                "trajectory_residuals", trajectory_residuals.cpu().numpy()
+                "body_lambda_history", engine.data._body_lambda_history.numpy()
             )
+            self.hdf5_logger.log_np_dataset("trajectory_residuals", residuals_all.cpu().numpy())
             self.hdf5_logger.log_np_dataset(
                 "trajectory_residual_norms", trajectory_residual_norms.cpu().numpy()
             )
 
-            # Store metadata
-            metadata = np.array(
-                [
-                    grid_res,  # Grid resolution
-                    plot_scale,  # Plot range scale
-                    len(trajectory),  # Number of Newton iterations
-                ]
-            )
-            self.hdf5_logger.log_np_dataset("pca_metadata", metadata)
+            # # Metadata
+            # metadata = np.array([grid_res, plot_scale, steps, n_w])  # Log number of worlds
+            # self.hdf5_logger.log_np_dataset("pca_metadata", metadata)
 
     def timestep_start(self, timestep: int, current_time: float):
         """Start logging for a timestep and log the current time."""

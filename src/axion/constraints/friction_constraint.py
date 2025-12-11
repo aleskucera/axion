@@ -17,6 +17,7 @@ def compute_friction_model(
     u_2: wp.spatial_vector,
     imulse_f_prev: wp.vec2,
     impulse_n_prev: wp.float32,
+    dt: wp.float32,
     fb_alpha: wp.float32,
     fb_beta: wp.float32,
 ) -> FrictionModelResult:
@@ -38,7 +39,7 @@ def compute_friction_model(
         v_t_norm,
         mu * impulse_n_prev - impulse_f_norm,
         fb_alpha,
-        fb_beta,
+        dt * fb_beta,
     )
 
     # --- Compute the Slip Coupling Factor 'w' ---
@@ -61,6 +62,7 @@ def friction_constraint_kernel(
     s_n_prev: wp.array(dtype=wp.float32, ndim=2),
     interactions: wp.array(dtype=ContactInteraction, ndim=2),
     # --- Simulation & Solver Parameters ---
+    dt: wp.float32,
     fb_alpha: wp.float32,
     fb_beta: wp.float32,
     compliance: wp.float32,
@@ -117,6 +119,7 @@ def friction_constraint_kernel(
         u_2,
         impulse_f_prev,
         impulse_n_prev,
+        dt,
         fb_alpha,
         fb_beta,
     )
@@ -132,13 +135,17 @@ def friction_constraint_kernel(
 
     # Update g
     if body_1 >= 0:
-        wp.atomic_add(h_d, world_idx, body_1, -J_hat_t1_1 * lambda_t1 - J_hat_t2_1 * lambda_t2)
+        wp.atomic_add(
+            h_d, world_idx, body_1, -dt * (J_hat_t1_1 * lambda_t1 + J_hat_t2_1 * lambda_t2)
+        )
     if body_2 >= 0:
-        wp.atomic_add(h_d, world_idx, body_2, -J_hat_t1_2 * lambda_t1 - J_hat_t2_2 * lambda_t2)
+        wp.atomic_add(
+            h_d, world_idx, body_2, -dt * (J_hat_t1_2 * lambda_t1 + J_hat_t2_2 * lambda_t2)
+        )
 
     # Update h (constraint violation)
-    h_f[world_idx, constr_idx1] = v_t1 + (w + compliance) * lambda_t1
-    h_f[world_idx, constr_idx2] = v_t2 + (w + compliance) * lambda_t2
+    h_f[world_idx, constr_idx1] = v_t1 + w * lambda_t1
+    h_f[world_idx, constr_idx2] = v_t2 + w * lambda_t2
 
     # Update J (Jacobian)
     J_hat_f_values[world_idx, constr_idx1, 0] = J_hat_t1_1
@@ -147,8 +154,8 @@ def friction_constraint_kernel(
     J_hat_f_values[world_idx, constr_idx2, 1] = J_hat_t2_2
 
     # Update C (compliance)
-    C_f_values[world_idx, constr_idx1] = w + compliance
-    C_f_values[world_idx, constr_idx2] = w + compliance
+    C_f_values[world_idx, constr_idx1] = w
+    C_f_values[world_idx, constr_idx2] = w
 
 
 @wp.kernel
@@ -161,6 +168,7 @@ def batch_friction_residual_kernel(
     s_n_prev: wp.array(dtype=wp.float32, ndim=2),
     interactions: wp.array(dtype=ContactInteraction, ndim=2),
     # --- Simulation & Solver Parameters ---
+    dt: wp.float32,
     fb_alpha: wp.float32,
     fb_beta: wp.float32,
     compliance: wp.float32,
@@ -208,6 +216,7 @@ def batch_friction_residual_kernel(
         u_2,
         impulse_f_prev,
         impulse_n_prev,
+        dt,
         fb_alpha,
         fb_beta,
     )
@@ -221,16 +230,24 @@ def batch_friction_residual_kernel(
     lambda_t1 = body_lambda_f[batch_idx, world_idx, constr_idx1]
     lambda_t2 = body_lambda_f[batch_idx, world_idx, constr_idx2]
 
-    # Update g
+    # Update h_d
     if body_1 >= 0:
         wp.atomic_add(
-            h_d, batch_idx, world_idx, body_1, -J_hat_t1_1 * lambda_t1 - J_hat_t2_1 * lambda_t2
+            h_d,
+            batch_idx,
+            world_idx,
+            body_1,
+            -dt * (J_hat_t1_1 * lambda_t1 + J_hat_t2_1 * lambda_t2),
         )
     if body_2 >= 0:
         wp.atomic_add(
-            h_d, batch_idx, world_idx, body_2, -J_hat_t1_2 * lambda_t1 - J_hat_t2_2 * lambda_t2
+            h_d,
+            batch_idx,
+            world_idx,
+            body_2,
+            -dt * (J_hat_t1_2 * lambda_t1 + J_hat_t2_2 * lambda_t2),
         )
 
-    # Update h (constraint violation)
-    h_f[batch_idx, world_idx, constr_idx1] = v_t1 + (w + compliance) * lambda_t1
-    h_f[batch_idx, world_idx, constr_idx2] = v_t2 + (w + compliance) * lambda_t2
+    # Update h_f (constraint violation)
+    h_f[batch_idx, world_idx, constr_idx1] = v_t1 + w * lambda_t1
+    h_f[batch_idx, world_idx, constr_idx2] = v_t2 + w * lambda_t2

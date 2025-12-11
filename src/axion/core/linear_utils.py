@@ -18,6 +18,7 @@ def update_system_rhs_kernel(
     h_d: wp.array(dtype=wp.spatial_vector, ndim=2),
     h_c: wp.array(dtype=wp.float32, ndim=2),
     constraint_body_idx: wp.array(dtype=wp.int32, ndim=3),
+    dt: wp.float32,
     # Output array
     b: wp.array(dtype=wp.float32, ndim=2),
 ):
@@ -37,8 +38,8 @@ def update_system_rhs_kernel(
     b_contrib = wp.dot(J_2, to_spatial_momentum(M_inv_2, h_d[world_idx, body_2]))
     JHinvg = a_contrib + b_contrib
 
-    # b = J * M^-1 * h_d - h_c
-    b[world_idx, constraint_idx] = JHinvg - h_c[world_idx, constraint_idx]
+    # b = (J * M^-1 * h_d - h_c) / dt
+    b[world_idx, constraint_idx] = (JHinvg - h_c[world_idx, constraint_idx]) / dt
 
 
 @wp.kernel
@@ -70,6 +71,7 @@ def compute_dbody_u_kernel(
     body_M_inv: wp.array(dtype=SpatialInertia, ndim=2),
     JT_dbody_lambda: wp.array(dtype=wp.spatial_vector, ndim=2),
     h_d: wp.array(dtype=wp.spatial_vector, ndim=2),
+    dt: wp.float32,
     # Output array
     dbody_u: wp.array(dtype=wp.spatial_vector, ndim=2),
 ):
@@ -80,7 +82,7 @@ def compute_dbody_u_kernel(
 
     dbody_u[world_idx, body_idx] = to_spatial_momentum(
         body_M_inv[world_idx, body_idx],
-        (JT_dbody_lambda[world_idx, body_idx] - h_d[world_idx, body_idx]),
+        (JT_dbody_lambda[world_idx, body_idx] * dt - h_d[world_idx, body_idx]),
     )
 
 
@@ -168,6 +170,7 @@ def compute_linear_system(
             data.body_lambda_prev.n,
             data.s_n_prev,
             data.contact_interaction,
+            data.dt,
             config.friction_fb_alpha,
             config.friction_fb_beta,
             config.friction_compliance,
@@ -190,6 +193,7 @@ def compute_linear_system(
             data.h.d_spatial,
             data.h.c.full,
             data.constraint_body_idx.full,
+            data.dt,
         ],
         outputs=[data.b],
         device=device,
@@ -222,6 +226,7 @@ def compute_dbody_qd_from_dbody_lambda(
             data.world_M_inv,
             data.JT_delta_lambda,
             data.h.d_spatial,
+            data.dt,
         ],
         outputs=[data.dbody_u],
         device=device,

@@ -1,45 +1,9 @@
 import warp as wp
 from axion.types import ContactInteraction
 from axion.types import SpatialInertia
+from axion.types import to_spatial_momentum
 
 from .utils import scaled_fisher_burmeister
-
-
-@wp.func
-def compute_target_v_n(
-    interaction: ContactInteraction,
-    u_1: wp.spatial_vector,
-    u_2: wp.spatial_vector,
-    u_1_prev: wp.spatial_vector,
-    u_2_prev: wp.spatial_vector,
-    dt: wp.float32,
-    stabilization_factor: wp.float32,
-) -> wp.float32:
-    J_n_1 = interaction.basis_a.normal
-    J_n_2 = interaction.basis_b.normal
-    c = interaction.penetration_depth
-    e = interaction.restitution_coeff
-
-    # Relative normal velocity at the current time step positive if separating.
-    v_n_curr = wp.dot(J_n_1, u_1) + wp.dot(J_n_2, u_2)
-
-    # Relative normal velocity at the previous time step (for restitution).
-    v_n_prev = wp.dot(J_n_1, u_1_prev) + wp.dot(J_n_2, u_2_prev)
-
-    # --- Bias Terms ---
-    # 1. Restitution bias based on pre-collision velocity.
-    #    We only apply restitution if the pre-collision velocity is approaching (negative relative velocity).
-    restitution_bias = e * wp.min(v_n_prev, 0.0)
-
-    # 2. Baumgarte stabilization bias to correct positional error (penetration) over time.
-    #    We use wp.max to ensure we only correct for actual penetration (depth > 0).
-    # TODO: Correct the positional correction bias
-    positional_correction_bias = -(stabilization_factor / dt) * wp.max(0.0, c)
-
-    # The final term for the complementarity function.
-    # This represents the "effective" relative velocity after accounting for error correction and restitution.
-    target_v_n = v_n_curr + positional_correction_bias + restitution_bias
-    return target_v_n
 
 
 @wp.kernel
@@ -87,38 +51,24 @@ def contact_constraint_kernel(
     J_n_1 = interaction.basis_a.normal
     J_n_2 = interaction.basis_b.normal
 
-    # Safely get body velocities (handles fixed bodies with index -1)
-    u_1, u_1_prev = wp.spatial_vector(), wp.spatial_vector()
+    precond = 0.0
     if body_1 >= 0:
-        u_1 = body_u[world_idx, body_1]
-        u_1_prev = body_u_prev[world_idx, body_1]
-
-    u_2, u_2_prev = wp.spatial_vector(), wp.spatial_vector()
+        M_inv_1 = body_M_inv[world_idx, body_1]
+        precond += wp.dot(J_n_1, to_spatial_momentum(M_inv_1, J_n_1))
     if body_2 >= 0:
-        u_2 = body_u[world_idx, body_2]
-        u_2_prev = body_u_prev[world_idx, body_2]
+        M_inv_2 = body_M_inv[world_idx, body_2]
+        precond += wp.dot(J_n_2, to_spatial_momentum(M_inv_2, J_n_2))
 
-    # Compute the velocity-level term for the complementarity function
-    target_v_n = compute_target_v_n(
-        interaction,
-        u_1,
-        u_2,
-        u_1_prev,
-        u_2_prev,
-        dt,
-        stabilization_factor,
-    )
-
-    # Evaluate the Fisher-Burmeister complementarity function φ(v_n, λ)
-    phi_n, dphi_dtarget_v_n, dphi_dlambda_n = scaled_fisher_burmeister(
-        target_v_n,
+    # Evaluate the Fisher-Burmeister complementarity function φ(C_n, λ)
+    phi_n, dphi_dc_n, dphi_dlambda_n = scaled_fisher_burmeister(
+        -interaction.penetration_depth,
         lambda_n,
-        fb_alpha,
-        dt * fb_beta,
+        1.0,
+        wp.pow(dt, 2.0) * precond,
     )
 
-    J_hat_n_1 = dphi_dtarget_v_n * J_n_1
-    J_hat_n_2 = dphi_dtarget_v_n * J_n_2
+    J_hat_n_1 = dphi_dc_n * J_n_1
+    J_hat_n_2 = dphi_dc_n * J_n_2
 
     # --- Update global system components ---
     # 1. Update `h_d`
@@ -128,17 +78,17 @@ def contact_constraint_kernel(
         wp.atomic_add(h_d, world_idx, body_2, -J_hat_n_2 * lambda_n * dt)
 
     # 2. Update `h_n`
-    h_n[world_idx, contact_idx] = phi_n
+    h_n[world_idx, contact_idx] = phi_n / dt
 
     # 3. Update `C_n` (Compliance block)
-    C_n_values[world_idx, contact_idx] = dphi_dlambda_n / dt
+    C_n_values[world_idx, contact_idx] = compliance / wp.pow(dt, 2.0)
 
     # 4. Update `J_hat_n`
     J_hat_n_values[world_idx, contact_idx, 0] = J_hat_n_1
     J_hat_n_values[world_idx, contact_idx, 1] = J_hat_n_2
 
     # 5. Update lambda_n scale
-    s_n[world_idx, contact_idx] = dphi_dtarget_v_n
+    s_n[world_idx, contact_idx] = dphi_dc_n
 
 
 @wp.kernel
@@ -178,38 +128,16 @@ def batch_contact_residual_kernel(
     J_n_1 = interaction.basis_a.normal
     J_n_2 = interaction.basis_b.normal
 
-    # Safely get body velocities (handles fixed bodies with index -1)
-    u_1, u_1_prev = wp.spatial_vector(), wp.spatial_vector()
-    if body_1 >= 0:
-        u_1 = body_u[batch_idx, world_idx, body_1]
-        u_1_prev = body_u_prev[world_idx, body_1]
-
-    u_2, u_2_prev = wp.spatial_vector(), wp.spatial_vector()
-    if body_2 >= 0:
-        u_2 = body_u[batch_idx, world_idx, body_2]
-        u_2_prev = body_u_prev[world_idx, body_2]
-
-    # Compute the velocity-level term for the complementarity function
-    target_v_n = compute_target_v_n(
-        interaction,
-        u_1,
-        u_2,
-        u_1_prev,
-        u_2_prev,
-        dt,
-        stabilization_factor,
-    )
-
-    # Evaluate the Fisher-Burmeister complementarity function φ(v_n, λ)
-    phi_n, dphi_dtarget_v_n, dphi_dlambda_n = scaled_fisher_burmeister(
-        target_v_n,
+    # Evaluate the Fisher-Burmeister complementarity function φ(C_n, λ)
+    phi_n, dphi_dc_n, dphi_dlambda_n = scaled_fisher_burmeister(
+        -interaction.penetration_depth,
         lambda_n,
-        fb_alpha,
-        dt * fb_beta,
+        1.0,
+        wp.pow(dt, 2.0),
     )
 
-    J_hat_n_1 = dphi_dtarget_v_n * J_n_1
-    J_hat_n_2 = dphi_dtarget_v_n * J_n_2
+    J_hat_n_1 = dphi_dc_n * J_n_1
+    J_hat_n_2 = dphi_dc_n * J_n_2
 
     # --- Update global system components ---
     # 1. Update `h_d`
