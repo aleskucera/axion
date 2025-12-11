@@ -40,6 +40,42 @@ class Simulator(AbstractSimulator):
     def control_policy(self, state: newton.State):
         wp.copy(self.control.joint_f, wp.array([0.0, 800.0], dtype=wp.float32))
 
+    @override
+    def _render(self, segment_num: int):
+        """Renders the current state to the appropriate viewers, including world XYZ axes."""
+        sim_time = segment_num * self.steps_per_segment * self.effective_timestep
+        self.viewer.begin_frame(sim_time)
+        self.viewer.log_state(self.current_state)
+        self.viewer.log_contacts(self.contacts, self.current_state)
+        
+        # Draw world axes at origin
+        axis_length = 1.0  # Length of each axis
+        origin = wp.vec3(0.0, 0.0, 0.0)
+        
+        # Define axis endpoints
+        x_end = wp.vec3(axis_length, 0.0, 0.0)  # X axis (red)
+        y_end = wp.vec3(0.0, axis_length, 0.0)  # Y axis (green)
+        z_end = wp.vec3(0.0, 0.0, axis_length)  # Z axis (blue)
+        
+        # Create arrays for line starts and ends
+        device = wp.get_device()
+        starts = wp.array([origin, origin, origin], dtype=wp.vec3, device=device)
+        ends = wp.array([x_end, y_end, z_end], dtype=wp.vec3, device=device)
+        
+        # Colors: red for X, green for Y, blue for Z
+        colors = wp.array(
+            [wp.vec3(1.0, 0.0, 0.0),  # Red for X
+             wp.vec3(0.0, 1.0, 0.0),  # Green for Y
+             wp.vec3(0.0, 0.0, 1.0)], # Blue for Z
+            dtype=wp.vec3,
+            device=device
+        )
+        
+        # Draw the axes
+        self.viewer.log_lines("world_axes", starts, ends, colors, width=0.08)
+        
+        self.viewer.end_frame()
+
     def build_model(self) -> newton.Model:
 
         chain_width = 1.5
@@ -52,6 +88,7 @@ class Simulator(AbstractSimulator):
         link_0 = self.builder.add_body(armature=0.1)
         link_config = newton.ModelBuilder.ShapeConfig(density=500.0, ke = shape_ke, kd = shape_kd, kf = shape_kf)
         capsule_shape_transform = wp.transform(p=wp.vec3(0.0, 0.0, 0.0), q=wp.quat_from_axis_angle(wp.vec3(0.0, 1.0, 0.0), -wp.pi/2))
+        
         self.builder.add_shape_capsule(link_0,
                                         xform= capsule_shape_transform,
                                         radius=0.1, 
@@ -65,13 +102,14 @@ class Simulator(AbstractSimulator):
                                     half_height=chain_width*0.5,
                                     cfg = link_config)
 
-        rot = wp.quat_from_axis_angle(wp.vec3(0.0, 0.0, 1.0), -wp.pi * 0.5)
+        rot = wp.quat_from_axis_angle(wp.vec3(0.0, 1.0, 0.0), -wp.pi * 0.5)
+        
         self.builder.add_joint_revolute(
             parent=-1,
             child=link_0,
             axis=wp.vec3(0.0, 1.0, 0.0),
-            parent_xform=wp.transform(p=wp.vec3(0.0, 0.0, 5.0), q=rot),
-            child_xform=wp.transform(p=wp.vec3(-hx, 0.0, 0.0), q=wp.quat_identity()),
+            parent_xform=wp.transform(p=wp.vec3(0.0, 0.0, 5.0), q= rot),
+            child_xform=wp.transform(p=wp.vec3(-hx, 0.0, 0.0), q= wp.quat_identity()),
             target_ke=1000.0,
             target_kd=50.0,
             custom_attributes={
