@@ -145,3 +145,17 @@ You need to provide robot-specific configuration when creating the predictor:
 - States are automatically wrapped to [-π, π] for continuous angular DOFs
 - Coordinate frame conversions (world ↔ body) are handled automatically based on configuration
 
+## model_inputs that are actually passed: self.model(model_inputs):
+The model_inputs dictionary passed to self.model.evaluate(...) has these keys:
+"root_body_q" — root body pose (num_envs, 1, 7)
+"states" — current states (num_envs, 1, state_dim), modified by coordinate frame conversion
+"joint_acts" — joint actions/torques (num_envs, 1, joint_act_dim)
+"gravity_dir" — gravity direction (num_envs, 1, 3), modified by coordinate frame conversion
+"contact_normals" — contact normals (num_envs, 1, num_contacts * 3), modified by coordinate frame conversion and masking
+"contact_depths" — contact depths (num_envs, 1, num_contacts), modified by masking
+"contact_thicknesses" — contact thicknesses (num_envs, 1, num_contacts), modified by masking
+"contact_points_0" — contact points for body 0 (num_envs, 1, num_contacts * 3), modified by masking
+"contact_points_1" — contact points for body 1 (num_envs, 1, num_contacts * 3), modified by coordinate frame conversion and masking
+"contact_masks" — contact masks (num_envs, 1, num_contacts)
+"states_embedding" — embedded states (num_envs, 1, state_embedding_dim), added during processing
+Created at lines 210-221, then processed by _process_inputs() (line 224), which modifies several keys and adds "states_embedding" before being passed to self.model.evaluate() at line 228.

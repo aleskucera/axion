@@ -144,3 +144,7 @@ class XPBDEngineConfig(EngineConfig):
     rigid_contact_con_weighting: bool = True
     angular_damping: float = 0.0
     enable_restitution: bool = False
+
+@dataclass(frozen=True)
+class NerdEngineConfig(EngineConfig):
+    pass

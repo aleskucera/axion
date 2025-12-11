@@ -10,6 +10,7 @@ from .core import MuJoCoEngineConfig
 from .core import RenderingConfig
 from .core import SimulationConfig
 from .core import XPBDEngineConfig
+from .core import NerdEngineConfig
 from .logging import HDF5Logger
 from .logging import HDF5Reader
 from .logging import NullLogger

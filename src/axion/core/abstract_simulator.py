@@ -15,11 +15,13 @@ from tqdm import tqdm
 
 from .control_utils import JointMode
 from .engine import AxionEngine
+from .nerd_engine import NerdEngine
 from .engine_config import AxionEngineConfig
 from .engine_config import EngineConfig
 from .engine_config import FeatherstoneEngineConfig
 from .engine_config import MuJoCoEngineConfig
 from .engine_config import XPBDEngineConfig
+from .engine_config import NerdEngineConfig
 from .engine_logger import EngineLogger
 from .engine_logger import LoggingConfig
 from .model_builder import AxionModelBuilder
@@ -139,6 +141,8 @@ class AbstractSimulator(ABC):
             self.solver = SolverMuJoCo(self.model, **vars(self.engine_config))
         elif isinstance(self.engine_config, XPBDEngineConfig):
             self.solver = SolverXPBD(self.model, **vars(self.engine_config))
+        elif isinstance(self.engine_config, NerdEngineConfig):
+            self.solver = NerdEngine(self.model, self.logger, self.engine_config)
         else:
             raise ValueError(f"Unsupported engine configuration type: {type(self.engine_config)}")
         newton.eval_fk(self.model, self.model.joint_q, self.model.joint_qd, self.current_state)

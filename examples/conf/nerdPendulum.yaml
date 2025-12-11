@@ -1,0 +1,10 @@
+defaults:
+  - simulation: base
+  - rendering: gl
+  - execution: no_graph
+  - logging: disabled
+  - engine: nerd 
+  - _self_
+
+# Use the recommended hybrid approach for project names
+project_name: ${hydra:job.name}

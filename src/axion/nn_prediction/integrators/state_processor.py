@@ -230,6 +230,7 @@ def convert_coordinate_frame(
     Returns:
         states_body, next_states_body, contact_points_1_body, contact_normals_body, gravity_dir_body
     """
+    print("states.shape", states.shape)
     assert len(states.shape) == 3
 
     if states_frame == 'world':
