@@ -46,40 +46,68 @@ class Simulator(AbstractSimulator):
         hy = 0.1
         hz = 0.1
 
-        link_0 = self.builder.add_body()
+        # create first link
+        link_0 = self.builder.add_link()
         self.builder.add_shape_box(link_0, hx=hx, hy=hy, hz=hz)
 
-        link_1 = self.builder.add_body()
+        link_1 = self.builder.add_link()
         self.builder.add_shape_box(link_1, hx=hx, hy=hy, hz=hz)
 
+        # add joints
         rot = wp.quat_from_axis_angle(wp.vec3(0.0, 0.0, 1.0), -wp.pi * 0.5)
-        self.builder.add_joint_revolute(
+        j0 = self.builder.add_joint_revolute(
             parent=-1,
             child=link_0,
             axis=wp.vec3(0.0, 1.0, 0.0),
+            # rotate pendulum around the z-axis to appear sideways to the viewer
             parent_xform=wp.transform(p=wp.vec3(0.0, 0.0, 5.0), q=rot),
             child_xform=wp.transform(p=wp.vec3(-hx, 0.0, 0.0), q=wp.quat_identity()),
-            target_ke=1000.0,
-            target_kd=50.0,
-            custom_attributes={
-                "joint_target_ki": [0.5],
-                "joint_dof_mode": [JointMode.TARGET_VELOCITY],
-            },
         )
-        self.builder.add_joint_revolute(
+        j1 = self.builder.add_joint_revolute(
             parent=link_0,
             child=link_1,
             axis=wp.vec3(0.0, 1.0, 0.0),
             parent_xform=wp.transform(p=wp.vec3(hx, 0.0, 0.0), q=wp.quat_identity()),
             child_xform=wp.transform(p=wp.vec3(-hx, 0.0, 0.0), q=wp.quat_identity()),
-            target_ke=500.0,
-            target_kd=5.0,
-            armature=0.1,
-            custom_attributes={
-                "joint_target_ki": [0.5],
-                "joint_dof_mode": [JointMode.TARGET_VELOCITY],
-            },
         )
+
+        # Create articulation from joints
+        self.builder.add_articulation([j0, j1], key="pendulum")
+
+        # link_0 = self.builder.add_body()
+        # self.builder.add_shape_box(link_0, hx=hx, hy=hy, hz=hz)
+        #
+        # link_1 = self.builder.add_body()
+        # self.builder.add_shape_box(link_1, hx=hx, hy=hy, hz=hz)
+        #
+        # rot = wp.quat_from_axis_angle(wp.vec3(0.0, 0.0, 1.0), -wp.pi * 0.5)
+        # self.builder.add_joint_revolute(
+        #     parent=-1,
+        #     child=link_0,
+        #     axis=wp.vec3(0.0, 1.0, 0.0),
+        #     parent_xform=wp.transform(p=wp.vec3(0.0, 0.0, 5.0), q=rot),
+        #     child_xform=wp.transform(p=wp.vec3(-hx, 0.0, 0.0), q=wp.quat_identity()),
+        #     target_ke=1000.0,
+        #     target_kd=50.0,
+        #     custom_attributes={
+        #         "joint_target_ki": [0.5],
+        #         "joint_dof_mode": [JointMode.TARGET_VELOCITY],
+        #     },
+        # )
+        # self.builder.add_joint_revolute(
+        #     parent=link_0,
+        #     child=link_1,
+        #     axis=wp.vec3(0.0, 1.0, 0.0),
+        #     parent_xform=wp.transform(p=wp.vec3(hx, 0.0, 0.0), q=wp.quat_identity()),
+        #     child_xform=wp.transform(p=wp.vec3(-hx, 0.0, 0.0), q=wp.quat_identity()),
+        #     target_ke=500.0,
+        #     target_kd=5.0,
+        #     armature=0.1,
+        #     custom_attributes={
+        #         "joint_target_ki": [0.5],
+        #         "joint_dof_mode": [JointMode.TARGET_VELOCITY],
+        #     },
+        # )
 
         self.builder.add_ground_plane()
 

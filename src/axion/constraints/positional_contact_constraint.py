@@ -81,7 +81,7 @@ def contact_constraint_kernel(
     h_n[world_idx, contact_idx] = phi_n / dt
 
     # 3. Update `C_n` (Compliance block)
-    C_n_values[world_idx, contact_idx] = compliance / wp.pow(dt, 2.0)
+    C_n_values[world_idx, contact_idx] = dphi_dlambda_n / wp.pow(dt, 2.0)
 
     # 4. Update `J_hat_n`
     J_hat_n_values[world_idx, contact_idx, 0] = J_hat_n_1

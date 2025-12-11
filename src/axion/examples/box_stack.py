@@ -103,9 +103,9 @@ class Simulator(AbstractSimulator):
                 thickness=0.0,
             ),
         )
-        self.builder.add_joint_free(parent=-1, child=box1)
-        self.builder.add_joint_free(parent=-1, child=box2)
-        self.builder.add_joint_free(parent=-1, child=box3)
+        # self.builder.add_joint_free(parent=-1, child=box1)
+        # self.builder.add_joint_free(parent=-1, child=box2)
+        # self.builder.add_joint_free(parent=-1, child=box3)
 
         self.builder.add_ground_plane(
             cfg=newton.ModelBuilder.ShapeConfig(
