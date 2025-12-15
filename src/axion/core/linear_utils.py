@@ -1,8 +1,10 @@
 import warp as wp
-from axion.constraints import contact_constraint_kernel
 from axion.constraints import friction_constraint_kernel
-from axion.constraints import joint_constraint_kernel
+from axion.constraints import positional_contact_constraint_kernel
+from axion.constraints import positional_joint_constraint_kernel
 from axion.constraints import unconstrained_dynamics_kernel
+from axion.constraints import velocity_contact_constraint_kernel
+from axion.constraints import velocity_joint_constraint_kernel
 from axion.types import SpatialInertia
 from axion.types import to_spatial_momentum
 
@@ -115,50 +117,105 @@ def compute_linear_system(
         device=device,
     )
 
-    wp.launch(
-        kernel=joint_constraint_kernel,
-        dim=(dims.N_w, dims.N_j),
-        inputs=[
-            data.body_u,
-            data.body_lambda.j,
-            data.joint_constraint_data,
-            dt,
-            config.joint_stabilization_factor,
-            config.joint_compliance,
-        ],
-        outputs=[
-            data.h.d_spatial,
-            data.h.c.j,
-            data.J_values.j,
-            data.C_values.j,
-        ],
-        device=device,
-    )
+    if config.joint_constraint_level == "pos":
+        wp.launch(
+            kernel=positional_joint_constraint_kernel,
+            dim=(dims.N_w, dims.N_j),
+            inputs=[
+                data.body_u,
+                data.body_lambda.j,
+                data.joint_constraint_data,
+                dt,
+                config.joint_stabilization_factor,
+                config.joint_compliance,
+            ],
+            outputs=[
+                data.h.d_spatial,
+                data.h.c.j,
+                data.J_values.j,
+                data.C_values.j,
+            ],
+            device=device,
+        )
+    elif config.joint_constraint_level == "vel":
+        wp.launch(
+            kernel=velocity_joint_constraint_kernel,
+            dim=(dims.N_w, dims.N_j),
+            inputs=[
+                data.body_u,
+                data.body_lambda.j,
+                data.joint_constraint_data,
+                dt,
+                config.joint_stabilization_factor,
+                config.joint_compliance,
+            ],
+            outputs=[
+                data.h.d_spatial,
+                data.h.c.j,
+                data.J_values.j,
+                data.C_values.j,
+            ],
+            device=device,
+        )
+    else:
+        raise ValueError(
+            f"Joint constraint level can be only 'pos' or 'vel' ({config.joint_constraint_level})."
+        )
 
-    wp.launch(
-        kernel=contact_constraint_kernel,
-        dim=(dims.N_w, dims.N_n),
-        inputs=[
-            data.body_u,
-            data.body_u_prev,
-            data.body_lambda.n,
-            data.contact_interaction,
-            data.world_M_inv,
-            dt,
-            config.contact_stabilization_factor,
-            config.contact_fb_alpha,
-            config.contact_fb_beta,
-            config.contact_compliance,
-        ],
-        outputs=[
-            data.h.d_spatial,
-            data.h.c.n,
-            data.J_values.n,
-            data.C_values.n,
-            data.s_n,
-        ],
-        device=device,
-    )
+    if config.contact_constraint_level == "pos":
+        wp.launch(
+            kernel=positional_contact_constraint_kernel,
+            dim=(dims.N_w, dims.N_n),
+            inputs=[
+                data.body_u,
+                data.body_u_prev,
+                data.body_lambda.n,
+                data.contact_interaction,
+                data.world_M_inv,
+                dt,
+                config.contact_stabilization_factor,
+                config.contact_fb_alpha,
+                config.contact_fb_beta,
+                config.contact_compliance,
+            ],
+            outputs=[
+                data.h.d_spatial,
+                data.h.c.n,
+                data.J_values.n,
+                data.C_values.n,
+                data.s_n,
+            ],
+            device=device,
+        )
+    elif config.contact_constraint_level == "vel":
+        wp.launch(
+            kernel=velocity_contact_constraint_kernel,
+            dim=(dims.N_w, dims.N_n),
+            inputs=[
+                data.body_u,
+                data.body_u_prev,
+                data.body_lambda.n,
+                data.contact_interaction,
+                data.world_M_inv,
+                dt,
+                config.contact_stabilization_factor,
+                config.contact_fb_alpha,
+                config.contact_fb_beta,
+                config.contact_compliance,
+            ],
+            outputs=[
+                data.h.d_spatial,
+                data.h.c.n,
+                data.J_values.n,
+                data.C_values.n,
+                data.s_n,
+            ],
+            device=device,
+        )
+    else:
+        raise ValueError(
+            f"Contact constraint level can be only 'pos' or 'vel' ({config.contact_constraint_level})."
+        )
 
     wp.launch(
         kernel=friction_constraint_kernel,

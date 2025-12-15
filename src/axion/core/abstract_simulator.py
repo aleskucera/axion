@@ -139,8 +139,7 @@ class AbstractSimulator(ABC):
             self.solver = SolverXPBD(self.model, **vars(self.engine_config))
         else:
             raise ValueError(f"Unsupported engine configuration type: {type(self.engine_config)}")
-
-        newton.eval_fk(self.model, self.model.joint_q, self.model.joint_qd, self.current_state)
+        # newton.eval_fk(self.model, self.model.joint_q, self.model.joint_qd, self.current_state)
 
         if self.rendering_config.vis_type == "usd":
             self.viewer = newton.viewer.ViewerUSD(

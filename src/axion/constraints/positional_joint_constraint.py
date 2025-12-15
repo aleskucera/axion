@@ -3,7 +3,7 @@ from axion.types import JointConstraintData
 
 
 @wp.kernel
-def joint_constraint_kernel(
+def positional_joint_constraint_kernel(
     # --- Iterative Inputs ---
     body_u: wp.array(dtype=wp.spatial_vector, ndim=2),
     body_lambda_j: wp.array(dtype=wp.float32, ndim=2),
@@ -46,7 +46,7 @@ def joint_constraint_kernel(
 
 
 @wp.kernel
-def batch_joint_residual_kernel(
+def batch_positional_joint_residual_kernel(
     # --- Iterative Inputs ---
     body_u: wp.array(dtype=wp.spatial_vector, ndim=3),
     body_lambda_j: wp.array(dtype=wp.float32, ndim=3),

@@ -38,7 +38,7 @@ class Simulator(AbstractSimulator):
         )
 
     def build_model(self) -> newton.Model:
-        FRICTION = 0.8
+        FRICTION = 0.0
         RESTITUTION = 0.2
 
         surface_m = openmesh.read_trimesh(f"{ASSETS_DIR}/surface.obj")
@@ -50,10 +50,10 @@ class Simulator(AbstractSimulator):
         mesh_points = np.array(surface_m.points()) * scale + np.array([0.0, 0.0, 0.01])
 
         surface_mesh = newton.Mesh(mesh_points, mesh_indices)
-        self.builder.add_articulation(key="surface")
+        # self.builder.add_articulation(key="surface")
 
         ball1 = self.builder.add_body(
-            xform=wp.transform((0.0, 0.0, 2.0), wp.quat_identity()), key="ball1"
+            xform=wp.transform((0.0, 0.0, 10.0), wp.quat_identity()), key="ball1"
         )
 
         self.builder.add_shape_sphere(
@@ -70,8 +70,6 @@ class Simulator(AbstractSimulator):
             ),
         )
 
-        self.builder.add_joint_free(parent=-1, child=ball1)
-
         self.builder.add_ground_plane(
             cfg=newton.ModelBuilder.ShapeConfig(
                 ke=10.0,
@@ -87,6 +85,8 @@ class Simulator(AbstractSimulator):
             cfg=newton.ModelBuilder.ShapeConfig(
                 density=0.0,
                 has_shape_collision=True,
+                mu=FRICTION,
+                restitution=0.0,
             ),
         )
 

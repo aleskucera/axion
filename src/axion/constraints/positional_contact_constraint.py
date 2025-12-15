@@ -7,7 +7,7 @@ from .utils import scaled_fisher_burmeister
 
 
 @wp.kernel
-def contact_constraint_kernel(
+def positional_contact_constraint_kernel(
     # --- Body State Inputs ---
     body_u: wp.array(dtype=wp.spatial_vector, ndim=2),
     body_u_prev: wp.array(dtype=wp.spatial_vector, ndim=2),
@@ -92,7 +92,7 @@ def contact_constraint_kernel(
 
 
 @wp.kernel
-def batch_contact_residual_kernel(
+def batch_positional_contact_residual_kernel(
     # --- Body State Inputs ---
     body_u: wp.array(dtype=wp.spatial_vector, ndim=3),
     body_u_prev: wp.array(dtype=wp.spatial_vector, ndim=2),

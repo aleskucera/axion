@@ -43,7 +43,7 @@ def compute_target_v_n(
 
 
 @wp.kernel
-def contact_constraint_kernel(
+def velocity_contact_constraint_kernel(
     # --- Body State Inputs ---
     body_u: wp.array(dtype=wp.spatial_vector, ndim=2),
     body_u_prev: wp.array(dtype=wp.spatial_vector, ndim=2),
@@ -70,7 +70,7 @@ def contact_constraint_kernel(
     lambda_n = body_lambda_n[world_idx, contact_idx]
 
     # Early exit for inactive contacts.
-    if not interaction.is_active:
+    if interaction.penetration_depth <= 0:
         # The constraint residual is simply the impulse (h = λ),
         # which drives it to zero if unconstrained.
         h_n[world_idx, contact_idx] = 0.0
@@ -114,7 +114,7 @@ def contact_constraint_kernel(
         target_v_n,
         lambda_n,
         fb_alpha,
-        dt * fb_beta,
+        1e-5 * dt * fb_beta,
     )
 
     J_hat_n_1 = dphi_dtarget_v_n * J_n_1
@@ -131,7 +131,7 @@ def contact_constraint_kernel(
     h_n[world_idx, contact_idx] = phi_n
 
     # 3. Update `C_n` (Compliance block)
-    C_n_values[world_idx, contact_idx] = dphi_dlambda_n / dt
+    C_n_values[world_idx, contact_idx] = dphi_dlambda_n / 1000000.0
 
     # 4. Update `J_hat_n`
     J_hat_n_values[world_idx, contact_idx, 0] = J_hat_n_1
@@ -142,7 +142,7 @@ def contact_constraint_kernel(
 
 
 @wp.kernel
-def batch_contact_residual_kernel(
+def batch_velocity_contact_residual_kernel(
     # --- Body State Inputs ---
     body_u: wp.array(dtype=wp.spatial_vector, ndim=3),
     body_u_prev: wp.array(dtype=wp.spatial_vector, ndim=2),
@@ -166,7 +166,7 @@ def batch_contact_residual_kernel(
     lambda_n = body_lambda_n[batch_idx, world_idx, contact_idx]
 
     # Early exit for inactive contacts.
-    if not interaction.is_active:
+    if interaction.penetration_depth <= 0:
         h_n[batch_idx, world_idx, contact_idx] = 0.0
         return
 
@@ -214,9 +214,9 @@ def batch_contact_residual_kernel(
     # --- Update global system components ---
     # 1. Update `h_d`
     if body_1 >= 0:
-        wp.atomic_add(h_d, batch_idx, world_idx, body_1, -J_hat_n_1 * lambda_n * dt)
+        wp.atomic_add(h_d, batch_idx, world_idx, body_1, -dt * J_hat_n_1 * lambda_n)
     if body_2 >= 0:
-        wp.atomic_add(h_d, batch_idx, world_idx, body_2, -J_hat_n_2 * lambda_n * dt)
+        wp.atomic_add(h_d, batch_idx, world_idx, body_2, -dt * J_hat_n_2 * lambda_n)
 
     # 2. Update `h_n`
-    h_n[batch_idx, world_idx, contact_idx] = phi_n / dt
+    h_n[batch_idx, world_idx, contact_idx] = phi_n

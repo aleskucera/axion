@@ -35,12 +35,13 @@ class Simulator(AbstractSimulator):
         )
 
     def build_model(self) -> newton.Model:
-        FRICTION = 0.8
+        FRICTION = 1.0
         RESTITUTION = 0.0
 
         ball1 = self.builder.add_body(
             xform=wp.transform((0.0, 0.0, 2.0), wp.quat_identity()), key="ball1"
         )
+        initial_velocity = wp.spatial_vector(0.0, 2.0, 0.0, 0.0, 0.0, 0.0)
 
         self.builder.add_shape_sphere(
             body=ball1,
@@ -57,8 +58,6 @@ class Simulator(AbstractSimulator):
             ),
         )
 
-        # self.builder.add_joint_free(parent=-1, child=ball1)
-
         self.builder.add_ground_plane(
             cfg=newton.ModelBuilder.ShapeConfig(
                 ke=6000.0,
@@ -69,6 +68,7 @@ class Simulator(AbstractSimulator):
             )
         )
 
+        self.builder.body_qd[0] = initial_velocity
         final_builder = newton.ModelBuilder()
         final_builder.replicate(
             self.builder,

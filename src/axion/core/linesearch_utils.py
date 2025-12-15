@@ -1,8 +1,10 @@
 import warp as wp
-from axion.constraints import batch_contact_residual_kernel
 from axion.constraints import batch_friction_residual_kernel
-from axion.constraints import batch_joint_residual_kernel
+from axion.constraints import batch_positional_contact_residual_kernel
+from axion.constraints import batch_positional_joint_residual_kernel
 from axion.constraints import batch_unconstrained_dynamics_kernel
+from axion.constraints import batch_velocity_contact_residual_kernel
+from axion.constraints import batch_velocity_joint_residual_kernel
 
 from .batched_model import BatchedModel
 from .engine_config import EngineConfig
@@ -270,46 +272,93 @@ def compute_linesearch_batch_h(
     )
 
     # Evaluate residual for joint constraints
-    wp.launch(
-        kernel=batch_joint_residual_kernel,
-        dim=(B, dims.N_j),
-        inputs=[
-            data.linesearch_batch_body_u,
-            data.linesearch_batch_body_lambda.j,
-            data.joint_constraint_data,
-            data.dt,
-            config.joint_stabilization_factor,
-            config.joint_compliance,
-        ],
-        outputs=[
-            data.linesearch_batch_h.d_spatial,
-            data.linesearch_batch_h.c.j,
-        ],
-        device=device,
-    )
+    if config.joint_constraint_level == "pos":
+        wp.launch(
+            kernel=batch_positional_joint_residual_kernel,
+            dim=(B, dims.N_j),
+            inputs=[
+                data.linesearch_batch_body_u,
+                data.linesearch_batch_body_lambda.j,
+                data.joint_constraint_data,
+                data.dt,
+                config.joint_stabilization_factor,
+                config.joint_compliance,
+            ],
+            outputs=[
+                data.linesearch_batch_h.d_spatial,
+                data.linesearch_batch_h.c.j,
+            ],
+            device=device,
+        )
+    elif config.joint_constraint_level == "vel":
+        wp.launch(
+            kernel=batch_velocity_joint_residual_kernel,
+            dim=(B, dims.N_j),
+            inputs=[
+                data.linesearch_batch_body_u,
+                data.linesearch_batch_body_lambda.j,
+                data.joint_constraint_data,
+                data.dt,
+                config.joint_stabilization_factor,
+                config.joint_compliance,
+            ],
+            outputs=[
+                data.linesearch_batch_h.d_spatial,
+                data.linesearch_batch_h.c.j,
+            ],
+            device=device,
+        )
+    else:
+        raise ValueError("Joint constraint level can be only 'pos' or 'vel'.")
 
     # Evaluate residual for normal contact constraints
-    wp.launch(
-        kernel=batch_contact_residual_kernel,
-        dim=(B, dims.N_n),
-        inputs=[
-            data.linesearch_batch_body_u,
-            data.body_u_prev,
-            data.linesearch_batch_body_lambda.n,
-            data.contact_interaction,
-            data.body_M_inv,
-            data.dt,
-            config.contact_stabilization_factor,
-            config.contact_fb_alpha,
-            config.contact_fb_beta,
-            config.contact_compliance,
-        ],
-        outputs=[
-            data.linesearch_batch_h.d_spatial,
-            data.linesearch_batch_h.c.n,
-        ],
-        device=device,
-    )
+    if config.contact_constraint_level == "pos":
+        wp.launch(
+            kernel=batch_positional_contact_residual_kernel,
+            dim=(B, dims.N_n),
+            inputs=[
+                data.linesearch_batch_body_u,
+                data.body_u_prev,
+                data.linesearch_batch_body_lambda.n,
+                data.contact_interaction,
+                data.body_M_inv,
+                data.dt,
+                config.contact_stabilization_factor,
+                config.contact_fb_alpha,
+                config.contact_fb_beta,
+                config.contact_compliance,
+            ],
+            outputs=[
+                data.linesearch_batch_h.d_spatial,
+                data.linesearch_batch_h.c.n,
+            ],
+            device=device,
+        )
+    elif config.contact_constraint_level == "vel":
+        wp.launch(
+            kernel=batch_velocity_contact_residual_kernel,
+            dim=(B, dims.N_n),
+            inputs=[
+                data.linesearch_batch_body_u,
+                data.body_u_prev,
+                data.linesearch_batch_body_lambda.n,
+                data.contact_interaction,
+                data.body_M_inv,
+                data.dt,
+                config.contact_stabilization_factor,
+                config.contact_fb_alpha,
+                config.contact_fb_beta,
+                config.contact_compliance,
+            ],
+            outputs=[
+                data.linesearch_batch_h.d_spatial,
+                data.linesearch_batch_h.c.n,
+            ],
+            device=device,
+        )
+    else:
+        raise ValueError("Contact constraint level can be only 'pos' or 'vel'.")
+
     # Evaluate residual for friction constraints
     wp.launch(
         kernel=batch_friction_residual_kernel,

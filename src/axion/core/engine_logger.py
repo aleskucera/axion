@@ -302,6 +302,24 @@ class EngineLogger:
         # Norms for entire history: (Steps, Worlds)
         trajectory_residual_norms = torch.norm(residuals_all, dim=2)
 
+        # ---- START: THRESHOLD RESIDUAL PRINT ----
+        # Select the last step (iteration) for all worlds. Shape: (Worlds,)
+        last_step_norms = trajectory_residual_norms[-1, :]
+
+        # Compute the global maximum norm across all worlds in the last step
+        max_residual = torch.max(last_step_norms)
+
+        # Define your threshold (adjust this value as needed)
+        threshold = 1e-1
+
+        # Check and print if the maximum exceeds the threshold
+        if max_residual > threshold:
+            # .item() converts the 0-dim tensor to a standard Python float
+            print(
+                f"Warning: Max residual norm ({max_residual.item():.6f}) exceeds limit ({threshold}) in timestep {engine._timestep}"
+            )
+        # ---- END: THRESHOLD RESIDUAL PRINT ----
+
         # 3. Perform PCA (Batched over Worlds)
         # v1, v2: (Worlds, Dofs) | S: (Worlds, 2)
         v1, v2, S = perform_pca(trajectory_all)
@@ -333,43 +351,23 @@ class EngineLogger:
             x_center, v1, v2, S, grid_res, plot_scale, N_u
         )
 
-        # # 6. Populate Warp Arrays (Flattened for memory transfer)
-        # # Use float view for spatial_vector array `pca_batch_body_u`
-        # total_u_floats = pca_u.numel()
-        # dest_u_view = wp.array(
-        #     ptr=engine.data.pca_batch_body_u.ptr,
-        #     shape=(total_u_floats,),
-        #     dtype=wp.float32,
-        #     device=engine.device,
-        # )
-        # wp.copy(dest=dest_u_view, src=wp.from_torch(pca_u.flatten()))
-        #
-        # total_lambda_floats = pca_lambda.numel()
-        # dest_lambda_view = wp.array(
-        #     ptr=engine.data.pca_batch_body_lambda.ptr,
-        #     shape=(total_lambda_floats,),
-        #     dtype=wp.float32,
-        #     device=engine.device,
-        # )
-        # wp.copy(dest=dest_lambda_view, src=wp.from_torch(pca_lambda.flatten()))
-        #
-        # # 7. Compute Norms (GridSize, N_w)
-        # norm_results = compute_pca_batch_h_norm(
-        #     engine.model, engine.data, engine.config, engine.dims
-        # )
-        #
-        # # Reshape to (GridRes, GridRes, N_w) for easier slicing/plotting later
-        # residual_norm_grid = norm_results.reshape(grid_res, grid_res, n_w)
+        # 6. Compute Norms (GridSize, N_w)
+        norm_results = compute_pca_batch_h_norm(
+            engine.model, engine.data, engine.config, engine.dims
+        )
+
+        # Reshape to (GridRes, GridRes, N_w) for easier slicing/plotting later
+        residual_norm_grid = norm_results.reshape(grid_res, grid_res, n_w)
 
         # 8. Log Data
         with self.hdf5_logger.scope("residual_norm_landscape_data"):
             # # Visualization Grid
-            # self.hdf5_logger.log_np_dataset("residual_norm_grid", residual_norm_grid.cpu().numpy())
-            # self.hdf5_logger.log_np_dataset("pca_alphas", alphas.cpu().numpy())
-            # self.hdf5_logger.log_np_dataset("pca_betas", betas.cpu().numpy())
-            #
-            # # Projected trajectory
-            # self.hdf5_logger.log_np_dataset("trajectory_2d_projected", trajectory_2d.cpu().numpy())
+            self.hdf5_logger.log_np_dataset("residual_norm_grid", residual_norm_grid.cpu().numpy())
+            self.hdf5_logger.log_np_dataset("pca_alphas", alphas.cpu().numpy())
+            self.hdf5_logger.log_np_dataset("pca_betas", betas.cpu().numpy())
+
+            # Projected trajectory
+            self.hdf5_logger.log_np_dataset("trajectory_2d_projected", trajectory_2d.cpu().numpy())
 
             # PCA Components
             self.hdf5_logger.log_np_dataset("pca_v1", v1.cpu().numpy())
@@ -390,8 +388,8 @@ class EngineLogger:
             )
 
             # # Metadata
-            # metadata = np.array([grid_res, plot_scale, steps, n_w])  # Log number of worlds
-            # self.hdf5_logger.log_np_dataset("pca_metadata", metadata)
+            metadata = np.array([grid_res, plot_scale, steps, n_w])  # Log number of worlds
+            self.hdf5_logger.log_np_dataset("pca_metadata", metadata)
 
     def timestep_start(self, timestep: int, current_time: float):
         """Start logging for a timestep and log the current time."""

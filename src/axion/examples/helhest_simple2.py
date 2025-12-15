@@ -79,10 +79,9 @@ class Simulator(AbstractSimulator):
         KD = 30000.0
         KF = 500.0
 
-        robot_x = -0.3
-
+        robot_x = 0.4
         robot_y = 0.0
-        robot_z = 1.0
+        robot_z = 2.0
 
         wheel_m = openmesh.read_trimesh(f"{ASSETS_DIR}/helhest/wheel2.obj")
         mesh_points = np.array(wheel_m.points())
@@ -103,6 +102,9 @@ class Simulator(AbstractSimulator):
                 density=CHASSIS_DENSITY,
                 mu=FRICTION,
                 restitution=RESTITUTION,
+                thickness=0.0,
+                contact_margin=0.1,
+                collision_group=0.0,
                 ke=KE,
                 kd=KD,
                 kf=KF,
@@ -114,27 +116,19 @@ class Simulator(AbstractSimulator):
             xform=wp.transform((robot_x, robot_y - 0.75, robot_z), wp.quat_identity()),
             key="left_wheel",
         )
-        self.builder.add_shape_mesh(
-            body=left_wheel,
-            mesh=wheel_mesh_render,
-            cfg=newton.ModelBuilder.ShapeConfig(
-                density=0.0,
-                collision_group=0,  # No collisions
-            ),
-        )
-        self.builder.add_shape_capsule(
+        self.builder.add_shape_sphere(
             body=left_wheel,
             xform=wp.transform(
                 (0.0, 0.0, 0.0), wp.quat_from_axis_angle(wp.vec3(1.0, 0.0, 0.0), wp.pi / 2)
             ),
             radius=0.45,
-            half_height=0.1,
             cfg=newton.ModelBuilder.ShapeConfig(
                 density=WHEEL_DENSITY,
                 mu=FRICTION,
                 restitution=RESTITUTION,
                 thickness=0.0,
-                is_visible=False,
+                contact_margin=0.6,
+                is_visible=True,
                 ke=KE,
                 kd=KD,
                 kf=KF,
@@ -146,27 +140,19 @@ class Simulator(AbstractSimulator):
             xform=wp.transform((robot_x, robot_y + 0.75, robot_z), wp.quat_identity()),
             key="right_wheel",
         )
-        self.builder.add_shape_mesh(
-            body=right_wheel,
-            mesh=wheel_mesh_render,
-            cfg=newton.ModelBuilder.ShapeConfig(
-                density=0.0,
-                collision_group=0,  # No collisions
-            ),
-        )
-        self.builder.add_shape_capsule(
+        self.builder.add_shape_sphere(
             body=right_wheel,
             xform=wp.transform(
                 (0.0, 0.0, 0.0), wp.quat_from_axis_angle(wp.vec3(1.0, 0.0, 0.0), wp.pi / 2)
             ),
             radius=0.45,
-            half_height=0.1,
             cfg=newton.ModelBuilder.ShapeConfig(
                 density=WHEEL_DENSITY,
                 mu=FRICTION,
                 restitution=RESTITUTION,
                 thickness=0.0,
-                is_visible=False,
+                contact_margin=0.6,
+                is_visible=True,
                 ke=KE,
                 kd=KD,
                 kf=KF,
@@ -178,28 +164,19 @@ class Simulator(AbstractSimulator):
             xform=wp.transform((robot_x - 1.25, robot_y, robot_z), wp.quat_identity()),
             key="back_wheel",
         )
-        self.builder.add_shape_mesh(
-            body=back_wheel,
-            mesh=wheel_mesh_render,
-            cfg=newton.ModelBuilder.ShapeConfig(
-                density=0.0,
-                # has_shape_collision=False,
-                collision_group=0,  # No collisions
-            ),
-        )
-        self.builder.add_shape_capsule(
+        self.builder.add_shape_sphere(
             body=back_wheel,
             xform=wp.transform(
                 (0.0, 0.0, 0.0), wp.quat_from_axis_angle(wp.vec3(1.0, 0.0, 0.0), wp.pi / 2)
             ),
             radius=0.45,
-            half_height=0.1,
             cfg=newton.ModelBuilder.ShapeConfig(
                 density=WHEEL_DENSITY,
                 mu=FRICTION,
                 restitution=RESTITUTION,
                 thickness=0.0,
-                is_visible=False,
+                contact_margin=0.6,
+                is_visible=True,
                 ke=KE,
                 kd=KD,
                 kf=KF,
@@ -250,7 +227,7 @@ class Simulator(AbstractSimulator):
         # Add a static box obstacle (body=-1 means it's fixed to the world)
         self.builder.add_shape_box(
             body=-1,
-            xform=wp.transform((1.5, 0.0, 0.0), wp.quat_identity()),
+            xform=wp.transform((2.5, 0.0, 0.0), wp.quat_identity()),
             hx=1.75,
             hy=1.5,
             hz=0.15,
@@ -261,7 +238,7 @@ class Simulator(AbstractSimulator):
         )
         self.builder.add_shape_box(
             body=-1,
-            xform=wp.transform((1.5, 0.0, 0.0), wp.quat_identity()),
+            xform=wp.transform((2.5, 0.0, 0.0), wp.quat_identity()),
             hx=0.75,
             hy=1.75,
             hz=0.25,
@@ -278,8 +255,8 @@ class Simulator(AbstractSimulator):
             )
         )
 
-        final_builder = newton.ModelBuilder()
-        final_builder.rigid_contact_margin = 0.1
+        final_builder = newton.ModelBuilder(gravity=0.0)
+        final_builder.rigid_contact_margin = 0.0
         final_builder.replicate(
             self.builder,
             num_worlds=self.simulation_config.num_worlds,

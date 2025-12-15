@@ -35,8 +35,8 @@ class Simulator(AbstractSimulator):
         )
 
     def build_model(self) -> newton.Model:
-        FRICTION = 0.7
-        RESTITUTION = 0.5
+        FRICTION = 0.0
+        RESTITUTION = 0.0
         DENSITY = 1000.0
         KE = 200.0
         KD = 50.0
@@ -132,12 +132,6 @@ class Simulator(AbstractSimulator):
                 thickness=0.0,
             ),
         )
-
-        self.builder.add_joint_free(parent=-1, child=ball1)
-        self.builder.add_joint_free(parent=-1, child=ball2)
-        self.builder.add_joint_free(parent=-1, child=ball3)
-        self.builder.add_joint_free(parent=-1, child=ball4)
-        self.builder.add_joint_free(parent=-1, child=box1)
 
         self.builder.add_ground_plane(
             cfg=newton.ModelBuilder.ShapeConfig(

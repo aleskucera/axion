@@ -3,7 +3,7 @@ from axion.types import JointConstraintData
 
 
 @wp.kernel
-def joint_constraint_kernel(
+def velocity_joint_constraint_kernel(
     # --- Iterative Inputs ---
     body_u: wp.array(dtype=wp.spatial_vector, ndim=2),
     body_lambda_j: wp.array(dtype=wp.float32, ndim=2),
@@ -41,11 +41,10 @@ def joint_constraint_kernel(
     J_hat_parent = c.J_parent if c.parent_idx >= 0 else wp.spatial_vector()
 
     if c.parent_idx >= 0:
-        wp.atomic_add(h_d, world_idx, c.parent_idx, -J_hat_parent * lambda_j)
-    wp.atomic_add(h_d, world_idx, c.child_idx, -J_hat_child * lambda_j)
+        wp.atomic_add(h_d, world_idx, c.parent_idx, -dt * J_hat_parent * lambda_j)
+    wp.atomic_add(h_d, world_idx, c.child_idx, -dt * J_hat_child * lambda_j)
 
-    h_j[world_idx, constraint_idx] = v_j + upsilon / dt * c.value + compliance * lambda_j
-    # h_j[world_idx, constraint_idx] = 10.0 * c.value + compliance * lambda_j
+    h_j[world_idx, constraint_idx] = v_j + upsilon / dt * c.value + dt * compliance * lambda_j
 
     J_hat_j_values[world_idx, constraint_idx, 0] = J_hat_parent
     J_hat_j_values[world_idx, constraint_idx, 1] = J_hat_child
@@ -54,7 +53,7 @@ def joint_constraint_kernel(
 
 
 @wp.kernel
-def batch_joint_residual_kernel(
+def batch_velocity_joint_residual_kernel(
     # --- Iterative Inputs ---
     body_u: wp.array(dtype=wp.spatial_vector, ndim=3),
     body_lambda_j: wp.array(dtype=wp.float32, ndim=3),
@@ -87,7 +86,9 @@ def batch_joint_residual_kernel(
     J_hat_parent = c.J_parent if c.parent_idx >= 0 else wp.spatial_vector()
 
     if c.parent_idx >= 0:
-        wp.atomic_add(h_d, batch_idx, world_idx, c.parent_idx, -J_hat_parent * lambda_j)
-    wp.atomic_add(h_d, batch_idx, world_idx, c.child_idx, -J_hat_child * lambda_j)
+        wp.atomic_add(h_d, batch_idx, world_idx, c.parent_idx, -dt * J_hat_parent * lambda_j)
+    wp.atomic_add(h_d, batch_idx, world_idx, c.child_idx, -dt * J_hat_child * lambda_j)
 
-    h_j[batch_idx, world_idx, constraint_idx] = v_j + upsilon / dt * c.value + compliance * lambda_j
+    h_j[batch_idx, world_idx, constraint_idx] = (
+        v_j + upsilon / dt * c.value + dt * compliance * lambda_j
+    )

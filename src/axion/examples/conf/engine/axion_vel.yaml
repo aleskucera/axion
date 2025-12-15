@@ -1,19 +1,21 @@
 # @package engine
 _target_: axion.AxionEngineConfig
 newton_iters: 8
-linear_iters: 6
+linear_iters: 10
 enable_linesearch: false
 linesearch_step_count: 256
 linesearch_step_min: 1e-5
 linesearch_step_max: 1e1
 joint_stabilization_factor: 0.01
 contact_stabilization_factor: 0.02
-joint_compliance: 1e-8
-contact_compliance: 1e-6
-friction_compliance: 1e-6
+joint_compliance: 1e-5
+contact_compliance: 0.0
+friction_compliance: 1e-5
 regularization: 1e-6
 contact_fb_alpha: 0.5
-contact_fb_beta: 1.0
+contact_fb_beta: 0.01
 friction_fb_alpha: 1.0
 friction_fb_beta: 1.0
 max_contacts_per_world: 32
+joint_constraint_level: 'vel'
+contact_constraint_level: 'vel'

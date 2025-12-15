@@ -41,6 +41,9 @@ class AxionEngineConfig(EngineConfig):
 
     max_contacts_per_world: int = 20
 
+    joint_constraint_level: str = "pos"  # pos / vel
+    contact_constraint_level: str = "pos"  # pos / vel
+
     def __post_init__(self):
         """Validate all configuration parameters."""
 
@@ -124,7 +127,6 @@ class MuJoCoEngineConfig(EngineConfig):
     save_to_mjcf: str | None = None
     ls_parallel: bool = False
     use_mujoco_contacts: bool = True
-    joint_solimp_limit: tuple[float, float, float, float, float] | None = None
 
 
 @dataclass(frozen=True)

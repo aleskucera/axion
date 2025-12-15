@@ -1,6 +1,5 @@
 import os
 from importlib.resources import files
-from typing import override
 
 import hydra
 import newton
@@ -8,7 +7,6 @@ import warp as wp
 from axion import AbstractSimulator
 from axion import EngineConfig
 from axion import ExecutionConfig
-from axion import JointMode
 from axion import LoggingConfig
 from axion import RenderingConfig
 from axion import SimulationConfig
@@ -36,47 +34,62 @@ class Simulator(AbstractSimulator):
             logging_config,
         )
 
-    @override
-    def control_policy(self, state: newton.State):
-        wp.copy(self.control.joint_f, wp.array([0.0, 800.0], dtype=wp.float32))
-
     def build_model(self) -> newton.Model:
+        # z height to drop shapes from
+        drop_z = 2.0
 
-        hx = 1.0
-        hy = 0.1
-        hz = 0.1
-
-        # create first link
-        link_0 = self.builder.add_link()
-        self.builder.add_shape_box(link_0, hx=hx, hy=hy, hz=hz)
-
-        link_1 = self.builder.add_link()
-        self.builder.add_shape_box(link_1, hx=hx, hy=hy, hz=hz)
-
-        # add joints
-        rot = wp.quat_from_axis_angle(wp.vec3(0.0, 0.0, 1.0), -wp.pi * 0.5)
-        j0 = self.builder.add_joint_revolute(
-            parent=-1,
-            child=link_0,
-            axis=wp.vec3(0.0, 1.0, 0.0),
-            # rotate pendulum around the z-axis to appear sideways to the viewer
-            parent_xform=wp.transform(p=wp.vec3(0.0, 0.0, 5.0), q=rot),
-            child_xform=wp.transform(p=wp.vec3(-hx, 0.0, 0.0), q=wp.quat_identity()),
+        # SPHERE
+        self.sphere_pos = wp.vec3(0.0, -0.9, drop_z)
+        body_sphere = self.builder.add_body(
+            xform=wp.transform(p=self.sphere_pos, q=wp.quat_identity()), key="sphere"
         )
-        j1 = self.builder.add_joint_revolute(
-            parent=link_0,
-            child=link_1,
-            axis=wp.vec3(0.0, 1.0, 0.0),
-            parent_xform=wp.transform(p=wp.vec3(hx, 0.0, 0.0), q=wp.quat_identity()),
-            child_xform=wp.transform(p=wp.vec3(-hx, 0.0, 0.0), q=wp.quat_identity()),
+        self.builder.add_shape_sphere(
+            body_sphere,
+            radius=0.5,
+            cfg=self.builder.ShapeConfig(
+                thickness=0.0,
+                contact_margin=0.7,
+                mu=0.0,
+            ),
         )
 
-        # Create articulation from joints
-        self.builder.add_articulation([j0, j1], key="pendulum")
+        # BOX
+        self.box_pos = wp.vec3(0.0, 0.0, drop_z)
+        body_box = self.builder.add_body(
+            xform=wp.transform(p=self.box_pos, q=wp.quat_identity()), key="box"
+        )
+        self.builder.add_shape_box(
+            body_box,
+            hx=0.5,
+            hy=0.35,
+            hz=0.25,
+            cfg=self.builder.ShapeConfig(
+                thickness=0.0,
+                contact_margin=0.0,
+                mu=0.0,
+                density=1e6,
+            ),
+        )
 
-        self.builder.add_ground_plane()
+        # CAPSULE
+        self.capsule_pos = wp.vec3(0.0, 0.7, drop_z)
+        body_capsule = self.builder.add_body(
+            xform=wp.transform(p=self.capsule_pos, q=wp.quat_identity()), key="capsule"
+        )
+        self.builder.add_shape_capsule(
+            body_capsule,
+            radius=0.3,
+            half_height=0.1,
+            cfg=self.builder.ShapeConfig(
+                thickness=0.0,
+                contact_margin=0.1,
+                mu=0.0,
+            ),
+        )
 
-        final_builder = newton.ModelBuilder()
+        self.builder.rigid_contact_margin = 0.00
+        final_builder = newton.ModelBuilder(gravity=0.0)
+        final_builder.rigid_contact_margin = 0.00
         final_builder.replicate(
             self.builder,
             num_worlds=self.simulation_config.num_worlds,
@@ -87,7 +100,7 @@ class Simulator(AbstractSimulator):
 
 
 @hydra.main(config_path=str(CONFIG_PATH), config_name="config", version_base=None)
-def basic_pendulum_example(cfg: DictConfig):
+def basic_shape_example(cfg: DictConfig):
     sim_config: SimulationConfig = hydra.utils.instantiate(cfg.simulation)
     render_config: RenderingConfig = hydra.utils.instantiate(cfg.rendering)
     exec_config: ExecutionConfig = hydra.utils.instantiate(cfg.execution)
@@ -106,4 +119,4 @@ def basic_pendulum_example(cfg: DictConfig):
 
 
 if __name__ == "__main__":
-    basic_pendulum_example()
+    basic_shape_example()

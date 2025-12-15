@@ -68,10 +68,6 @@ class Simulator(AbstractSimulator):
         )
         self.builder.add_shape_box(body_box, hx=0.5, hy=0.35, hz=0.25, cfg=rigid_cfg)
 
-        self.builder.add_joint_free(parent=-1, child=body_sphere)
-        self.builder.add_joint_free(parent=-1, child=body_capsule)
-        self.builder.add_joint_free(parent=-1, child=body_box)
-
         final_builder = newton.ModelBuilder()
         final_builder.replicate(
             self.builder,

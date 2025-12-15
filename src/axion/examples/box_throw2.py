@@ -1,6 +1,6 @@
+import math  # Imported math for degree-to-radian conversion
 import os
 from importlib.resources import files
-from typing import override
 
 import hydra
 import newton
@@ -8,7 +8,6 @@ import warp as wp
 from axion import AbstractSimulator
 from axion import EngineConfig
 from axion import ExecutionConfig
-from axion import JointMode
 from axion import LoggingConfig
 from axion import RenderingConfig
 from axion import SimulationConfig
@@ -36,45 +35,51 @@ class Simulator(AbstractSimulator):
             logging_config,
         )
 
-    @override
-    def control_policy(self, state: newton.State):
-        wp.copy(self.control.joint_f, wp.array([0.0, 800.0], dtype=wp.float32))
-
     def build_model(self) -> newton.Model:
+        FRICTION = 1.0
+        RESTITUTION = 0.0
 
-        hx = 1.0
-        hy = 0.1
-        hz = 0.1
+        # 1. Define a rotation (45 degrees around the X-axis)
+        # We use a normalized vector (1,0,0) for the axis and radians for the angle.
+        rot_angle = math.radians(0.0)
+        rotation_quat = wp.quat_from_axis_angle(wp.vec3(1.0, 0.0, 0.0), rot_angle)
 
-        # create first link
-        link_0 = self.builder.add_link()
-        self.builder.add_shape_box(link_0, hx=hx, hy=hy, hz=hz)
+        # 2. Define initial velocity (Throwing it along Y axis and slightly Up on Z)
+        initial_velocity = wp.spatial_vector(0.0, 2.0, 0.0, 0.0, 0.0, 0.0)
 
-        link_1 = self.builder.add_link()
-        self.builder.add_shape_box(link_1, hx=hx, hy=hy, hz=hz)
-
-        # add joints
-        rot = wp.quat_from_axis_angle(wp.vec3(0.0, 0.0, 1.0), -wp.pi * 0.5)
-        j0 = self.builder.add_joint_revolute(
-            parent=-1,
-            child=link_0,
-            axis=wp.vec3(0.0, 1.0, 0.0),
-            # rotate pendulum around the z-axis to appear sideways to the viewer
-            parent_xform=wp.transform(p=wp.vec3(0.0, 0.0, 5.0), q=rot),
-            child_xform=wp.transform(p=wp.vec3(-hx, 0.0, 0.0), q=wp.quat_identity()),
-        )
-        j1 = self.builder.add_joint_revolute(
-            parent=link_0,
-            child=link_1,
-            axis=wp.vec3(0.0, 1.0, 0.0),
-            parent_xform=wp.transform(p=wp.vec3(hx, 0.0, 0.0), q=wp.quat_identity()),
-            child_xform=wp.transform(p=wp.vec3(-hx, 0.0, 0.0), q=wp.quat_identity()),
+        # 3. Create the body with the new name, rotation, and velocity
+        box_body = self.builder.add_body(
+            xform=wp.transform((0.0, 0.0, 1.5), rotation_quat), key="box_throw"
         )
 
-        # Create articulation from joints
-        self.builder.add_articulation([j0, j1], key="pendulum")
+        self.builder.add_shape_box(
+            body=box_body,
+            hx=0.5,
+            hy=0.5,
+            hz=0.5,
+            cfg=newton.ModelBuilder.ShapeConfig(
+                density=10.0,
+                ke=6000.0,
+                kd=1000.0,
+                kf=200.0,
+                mu=FRICTION,
+                restitution=RESTITUTION,
+                thickness=0.0,
+                contact_margin=0.1,
+            ),
+        )
 
-        self.builder.add_ground_plane()
+        self.builder.add_ground_plane(
+            cfg=newton.ModelBuilder.ShapeConfig(
+                ke=6000.0,
+                kd=1000.0,
+                kf=200.0,
+                mu=FRICTION,
+                restitution=RESTITUTION,
+            )
+        )
+
+        self.builder.body_qd[0] = initial_velocity
 
         final_builder = newton.ModelBuilder()
         final_builder.replicate(
@@ -83,11 +88,12 @@ class Simulator(AbstractSimulator):
         )
 
         model = final_builder.finalize()
+
         return model
 
 
 @hydra.main(config_path=str(CONFIG_PATH), config_name="config", version_base=None)
-def basic_pendulum_example(cfg: DictConfig):
+def box_throw_example(cfg: DictConfig):
     sim_config: SimulationConfig = hydra.utils.instantiate(cfg.simulation)
     render_config: RenderingConfig = hydra.utils.instantiate(cfg.rendering)
     exec_config: ExecutionConfig = hydra.utils.instantiate(cfg.execution)
@@ -106,4 +112,4 @@ def basic_pendulum_example(cfg: DictConfig):
 
 
 if __name__ == "__main__":
-    basic_pendulum_example()
+    box_throw_example()

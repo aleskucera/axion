@@ -116,6 +116,8 @@ class AxionEngine(SolverBase):
 
         self.data.set_g_accel(model)
 
+        self._timestep = 0
+
     def _apply_control(self, state: State, control: Control):
         newton.eval_ik(self.model, state, state.joint_q, state.joint_qd)
         apply_control(self.model, state, self.data.dt, control)
@@ -329,6 +331,9 @@ class AxionEngine(SolverBase):
 
         self.data.set_dt(dt)
 
+        # if contacts.rigid_contact_count.numpy() > 0:
+        #     print(f"Contact count {contacts.rigid_contact_count} in timestep {self._timestep}.")
+
         # Control block
         with self.logger.timed_block(*step_events["control"]):
             self._apply_control(state_in, control)
@@ -380,3 +385,5 @@ class AxionEngine(SolverBase):
 
         wp.copy(dest=state_out.body_qd, src=self.data.body_u)
         wp.copy(dest=state_out.body_q, src=self.data.body_q)
+
+        self._timestep += 1
