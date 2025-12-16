@@ -387,8 +387,14 @@ class EngineLogger:
                 "trajectory_residual_norms", trajectory_residual_norms.cpu().numpy()
             )
 
-            # # Metadata
-            metadata = np.array([grid_res, plot_scale, steps, n_w])  # Log number of worlds
+            # Metadata & Dimensions (CRITICAL UPDATE)
+            # We add N_u (dofs), N_j (joints), N_n (contacts), N_f (friction)
+            # to allow the dashboard to split the vector.
+            dims = engine.dims
+            dims_metadata = np.array([dims.N_u, dims.N_j, dims.N_n, dims.N_f], dtype=np.int32)
+            self.hdf5_logger.log_np_dataset("simulation_dims", dims_metadata)
+
+            metadata = np.array([grid_res, plot_scale, steps, n_w])
             self.hdf5_logger.log_np_dataset("pca_metadata", metadata)
 
     def timestep_start(self, timestep: int, current_time: float):

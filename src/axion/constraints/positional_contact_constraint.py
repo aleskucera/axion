@@ -128,12 +128,20 @@ def batch_positional_contact_residual_kernel(
     J_n_1 = interaction.basis_a.normal
     J_n_2 = interaction.basis_b.normal
 
+    precond = 0.0
+    if body_1 >= 0:
+        M_inv_1 = body_M_inv[world_idx, body_1]
+        precond += wp.dot(J_n_1, to_spatial_momentum(M_inv_1, J_n_1))
+    if body_2 >= 0:
+        M_inv_2 = body_M_inv[world_idx, body_2]
+        precond += wp.dot(J_n_2, to_spatial_momentum(M_inv_2, J_n_2))
+
     # Evaluate the Fisher-Burmeister complementarity function φ(C_n, λ)
     phi_n, dphi_dc_n, dphi_dlambda_n = scaled_fisher_burmeister(
         -interaction.penetration_depth,
         lambda_n,
         1.0,
-        wp.pow(dt, 2.0),
+        wp.pow(dt, 2.0) * precond,
     )
 
     J_hat_n_1 = dphi_dc_n * J_n_1

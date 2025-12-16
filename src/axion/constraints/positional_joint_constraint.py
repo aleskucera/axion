@@ -68,18 +68,11 @@ def batch_positional_joint_residual_kernel(
         h_j[batch_idx, world_idx, constraint_idx] = 0.0
         return
 
-    u_c = body_u[batch_idx, world_idx, c.child_idx]
-    u_p = wp.spatial_vector()
-    if c.parent_idx >= 0:
-        u_p = body_u[batch_idx, world_idx, c.parent_idx]
-
-    v_j = wp.dot(c.J_child, u_c) + wp.dot(c.J_parent, u_p)
-
     J_hat_child = c.J_child
     J_hat_parent = c.J_parent if c.parent_idx >= 0 else wp.spatial_vector()
 
     if c.parent_idx >= 0:
-        wp.atomic_add(h_d, batch_idx, world_idx, c.parent_idx, -J_hat_parent * lambda_j)
-    wp.atomic_add(h_d, batch_idx, world_idx, c.child_idx, -J_hat_child * lambda_j)
+        wp.atomic_add(h_d, batch_idx, world_idx, c.parent_idx, -dt * J_hat_parent * lambda_j)
+    wp.atomic_add(h_d, batch_idx, world_idx, c.child_idx, -dt * J_hat_child * lambda_j)
 
-    h_j[batch_idx, world_idx, constraint_idx] = v_j + upsilon / dt * c.value + compliance * lambda_j
+    h_j[batch_idx, world_idx, constraint_idx] = (c.value + compliance * lambda_j) / dt
