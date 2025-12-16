@@ -374,7 +374,7 @@ class EngineLogger:
             x_center, v1, v2, trajectory_bounds, grid_res, auto_scale_margin, N_u
         )
 
-        # 5b. Copy Grid Points to Engine Data using Kernels (FROM PREVIOUS FIX)
+        # 5b. Copy Grid Points to Engine Data using Kernels
         src_u = wp.from_torch(pca_u, dtype=wp.float32)
         src_lambda = wp.from_torch(pca_lambda, dtype=wp.float32)
 

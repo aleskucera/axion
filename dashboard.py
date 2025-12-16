@@ -182,9 +182,9 @@ grid, alphas, betas, traj_2d, h_hist, lambda_hist, dims = load_detailed_data(
 col1, col2 = st.columns([1, 1])
 
 with col1:
-    st.subheader("Loss Landscape")
+    st.subheader("Residual Norm Landscape")
 
-    # Auto-Range Logic for Colors
+    # Auto-Range Logic for Colors (in actual values, not log)
     grid_valid = grid[grid > 1e-12]
     if len(grid_valid) > 0:
         p05 = np.percentile(grid_valid, 5)
@@ -194,24 +194,58 @@ with col1:
     else:
         log_min_def, log_max_def = -6.0, 0.0
 
-    c_min, c_max = st.slider(
-        "Color Scale (Log10)", min_value=-12.0, max_value=5.0, value=(log_min_def, log_max_def)
+    # Slider with finer step (0.5 allows hitting values like 3e-5 ≈ 10^-4.5)
+    c_min_log, c_max_log = st.slider(
+        "Color Scale Range",
+        min_value=-12.0,
+        max_value=5.0,
+        value=(log_min_def, log_max_def),
+        step=0.5,
+        format="%.1f",
     )
 
-    # Log and Clip
+    # Show the actual range in scientific notation
+    st.caption(f"Range: `{10**c_min_log:.1e}` to `{10**c_max_log:.1e}`")
+
+    # Log-transform for visualization (keeps logarithmic color scaling)
     grid_log = np.log10(np.clip(grid.T, 1e-12, None))
 
+    # Create custom tick values in scientific notation
+    tick_vals = []
+    tick_text = []
+    for exp in range(int(np.floor(c_min_log)), int(np.ceil(c_max_log)) + 1):
+        tick_vals.append(exp)
+        tick_text.append(f"1e{exp}")
+
+    # Pre-compute hover text with scientific notation
+    hover_text = [
+        [
+            f"α: {alphas[i]:.3f}<br>β: {betas[j]:.3f}<br>Residual: {grid.T[j, i]:.2e}"
+            for i in range(len(alphas))
+        ]
+        for j in range(len(betas))
+    ]
+
     fig_land = go.Figure()
+
+    # Use Contour with heatmap coloring (original style)
     fig_land.add_trace(
         go.Contour(
             z=grid_log,
             x=alphas,
             y=betas,
             colorscale="Plasma",
-            zmin=c_min,
-            zmax=c_max,
+            zmin=c_min_log,
+            zmax=c_max_log,
             contours=dict(coloring="heatmap"),
-            colorbar=dict(title="Log(Res)", len=0.5),
+            colorbar=dict(
+                title="Residual",
+                len=0.5,
+                tickvals=tick_vals,
+                ticktext=tick_text,
+            ),
+            hoverinfo="text",
+            text=hover_text,
         )
     )
 
