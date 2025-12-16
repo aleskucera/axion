@@ -115,39 +115,45 @@ if df is None or df.empty:
     st.warning(f"No valid data found in range [{w_min}-{w_max}].")
     st.stop()
 
-# --- TABLE DISPLAY ---
-st.info("Sort table by 'Final Residual' to find broken steps. Click a row to inspect.")
+# --- SIDEBAR: TIMESTEP SELECTION ---
+with st.sidebar:
+    st.markdown("---")
+    st.header("3. Select Timestep")
+    st.caption("Sort by 'Final Residual' to find broken steps.")
 
-# Simple Table
-selection = st.dataframe(
-    df.sort_values("Final Residual", ascending=False),
-    use_container_width=True,
-    hide_index=True,
-    selection_mode="single-row",
-    on_select="rerun",
-    column_config={
-        "Final Residual": st.column_config.NumberColumn(format="%.4e"),
-        "Timestep": st.column_config.NumberColumn(format="%d"),
-        "World": st.column_config.NumberColumn(format="%d"),
-    },
-    height=400,
-)
+    # Sort default so worst steps are at the top
+    df_sorted = df.sort_values("Final Residual", ascending=False)
+
+    selection = st.dataframe(
+        df_sorted,
+        use_container_width=True,
+        hide_index=True,
+        selection_mode="single-row",
+        on_select="rerun",
+        column_config={
+            "Final Residual": st.column_config.NumberColumn(format="%.2e"),
+            "Timestep": st.column_config.NumberColumn(format="%d"),
+            "World": st.column_config.NumberColumn(format="%d"),
+        },
+        height=300,  # Fixed height for sidebar
+    )
 
 # --- SELECTION HANDLING ---
 if selection.selection.rows:
-    # dataframe is sorted, need to find the correct row from the sorted index
-    sorted_df = df.sort_values("Final Residual", ascending=False)
+    # Get the row index from the *sorted* dataframe (since the user clicked on sorted view)
     selected_idx = selection.selection.rows[0]
-    selected_row = sorted_df.iloc[selected_idx]
+    selected_row = df_sorted.iloc[selected_idx]
 else:
-    # Default to worst offender in range
-    sorted_df = df.sort_values("Final Residual", ascending=False)
-    selected_row = sorted_df.iloc[0]
+    # Default to the worst offender if nothing selected
+    selected_row = df_sorted.iloc[0]
 
 sel_step = int(selected_row["Timestep"])
 sel_world = int(selected_row["World"])
 
-st.markdown(f"### 📍 Inspecting: Timestep `{sel_step}`, World `{sel_world}`")
+# Show what is currently selected in the main view
+st.success(
+    f"**Inspecting:** Timestep `{sel_step}` | World `{sel_world}` | Residual `{selected_row['Final Residual']:.2e}`"
+)
 
 
 # --- DETAIL LOADING ---

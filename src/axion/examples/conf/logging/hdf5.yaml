@@ -21,5 +21,5 @@ log_residual_norm_landscape: true
 pca_grid_res: 100
 pca_plot_range_scale: 3.0
 
-hdf5_log_file: "${project_name}.h5"
+hdf5_log_file: "data/logs/${project_name}.h5"
 

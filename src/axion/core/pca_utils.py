@@ -16,6 +16,39 @@ from .engine_dims import EngineDimensions
 
 
 @wp.kernel
+def copy_grid_u_kernel(
+    src: wp.array(dtype=float, ndim=3),  # Shape: (Grid, World, Body*6)
+    dst: wp.array(dtype=wp.spatial_vector, ndim=3),  # Shape: (Grid, World, Body)
+):
+    g, w, b = wp.tid()
+
+    # Each body has 6 DOFs in the flat source array
+    base_idx = b * 6
+
+    # Manually construct the spatial vector from the 6 floats
+    # Warp's spatial_vector is (w_x, w_y, w_z, v_x, v_y, v_z)
+    val = wp.spatial_vector(
+        src[g, w, base_idx + 0],
+        src[g, w, base_idx + 1],
+        src[g, w, base_idx + 2],
+        src[g, w, base_idx + 3],
+        src[g, w, base_idx + 4],
+        src[g, w, base_idx + 5],
+    )
+
+    dst[g, w, b] = val
+
+
+@wp.kernel
+def copy_grid_lambda_kernel(
+    src: wp.array(dtype=float, ndim=3),  # Shape: (Grid, World, Constraints)
+    dst: wp.array(dtype=float, ndim=3),  # Shape: (Grid, World, Constraints)
+):
+    g, w, c = wp.tid()
+    dst[g, w, c] = src[g, w, c]
+
+
+@wp.kernel
 def copy_h_to_history(
     h: wp.array(dtype=wp.float32, ndim=2),
     h_history: wp.array(dtype=wp.float32, ndim=2),
@@ -141,33 +174,29 @@ def create_pca_grid_batch(
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     """
     Creates a batch of points for ALL worlds simultaneously.
-
-    Args:
-        x_center: (N_w, Dofs)
-        v1, v2: (N_w, Dofs)
-        S: (N_w, 2)
-
-    Returns:
-        pca_u: (GridSize, N_w, N_u)
-        pca_lambda: (GridSize, N_w, N_c)
-        alphas: (N_w, GridRes) - Axis coordinates for each world
-        betas: (N_w, GridRes)
     """
     device = x_center.device
 
     # 1. Determine plot range per world
+    # We use S[:, 0] for alpha (X) and S[:, 1] for beta (Y)
     s0 = S[:, 0]  # (N_w,)
+    s1 = S[:, 1]  # (N_w,)
+
+    # Avoid zero ranges
     s0 = torch.where(s0 > 1e-6, s0, torch.tensor(1.0, device=device))
-    max_range = plot_range_scale * s0  # (N_w,)
+    s1 = torch.where(s1 > 1e-6, s1, torch.tensor(1.0, device=device))  # Use actual S1 or fallback
+
+    # Apply the margin/scale
+    range_alpha = plot_range_scale * s0
+    range_beta = plot_range_scale * s1
 
     # 2. Create canonical normalized grid indices [-1, 1]
-    # This grid shape is constant, but values are scaled per world later
     lin_norm = torch.linspace(-1.0, 1.0, grid_res, device=device)
 
-    # 3. Create output axes for plotting (scaled)
+    # 3. Create output axes for plotting (scaled independently)
     # alphas: (N_w, GridRes)
-    alphas = max_range.unsqueeze(1) * lin_norm.unsqueeze(0)
-    betas = (0.1 * max_range).unsqueeze(1) * lin_norm.unsqueeze(0)
+    alphas = range_alpha.unsqueeze(1) * lin_norm.unsqueeze(0)
+    betas = range_beta.unsqueeze(1) * lin_norm.unsqueeze(0)
 
     # 4. Create meshgrid coefficients
     # alpha_norm, beta_norm are (GridRes, GridRes)
@@ -179,13 +208,10 @@ def create_pca_grid_batch(
 
     # 5. Compute coefficients for every point in every world
     # alpha_vals: (GridSize, N_w)
-    alpha_vals = alpha_flat.unsqueeze(1) * max_range.unsqueeze(0)
-    beta_vals = beta_flat.unsqueeze(1) * (0.1 * max_range.unsqueeze(0))
+    alpha_vals = alpha_flat.unsqueeze(1) * range_alpha.unsqueeze(0)
+    beta_vals = beta_flat.unsqueeze(1) * range_beta.unsqueeze(0)
 
     # 6. Generate High-Dimensional Points
-    # x_center: (1, N_w, Dofs)
-    # v1: (1, N_w, Dofs)
-    # alpha_vals: (GridSize, N_w, 1)
     pca_batch_points = (
         x_center.unsqueeze(0)
         + alpha_vals.unsqueeze(2) * v1.unsqueeze(0)

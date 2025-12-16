@@ -14,6 +14,8 @@ from axion.logging import NullLogger
 from .dense_utils import get_system_matrix_numpy
 from .dense_utils import update_dense_matrices
 from .pca_utils import compute_pca_batch_h_norm
+from .pca_utils import copy_grid_lambda_kernel
+from .pca_utils import copy_grid_u_kernel
 from .pca_utils import create_pca_grid_batch
 from .pca_utils import perform_pca
 
@@ -339,19 +341,66 @@ class EngineLogger:
         # Stack to (Steps, Worlds, 2)
         trajectory_2d = torch.stack([alpha_coords, beta_coords], dim=2)
 
+        # --- AUTO-SCALE GRID TO FIT TRAJECTORY ---
+        # Instead of relying on singular values S (variance), we calculate the
+        # actual maximum distance of any point from the center.
+
+        # 1. Calculate max absolute coordinate per world
+        max_alpha = torch.max(torch.abs(alpha_coords), dim=0).values
+        max_beta = torch.max(torch.abs(beta_coords), dim=0).values
+
+        # 2. Ensure non-zero minimums (safety)
+        max_alpha = torch.maximum(max_alpha, torch.tensor(1e-6, device=max_alpha.device))
+        max_beta = torch.maximum(max_beta, torch.tensor(1e-6, device=max_beta.device))
+
+        # 3. Create explicit bounds tensor
+        # We pass this as 'S' to create_pca_grid_batch
+        trajectory_bounds = torch.zeros_like(S)
+        trajectory_bounds[:, 0] = max_alpha  # X-axis extent
+        trajectory_bounds[:, 1] = max_beta  # Y-axis extent (Now respected by pca_utils)
+
+        # 4. Use 1.2 (20% margin)
+        auto_scale_margin = 1.2
+        # --- END FIX ---
+
         # 5. Create Grid Batch (for ALL worlds)
         grid_res = self.config.pca_grid_res
-        plot_scale = self.config.pca_plot_range_scale
+        # We ignore config.pca_plot_range_scale here and use our auto-margin
         N_u = engine.dims.N_u
 
         # pca_u: (GridSize, N_w, N_u)
         # pca_lambda: (GridSize, N_w, N_c)
-        # alphas, betas: (N_w, GridRes)
         pca_u, pca_lambda, alphas, betas = create_pca_grid_batch(
-            x_center, v1, v2, S, grid_res, plot_scale, N_u
+            x_center, v1, v2, trajectory_bounds, grid_res, auto_scale_margin, N_u
+        )
+
+        # 5b. Copy Grid Points to Engine Data using Kernels (FROM PREVIOUS FIX)
+        src_u = wp.from_torch(pca_u, dtype=wp.float32)
+        src_lambda = wp.from_torch(pca_lambda, dtype=wp.float32)
+
+        grid_size = pca_u.shape[0]
+        n_w = pca_u.shape[1]
+        n_b = engine.dims.N_b
+        n_c = engine.dims.N_c
+
+        wp.launch(
+            kernel=copy_grid_u_kernel,
+            dim=(grid_size, n_w, n_b),
+            inputs=[src_u],
+            outputs=[engine.data.pca_batch_body_u],
+            device=engine.data.device,
+        )
+
+        wp.launch(
+            kernel=copy_grid_lambda_kernel,
+            dim=(grid_size, n_w, n_c),
+            inputs=[src_lambda],
+            outputs=[engine.data.pca_batch_body_lambda.full],
+            device=engine.data.device,
         )
 
         # 6. Compute Norms (GridSize, N_w)
+        # Now the input arrays (pca_batch_body_*) are correctly populated
         norm_results = compute_pca_batch_h_norm(
             engine.model, engine.data, engine.config, engine.dims
         )
@@ -387,14 +436,14 @@ class EngineLogger:
                 "trajectory_residual_norms", trajectory_residual_norms.cpu().numpy()
             )
 
-            # Metadata & Dimensions (CRITICAL UPDATE)
+            # Metadata & Dimensions
             # We add N_u (dofs), N_j (joints), N_n (contacts), N_f (friction)
             # to allow the dashboard to split the vector.
             dims = engine.dims
             dims_metadata = np.array([dims.N_u, dims.N_j, dims.N_n, dims.N_f], dtype=np.int32)
             self.hdf5_logger.log_np_dataset("simulation_dims", dims_metadata)
 
-            metadata = np.array([grid_res, plot_scale, steps, n_w])
+            metadata = np.array([grid_res, self.config.pca_plot_range_scale, steps, n_w])
             self.hdf5_logger.log_np_dataset("pca_metadata", metadata)
 
     def timestep_start(self, timestep: int, current_time: float):
