@@ -18,6 +18,7 @@ os.environ['PYOPENGL_PLATFORM'] = 'glx'
 
 CONFIG_PATH = files("axion").joinpath("examples").joinpath("conf")
 
+PENDULUM_HEIGHT = 5.0
 
 class Simulator(AbstractSimulator):
     def __init__(
@@ -74,6 +75,42 @@ class Simulator(AbstractSimulator):
         # Draw the axes
         self.viewer.log_lines("world_axes", starts, ends, colors, width=0.08)
         
+        # Draw reference frame at the first pendulum link anchor point
+        anchor_x = 0.0
+        anchor_y = 0.0
+        anchor_z = PENDULUM_HEIGHT  # Position from parent_xform
+        anchor_axis_length = 0.5  # Slightly shorter than world axes
+        
+        # Define axis endpoints (absolute positions)
+        anchor_point = wp.vec3(anchor_x, anchor_y, anchor_z)
+        anchor_x_end = wp.vec3(anchor_x + anchor_axis_length, anchor_y, anchor_z)
+        anchor_y_end = wp.vec3(anchor_x, anchor_y + anchor_axis_length, anchor_z)
+        anchor_z_end = wp.vec3(anchor_x, anchor_y, anchor_z + anchor_axis_length)
+        
+        # Create arrays for anchor frame lines
+        anchor_starts = wp.array(
+            [anchor_point, anchor_point, anchor_point],
+            dtype=wp.vec3,
+            device=device
+        )
+        anchor_ends = wp.array(
+            [anchor_x_end, anchor_y_end, anchor_z_end],
+            dtype=wp.vec3,
+            device=device
+        )
+        
+        # Same colors as world axes
+        anchor_colors = wp.array(
+            [wp.vec3(1.0, 0.0, 0.0),  # Red for X
+             wp.vec3(0.0, 1.0, 0.0),  # Green for Y
+             wp.vec3(0.0, 0.0, 1.0)], # Blue for Z
+            dtype=wp.vec3,
+            device=device
+        )
+        
+        # Draw the anchor reference frame
+        self.viewer.log_lines("anchor_frame", anchor_starts, anchor_ends, anchor_colors, width=0.08)
+        
         self.viewer.end_frame()
 
     def build_model(self) -> newton.Model:
@@ -102,13 +139,13 @@ class Simulator(AbstractSimulator):
                                     half_height=chain_width*0.5,
                                     cfg = link_config)
 
-        rot = wp.quat_from_axis_angle(wp.vec3(0.0, 1.0, 0.0), -wp.pi * 0.5)
+        #rot = wp.quat_from_axis_angle(wp.vec3(0.0, 1.0, 0.0), -wp.pi * 0.5)
         
         self.builder.add_joint_revolute(
             parent=-1,
             child=link_0,
             axis=wp.vec3(0.0, 1.0, 0.0),
-            parent_xform=wp.transform(p=wp.vec3(0.0, 0.0, 5.0), q= rot),
+            parent_xform=wp.transform(p=wp.vec3(0.0, 0.0, PENDULUM_HEIGHT), q= wp.quat_identity()),
             child_xform=wp.transform(p=wp.vec3(-hx, 0.0, 0.0), q= wp.quat_identity()),
             target_ke=1000.0,
             target_kd=50.0,

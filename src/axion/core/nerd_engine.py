@@ -32,6 +32,8 @@ import torch
 import sys
 from axion.nn_prediction.nerd_predictor import NeRDPredictor
 from axion.nn_prediction import models, utils
+from axion.nn_prediction.utils.analysis_utils import write_state_to_csv
+
 sys.modules['models'] = models
 sys.modules['utils'] = utils
 
@@ -157,6 +159,10 @@ class NerdEngine(SolverBase):
         self.gravity_vector = torch.zeros((self.num_models, 3), device= str(self.device))
         self.gravity_vector[:, 1] = -1.0  # Gravity in negative Y direction
 
+        self.nerd_state = torch.zeros((1,4))
+
+        self.csv_filename = Path(__file__).parent / 'pendulum_states_NerdEngine.csv'
+
     def step(
         self,
         state_in: newton.State,
@@ -166,8 +172,8 @@ class NerdEngine(SolverBase):
         dt: float,
     ):
         # Convert the states in to C-space (robot frame)
-        state_robot_centric = torch.cat( (wp.to_torch(state_in.joint_q), wp.to_torch(state_in.joint_qd)))
-        state_robot_centric = state_robot_centric.unsqueeze(0)  # shape (1,4)
+        #state_robot_centric = torch.cat( (wp.to_torch(state_in.joint_q), wp.to_torch(state_in.joint_qd)))
+        #state_robot_centric = state_robot_centric.unsqueeze(0)  # shape (1,4)
 
         # TO-DO: Add Control from function input
         joint_acts = torch.zeros((self.num_models, 1), device= str(self.device))
@@ -189,23 +195,39 @@ class NerdEngine(SolverBase):
         
         # Process inputs into NN-friendly form (coordinate frame conversion, state embedding, contact masking)
         # Predict using self.nn_predictor
+
+        root_body_q = torch.zeros((self.num_models, 7), device=str(self.device))
+        root_body_q[:, 0:3] = torch.tensor([[0.0, 0.0, 0.0]], device= str(self.device))  # position
+        root_body_q[:, 3:7] = torch.tensor([[0.0, 0.0, 0.0, 1.0]], device= str(self.device))  # quaternion (identity)
+
         state_predicted = self.nn_predictor.predict(
-            states= state_robot_centric.clone(),
+            states= self.nerd_state.clone(),
             joint_acts= joint_acts,
-            root_body_q= wp.to_torch(state_in.body_q)[0, :].unsqueeze(0),  # extract only body at index 0, shape = (1, 7)
+            root_body_q= root_body_q, #wp.to_torch(state_in.body_q)[0, :].unsqueeze(0),  # extract only body at index 0, shape = (1, 7)
             contacts= contacts,
             gravity_dir= self.gravity_vector
         ) 
-        print(f"Step {self.step_cnt} predicted states: {state_predicted}")
 
+        print(f"Step {self.step_cnt}: in: {self.nerd_state}, root_body_1: {wp.to_torch(state_in.body_q)[0, :].unsqueeze(0)}")
+        
+        if self.step_cnt < 500:
+            write_state_to_csv(self.csv_filename, self.step_cnt, state_predicted)
+
+        assert state_predicted.shape == self.nerd_state.shape
+        self.nerd_state = state_predicted.clone()
+       
+        #if self.step_cnt < 30:
+        print(f"Step {self.step_cnt}: out: {state_predicted}")
+        #print(f"Step {self.step_cnt}: in: {state_robot_centric[:]} out: {state_predicted}")
 
         # Write into state_out 
         state_out = state_in
         state_out.joint_q = wp.from_torch(state_predicted[0,:2].reshape(2,))
         state_out.joint_qd = wp.from_torch(state_predicted[0,2:].reshape(2,))
-
-        newton.eval_fk(self.model, state_out.joint_q, state_out.joint_qd, state_out)
         
+        #newton.eval_fk(self.model, state_out.joint_q, state_out.joint_qd, state_out)
+        newton.eval_fk(self.model, state_out.joint_q, state_out.joint_qd, state_out)
+
         # increase step counter
         self.step_cnt += 1
         

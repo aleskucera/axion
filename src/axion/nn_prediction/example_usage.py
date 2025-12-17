@@ -20,6 +20,7 @@ import yaml
 from pathlib import Path
 
 from axion.nn_prediction import NeRDPredictor
+from axion.nn_prediction.utils.analysis_utils import write_state_to_csv
 
 
 def load_model_and_config(model_path, cfg_path):
@@ -82,7 +83,7 @@ def create_example_inputs(num_envs=1, device='cuda:0'):
     # Example: Double pendulum with first joint at 45 degrees, second at -30 degrees
     # States: [angle1, angle2, angular_vel1, angular_vel2]
     states = torch.zeros((num_envs, 4), device=device)
-    states[:, 0] = torch.tensor([np.deg2rad(-90.0)], device=device)   # First joint angle
+    states[:, 0] = torch.tensor([np.deg2rad(0.0)], device=device)   # First joint angle
     states[:, 1] = torch.tensor([np.deg2rad(0.0)], device=device)  # Second joint angle
     states[:, 2] = torch.tensor([0.0], device=device)               # First joint angular velocity
     states[:, 3] = torch.tensor([0.0], device=device)              # Second joint angular velocity
@@ -154,6 +155,10 @@ def run_prediction_example(model_path, cfg_path, device='cuda:0', num_steps=10):
     
     current_states = states.clone()
     trajectory = [current_states.cpu().numpy()]
+
+    # Setup CSV file for logging state vectors
+    csv_filename = Path(__file__).parent / 'pendulum_states_axion_example_usage.csv'
+    print(f"\nWriting state vectors to: {csv_filename}")
     
     for step in range(num_steps):
         print(f"Step {step + 1}/{num_steps}:")
@@ -169,6 +174,9 @@ def run_prediction_example(model_path, cfg_path, device='cuda:0', num_steps=10):
             contacts=contacts,
             gravity_dir=gravity_dir
         )
+
+        # Write state vector to CSV file
+        write_state_to_csv(csv_filename, step, next_states)
         
         print(f"  Next state: {next_states[0].cpu().numpy()}")
         print(f"    Joint angles (deg): {np.rad2deg(next_states[0, :2].cpu().numpy())}")
@@ -211,7 +219,7 @@ def main():
     parser.add_argument(
         '--num-steps',
         type=int,
-        default=10,
+        default=500,
         help='Number of prediction steps to run'
     )
     
