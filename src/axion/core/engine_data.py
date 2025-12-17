@@ -74,6 +74,7 @@ class EngineArrays:
     J_dense: wp.array = None
     C_dense: wp.array = None
 
+    pca_batch_body_q: wp.array = None
     pca_batch_body_u: wp.array = None
     _pca_batch_body_lambda: wp.array = None
     _pca_batch_h: wp.array = None
@@ -284,11 +285,12 @@ def create_engine_arrays(
         body_q_history,
         body_u_history,
         body_lambda_history,
+        pca_batch_body_q,
         pca_batch_body_u,
         pca_batch_body_lambda,
         pca_batch_h,
         pca_batch_h_norm,
-    ) = (None, None, None, None, None, None, None, None)
+    ) = (None, None, None, None, None, None, None, None, None)
 
     if allocate_pca:
         pca_batch_size = pca_grid_res * pca_grid_res
@@ -298,6 +300,7 @@ def create_engine_arrays(
         body_u_history = _zeros((config.newton_iters, dims.N_w, dims.N_b), dtype=wp.spatial_vector)
         body_lambda_history = _zeros((config.newton_iters, dims.N_w, dims.N_c))
 
+        pca_batch_body_q = _zeros((pca_batch_size, dims.N_w, dims.N_b), wp.transform)
         pca_batch_body_u = _zeros((pca_batch_size, dims.N_w, dims.N_b), wp.spatial_vector)
         pca_batch_body_lambda = _zeros((pca_batch_size, dims.N_w, dims.N_c))
         pca_batch_h = _zeros((pca_batch_size, dims.N_w, dims.N_u + dims.N_c))
@@ -344,6 +347,7 @@ def create_engine_arrays(
         body_q_history=body_q_history,
         body_u_history=body_u_history,
         _body_lambda_history=body_lambda_history,
+        pca_batch_body_q=pca_batch_body_q,
         pca_batch_body_u=pca_batch_body_u,
         _pca_batch_body_lambda=pca_batch_body_lambda,
         _pca_batch_h=pca_batch_h,

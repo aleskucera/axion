@@ -8,7 +8,7 @@ from axion.constraints import batch_positional_joint_residual_kernel
 from axion.constraints import batch_unconstrained_dynamics_kernel
 from axion.constraints import batch_velocity_contact_residual_kernel
 from axion.constraints import batch_velocity_joint_residual_kernel
-from newton import Model
+from axion.core.batched_model import BatchedModel
 
 from .engine_config import EngineConfig
 from .engine_data import EngineArrays
@@ -225,7 +225,7 @@ def create_pca_grid_batch(
 
 
 def compute_pca_batch_h_norm(
-    model: Model,
+    model: BatchedModel,
     data: EngineArrays,
     config: EngineConfig,
     dims: EngineDimensions,
@@ -253,15 +253,39 @@ def compute_pca_batch_h_norm(
     )
 
     if config.joint_constraint_level == "pos":
+        # wp.launch(
+        #     kernel=batch_positional_joint_residual_kernel,
+        #     dim=(B, dims.N_w, dims.N_j),
+        #     inputs=[
+        #         data.pca_batch_body_u,
+        #         data.pca_batch_body_lambda.j,
+        #         data.joint_constraint_data,
+        #         data.dt,
+        #         config.joint_stabilization_factor,
+        #         config.joint_compliance,
+        #     ],
+        #     outputs=[
+        #         data.pca_batch_h.d_spatial,
+        #         data.pca_batch_h.c.j,
+        #     ],
+        #     device=device,
+        # )
         wp.launch(
             kernel=batch_positional_joint_residual_kernel,
-            dim=(B, dims.N_w, dims.N_j),
+            dim=(B, dims.N_w, dims.joint_count),
             inputs=[
-                data.pca_batch_body_u,
+                data.pca_batch_body_q,
                 data.pca_batch_body_lambda.j,
-                data.joint_constraint_data,
+                model.body_com,
+                model.joint_type,
+                model.joint_parent,
+                model.joint_child,
+                model.joint_X_p,
+                model.joint_X_c,
+                model.joint_axis,
+                model.jiont_qd_start,
+                data.constraint_offsets,
                 data.dt,
-                config.joint_stabilization_factor,
                 config.joint_compliance,
             ],
             outputs=[

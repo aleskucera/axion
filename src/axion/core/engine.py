@@ -354,7 +354,7 @@ class AxionEngine(SolverBase):
 
             # System linearization block
             with self.logger.timed_block(*newton_iter_events["system_linearization"]):
-                compute_linear_system(self.data, self.config, self.dims, dt)
+                compute_linear_system(self.batched_model, self.data, self.config, self.dims, dt)
 
             self.preconditioner.update()
 
@@ -375,7 +375,7 @@ class AxionEngine(SolverBase):
                 perform_linesearch(self.data, self.config, self.dims)
                 update_body_q(self.batched_model, self.data, self.config, self.dims)
                 self._update_mass_matrix()
-                self._update_constraint_positional_errors()
+                # self._update_constraint_positional_errors()
 
             self.logger.log_newton_iteration_data(self, i)
             if self.logger.uses_pca_arrays:

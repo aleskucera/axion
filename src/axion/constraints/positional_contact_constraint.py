@@ -6,9 +6,32 @@ from axion.types import to_spatial_momentum
 from .utils import scaled_fisher_burmeister
 
 
+@wp.func
+def compute_signed_distance(
+    body_q_1: wp.transform,
+    body_q_2: wp.transform,
+    interaction: ContactInteraction,
+):
+    # Extract normal from the stored Jacobian (first 3 components)
+    n = wp.spatial_top(interaction.basis_a.normal)
+
+    # Initialize world points (handles static body case correctly)
+    p_a = interaction.contact_point_a
+    p_b = interaction.contact_point_b
+
+    offset_a = -interaction.contact_thickness_a * n
+    p_a = wp.transform_point(body_q_1, interaction.contact_point_a) + offset_a
+
+    offset_b = interaction.contact_thickness_b * n
+    p_b = wp.transform_point(body_q_2, interaction.contact_point_b) + offset_b
+
+    return wp.dot(n, p_a - p_b)
+
+
 @wp.kernel
 def positional_contact_constraint_kernel(
     # --- Body State Inputs ---
+    body_q: wp.array(dtype=wp.transform, ndim=2),
     body_u: wp.array(dtype=wp.spatial_vector, ndim=2),
     body_u_prev: wp.array(dtype=wp.spatial_vector, ndim=2),
     body_lambda_n: wp.array(dtype=wp.float32, ndim=2),
@@ -47,6 +70,14 @@ def positional_contact_constraint_kernel(
     body_1 = interaction.body_a_idx
     body_2 = interaction.body_b_idx
 
+    body_q_1 = wp.transform()
+    if body_1 >= 0:
+        body_q_1 = body_q[world_idx, interaction.body_a_idx]
+
+    body_q_2 = wp.transform()
+    if body_2 >= 0:
+        body_q_2 = body_q[world_idx, interaction.body_b_idx]
+
     # Unpack Jacobian basis vectors
     J_n_1 = interaction.basis_a.normal
     J_n_2 = interaction.basis_b.normal
@@ -59,9 +90,11 @@ def positional_contact_constraint_kernel(
         M_inv_2 = body_M_inv[world_idx, body_2]
         precond += wp.dot(J_n_2, to_spatial_momentum(M_inv_2, J_n_2))
 
+    signed_distance = compute_signed_distance(body_q_1, body_q_2, interaction)
+
     # Evaluate the Fisher-Burmeister complementarity function φ(C_n, λ)
     phi_n, dphi_dc_n, dphi_dlambda_n = scaled_fisher_burmeister(
-        -interaction.penetration_depth,
+        signed_distance,
         lambda_n,
         1.0,
         wp.pow(dt, 2.0) * precond,
@@ -94,6 +127,7 @@ def positional_contact_constraint_kernel(
 @wp.kernel
 def batch_positional_contact_residual_kernel(
     # --- Body State Inputs ---
+    body_q: wp.array(dtype=wp.transform, ndim=3),
     body_u: wp.array(dtype=wp.spatial_vector, ndim=3),
     body_u_prev: wp.array(dtype=wp.spatial_vector, ndim=2),
     body_lambda_n: wp.array(dtype=wp.float32, ndim=3),
@@ -124,6 +158,14 @@ def batch_positional_contact_residual_kernel(
     body_1 = interaction.body_a_idx
     body_2 = interaction.body_b_idx
 
+    body_q_1 = wp.transform()
+    if body_1 >= 0:
+        body_q_1 = body_q[batch_idx, world_idx, interaction.body_a_idx]
+
+    body_q_2 = wp.transform()
+    if body_2 >= 0:
+        body_q_2 = body_q[batch_idx, world_idx, interaction.body_b_idx]
+
     # Unpack Jacobian basis vectors
     J_n_1 = interaction.basis_a.normal
     J_n_2 = interaction.basis_b.normal
@@ -136,9 +178,11 @@ def batch_positional_contact_residual_kernel(
         M_inv_2 = body_M_inv[world_idx, body_2]
         precond += wp.dot(J_n_2, to_spatial_momentum(M_inv_2, J_n_2))
 
+    signed_distance = compute_signed_distance(body_q_1, body_q_2, interaction)
+
     # Evaluate the Fisher-Burmeister complementarity function φ(C_n, λ)
     phi_n, dphi_dc_n, dphi_dlambda_n = scaled_fisher_burmeister(
-        -interaction.penetration_depth,
+        signed_distance,
         lambda_n,
         1.0,
         wp.pow(dt, 2.0) * precond,

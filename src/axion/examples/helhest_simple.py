@@ -79,7 +79,7 @@ class Simulator(AbstractSimulator):
         KD = 30000.0
         KF = 500.0
 
-        robot_x = 0.4
+        robot_x = 0.2
 
         robot_y = 0.0
         robot_z = 1.0

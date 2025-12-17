@@ -8,7 +8,6 @@ from .spatial_inertia import add_inertia
 from .spatial_inertia import spatial_inertia_kernel
 from .spatial_inertia import SpatialInertia
 from .spatial_inertia import to_spatial_momentum
-from .spatial_inertia import transform_spatial_inertia_to_world_kernel
 from .spatial_inertia import world_spatial_inertia_kernel
 
 __all__ = [
@@ -16,7 +15,6 @@ __all__ = [
     "ContactInteraction",
     "update_penetration_depth_kernel",
     "spatial_inertia_kernel",
-    "transform_spatial_inertia_to_world_kernel",
     "SpatialInertia",
     "add_inertia",
     "to_spatial_momentum",
