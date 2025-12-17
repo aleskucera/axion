@@ -172,7 +172,8 @@ def run_prediction_example(model_path, cfg_path, device='cuda:0', num_steps=10):
             joint_acts=joint_acts,
             root_body_q=root_body_q,
             contacts=contacts,
-            gravity_dir=gravity_dir
+            gravity_dir=gravity_dir,
+            step=step
         )
 
         # Write state vector to CSV file

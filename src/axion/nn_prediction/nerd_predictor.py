@@ -51,6 +51,7 @@ Example usage:
 import torch
 import numpy as np
 from typing import Dict, Optional, Union
+from pathlib import Path
 
 from .models.models import ModelMixedInput
 from .integrators.state_processor import (
@@ -62,6 +63,7 @@ from .integrators.state_processor import (
     convert_prediction_to_next_states
 )
 
+from axion.nn_prediction.utils.analysis_utils import write_model_inputs_to_csv
 
 class NeRDPredictor:
     """
@@ -169,6 +171,7 @@ class NeRDPredictor:
         root_body_q: torch.Tensor,
         contacts: Dict[str, torch.Tensor],
         gravity_dir: torch.Tensor,
+        step: int,
         dt: Optional[float] = None
     ) -> torch.Tensor:
         """
@@ -223,6 +226,9 @@ class NeRDPredictor:
         # Process inputs (coordinate frame conversion, state embedding, contact masking)
         model_inputs = self._process_inputs(model_inputs)
         
+        model_inputs_csv_filename = Path(__file__).parent / 'pendulum_model_inputs.csv'
+        write_model_inputs_to_csv(model_inputs_csv_filename, step, model_inputs)
+
         # Run model inference
         with torch.no_grad():
             prediction = self.model.evaluate(model_inputs)  # (num_envs, 1, pred_dim)
