@@ -2,6 +2,7 @@ import warp as wp
 from axion.types import ContactInteraction
 from axion.types import SpatialInertia
 from axion.types import to_spatial_momentum
+from axion.types.spatial_inertia import compute_world_inertia
 
 from .utils import scaled_fisher_burmeister
 
@@ -132,10 +133,11 @@ def batch_positional_contact_residual_kernel(
     body_u_prev: wp.array(dtype=wp.spatial_vector, ndim=2),
     body_lambda_n: wp.array(dtype=wp.float32, ndim=3),
     interactions: wp.array(dtype=ContactInteraction, ndim=2),
-    body_M_inv: wp.array(dtype=SpatialInertia, ndim=2),
+    # --- Body Property Inputs ---
+    body_inv_mass: wp.array(dtype=wp.float32, ndim=2),
+    body_inv_inertia: wp.array(dtype=wp.mat33, ndim=2),
     # --- Simulation & Solver Parameters ---
     dt: wp.float32,
-    stabilization_factor: wp.float32,
     fb_alpha: wp.float32,
     fb_beta: wp.float32,
     compliance: wp.float32,
@@ -172,10 +174,14 @@ def batch_positional_contact_residual_kernel(
 
     precond = 0.0
     if body_1 >= 0:
-        M_inv_1 = body_M_inv[world_idx, body_1]
+        m_inv_1 = body_inv_mass[world_idx, body_1]
+        I_inv_1 = body_inv_inertia[world_idx, body_1]
+        M_inv_1 = compute_world_inertia(body_q_1, m_inv_1, I_inv_1)
         precond += wp.dot(J_n_1, to_spatial_momentum(M_inv_1, J_n_1))
     if body_2 >= 0:
-        M_inv_2 = body_M_inv[world_idx, body_2]
+        m_inv_2 = body_inv_mass[world_idx, body_2]
+        I_inv_2 = body_inv_inertia[world_idx, body_2]
+        M_inv_2 = compute_world_inertia(body_q_2, m_inv_2, I_inv_2)
         precond += wp.dot(J_n_2, to_spatial_momentum(M_inv_2, J_n_2))
 
     signed_distance = compute_signed_distance(body_q_1, body_q_2, interaction)

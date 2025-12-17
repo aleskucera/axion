@@ -166,6 +166,7 @@ def compute_linear_system(
             ],
             device=device,
         )
+
     elif config.joint_constraint_level == "vel":
         wp.launch(
             kernel=velocity_joint_constraint_kernel,
@@ -226,7 +227,6 @@ def compute_linear_system(
                 data.body_u_prev,
                 data.body_lambda.n,
                 data.contact_interaction,
-                data.world_M_inv,
                 dt,
                 config.contact_stabilization_factor,
                 config.contact_fb_alpha,

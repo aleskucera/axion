@@ -15,6 +15,7 @@ from .dense_utils import get_system_matrix_numpy
 from .dense_utils import update_dense_matrices
 from .pca_utils import compute_pca_batch_h_norm
 from .pca_utils import copy_grid_lambda_kernel
+from .pca_utils import copy_grid_q_kernel
 from .pca_utils import copy_grid_u_kernel
 from .pca_utils import create_pca_grid_batch
 from .pca_utils import perform_pca
@@ -270,28 +271,30 @@ class EngineLogger:
             return
 
         # 1. Reconstruct Trajectory from History Arrays
-        # The history arrays split the state into 'u' (velocities) and 'lambda' (constraint impulses).
-        # We must combine them to form the full optimization vector 'x = [u, lambda]'.
+        # State vector x = [q, u, lambda]
 
-        # Body Velocities (u)
-        # shape: (Steps, Worlds, BodyCount) of spatial_vectors (6 floats)
-        # wp.to_torch converts spatial_vector to a last dimension of 6
+        # --- A. Body Positions (q) ---
+        # shape: (Steps, Worlds, BodyCount) of wp.transform (7 floats)
+        q_hist = wp.to_torch(engine.data.body_q_history)
+        steps, n_w, n_b, _ = q_hist.shape
+        # Flatten: (Steps, Worlds, N_b * 7)
+        q_flat = q_hist.reshape(steps, n_w, n_b * 7)
+
+        # --- B. Body Velocities (u) ---
+        # shape: (Steps, Worlds, BodyCount) of wp.spatial_vector (6 floats)
         u_hist = wp.to_torch(engine.data.body_u_history)
-        steps, n_w, n_b, _ = u_hist.shape
+        # Flatten: (Steps, Worlds, N_b * 6)
+        u_flat = u_hist.reshape(steps, n_w, n_b * 6)
 
-        # Flatten the spatial vectors: (Steps, Worlds, N_u) where N_u = BodyCount * 6
-        u_flat = u_hist.view(steps, n_w, n_b * 6)
-
-        # Constraint Impulses (lambda)
+        # --- C. Constraint Impulses (lambda) ---
         # shape: (Steps, Worlds, N_c)
         lambda_hist = wp.to_torch(engine.data._body_lambda_history)
 
-        # Full Trajectory: Concatenate u and lambda along the DOF dimension (dim=2)
-        # shape: (Steps, Worlds, N_u + N_c)
-        trajectory_all = torch.cat([u_flat, lambda_hist], dim=2)
+        # --- D. Full Trajectory Concatenation ---
+        # shape: (Steps, Worlds, Dofs) where Dofs = (N_b*7 + N_b*6 + N_c)
+        trajectory_all = torch.cat([q_flat, u_flat, lambda_hist], dim=2)
 
-        # Residuals (h)
-        # shape: (Steps, Worlds, N_u + N_c)
+        # Residuals for norm calculation
         residuals_all = wp.to_torch(engine.data._h_history)
 
         if steps < 2:
@@ -301,92 +304,78 @@ class EngineLogger:
             )
 
         # 2. Compute Norms for Visualization
-        # Norms for entire history: (Steps, Worlds)
         trajectory_residual_norms = torch.norm(residuals_all, dim=2)
 
-        # ---- START: THRESHOLD RESIDUAL PRINT ----
-        # Select the last step (iteration) for all worlds. Shape: (Worlds,)
+        # Warning threshold logic
         last_step_norms = trajectory_residual_norms[-1, :]
-
-        # Compute the global maximum norm across all worlds in the last step
         max_residual = torch.max(last_step_norms)
-
-        # Define your threshold (adjust this value as needed)
         threshold = 1e-1
-
-        # Check and print if the maximum exceeds the threshold
         if max_residual > threshold:
-            # .item() converts the 0-dim tensor to a standard Python float
             print(
                 f"Warning: Max residual norm ({max_residual.item():.6f}) exceeds limit ({threshold}) in timestep {engine._timestep}"
             )
-        # ---- END: THRESHOLD RESIDUAL PRINT ----
 
         # 3. Perform PCA (Batched over Worlds)
         # v1, v2: (Worlds, Dofs) | S: (Worlds, 2)
         v1, v2, S = perform_pca(trajectory_all)
+        x_center = trajectory_all[-1]
 
-        # Center point is the final iterate for each world
-        x_center = trajectory_all[-1]  # (Worlds, Dofs)
-
-        # 4. Project Trajectory to 2D (per world)
-        # Calculate vector from center: (Steps, Worlds, Dofs)
+        # 4. Project Trajectory to 2D
         vecs_from_center = trajectory_all - x_center.unsqueeze(0)
-
-        # Project onto Principal Components
-        # (Steps, Worlds, Dofs) * (1, Worlds, Dofs) -> Sum(dim=2) -> (Steps, Worlds)
         alpha_coords = (vecs_from_center * v1.unsqueeze(0)).sum(dim=2)
         beta_coords = (vecs_from_center * v2.unsqueeze(0)).sum(dim=2)
-
-        # Stack to (Steps, Worlds, 2)
         trajectory_2d = torch.stack([alpha_coords, beta_coords], dim=2)
 
-        # --- AUTO-SCALE GRID TO FIT TRAJECTORY ---
-        # Instead of relying on singular values S (variance), we calculate the
-        # actual maximum distance of any point from the center.
-
-        # 1. Calculate max absolute coordinate per world
+        # --- Auto-Scale Logic ---
         max_alpha = torch.max(torch.abs(alpha_coords), dim=0).values
         max_beta = torch.max(torch.abs(beta_coords), dim=0).values
 
-        # 2. Ensure non-zero minimums (safety)
+        # Safety for zero movement
         max_alpha = torch.maximum(max_alpha, torch.tensor(1e-6, device=max_alpha.device))
         max_beta = torch.maximum(max_beta, torch.tensor(1e-6, device=max_beta.device))
 
-        # 3. Create explicit bounds tensor
-        # We pass this as 'S' to create_pca_grid_batch
         trajectory_bounds = torch.zeros_like(S)
-        trajectory_bounds[:, 0] = max_alpha  # X-axis extent
-        trajectory_bounds[:, 1] = max_beta  # Y-axis extent (Now respected by pca_utils)
-
-        # 4. Use 1.2 (20% margin)
+        trajectory_bounds[:, 0] = max_alpha
+        trajectory_bounds[:, 1] = max_beta
         auto_scale_margin = 1.2
-        # --- END FIX ---
 
-        # 5. Create Grid Batch (for ALL worlds)
+        # 5. Create Grid Batch (Now includes Q)
         grid_res = self.config.pca_grid_res
-        # We ignore config.pca_plot_range_scale here and use our auto-margin
-        N_u = engine.dims.N_u
 
-        # pca_u: (GridSize, N_w, N_u)
-        # pca_lambda: (GridSize, N_w, N_c)
-        pca_u, pca_lambda, alphas, betas = create_pca_grid_batch(
-            x_center, v1, v2, trajectory_bounds, grid_res, auto_scale_margin, N_u
+        # Note: We pass the full dimensions object now so the function knows how to split N_b*7 vs N_b*6
+        # Returns: pca_q, pca_u, pca_lambda, alphas, betas, ...
+        pca_q, pca_u, pca_lambda, alphas, betas, _, _ = create_pca_grid_batch(
+            x_center,
+            v1,
+            v2,
+            trajectory_bounds,  # passing bounds as S
+            grid_res,
+            auto_scale_margin,
+            engine.dims,  # passing dims to handle q/u splitting
         )
 
-        # 5b. Copy Grid Points to Engine Data using Kernels
+        # 6. Copy Grid Points to Engine Data
+        src_q = wp.from_torch(pca_q, dtype=wp.float32)
         src_u = wp.from_torch(pca_u, dtype=wp.float32)
         src_lambda = wp.from_torch(pca_lambda, dtype=wp.float32)
 
-        grid_size = pca_u.shape[0]
-        n_w = pca_u.shape[1]
+        grid_size = pca_q.shape[0]
+        n_w = pca_q.shape[1]
         n_b = engine.dims.N_b
         n_c = engine.dims.N_c
 
         wp.launch(
-            kernel=copy_grid_u_kernel,
+            kernel=copy_grid_q_kernel,
             dim=(grid_size, n_w, n_b),
             inputs=[src_u],
+            outputs=[engine.data.pca_batch_body_q],
+            device=engine.data.device,
+        )
+
+        wp.launch(
+            kernel=copy_grid_u_kernel,
+            dim=(grid_size, n_w, n_b),
+            inputs=[src_q],
             outputs=[engine.data.pca_batch_body_u],
             device=engine.data.device,
         )
@@ -398,48 +387,42 @@ class EngineLogger:
             outputs=[engine.data.pca_batch_body_lambda.full],
             device=engine.data.device,
         )
-
-        # 6. Compute Norms (GridSize, N_w)
-        # Now the input arrays (pca_batch_body_*) are correctly populated
+        # 7. Compute Norms with Q-aware kernels
+        # This will now trigger the dynamic mass matrix re-computation
         norm_results = compute_pca_batch_h_norm(
-            engine.model, engine.data, engine.config, engine.dims
+            engine.batched_model, engine.data, engine.config, engine.dims
         )
 
-        # Reshape to (GridRes, GridRes, N_w) for easier slicing/plotting later
         residual_norm_grid = norm_results.reshape(grid_res, grid_res, n_w)
 
         # 8. Log Data
         with self.hdf5_logger.scope("residual_norm_landscape_data"):
-            # # Visualization Grid
             self.hdf5_logger.log_np_dataset("residual_norm_grid", residual_norm_grid.cpu().numpy())
             self.hdf5_logger.log_np_dataset("pca_alphas", alphas.cpu().numpy())
             self.hdf5_logger.log_np_dataset("pca_betas", betas.cpu().numpy())
-
-            # Projected trajectory
             self.hdf5_logger.log_np_dataset("trajectory_2d_projected", trajectory_2d.cpu().numpy())
 
-            # PCA Components
             self.hdf5_logger.log_np_dataset("pca_v1", v1.cpu().numpy())
             self.hdf5_logger.log_np_dataset("pca_v2", v2.cpu().numpy())
             self.hdf5_logger.log_np_dataset("pca_singular_values", S.cpu().numpy())
             self.hdf5_logger.log_np_dataset("pca_center_point", x_center.cpu().numpy())
 
-            # Full Trajectory Data (for reference/debugging)
+            # Log history arrays including Q
             self.hdf5_logger.log_np_dataset("optimization_trajectory", trajectory_all.cpu().numpy())
             self.hdf5_logger.log_np_dataset("body_q_history", engine.data.body_q_history.numpy())
             self.hdf5_logger.log_np_dataset("body_u_history", engine.data.body_u_history.numpy())
             self.hdf5_logger.log_np_dataset(
                 "body_lambda_history", engine.data._body_lambda_history.numpy()
             )
+
             self.hdf5_logger.log_np_dataset("trajectory_residuals", residuals_all.cpu().numpy())
             self.hdf5_logger.log_np_dataset(
                 "trajectory_residual_norms", trajectory_residual_norms.cpu().numpy()
             )
 
-            # Metadata & Dimensions
-            # We add N_u (dofs), N_j (joints), N_n (contacts), N_f (friction)
-            # to allow the dashboard to split the vector.
+            # Metadata
             dims = engine.dims
+            # Add N_q (7 per body) to metadata if needed, otherwise dashboard assumes N_u
             dims_metadata = np.array([dims.N_u, dims.N_j, dims.N_n, dims.N_f], dtype=np.int32)
             self.hdf5_logger.log_np_dataset("simulation_dims", dims_metadata)
 

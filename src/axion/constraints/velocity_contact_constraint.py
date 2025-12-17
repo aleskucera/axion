@@ -49,7 +49,6 @@ def velocity_contact_constraint_kernel(
     body_u_prev: wp.array(dtype=wp.spatial_vector, ndim=2),
     body_lambda_n: wp.array(dtype=wp.float32, ndim=2),
     interactions: wp.array(dtype=ContactInteraction, ndim=2),
-    body_M_inv: wp.array(dtype=SpatialInertia, ndim=2),
     # --- Simulation & Solver Parameters ---
     dt: wp.float32,
     stabilization_factor: wp.float32,
@@ -148,7 +147,6 @@ def batch_velocity_contact_residual_kernel(
     body_u_prev: wp.array(dtype=wp.spatial_vector, ndim=2),
     body_lambda_n: wp.array(dtype=wp.float32, ndim=3),
     interactions: wp.array(dtype=ContactInteraction, ndim=2),
-    body_M_inv: wp.array(dtype=SpatialInertia, ndim=2),
     # --- Simulation & Solver Parameters ---
     dt: wp.float32,
     stabilization_factor: wp.float32,

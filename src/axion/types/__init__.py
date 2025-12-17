@@ -5,6 +5,7 @@ from .joint_constraint_data import compute_joint_constraint_offsets_batched
 from .joint_constraint_data import joint_constraint_data_kernel
 from .joint_constraint_data import JointConstraintData
 from .spatial_inertia import add_inertia
+from .spatial_inertia import compute_world_inertia
 from .spatial_inertia import spatial_inertia_kernel
 from .spatial_inertia import SpatialInertia
 from .spatial_inertia import to_spatial_momentum
@@ -18,6 +19,7 @@ __all__ = [
     "SpatialInertia",
     "add_inertia",
     "to_spatial_momentum",
+    "compute_world_inertia",
     "joint_constraint_data_kernel",
     "compute_joint_constraint_offsets_batched",
     "JointConstraintData",

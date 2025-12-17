@@ -1,5 +1,4 @@
 import warp as wp
-from newton.geometry import transform_inertia
 
 
 @wp.struct
@@ -35,6 +34,20 @@ def spatial_inertia_kernel(
 ):
     tid = wp.tid()
     spatial_inertia[tid] = SpatialInertia(mass[tid], inertia[tid])
+
+
+@wp.func
+def compute_world_inertia(
+    body_q: wp.transform, mass: wp.float32, body_inertia: wp.mat33
+) -> SpatialInertia:
+    # Get orientation quaternion from transform
+    orientation = wp.transform_get_rotation(body_q)
+    R = wp.quat_to_matrix(orientation)
+
+    # Transform inertia tensor: I_w = R * I_body * R^T
+    I_w = R @ body_inertia @ wp.transpose(R)
+
+    return SpatialInertia(mass, I_w)
 
 
 @wp.kernel
