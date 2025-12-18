@@ -171,8 +171,8 @@ class NerdEngine(SolverBase):
         contacts: newton.Contacts,
         dt: float,
     ):
-        #state_robot_centric = torch.cat( (wp.to_torch(state_in.joint_q), wp.to_torch(state_in.joint_qd)))
-        #state_robot_centric = state_robot_centric.unsqueeze(0)  # shape (1,4)
+        state_robot_centric = torch.cat( (wp.to_torch(state_in.joint_q), wp.to_torch(state_in.joint_qd)))
+        state_robot_centric = state_robot_centric.unsqueeze(0)  # shape (1,4)
 
         # TO-DO: Add Control from function input
         joint_acts = torch.zeros((self.num_models, 1), device= str(self.device))
@@ -197,12 +197,12 @@ class NerdEngine(SolverBase):
         # Edit 2: Nerd expects root_body_q to be the pos/orient of the first pendulum link, but only its rotational part for some reason? 
         root_body_q = wp.to_torch(state_in.body_q)[0, :].unsqueeze(0)
         root_body_q[0, :3] = torch.tensor([0.0, 0.0, 5.0])
-        root_body_q[0, 5] = root_body_q[0, 4]
+        root_body_q[0, 5] = -root_body_q[0, 4]
         root_body_q[0, 4] = torch.tensor([0.0])
 
         # Predict using self.nn_predictor
         state_predicted = self.nn_predictor.predict(
-            states= self.nerd_state.clone(),
+            states= state_robot_centric.clone(), #self.nerd_state.clone(),
             joint_acts= joint_acts,
             root_body_q= root_body_q,  # extract only body at index 0, shape = (1, 7)
             contacts= contacts,
@@ -218,16 +218,14 @@ class NerdEngine(SolverBase):
         assert state_predicted.shape == self.nerd_state.shape
         self.nerd_state = state_predicted.clone()
        
-        #if self.step_cnt < 30:
         print(f"Step {self.step_cnt}: out: {state_predicted}")
-        #print(f"Step {self.step_cnt}: in: {state_robot_centric[:]} out: {state_predicted}")
 
         # Write into state_out 
-        state_out = state_in
         state_out.joint_q = wp.from_torch(state_predicted[0,:2].reshape(2,))
         state_out.joint_qd = wp.from_torch(state_predicted[0,2:].reshape(2,))
         
-        #newton.eval_fk(self.model, state_out.joint_q, state_out.joint_qd, state_out)
+        # Edit: the newton.eval_fk has probably different convention on the sign of joint angles than NeRD, 
+        # that's why I added minus here: 
         newton.eval_fk(self.model, -state_out.joint_q, -state_out.joint_qd, state_out)
 
         # increase step counter

@@ -137,7 +137,7 @@ if __name__ == '__main__':
     file2 = 'src/axion/nn_prediction/pendulum_model_inputs.csv'
     
     # Parameters
-    max_rows = 400
+    max_rows = 1000
     epsilon = 1e-1
     
     analyze_csv_difference(file1, file2, max_rows=max_rows, epsilon=epsilon)
