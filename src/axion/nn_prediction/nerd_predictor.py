@@ -52,6 +52,7 @@ import torch
 import numpy as np
 from typing import Dict, Optional, Union
 from pathlib import Path
+from collections import deque
 
 from .models.models import ModelMixedInput
 from .integrators.state_processor import (
@@ -120,7 +121,11 @@ class NeRDPredictor:
             'orientation_prediction_parameterization', 'quaternion'
         )
         self.states_embedding_type = self.neural_integrator_cfg.get('states_embedding_type', None)
-        
+        self.num_states_history = self.neural_integrator_cfg.get('num_states_history', 1)   # history window, defaults to 1
+
+        # state history double ended queue
+        self.states_history = deque(maxlen=self.num_states_history)
+
         # Robot configuration
         if dof_q_per_env is None:
             raise ValueError("dof_q_per_env must be provided")
@@ -156,6 +161,9 @@ class NeRDPredictor:
         self.is_angular_dof = np.array(is_angular_dof)
         self.is_continuous_dof = np.array(is_continuous_dof)
         
+        # Prepare model_inputs dict (input to torch model, to be filled by process_inputs method)
+        self.model_inputs = {}
+
         # Compute state embedding dimension
         if self.states_embedding_type is None or self.states_embedding_type == "identical":
             self.state_embedding_dim = self.state_dim
@@ -164,15 +172,13 @@ class NeRDPredictor:
         else:
             raise NotImplementedError(f"Unknown states_embedding_type: {self.states_embedding_type}")
     
+    def reset(self):
+        """Reset the history buffer (call at start of new trajectory)."""
+        self.states_history.clear()
+
     def predict(
         self,
-        states: torch.Tensor,
-        joint_acts: torch.Tensor,
-        root_body_q: torch.Tensor,
-        contacts: Dict[str, torch.Tensor],
-        gravity_dir: torch.Tensor,
-        step: int,
-        dt: Optional[float] = None
+        step
     ) -> torch.Tensor:
         """
         Predict next robot state.
@@ -193,56 +199,29 @@ class NeRDPredictor:
         Returns:
             next_states: Next states (num_envs, state_dim)
         """
-        num_envs = states.shape[0]
-        
-        # Ensure tensors are on correct device
-        states = states.to(self.device)
-        joint_acts = joint_acts.to(self.device)
-        root_body_q = root_body_q.to(self.device)
-        gravity_dir = gravity_dir.to(self.device)
-        for key in contacts:
-            contacts[key] = contacts[key].to(self.device)
-        
-        # Compute contact masks
-        contact_masks = get_contact_masks(
-            contacts['contact_depths'],
-            contacts['contact_thicknesses']
-        )
-        
-        # Assemble model inputs
-        model_inputs = {
-            "root_body_q": root_body_q.unsqueeze(1),  # (num_envs, 1, 7)
-            "states": states.unsqueeze(1),  # (num_envs, 1, state_dim)
-            "joint_acts": joint_acts.unsqueeze(1),  # (num_envs, 1, joint_act_dim)
-            "gravity_dir": gravity_dir.unsqueeze(1),  # (num_envs, 1, 3)
-            "contact_normals": contacts['contact_normals'].unsqueeze(1),  # (num_envs, 1, num_contacts * 3)
-            "contact_depths": contacts['contact_depths'].unsqueeze(1),  # (num_envs, 1, num_contacts)
-            "contact_thicknesses": contacts['contact_thicknesses'].unsqueeze(1),  # (num_envs, 1, num_contacts)
-            "contact_points_0": contacts['contact_points_0'].unsqueeze(1),  # (num_envs, 1, num_contacts * 3)
-            "contact_points_1": contacts['contact_points_1'].unsqueeze(1),  # (num_envs, 1, num_contacts * 3)
-            "contact_masks": contact_masks.unsqueeze(1),  # (num_envs, 1, num_contacts)
-        }
-        
-        # Process inputs (coordinate frame conversion, state embedding, contact masking)
-        model_inputs = self._process_inputs(model_inputs)
 
-        model_inputs["contact_normals"] = torch.zeros_like(model_inputs["contact_normals"])
-        model_inputs["contact_depths"] = torch.zeros_like(model_inputs["contact_depths"])
-        model_inputs["contact_thicknesses"] = torch.zeros_like(model_inputs["contact_thicknesses"])
-        model_inputs["contact_points_0"] = torch.zeros_like(model_inputs["contact_points_0"])
-        model_inputs["contact_points_1"] = torch.zeros_like(model_inputs["contact_points_1"])
-        model_inputs["contact_masks"] = torch.zeros_like(model_inputs["contact_masks"])
+        # FIX: zeroing the output of _process_inputs once again,remove it ideally
+        self.model_inputs["contact_normals"] = torch.zeros_like(self.model_inputs["contact_normals"])
+        self.model_inputs["contact_depths"] = torch.zeros_like(self.model_inputs["contact_depths"])
+        self.model_inputs["contact_thicknesses"] = torch.zeros_like(self.model_inputs["contact_thicknesses"])
+        self.model_inputs["contact_points_0"] = torch.zeros_like(self.model_inputs["contact_points_0"])
+        self.model_inputs["contact_points_1"] = torch.zeros_like(self.model_inputs["contact_points_1"])
+        self.model_inputs["contact_masks"] = torch.zeros_like(self.model_inputs["contact_masks"])
 
         model_inputs_csv_filename = Path(__file__).parent / 'pendulum_model_inputs.csv'
-        write_model_inputs_to_csv(model_inputs_csv_filename, step, model_inputs)
+        write_model_inputs_to_csv(model_inputs_csv_filename, step, self.model_inputs)
 
         # Run model inference
         with torch.no_grad():
-            prediction = self.model.evaluate(model_inputs)  # (num_envs, 1, pred_dim)
-            prediction = prediction.squeeze(1)  # (num_envs, pred_dim)
+            prediction = self.model.evaluate(self.model_inputs)  # (num_envs, 1, pred_dim)
+            # Take prediction from last timestep
+            if prediction.shape[1] > 1:
+                prediction = prediction[:, -1, :]  # (num_envs, pred_dim)
+            else:
+                prediction = prediction.squeeze(1)  # (num_envs, pred_dim)
         
         # Convert prediction to next states
-        cur_states = model_inputs["states"][:, -1, :]  # (num_envs, state_dim)
+        cur_states = self.model_inputs["states"][:, -1, :]  # (num_envs, state_dim)
         next_states = convert_prediction_to_next_states(
             cur_states,
             prediction,
@@ -258,7 +237,7 @@ class NeRDPredictor:
         
         # Convert back to world frame if needed
         next_states = convert_states_back_to_world(
-            model_inputs["root_body_q"],
+            self.model_inputs["root_body_q"],
             next_states,
             self.states_frame,
             self.anchor_frame_step,
@@ -272,24 +251,70 @@ class NeRDPredictor:
         
         return next_states
     
-    def _process_inputs(self, model_inputs: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
+    def process_inputs(
+        self,
+        states: torch.Tensor,
+        joint_acts: torch.Tensor,
+        root_body_q: torch.Tensor,
+        contacts: Dict[str, torch.Tensor],
+        gravity_dir: torch.Tensor,
+        dt: Optional[float] = None
+    ) -> Dict[str, torch.Tensor]:
         """
         Process model inputs: coordinate frame conversion, state embedding, contact masking.
         """
+        
+        # Reset model_inputs dict
+        self.model_inputs = {}
+
+        # Ensure tensors are on correct device
+        states = states.to(self.device)
+        joint_acts = joint_acts.to(self.device)
+        root_body_q = root_body_q.to(self.device)
+        gravity_dir = gravity_dir.to(self.device)
+        for key in contacts:
+            contacts[key] = contacts[key].to(self.device)
+        
+        # Compute contact masks
+        contact_masks = get_contact_masks(
+            contacts['contact_depths'],
+            contacts['contact_thicknesses']
+        )
+
+        # Add current state to history BEFORE prediction - TO-DO FIX contacts for zero
+        history_entry = {
+            "root_body_q": root_body_q.clone(),
+            "states": states.clone(),
+            "joint_acts": joint_acts.clone(),
+            "gravity_dir": gravity_dir.clone(),
+            "contact_normals": torch.zeros_like(contacts['contact_normals']), #contacts['contact_normals'].clone(),
+            "contact_depths": torch.zeros_like(contacts['contact_depths']), #contacts['contact_depths'].clone(),
+            "contact_thicknesses": torch.zeros_like(contacts['contact_thicknesses']), #contacts['contact_thicknesses'].clone(),
+            "contact_points_0": torch.zeros_like(contacts['contact_points_0']), #contacts['contact_points_0'].clone(),
+            "contact_points_1": torch.zeros_like(contacts['contact_points_1']), #contacts['contact_points_1'].clone(),
+            "contact_masks": torch.zeros_like(contact_masks) #contact_masks.clone(),
+        }
+        self.states_history.append(history_entry)
+
+        # Assemble model inputs
+        for key in self.states_history[0].keys():       # pick the first in the queue
+            stacked = torch.stack([entry[key] for entry in self.states_history], dim=1)
+            self.model_inputs[key] = stacked  # (num_envs, T, dim)
+
         # Convert coordinate frame
         (
-            model_inputs["states"],
+            self.model_inputs["states"],
             _,
-            model_inputs["contact_points_1"],
-            model_inputs["contact_normals"],
-            model_inputs["gravity_dir"]
+            self.model_inputs["contact_points_1"],
+            self.model_inputs["contact_normals"],
+            self.model_inputs["gravity_dir"]
         ) = convert_coordinate_frame(
-            model_inputs["root_body_q"],
-            model_inputs["states"],
+            self.model_inputs["root_body_q"],
+            self.model_inputs["states"],
             None,  # next_states
-            model_inputs["contact_points_1"],
-            model_inputs["contact_normals"],
-            model_inputs["gravity_dir"],
+            self.model_inputs["contact_points_1"],
+            self.model_inputs["contact_normals"],
+            self.model_inputs["gravity_dir"],
             self.states_frame,
             self.anchor_frame_step,
             self.state_dim,
@@ -300,30 +325,30 @@ class NeRDPredictor:
         
         # Wrap continuous DOFs
         # Reshape states to (num_envs * T, state_dim) for wrapping
-        B, T, D = model_inputs["states"].shape
-        states_flat = model_inputs["states"].view(B * T, D)
+        B, T, D = self.model_inputs["states"].shape
+        states_flat = self.model_inputs["states"].view(B * T, D)
         wrap2PI(states_flat, self.is_continuous_dof)
-        model_inputs["states"] = states_flat.view(B, T, D)
+        self.model_inputs["states"] = states_flat.view(B, T, D)
         
         # State embedding
         states_embedding = embed_states(
-            model_inputs["states"],
+            self.model_inputs["states"],
             self.states_embedding_type,
             self.state_embedding_dim,
             self.is_angular_dof,
             self.dof_q_per_env
         )
-        model_inputs["states_embedding"] = states_embedding
+        self.model_inputs["states_embedding"] = states_embedding
         
         # Apply contact mask
-        contact_masks = model_inputs["contact_masks"]  # (num_envs, T, num_contacts)
-        for key in model_inputs.keys():
+        contact_masks = self.model_inputs["contact_masks"]  # (num_envs, T, num_contacts)
+        for key in self.model_inputs.keys():
             if key.startswith('contact_') and key != 'contact_masks':
                 # Reshape to (num_envs, T, num_contacts, dim_per_contact)
                 if key in ['contact_depths', 'contact_thicknesses']:
                     dim_per_contact = 1
-                    original_shape = model_inputs[key].shape
-                    reshaped = model_inputs[key].view(
+                    original_shape = self.model_inputs[key].shape
+                    reshaped = self.model_inputs[key].view(
                         original_shape[0], original_shape[1], self.num_contacts_per_env, dim_per_contact
                     )
                     masked = torch.where(
@@ -331,11 +356,11 @@ class NeRDPredictor:
                         0.,
                         reshaped
                     )
-                    model_inputs[key] = masked.view(original_shape)
+                    self.model_inputs[key] = masked.view(original_shape)
                 else:  # contact_normals, contact_points_0, contact_points_1
                     dim_per_contact = 3
-                    original_shape = model_inputs[key].shape
-                    reshaped = model_inputs[key].view(
+                    original_shape = self.model_inputs[key].shape
+                    reshaped = self.model_inputs[key].view(
                         original_shape[0], original_shape[1], self.num_contacts_per_env, dim_per_contact
                     )
                     masked = torch.where(
@@ -343,7 +368,7 @@ class NeRDPredictor:
                         0.,
                         reshaped
                     )
-                    model_inputs[key] = masked.view(original_shape)
+                    self.model_inputs[key] = masked.view(original_shape)
         
-        return model_inputs
+        return self.model_inputs
 

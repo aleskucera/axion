@@ -159,8 +159,6 @@ class NerdEngine(SolverBase):
         self.gravity_vector = torch.zeros((self.num_models, 3), device= str(self.device))
         self.gravity_vector[:, 1] = -1.0  # Gravity in negative Y direction
 
-        self.nerd_state = torch.zeros((1,4))
-
         self.csv_filename = Path(__file__).parent / 'pendulum_states_NerdEngine.csv'
 
     def step(
@@ -200,25 +198,23 @@ class NerdEngine(SolverBase):
         root_body_q[0, 5] = -root_body_q[0, 4]
         root_body_q[0, 4] = torch.tensor([0.0])
 
-        # Predict using self.nn_predictor
-        state_predicted = self.nn_predictor.predict(
-            states= state_robot_centric.clone(), #self.nerd_state.clone(),
+        # Process the inputs (NerdPredictor does this internally using process_inputs)
+        self.nn_predictor.process_inputs(
+            states= state_robot_centric.clone(),
             joint_acts= joint_acts,
             root_body_q= root_body_q,  # extract only body at index 0, shape = (1, 7)
             contacts= contacts,
             gravity_dir= self.gravity_vector,
-            step= self.step_cnt
-        ) 
+        )
 
-        print(f"Step {self.step_cnt}: in: {self.nerd_state}, root_body_1: {wp.to_torch(state_in.body_q)[0, :].unsqueeze(0)}")
+        # Predict using self.nn_predictor
+        state_predicted = self.nn_predictor.predict(self.step_cnt)
+
+        print(f"Step {self.step_cnt}: in: {state_robot_centric} ")
+        print(f"Step {self.step_cnt}: out: {state_predicted}")
         
         if self.step_cnt < 500:
             write_state_to_csv(self.csv_filename, self.step_cnt, state_predicted)
-
-        assert state_predicted.shape == self.nerd_state.shape
-        self.nerd_state = state_predicted.clone()
-       
-        print(f"Step {self.step_cnt}: out: {state_predicted}")
 
         # Write into state_out 
         state_out.joint_q = wp.from_torch(state_predicted[0,:2].reshape(2,))
