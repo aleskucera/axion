@@ -171,7 +171,6 @@ class NerdEngine(SolverBase):
         contacts: newton.Contacts,
         dt: float,
     ):
-        # Convert the states in to C-space (robot frame)
         #state_robot_centric = torch.cat( (wp.to_torch(state_in.joint_q), wp.to_torch(state_in.joint_qd)))
         #state_robot_centric = state_robot_centric.unsqueeze(0)  # shape (1,4)
 
@@ -179,6 +178,7 @@ class NerdEngine(SolverBase):
         joint_acts = torch.zeros((self.num_models, 1), device= str(self.device))
 
         # Preprocess contacts
+        # WARNING!!! I am rewriting contact info to all zeros inside .predict()!!!!
         max_num_contacts_per_model = 4
         contact_normals = wp.to_torch(contacts.rigid_contact_normal).flatten().unsqueeze(0).clone()
         contact_depths = -100* torch.zeros((self.num_models, max_num_contacts_per_model)) # FIX: wp.to_torch(contacts.rigid_contact_d)
@@ -193,19 +193,21 @@ class NerdEngine(SolverBase):
             "contact_points_1": contact_points_1
         }
         
-        # Process inputs into NN-friendly form (coordinate frame conversion, state embedding, contact masking)
+        # Edit 1: switching axis because NeRD had up_axis=Y and axion has up_axis = z
+        # Edit 2: Nerd expects root_body_q to be the pos/orient of the first pendulum link, but only its rotational part for some reason? 
+        root_body_q = wp.to_torch(state_in.body_q)[0, :].unsqueeze(0)
+        root_body_q[0, :3] = torch.tensor([0.0, 0.0, 5.0])
+        root_body_q[0, 5] = root_body_q[0, 4]
+        root_body_q[0, 4] = torch.tensor([0.0])
+
         # Predict using self.nn_predictor
-
-        root_body_q = torch.zeros((self.num_models, 7), device=str(self.device))
-        root_body_q[:, 0:3] = torch.tensor([[0.0, 0.0, 0.0]], device= str(self.device))  # position
-        root_body_q[:, 3:7] = torch.tensor([[0.0, 0.0, 0.0, 1.0]], device= str(self.device))  # quaternion (identity)
-
         state_predicted = self.nn_predictor.predict(
             states= self.nerd_state.clone(),
             joint_acts= joint_acts,
-            root_body_q= root_body_q, #wp.to_torch(state_in.body_q)[0, :].unsqueeze(0),  # extract only body at index 0, shape = (1, 7)
+            root_body_q= root_body_q,  # extract only body at index 0, shape = (1, 7)
             contacts= contacts,
-            gravity_dir= self.gravity_vector
+            gravity_dir= self.gravity_vector,
+            step= self.step_cnt
         ) 
 
         print(f"Step {self.step_cnt}: in: {self.nerd_state}, root_body_1: {wp.to_torch(state_in.body_q)[0, :].unsqueeze(0)}")
@@ -226,7 +228,7 @@ class NerdEngine(SolverBase):
         state_out.joint_qd = wp.from_torch(state_predicted[0,2:].reshape(2,))
         
         #newton.eval_fk(self.model, state_out.joint_q, state_out.joint_qd, state_out)
-        newton.eval_fk(self.model, state_out.joint_q, state_out.joint_qd, state_out)
+        newton.eval_fk(self.model, -state_out.joint_q, -state_out.joint_qd, state_out)
 
         # increase step counter
         self.step_cnt += 1

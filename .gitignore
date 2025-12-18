@@ -186,6 +186,7 @@ pyrightconfig.json
 *.csv
 *.html
 *.svg
+*.pdf
 
 outputs/
 *.ini

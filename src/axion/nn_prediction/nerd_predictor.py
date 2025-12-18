@@ -225,7 +225,14 @@ class NeRDPredictor:
         
         # Process inputs (coordinate frame conversion, state embedding, contact masking)
         model_inputs = self._process_inputs(model_inputs)
-        
+
+        model_inputs["contact_normals"] = torch.zeros_like(model_inputs["contact_normals"])
+        model_inputs["contact_depths"] = torch.zeros_like(model_inputs["contact_depths"])
+        model_inputs["contact_thicknesses"] = torch.zeros_like(model_inputs["contact_thicknesses"])
+        model_inputs["contact_points_0"] = torch.zeros_like(model_inputs["contact_points_0"])
+        model_inputs["contact_points_1"] = torch.zeros_like(model_inputs["contact_points_1"])
+        model_inputs["contact_masks"] = torch.zeros_like(model_inputs["contact_masks"])
+
         model_inputs_csv_filename = Path(__file__).parent / 'pendulum_model_inputs.csv'
         write_model_inputs_to_csv(model_inputs_csv_filename, step, model_inputs)
 

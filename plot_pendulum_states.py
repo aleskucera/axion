@@ -5,4 +5,4 @@ from axion.nn_prediction.utils.analysis_utils import plot_states_from_csv, plot_
 csv_filepath = "src/axion/nn_prediction/pendulum_model_inputs.csv"
 
 #plot_states_from_csv(csv_filepath)
-plot_model_input_from_csv(csv_filepath, "root_body_q", 250)
+plot_model_input_from_csv(csv_filepath, "gravity_dir", 250)

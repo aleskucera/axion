@@ -1,5 +1,5 @@
 defaults:
-  - simulation: base
+  - simulation: nerd
   - rendering: gl
   - execution: no_graph
   - logging: disabled
