@@ -35,7 +35,7 @@ class Simulator(AbstractSimulator):
         )
 
     def build_model(self) -> newton.Model:
-        FRICTION = 1.0
+        FRICTION = 0.0
         RESTITUTION = 0.0
 
         ball1 = self.builder.add_body(

@@ -329,10 +329,10 @@ class AxionEngine(SolverBase):
     ):
         step_events = self.logger.step_event_pairs[self.logger.current_step_in_segment]
 
-        self.data.set_dt(dt)
+        if contacts.rigid_contact_count.numpy() > 0:
+            print(f"Contact count {contacts.rigid_contact_count} in timestep {self._timestep}.")
 
-        # if contacts.rigid_contact_count.numpy() > 0:
-        #     print(f"Contact count {contacts.rigid_contact_count} in timestep {self._timestep}.")
+        self.data.set_dt(dt)
 
         # Control block
         with self.logger.timed_block(*step_events["control"]):

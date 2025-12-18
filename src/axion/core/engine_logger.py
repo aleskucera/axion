@@ -317,7 +317,7 @@ class EngineLogger:
 
         # 3. Perform PCA (Batched over Worlds)
         # v1, v2: (Worlds, Dofs) | S: (Worlds, 2)
-        v1, v2, S = perform_pca(trajectory_all)
+        v1, v2, S, mean, std = perform_pca(trajectory_all)
         x_center = trajectory_all[-1]
 
         # 4. Project Trajectory to 2D
@@ -349,6 +349,8 @@ class EngineLogger:
             v1,
             v2,
             trajectory_bounds,  # passing bounds as S
+            mean,
+            std,
             grid_res,
             auto_scale_margin,
             engine.dims,  # passing dims to handle q/u splitting
