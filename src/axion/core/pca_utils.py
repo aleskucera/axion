@@ -147,59 +147,80 @@ def copy_state_to_history(
     )
 
 
-def perform_pca(
-    trajectory_data: torch.Tensor,
-) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    """
-    Performs PCA on the given trajectory data.
+def create_pca_grid_batch(
+    x_center: torch.Tensor,
+    v1: torch.Tensor,
+    v2: torch.Tensor,
+    S: torch.Tensor,
+    mean: torch.Tensor,  # NEW: For Denormalization
+    std: torch.Tensor,  # NEW: For Denormalization
+    grid_res: int,
+    plot_range_scale: float,
+    dims: EngineDimensions,  # NEW: Need full dims to split q/u/lambda
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
 
-    Args:
-        trajectory_data: Input tensor.
-          Expected shape: (Steps, Worlds, Dofs) or (Steps, Dofs).
+    device = x_center.device
 
-    Returns:
-        v1, v2: Principal components (Worlds, Dofs)
-        S: Singular values or variance info (Worlds, 2)
-    """
-
-    # Handle the 3D case: (Steps, Worlds, Dofs)
-    # We want to perform PCA over the 'Steps' dimension, independently for each 'World'.
-    if trajectory_data.ndim == 3:
-        # Permute to (Worlds, Steps, Dofs) for batch processing
-        data = trajectory_data.permute(1, 0, 2)
+    # --- 1. Determine Plot Range (using Normalized S) ---
+    # S comes from the normalized data, so it represents variance in "std deviations"
+    if S.dim() == 2:
+        max_bound_x = S[:, 0].max().item()
+        max_bound_y = S[:, 1].max().item()
+        # Default y range if 2nd component is weak
+        if max_bound_y < 1e-6:
+            max_bound_y = 0.1 * max_bound_x
     else:
-        # Assume (Steps, Dofs), add a batch dimension -> (1, Steps, Dofs)
-        data = trajectory_data.unsqueeze(0)
+        max_bound_x = S[0].item()
+        max_bound_y = 0.1 * max_bound_x
 
-    # Center data: mean over Steps (dim 1)
-    data_mean = data.mean(dim=1, keepdim=True)
-    data_centered = data - data_mean
+    range_x = plot_range_scale * (max_bound_x if max_bound_x > 1e-6 else 1.0)
+    range_y = plot_range_scale * (max_bound_y if max_bound_y > 1e-6 else 1.0)
 
-    # Perform Batched SVD
-    # Input: (Worlds, Steps, Dofs)
-    # Output Vh: (Worlds, Dofs, Dofs)
-    try:
-        k = min(2, data_centered.shape[1], data_centered.shape[2])
-        _U, S, Vh = torch.linalg.svd(data_centered, full_matrices=False)
+    alphas = torch.linspace(-range_x, range_x, grid_res, device=device)
+    betas = torch.linspace(-range_y, range_y, grid_res, device=device)
+    alpha_grid, beta_grid = torch.meshgrid(alphas, betas, indexing="ij")
 
-        # Principal components are rows of Vh
-        v1 = Vh[:, 0, :]  # (Worlds, Dofs)
-        v2 = Vh[:, 1, :] if k > 1 else torch.zeros_like(v1)
-        S_out = S[:, :2]  # (Worlds, 2)
+    # --- 2. Normalize the Center Point ---
+    x_center_norm = (x_center - mean) / std
 
-    except torch.linalg.LinAlgError:
-        print("SVD failed. Using random directions.")
-        worlds, _, dofs = data.shape
-        v1 = torch.randn(worlds, dofs, device=data.device)
-        v1 = torch.nn.functional.normalize(v1, dim=1)
-        v2 = torch.randn(worlds, dofs, device=data.device)
-        # Orthogonalize
-        dot = (v2 * v1).sum(dim=1, keepdim=True)
-        v2 = v2 - v1 * dot
-        v2 = torch.nn.functional.normalize(v2, dim=1)
-        S_out = torch.ones(worlds, 2, device=data.device)
+    # --- 3. Generate Grid in Normalized Space ---
+    pca_batch_norm = (
+        x_center_norm.unsqueeze(0)
+        + alpha_grid.flatten().view(-1, 1, 1) * v1.unsqueeze(0)
+        + beta_grid.flatten().view(-1, 1, 1) * v2.unsqueeze(0)
+    )
 
-    return v1, v2, S_out
+    # --- 4. Denormalize to Physics Space ---
+    # x_real = x_norm * std + mean
+    pca_batch_points = pca_batch_norm * std.unsqueeze(0) + mean.unsqueeze(0)
+
+    # --- 5. Split [q, u, lambda] ---
+    num_bodies = dims.N_b
+    dim_q = num_bodies * 7
+    dim_u = num_bodies * 6
+
+    pca_q_flat = pca_batch_points[:, :, :dim_q]
+    pca_u_flat = pca_batch_points[:, :, dim_q : dim_q + dim_u]
+    pca_lambda_flat = pca_batch_points[:, :, dim_q + dim_u :]
+
+    # --- 6. Normalize Quaternions in Q ---
+    # Linear interpolation destroys unit norm of quaternions
+    pca_q_reshaped = pca_q_flat.view(-1, dims.N_w, dims.N_b, 7)
+    pos = pca_q_reshaped[..., :3]
+    rot = pca_q_reshaped[..., 3:]
+    rot = torch.nn.functional.normalize(rot, p=2, dim=-1)
+
+    pca_q_final = torch.cat([pos, rot], dim=-1)
+
+    return (
+        pca_q_final.reshape(-1, dims.N_w, dim_q),
+        pca_u_flat,
+        pca_lambda_flat,
+        alphas,
+        betas,
+        alpha_grid,
+        beta_grid,
+    )
 
 
 def prepare_trajectory_data(

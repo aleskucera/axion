@@ -163,8 +163,8 @@ def load_detailed_data(file_path, step, world_idx):
         g = f[f"timestep_{step:04d}/residual_norm_landscape_data"]
 
         grid = g["residual_norm_grid"][:, :, world_idx]
-        alphas = g["pca_alphas"][world_idx, :]
-        betas = g["pca_betas"][world_idx, :]
+        alphas = g["pca_alphas"][:]
+        betas = g["pca_betas"][:]
         traj_2d = g["trajectory_2d_projected"][:, world_idx, :]
 
         residuals = g["trajectory_residuals"][:, world_idx, :]
@@ -280,7 +280,7 @@ with col1:
     )
 
     fig_land.update_layout(height=500, margin=dict(t=0, b=0, l=0, r=0))
-    st.plotly_chart(fig_land, use_container_width=True)
+    st.plotly_chart(fig_land, width="stretch")
 
 with col2:
     st.subheader("Max Residual per Iteration")
@@ -314,4 +314,4 @@ with col2:
         margin=dict(t=20, b=0, l=0, r=0),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
     )
-    st.plotly_chart(fig_max, use_container_width=True)
+    st.plotly_chart(fig_max, width="stretch")
