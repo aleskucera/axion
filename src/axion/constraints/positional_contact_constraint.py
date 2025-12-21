@@ -25,7 +25,6 @@ def compute_signed_distance(
 
     offset_b = interaction.contact_thickness_b * n
     p_b = wp.transform_point(body_q_2, interaction.contact_point_b) + offset_b
-
     return wp.dot(n, p_a - p_b)
 
 
@@ -71,11 +70,11 @@ def positional_contact_constraint_kernel(
     body_1 = interaction.body_a_idx
     body_2 = interaction.body_b_idx
 
-    body_q_1 = wp.transform()
+    body_q_1 = wp.transform_identity()
     if body_1 >= 0:
         body_q_1 = body_q[world_idx, interaction.body_a_idx]
 
-    body_q_2 = wp.transform()
+    body_q_2 = wp.transform_identity()
     if body_2 >= 0:
         body_q_2 = body_q[world_idx, interaction.body_b_idx]
 
@@ -160,11 +159,11 @@ def batch_positional_contact_residual_kernel(
     body_1 = interaction.body_a_idx
     body_2 = interaction.body_b_idx
 
-    body_q_1 = wp.transform()
+    body_q_1 = wp.transform_identity()
     if body_1 >= 0:
         body_q_1 = body_q[batch_idx, world_idx, interaction.body_a_idx]
 
-    body_q_2 = wp.transform()
+    body_q_2 = wp.transform_identity()
     if body_2 >= 0:
         body_q_2 = body_q[batch_idx, world_idx, interaction.body_b_idx]
 

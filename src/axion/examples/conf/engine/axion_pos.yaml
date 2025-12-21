@@ -1,7 +1,7 @@
 # @package engine
 _target_: axion.AxionEngineConfig
 newton_iters: 8
-linear_iters: 10
+linear_iters: 8
 enable_linesearch: false
 linesearch_step_count: 256
 linesearch_step_min: 1e-5

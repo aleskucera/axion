@@ -74,20 +74,18 @@ class Simulator(AbstractSimulator):
         RESTITUTION = 0.0
         WHEEL_DENSITY = 300
         CHASSIS_DENSITY = 800
-        KE = 80000.0
-        KD = 40000.0
-        KF = 600.0
+        KE = 90000.0
+        KD = 50000.0
+        KF = 2000.0
 
         wheel_m = openmesh.read_trimesh(f"{ASSETS_DIR}/helhest/wheel2.obj")
         mesh_points = np.array(wheel_m.points())
         mesh_indices = np.array(wheel_m.face_vertex_indices(), dtype=np.int32).flatten()
         wheel_mesh_render = newton.Mesh(mesh_points, mesh_indices)
 
-        self.builder.add_articulation(key="helhest_simple")
-
         # --- Build the Vehicle ---
         # Create main body (chassis)
-        chassis = self.builder.add_body(
+        chassis = self.builder.add_link(
             xform=wp.transform((-3.0, 0.0, 1.0), wp.quat_identity()), key="chassis"
         )
         self.builder.add_shape_box(
@@ -106,7 +104,7 @@ class Simulator(AbstractSimulator):
         )
 
         # Left Wheel
-        left_wheel = self.builder.add_body(
+        left_wheel = self.builder.add_link(
             xform=wp.transform((-3.0, -0.75, 1.0), wp.quat_identity()),
             key="left_wheel",
         )
@@ -130,6 +128,7 @@ class Simulator(AbstractSimulator):
                 mu=FRICTION,
                 restitution=RESTITUTION,
                 thickness=0.0,
+                contact_margin=0.1,
                 is_visible=False,
                 ke=KE,
                 kd=KD,
@@ -138,7 +137,7 @@ class Simulator(AbstractSimulator):
         )
 
         # Right Wheel
-        right_wheel = self.builder.add_body(
+        right_wheel = self.builder.add_link(
             xform=wp.transform((-3.0, 0.75, 1.0), wp.quat_identity()),
             key="right_wheel",
         )
@@ -162,6 +161,7 @@ class Simulator(AbstractSimulator):
                 mu=FRICTION,
                 restitution=RESTITUTION,
                 thickness=0.0,
+                contact_margin=0.1,
                 is_visible=False,
                 ke=KE,
                 kd=KD,
@@ -170,7 +170,7 @@ class Simulator(AbstractSimulator):
         )
 
         # Back Wheel
-        back_wheel = self.builder.add_body(
+        back_wheel = self.builder.add_link(
             xform=wp.transform((-1.5, 0.0, 1.0), wp.quat_identity()),
             key="back_wheel",
         )
@@ -194,6 +194,7 @@ class Simulator(AbstractSimulator):
                 mu=0.5,
                 restitution=RESTITUTION,
                 thickness=0.0,
+                contact_margin=0.1,
                 is_visible=False,
                 ke=KE,
                 kd=KD,
@@ -203,10 +204,10 @@ class Simulator(AbstractSimulator):
 
         # --- Define Joints ---
 
-        self.builder.add_joint_free(parent=-1, child=chassis)
+        j0 = self.builder.add_joint_free(parent=-1, child=chassis)
 
         # Left wheel revolute joint (velocity control)
-        self.builder.add_joint_revolute(
+        j1 = self.builder.add_joint_revolute(
             parent=chassis,
             child=left_wheel,
             parent_xform=wp.transform((0.0, -0.75, 0.0), wp.quat_identity()),
@@ -219,7 +220,7 @@ class Simulator(AbstractSimulator):
             },
         )
         # Right wheel revolute joint (velocity control)
-        self.builder.add_joint_revolute(
+        j2 = self.builder.add_joint_revolute(
             parent=chassis,
             child=right_wheel,
             parent_xform=wp.transform((0.0, 0.75, 0.0), wp.quat_identity()),
@@ -232,12 +233,14 @@ class Simulator(AbstractSimulator):
             },
         )
         # Back wheel revolute joint (not actively driven)
-        self.builder.add_joint_revolute(
+        j3 = self.builder.add_joint_revolute(
             parent=chassis,
             child=back_wheel,
             parent_xform=wp.transform((1.5, 0.0, 0.0), wp.quat_identity()),
             axis=(0.0, 1.0, 0.0),
         )
+
+        self.builder.add_articulation([j0, j1, j2, j3], key="helhest")
 
         # --- Add Static Obstacles and Ground ---
 
@@ -249,8 +252,12 @@ class Simulator(AbstractSimulator):
             hy=1.5,
             hz=0.15,
             cfg=newton.ModelBuilder.ShapeConfig(
+                contact_margin=0.1,
                 mu=FRICTION,
                 restitution=RESTITUTION,
+                ke=KE,
+                kd=KD,
+                kf=KF,
             ),
         )
         self.builder.add_shape_box(
@@ -260,15 +267,24 @@ class Simulator(AbstractSimulator):
             hy=1.75,
             hz=0.25,
             cfg=newton.ModelBuilder.ShapeConfig(
+                contact_margin=0.1,
                 mu=FRICTION,
                 restitution=RESTITUTION,
+                ke=KE,
+                kd=KD,
+                kf=KF,
             ),
         )
 
         # add ground plane
         self.builder.add_ground_plane(
             cfg=newton.ModelBuilder.ShapeConfig(
-                ke=10.0, kd=10.0, kf=0.0, mu=FRICTION, restitution=RESTITUTION
+                contact_margin=0.1,
+                ke=KE,
+                kd=KD,
+                kf=KF,
+                mu=FRICTION,
+                restitution=RESTITUTION,
             )
         )
 

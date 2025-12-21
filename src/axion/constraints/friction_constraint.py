@@ -15,8 +15,8 @@ def compute_friction_model(
     interaction: ContactInteraction,
     u_1: wp.spatial_vector,
     u_2: wp.spatial_vector,
-    impulse_f_prev: wp.vec2,
-    impulse_n_prev: wp.float32,
+    force_f_prev: wp.vec2,
+    force_n_prev: wp.float32,
     dt: wp.float32,
     fb_alpha: wp.float32,
     fb_beta: wp.float32,
@@ -32,14 +32,14 @@ def compute_friction_model(
     v_t_norm = wp.length(v_t)
 
     # --- Calculate Friction Impulse Magnitude & Cone Limit ---
-    impulse_f_norm = wp.length(impulse_f_prev)
+    force_f_norm = wp.length(force_f_prev)
 
     # --- Evaluate Friction Cone Complementarity ---
     # beta converts Force to Velocity (Compliance * dt or similar scaling)
     beta = dt * fb_beta
     phi_f, _, _ = scaled_fisher_burmeister(
         v_t_norm,
-        mu * impulse_n_prev - impulse_f_norm,
+        mu * force_n_prev - force_f_norm,
         fb_alpha,
         beta,
     )
@@ -47,7 +47,7 @@ def compute_friction_model(
     # --- Compute the Slip Coupling Factor 'w' ---
     # Denominator: beta * F (Velocity) + phi (Velocity)
     # Result w: beta * (V/V) = beta (Compliance units V/F)
-    w = beta * wp.max((v_t_norm - phi_f) / (beta * impulse_f_norm + phi_f + 1e-8), 0.0)
+    w = beta * wp.max((v_t_norm - phi_f) / (beta * force_f_norm + phi_f + 1e-8), 0.0)
 
     # --- Package and return the results ---
     result = FrictionModelResult()
@@ -87,9 +87,9 @@ def friction_constraint_kernel(
     s_prev = s_n_prev[world_idx, contact_idx]
 
     # --- 1. Handle Early Exit for Inactive/Non-Frictional Contacts ---
-    impulse_n_prev = lambda_n_prev / (s_prev + 1e-6)
+    force_n_prev = lambda_n_prev / (s_prev + 1e-6)
 
-    if mu * impulse_n_prev <= 1e-3:
+    if mu * force_n_prev <= 1e-3:
         # Unconstrained: h = λ, C = 1, J = 0
         h_f[world_idx, constr_idx1] = 0.0
         h_f[world_idx, constr_idx2] = 0.0
@@ -115,15 +115,15 @@ def friction_constraint_kernel(
 
     lambda_t1_prev = body_lambda_f_prev[world_idx, constr_idx1]
     lambda_t2_prev = body_lambda_f_prev[world_idx, constr_idx2]
-    impulse_f_prev = wp.vec2(lambda_t1_prev, lambda_t2_prev)
+    force_f_prev = wp.vec2(lambda_t1_prev, lambda_t2_prev)
 
     # --- 3. Compute Friction Terms by Calling the Model ---
     model_result = compute_friction_model(
         interaction,
         u_1,
         u_2,
-        impulse_f_prev,
-        impulse_n_prev,
+        force_f_prev,
+        force_n_prev,
         dt,
         fb_alpha,
         fb_beta,
@@ -192,9 +192,9 @@ def batch_friction_residual_kernel(
     s_prev = s_n_prev[world_idx, contact_idx]
 
     # --- 1. Handle Early Exit for Inactive/Non-Frictional Contacts ---
-    impulse_n_prev = lambda_n_prev / (s_prev + 1e-6)
+    force_n_prev = lambda_n_prev / (s_prev + 1e-6)
 
-    if interaction.penetration_depth <= 0 or mu * impulse_n_prev <= 1e-3:
+    if interaction.penetration_depth <= 0 or mu * force_n_prev <= 1e-3:
         h_f[batch_idx, world_idx, constr_idx1] = 0.0
         h_f[batch_idx, world_idx, constr_idx2] = 0.0
         return
@@ -212,15 +212,15 @@ def batch_friction_residual_kernel(
 
     lambda_t1_prev = body_lambda_f_prev[world_idx, constr_idx1]
     lambda_t2_prev = body_lambda_f_prev[world_idx, constr_idx2]
-    impulse_f_prev = wp.vec2(lambda_t1_prev, lambda_t2_prev)
+    force_f_prev = wp.vec2(lambda_t1_prev, lambda_t2_prev)
 
     # --- 3. Compute Friction Terms by Calling the Model ---
     model_result = compute_friction_model(
         interaction,
         u_1,
         u_2,
-        impulse_f_prev,
-        impulse_n_prev,
+        force_f_prev,
+        force_n_prev,
         dt,
         fb_alpha,
         fb_beta,

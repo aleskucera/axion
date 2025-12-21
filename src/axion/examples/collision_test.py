@@ -36,10 +36,10 @@ class Simulator(AbstractSimulator):
 
     def build_model(self) -> newton.Model:
         # z height to drop shapes from
-        drop_z = 2.0
+        drop_z = 0.0
 
         # SPHERE
-        self.sphere_pos = wp.vec3(0.0, -0.9, drop_z)
+        self.sphere_pos = wp.vec3(0.0, -0.9, 0.0)
         body_sphere = self.builder.add_body(
             xform=wp.transform(p=self.sphere_pos, q=wp.quat_identity()), key="sphere"
         )
@@ -54,12 +54,12 @@ class Simulator(AbstractSimulator):
         )
 
         # BOX
-        self.box_pos = wp.vec3(0.0, 0.0, drop_z)
+        self.box_pos = wp.vec3(0.0, 0.0, 0.0)
         body_box = self.builder.add_body(
             xform=wp.transform(p=self.box_pos, q=wp.quat_identity()), key="box"
         )
         self.builder.add_shape_box(
-            body_box,
+            -1,
             hx=0.5,
             hy=0.35,
             hz=0.25,
@@ -71,27 +71,25 @@ class Simulator(AbstractSimulator):
             ),
         )
 
-        # CAPSULE
-        self.capsule_pos = wp.vec3(0.0, 0.7, drop_z)
-        body_capsule = self.builder.add_body(
-            xform=wp.transform(p=self.capsule_pos, q=wp.quat_identity()), key="capsule"
-        )
-        self.builder.add_shape_capsule(
-            body_capsule,
-            radius=0.3,
-            half_height=0.1,
-            cfg=self.builder.ShapeConfig(
-                thickness=0.0,
-                contact_margin=0.1,
-                mu=0.0,
-            ),
-        )
+        # # CAPSULE
+        # self.capsule_pos = wp.vec3(0.0, 0.7, 0.0)
+        # body_capsule = self.builder.add_body(
+        #     xform=wp.transform(p=self.capsule_pos, q=wp.quat_identity()), key="capsule"
+        # )
+        # self.builder.add_shape_capsule(
+        #     body_capsule,
+        #     radius=0.3,
+        #     half_height=0.1,
+        #     cfg=self.builder.ShapeConfig(
+        #         thickness=0.0,
+        #         contact_margin=0.1,
+        #         mu=0.0,
+        #     ),
+        # )
 
-        self.builder.rigid_contact_margin = 0.00
         return self.builder.finalize_replicated(
             num_worlds=self.simulation_config.num_worlds,
             gravity=0.0,
-            rigid_contact_margin=0.00,
         )
 
 

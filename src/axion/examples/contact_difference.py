@@ -4,8 +4,6 @@ from typing import override
 
 import hydra
 import newton
-import numpy as np
-import openmesh
 import warp as wp
 from axion import AbstractSimulator
 from axion import EngineConfig
@@ -38,16 +36,6 @@ class Simulator(AbstractSimulator):
             logging_config,
         )
 
-        # self.mujoco_solver = newton.solvers.SolverMuJoCo(self.model, njmax=40)
-        # self.joint_target = wp.array(6 * [0.0] + [0.5, 0.5, 0.0], dtype=wp.float32)
-
-        robot_joint_target = np.concatenate(
-            [np.zeros(6), np.array([400.0, 400.0, 0.0], dtype=wp.float32)]
-        )
-
-        joint_target = np.tile(robot_joint_target, self.simulation_config.num_worlds)
-        self.joint_target = wp.from_numpy(joint_target, dtype=wp.float32)
-
     @override
     def init_state_fn(
         self,
@@ -56,13 +44,7 @@ class Simulator(AbstractSimulator):
         contacts: newton.Contacts,
         dt: float,
     ):
-        # self.mujoco_solver.step(current_state, next_state, self.model.control(), contacts, dt)
         self.solver.integrate_bodies(self.model, current_state, next_state, dt)
-
-    @override
-    def control_policy(self, current_state: newton.State):
-        # wp.copy(self.control.joint_f, self.joint_target)
-        pass
 
     def build_model(self) -> newton.Model:
         """
@@ -73,31 +55,22 @@ class Simulator(AbstractSimulator):
         FRICTION = 0.0
         RESTITUTION = 0.0
         WHEEL_DENSITY = 300
-        CHASSIS_DENSITY = 800
-        KE = 60000.0
-        KD = 30000.0
-        KF = 500.0
 
         ball_x = 0.5
-        ball_y = 0.0
+        ball_y = 4.0
         ball_z = 2.0
 
-        wheel_m = openmesh.read_trimesh(f"{ASSETS_DIR}/helhest/wheel2.obj")
-        mesh_points = np.array(wheel_m.points())
-        mesh_indices = np.array(wheel_m.face_vertex_indices(), dtype=np.int32).flatten()
-        wheel_mesh_render = newton.Mesh(mesh_points, mesh_indices)
-
         # Left Wheel
-        left_wheel = self.builder.add_body(
+        ball1 = self.builder.add_body(
             xform=wp.transform((ball_x, ball_y, ball_z), wp.quat_identity()),
             key="left_wheel",
         )
         self.builder.add_shape_sphere(
-            body=left_wheel,
+            body=ball1,
             xform=wp.transform(
                 (0.0, 0.0, 0.0), wp.quat_from_axis_angle(wp.vec3(1.0, 0.0, 0.0), wp.pi / 2)
             ),
-            radius=0.45,
+            radius=0.5,
             cfg=newton.ModelBuilder.ShapeConfig(
                 density=WHEEL_DENSITY,
                 mu=FRICTION,
@@ -105,23 +78,20 @@ class Simulator(AbstractSimulator):
                 thickness=0.0,
                 contact_margin=0.1,
                 is_visible=True,
-                ke=KE,
-                kd=KD,
-                kf=KF,
             ),
         )
 
         # Right Wheel
-        left_wheel = self.builder.add_body(
-            xform=wp.transform((ball_x + 4.05, ball_y, ball_z), wp.quat_identity()),
+        ball2 = self.builder.add_body(
+            xform=wp.transform((ball_x + 4.0, ball_y, ball_z), wp.quat_identity()),
             key="right_wheel",
         )
         self.builder.add_shape_sphere(
-            body=left_wheel,
+            body=ball2,
             xform=wp.transform(
                 (0.0, 0.0, 0.0), wp.quat_from_axis_angle(wp.vec3(1.0, 0.0, 0.0), wp.pi / 2)
             ),
-            radius=0.45,
+            radius=0.5,
             cfg=newton.ModelBuilder.ShapeConfig(
                 density=WHEEL_DENSITY,
                 mu=FRICTION,
@@ -129,18 +99,20 @@ class Simulator(AbstractSimulator):
                 thickness=0.0,
                 contact_margin=0.1,
                 is_visible=True,
-                ke=KE,
-                kd=KD,
-                kf=KF,
             ),
         )
 
         # --- Add Static Obstacles and Ground ---
+        box = self.builder.add_body(
+            xform=wp.transform((0.0, 0.0, 0.0), wp.quat_identity()),
+            key="box",
+            mass=0.0,
+        )
 
         # Add a static box obstacle (body=-1 means it's fixed to the world)
         self.builder.add_shape_box(
-            body=-1,
-            xform=wp.transform((2.5, 0.0, 0.0), wp.quat_identity()),
+            body=box,
+            xform=wp.transform((ball_x + 2.0, ball_y, ball_z - 2.0), wp.quat_identity()),
             hx=1.75,
             hy=1.5,
             hz=0.15,
@@ -149,6 +121,7 @@ class Simulator(AbstractSimulator):
                 restitution=RESTITUTION,
                 thickness=0.0,
                 contact_margin=0.5,
+                density=0.0,
             ),
         )
 

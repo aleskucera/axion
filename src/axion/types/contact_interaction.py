@@ -75,7 +75,7 @@ def contact_interaction_kernel(
     body_a = -1
     body_b = -1
 
-    # Get body indices and thickness
+    # Get body indices
     if shape_a >= 0:
         body_a = shape_body[world_idx, shape_a]
     if shape_b >= 0:
@@ -84,25 +84,40 @@ def contact_interaction_kernel(
     # Contact normal in world space
     n = contact_normal[world_idx, contact_idx]
 
-    # Contact points in world space
-    p_a = contact_point0[world_idx, contact_idx]
-    p_b = contact_point1[world_idx, contact_idx]
+    # Contact points from Newton are in Body-Local space
+    p_a_local = contact_point0[world_idx, contact_idx]
+    p_b_local = contact_point1[world_idx, contact_idx]
 
-    # Contact residual (contact_point - body_com)
-    r_a = wp.vec3()
-    r_b = wp.vec3()
-
-    # Get world-space contact points and lever arms (r_a, r_b)
+    # Transforms
+    X_a = wp.transform_identity()
     if body_a >= 0:
-        X_wb_a = body_q[world_idx, body_a]
-        offset_a = -contact_thickness0[world_idx, contact_idx] * n
-        p_a = wp.transform_point(X_wb_a, contact_point0[world_idx, contact_idx]) + offset_a
-        r_a = p_a - wp.transform_point(X_wb_a, body_com[world_idx, body_a])
+        X_a = body_q[world_idx, body_a]
+
+    X_b = wp.transform_identity()
     if body_b >= 0:
-        X_wb_b = body_q[world_idx, body_b]
-        offset_b = contact_thickness1[world_idx, contact_idx] * n
-        p_b = wp.transform_point(X_wb_b, contact_point1[world_idx, contact_idx]) + offset_b
-        r_b = p_b - wp.transform_point(X_wb_b, body_com[world_idx, body_b])
+        X_b = body_q[world_idx, body_b]
+
+    # World points
+    p_a_world = wp.transform_point(X_a, p_a_local)
+    p_b_world = wp.transform_point(X_b, p_b_local)
+
+    # Thickness adjustment in world space
+    offset_a = -contact_thickness0[world_idx, contact_idx] * n
+    offset_b = contact_thickness1[world_idx, contact_idx] * n
+
+    p_a_world_adj = p_a_world + offset_a
+    p_b_world_adj = p_b_world + offset_b
+
+    # Contact residuals (lever arms) in World space
+    r_a = wp.vec3()
+    if body_a >= 0:
+        com_a_world = wp.transform_point(X_a, body_com[world_idx, body_a])
+        r_a = p_a_world_adj - com_a_world
+
+    r_b = wp.vec3()
+    if body_b >= 0:
+        com_b_world = wp.transform_point(X_b, body_com[world_idx, body_b])
+        r_b = p_b_world_adj - com_b_world
 
     # Compute contact Jacobians
     t1, t2 = orthogonal_basis(n)
@@ -112,17 +127,14 @@ def contact_interaction_kernel(
     interaction.body_a_idx = body_a
     interaction.body_b_idx = body_b
 
-    interaction.contact_point_a = contact_point0[world_idx, contact_idx]
-    interaction.contact_point_b = contact_point1[world_idx, contact_idx]
+    interaction.contact_point_a = p_a_local
+    interaction.contact_point_b = p_b_local
 
     interaction.contact_thickness_a = contact_thickness0[world_idx, contact_idx]
     interaction.contact_thickness_b = contact_thickness1[world_idx, contact_idx]
 
-    # interaction.penetration_depth = d
-    interaction.penetration_depth = wp.dot(n, p_b - p_a)
-
-    # if interaction.penetration_depth <= 0:
-    #     interaction.is_active = False
+    # Penetration depth (positive for penetration)
+    interaction.penetration_depth = wp.dot(n, p_b_world_adj - p_a_world_adj)
 
     interaction.basis_a.normal = wp.spatial_vector(n, wp.cross(r_a, n))
     interaction.basis_a.tangent1 = wp.spatial_vector(t1, wp.cross(r_a, t1))
@@ -167,11 +179,18 @@ def update_penetration_depth_kernel(
         X_wb_a = body_q[world_idx, body_a]
         offset_a = -interaction.contact_thickness_a * n
         p_a = wp.transform_point(X_wb_a, interaction.contact_point_a) + offset_a
+    else:
+        offset_a = -interaction.contact_thickness_a * n
+        p_a = interaction.contact_point_a + offset_a
 
     if body_b >= 0:
         X_wb_b = body_q[world_idx, body_b]
         offset_b = interaction.contact_thickness_b * n
         p_b = wp.transform_point(X_wb_b, interaction.contact_point_b) + offset_b
+    else:
+        offset_b = interaction.contact_thickness_b * n
+        p_b = interaction.contact_point_b + offset_b
 
     # Update depth
     interactions[world_idx, contact_idx].penetration_depth = wp.dot(n, p_b - p_a)
+
