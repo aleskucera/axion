@@ -255,15 +255,11 @@ class Simulator(AbstractSimulator):
             )
         )
 
-        final_builder = newton.ModelBuilder(gravity=0.0)
-        final_builder.rigid_contact_margin = 0.0
-        final_builder.replicate(
-            self.builder,
+        return self.builder.finalize_replicated(
             num_worlds=self.simulation_config.num_worlds,
+            gravity=0.0,
+            rigid_contact_margin=0.0,
         )
-
-        model = final_builder.finalize()
-        return model
 
 
 @hydra.main(config_path=str(CONFIG_PATH), config_name="helhest", version_base=None)

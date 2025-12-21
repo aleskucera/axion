@@ -71,7 +71,7 @@ class Simulator(AbstractSimulator):
 
         This method constructs the three-wheeled vehicle, obstacles, and ground plane.
         """
-        FRICTION = 0.0
+        FRICTION = 0.8
         RESTITUTION = 0.0
         WHEEL_DENSITY = 300
         CHASSIS_DENSITY = 800
@@ -278,15 +278,10 @@ class Simulator(AbstractSimulator):
             )
         )
 
-        final_builder = newton.ModelBuilder()
-        final_builder.rigid_contact_margin = 0.1
-        final_builder.replicate(
-            self.builder,
+        return self.builder.finalize_replicated(
             num_worlds=self.simulation_config.num_worlds,
+            gravity=-9.81,
         )
-
-        model = final_builder.finalize()
-        return model
 
 
 @hydra.main(config_path=str(CONFIG_PATH), config_name="helhest", version_base=None)

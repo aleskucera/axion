@@ -5,13 +5,13 @@ from axion.constraints import positional_joint_constraint_kernel
 from axion.constraints import unconstrained_dynamics_kernel
 from axion.constraints import velocity_contact_constraint_kernel
 from axion.constraints import velocity_joint_constraint_kernel
-from axion.core.batched_model import BatchedModel
 from axion.types import SpatialInertia
 from axion.types import to_spatial_momentum
 
 from .engine_config import EngineConfig
-from .engine_data import EngineArrays
+from .engine_data import EngineData
 from .engine_dims import EngineDimensions
+from .model import AxionModel
 
 
 @wp.kernel
@@ -90,8 +90,8 @@ def compute_dbody_u_kernel(
 
 
 def compute_linear_system(
-    model: BatchedModel,
-    data: EngineArrays,
+    model: AxionModel,
+    data: EngineData,
     config: EngineConfig,
     dims: EngineDimensions,
     dt: float,
@@ -120,26 +120,6 @@ def compute_linear_system(
     )
 
     if config.joint_constraint_level == "pos":
-        # wp.launch(
-        #     kernel=positional_joint_constraint_kernel,
-        #     dim=(dims.N_w, dims.N_j),
-        #     inputs=[
-        #         data.body_u,
-        #         data.body_lambda.j,
-        #         data.joint_constraint_data,
-        #         dt,
-        #         config.joint_stabilization_factor,
-        #         config.joint_compliance,
-        #     ],
-        #     outputs=[
-        #         data.h.d_spatial,
-        #         data.h.c.j,
-        #         data.J_values.j,
-        #         data.C_values.j,
-        #     ],
-        #     device=device,
-        # )
-
         wp.launch(
             kernel=positional_joint_constraint_kernel,
             dim=(dims.N_w, dims.joint_count),
@@ -154,6 +134,7 @@ def compute_linear_system(
                 model.joint_X_c,
                 model.joint_axis,
                 model.joint_qd_start,
+                model.joint_enabled,
                 data.joint_constraint_offsets,
                 data.dt,
                 config.joint_compliance,
@@ -170,12 +151,22 @@ def compute_linear_system(
     elif config.joint_constraint_level == "vel":
         wp.launch(
             kernel=velocity_joint_constraint_kernel,
-            dim=(dims.N_w, dims.N_j),
+            dim=(dims.N_w, dims.joint_count),
             inputs=[
+                data.body_q,
+                model.body_com,
                 data.body_u,
                 data.body_lambda.j,
-                data.joint_constraint_data,
-                dt,
+                model.joint_type,
+                model.joint_parent,
+                model.joint_child,
+                model.joint_X_p,
+                model.joint_X_c,
+                model.joint_axis,
+                model.joint_qd_start,
+                model.joint_enabled,
+                data.joint_constraint_offsets,
+                data.dt,
                 config.joint_stabilization_factor,
                 config.joint_compliance,
             ],
@@ -288,7 +279,7 @@ def compute_linear_system(
 
 
 def compute_dbody_qd_from_dbody_lambda(
-    data: EngineArrays,
+    data: EngineData,
     config: EngineConfig,
     dims: EngineDimensions,
 ):

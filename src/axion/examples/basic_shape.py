@@ -40,6 +40,7 @@ class Simulator(AbstractSimulator):
         rigid_cfg.restitution = 0.0
         rigid_cfg.has_shape_collision = True
         rigid_cfg.mu = 1.0
+        rigid_cfg.density = 1000.0
 
         # add ground plane
         self.builder.add_ground_plane(cfg=rigid_cfg)
@@ -68,14 +69,7 @@ class Simulator(AbstractSimulator):
         )
         self.builder.add_shape_box(body_box, hx=0.5, hy=0.35, hz=0.25, cfg=rigid_cfg)
 
-        final_builder = newton.ModelBuilder()
-        final_builder.replicate(
-            self.builder,
-            num_worlds=self.simulation_config.num_worlds,
-        )
-
-        model = final_builder.finalize()
-        return model
+        return self.builder.finalize_replicated(num_worlds=self.simulation_config.num_worlds)
 
 
 @hydra.main(config_path=str(CONFIG_PATH), config_name="config", version_base=None)

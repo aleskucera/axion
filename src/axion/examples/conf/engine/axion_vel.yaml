@@ -16,6 +16,6 @@ contact_fb_alpha: 0.5
 contact_fb_beta: 0.01
 friction_fb_alpha: 1.0
 friction_fb_beta: 1.0
-max_contacts_per_world: 32
+max_contacts_per_world: 64
 joint_constraint_level: 'vel'
 contact_constraint_level: 'vel'

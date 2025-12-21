@@ -203,7 +203,7 @@ def batch_velocity_contact_residual_kernel(
         target_v_n,
         lambda_n,
         fb_alpha,
-        dt * fb_beta,
+        1e-5 * dt * fb_beta,
     )
 
     J_hat_n_1 = dphi_dtarget_v_n * J_n_1

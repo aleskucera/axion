@@ -274,14 +274,7 @@ class Simulator(AbstractSimulator):
             ),
         )
 
-        final_builder = newton.ModelBuilder()
-        final_builder.replicate(
-            self.builder,
-            num_worlds=self.simulation_config.num_worlds,
-        )
-
-        model = final_builder.finalize()
-        return model
+        return self.builder.finalize_replicated(num_worlds=self.simulation_config.num_worlds)
 
 
 @hydra.main(config_path=str(CONFIG_PATH), config_name="config", version_base=None)

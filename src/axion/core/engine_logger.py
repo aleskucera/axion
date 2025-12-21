@@ -11,8 +11,6 @@ import warp as wp
 from axion.logging import HDF5Logger
 from axion.logging import NullLogger
 
-from .dense_utils import get_system_matrix_numpy
-from .dense_utils import update_dense_matrices
 from .pca_utils import compute_pca_batch_h_norm
 from .pca_utils import copy_grid_lambda_kernel
 from .pca_utils import copy_grid_q_kernel
@@ -103,10 +101,6 @@ class EngineLogger:
     def current_step_in_segment(self) -> int:
         """The current physics substep index within the segment."""
         return self._current_step_in_segment
-
-    @property
-    def uses_dense_matrices(self):
-        return self.config.enable_hdf5_logging and self.config.log_linear_system_data
 
     @property
     def uses_pca_arrays(self):
@@ -210,9 +204,9 @@ class EngineLogger:
                     self.hdf5_logger.log_wp_dataset(
                         "constraint_body_idx", engine.data.constraint_body_idx.j
                     )
-                    self.hdf5_logger.log_struct_array(
-                        "joint_constraint_data", engine.data.joint_constraint_data
-                    )
+                    # self.hdf5_logger.log_struct_array(
+                    #     "joint_constraint_data", engine.data.joint_constraint_data
+                    # )
 
             # Log contact constraints data
             if self.config.log_contact_constraint_data:
@@ -256,16 +250,6 @@ class EngineLogger:
                     self.hdf5_logger.log_wp_dataset("dbody_qd", engine.data.dbody_u)
                     self.hdf5_logger.log_wp_dataset("dbody_lambda", engine.data.dbody_lambda.full)
 
-                    update_dense_matrices(engine.data, engine.config, engine.dims)
-
-                    self.hdf5_logger.log_wp_dataset("M_inv_dense", engine.data.M_inv_dense)
-                    self.hdf5_logger.log_wp_dataset("J_dense", engine.data.J_dense)
-                    self.hdf5_logger.log_wp_dataset("C_dense", engine.data.C_dense)
-
-                    A_np = get_system_matrix_numpy(engine.data, engine.config, engine.dims)
-                    self.hdf5_logger.log_np_dataset("A", A_np)
-                    self.hdf5_logger.log_scalar("cond_number", np.linalg.cond(A_np))
-
     def log_residual_norm_landscape(self, engine: AxionEngine):
         if not self.config.enable_hdf5_logging or not self.config.log_residual_norm_landscape:
             return
@@ -275,27 +259,27 @@ class EngineLogger:
 
         # --- A. Body Positions (q) ---
         # shape: (Steps, Worlds, BodyCount) of wp.transform (7 floats)
-        q_hist = wp.to_torch(engine.data.body_q_history)
+        q_hist = wp.to_torch(engine.data.history.body_q_history)
         steps, n_w, n_b, _ = q_hist.shape
         # Flatten: (Steps, Worlds, N_b * 7)
         q_flat = q_hist.reshape(steps, n_w, n_b * 7)
 
         # --- B. Body Velocities (u) ---
         # shape: (Steps, Worlds, BodyCount) of wp.spatial_vector (6 floats)
-        u_hist = wp.to_torch(engine.data.body_u_history)
+        u_hist = wp.to_torch(engine.data.history.body_u_history)
         # Flatten: (Steps, Worlds, N_b * 6)
         u_flat = u_hist.reshape(steps, n_w, n_b * 6)
 
         # --- C. Constraint Impulses (lambda) ---
         # shape: (Steps, Worlds, N_c)
-        lambda_hist = wp.to_torch(engine.data._body_lambda_history)
+        lambda_hist = wp.to_torch(engine.data.history._body_lambda_history)
 
         # --- D. Full Trajectory Concatenation ---
         # shape: (Steps, Worlds, Dofs) where Dofs = (N_b*7 + N_b*6 + N_c)
         trajectory_all = torch.cat([q_flat, u_flat, lambda_hist], dim=2)
 
         # Residuals for norm calculation
-        residuals_all = wp.to_torch(engine.data._h_history)
+        residuals_all = wp.to_torch(engine.data.history._h_history)
 
         if steps < 2:
             raise ValueError(
@@ -321,9 +305,12 @@ class EngineLogger:
         x_center = trajectory_all[-1]
 
         # 4. Project Trajectory to 2D
+        # Project normalized deviations onto normalized eigenvectors
         vecs_from_center = trajectory_all - x_center.unsqueeze(0)
-        alpha_coords = (vecs_from_center * v1.unsqueeze(0)).sum(dim=2)
-        beta_coords = (vecs_from_center * v2.unsqueeze(0)).sum(dim=2)
+        vecs_normalized = vecs_from_center / std.unsqueeze(0)
+
+        alpha_coords = (vecs_normalized * v1.unsqueeze(0)).sum(dim=2)
+        beta_coords = (vecs_normalized * v2.unsqueeze(0)).sum(dim=2)
         trajectory_2d = torch.stack([alpha_coords, beta_coords], dim=2)
 
         # --- Auto-Scale Logic ---
@@ -354,6 +341,7 @@ class EngineLogger:
             grid_res,
             auto_scale_margin,
             engine.dims,  # passing dims to handle q/u splitting
+            engine.data.dt,
         )
 
         # 6. Copy Grid Points to Engine Data
@@ -370,7 +358,7 @@ class EngineLogger:
             kernel=copy_grid_q_kernel,
             dim=(grid_size, n_w, n_b),
             inputs=[src_u],
-            outputs=[engine.data.pca_batch_body_q],
+            outputs=[engine.data.history.pca_batch_body_q],
             device=engine.data.device,
         )
 
@@ -378,7 +366,7 @@ class EngineLogger:
             kernel=copy_grid_u_kernel,
             dim=(grid_size, n_w, n_b),
             inputs=[src_q],
-            outputs=[engine.data.pca_batch_body_u],
+            outputs=[engine.data.history.pca_batch_body_u],
             device=engine.data.device,
         )
 
@@ -386,13 +374,13 @@ class EngineLogger:
             kernel=copy_grid_lambda_kernel,
             dim=(grid_size, n_w, n_c),
             inputs=[src_lambda],
-            outputs=[engine.data.pca_batch_body_lambda.full],
+            outputs=[engine.data.history.pca_batch_body_lambda.full],
             device=engine.data.device,
         )
         # 7. Compute Norms with Q-aware kernels
         # This will now trigger the dynamic mass matrix re-computation
         norm_results = compute_pca_batch_h_norm(
-            engine.batched_model, engine.data, engine.config, engine.dims
+            engine.axion_model, engine.data, engine.config, engine.dims
         )
 
         residual_norm_grid = norm_results.reshape(grid_res, grid_res, n_w)
@@ -411,10 +399,14 @@ class EngineLogger:
 
             # Log history arrays including Q
             self.hdf5_logger.log_np_dataset("optimization_trajectory", trajectory_all.cpu().numpy())
-            self.hdf5_logger.log_np_dataset("body_q_history", engine.data.body_q_history.numpy())
-            self.hdf5_logger.log_np_dataset("body_u_history", engine.data.body_u_history.numpy())
             self.hdf5_logger.log_np_dataset(
-                "body_lambda_history", engine.data._body_lambda_history.numpy()
+                "body_q_history", engine.data.history.body_q_history.numpy()
+            )
+            self.hdf5_logger.log_np_dataset(
+                "body_u_history", engine.data.history.body_u_history.numpy()
+            )
+            self.hdf5_logger.log_np_dataset(
+                "body_lambda_history", engine.data.history._body_lambda_history.numpy()
             )
 
             self.hdf5_logger.log_np_dataset("trajectory_residuals", residuals_all.cpu().numpy())

@@ -23,8 +23,8 @@ class AxionEngineConfig(EngineConfig):
     joint_stabilization_factor: float = 0.01
     contact_stabilization_factor: float = 0.02
 
-    joint_compliance: float = 1e-5
-    contact_compliance: float = 1e-5
+    joint_compliance: float = 1e-1
+    contact_compliance: float = 1e-6
     friction_compliance: float = 1e-6
 
     regularization: float = 1e-6
@@ -41,8 +41,8 @@ class AxionEngineConfig(EngineConfig):
 
     max_contacts_per_world: int = 20
 
-    joint_constraint_level: str = "pos"  # pos / vel
-    contact_constraint_level: str = "pos"  # pos / vel
+    joint_constraint_level: str = "vel"  # pos / vel
+    contact_constraint_level: str = "vel"  # pos / vel
 
     def __post_init__(self):
         """Validate all configuration parameters."""

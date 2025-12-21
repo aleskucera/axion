@@ -15,7 +15,7 @@ def compute_friction_model(
     interaction: ContactInteraction,
     u_1: wp.spatial_vector,
     u_2: wp.spatial_vector,
-    imulse_f_prev: wp.vec2,
+    impulse_f_prev: wp.vec2,
     impulse_n_prev: wp.float32,
     dt: wp.float32,
     fb_alpha: wp.float32,
@@ -32,18 +32,22 @@ def compute_friction_model(
     v_t_norm = wp.length(v_t)
 
     # --- Calculate Friction Impulse Magnitude & Cone Limit ---
-    impulse_f_norm = wp.length(imulse_f_prev)
+    impulse_f_norm = wp.length(impulse_f_prev)
 
     # --- Evaluate Friction Cone Complementarity ---
+    # beta converts Force to Velocity (Compliance * dt or similar scaling)
+    beta = dt * fb_beta
     phi_f, _, _ = scaled_fisher_burmeister(
         v_t_norm,
         mu * impulse_n_prev - impulse_f_norm,
         fb_alpha,
-        dt * fb_beta,
+        beta,
     )
 
     # --- Compute the Slip Coupling Factor 'w' ---
-    w = wp.max((v_t_norm - phi_f) / (dt * impulse_f_norm + phi_f + 1e-8), 0.0)
+    # Denominator: beta * F (Velocity) + phi (Velocity)
+    # Result w: beta * (V/V) = beta (Compliance units V/F)
+    w = beta * wp.max((v_t_norm - phi_f) / (beta * impulse_f_norm + phi_f + 1e-8), 0.0)
 
     # --- Package and return the results ---
     result = FrictionModelResult()
@@ -97,7 +101,7 @@ def friction_constraint_kernel(
         C_f_values[world_idx, constr_idx2] = 0.0
         return
 
-    wp.printf("Penetration depth: %f, mu: %f\n", interaction.penetration_depth, mu)
+    # wp.printf("Penetration depth: %f, mu: %f\n", interaction.penetration_depth, mu)
     # --- 2. Gather Inputs for the Friction Model ---
     body_1 = interaction.body_a_idx
     body_2 = interaction.body_b_idx
@@ -145,8 +149,8 @@ def friction_constraint_kernel(
         )
 
     # Update h (constraint violation)
-    h_f[world_idx, constr_idx1] = 0.001 * (v_t1 + w * lambda_t1)
-    h_f[world_idx, constr_idx2] = 0.001 * (v_t2 + w * lambda_t2)
+    h_f[world_idx, constr_idx1] = 0.03 * (v_t1 + w * lambda_t1)
+    h_f[world_idx, constr_idx2] = 0.03 * (v_t2 + w * lambda_t2)
 
     # Update J (Jacobian)
     J_hat_f_values[world_idx, constr_idx1, 0] = J_hat_t1_1
@@ -188,9 +192,9 @@ def batch_friction_residual_kernel(
     s_prev = s_n_prev[world_idx, contact_idx]
 
     # --- 1. Handle Early Exit for Inactive/Non-Frictional Contacts ---
-    impulse_n_prev = lambda_n_prev / (s_prev + 1e-3)
+    impulse_n_prev = lambda_n_prev / (s_prev + 1e-6)
 
-    if interaction.penetration_depth <= 0 or mu * impulse_n_prev <= 1e-4:
+    if interaction.penetration_depth <= 0 or mu * impulse_n_prev <= 1e-3:
         h_f[batch_idx, world_idx, constr_idx1] = 0.0
         h_f[batch_idx, world_idx, constr_idx2] = 0.0
         return
@@ -250,5 +254,5 @@ def batch_friction_residual_kernel(
         )
 
     # Update h_f (constraint violation)
-    h_f[batch_idx, world_idx, constr_idx1] = v_t1 + w * lambda_t1
-    h_f[batch_idx, world_idx, constr_idx2] = v_t2 + w * lambda_t2
+    h_f[batch_idx, world_idx, constr_idx1] = 0.001 * (v_t1 + w * lambda_t1)
+    h_f[batch_idx, world_idx, constr_idx2] = 0.001 * (v_t2 + w * lambda_t2)

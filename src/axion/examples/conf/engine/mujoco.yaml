@@ -1,8 +1,8 @@
 # @package engine
 _target_: axion.MuJoCoEngineConfig
 separate_worlds: null
-njmax: 100
-nconmax: 10
+njmax: 200
+nconmax: 100
 iterations: 100
 ls_iterations: 100
 solver: "newton"

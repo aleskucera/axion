@@ -8,11 +8,11 @@ from axion.constraints import batch_positional_joint_residual_kernel
 from axion.constraints import batch_unconstrained_dynamics_kernel
 from axion.constraints import batch_velocity_contact_residual_kernel
 from axion.constraints import batch_velocity_joint_residual_kernel
-from axion.core.batched_model import BatchedModel
 
 from .engine_config import EngineConfig
-from .engine_data import EngineArrays
+from .engine_data import EngineData
 from .engine_dims import EngineDimensions
+from .model import AxionModel
 
 
 @wp.kernel
@@ -111,7 +111,7 @@ def copy_body_lambda_to_history(
 
 def copy_state_to_history(
     newton_iteration: int,
-    data: EngineArrays,
+    data: EngineData,
     config: EngineConfig,
     dims: EngineDimensions,
 ):
@@ -121,28 +121,28 @@ def copy_state_to_history(
         kernel=copy_h_to_history,
         dim=(dims.N_w, dims.N_u + dims.N_c),
         inputs=[data._h],
-        outputs=[data._h_history[newton_iteration, :, :]],
+        outputs=[data.history._h_history[newton_iteration, :, :]],
         device=device,
     )
     wp.launch(
         kernel=copy_body_q_to_history,
         dim=(dims.N_w, dims.N_b),
         inputs=[data.body_q],
-        outputs=[data.body_q_history[newton_iteration, :, :]],
+        outputs=[data.history.body_q_history[newton_iteration, :, :]],
         device=device,
     )
     wp.launch(
         kernel=copy_body_u_to_history,
         dim=(dims.N_w, dims.N_b),
         inputs=[data.body_u],
-        outputs=[data.body_u_history[newton_iteration, :, :]],
+        outputs=[data.history.body_u_history[newton_iteration, :, :]],
         device=device,
     )
     wp.launch(
         kernel=copy_body_lambda_to_history,
         dim=(dims.N_w, dims.N_c),
         inputs=[data._body_lambda],
-        outputs=[data._body_lambda_history[newton_iteration, :, :]],
+        outputs=[data.history._body_lambda_history[newton_iteration, :, :]],
         device=device,
     )
 
@@ -166,12 +166,17 @@ def perform_pca(
     data_mean = data.mean(dim=1, keepdim=True)
     data_std = data.std(dim=1, keepdim=True)
 
-    # Prevent division by zero for fixed DOFs (std=0 -> std=1)
-    data_std = torch.where(data_std < 1e-9, torch.ones_like(data_std), data_std)
+    # 3. Robust Scaling (Whitening)
+    # Instead of dividing by std (which explodes for stationary/constrained DOFs),
+    # we clamp the denominator. If variation is below 'threshold', we don't scale it up.
+    # This keeps noise as noise and prevents it from dominating the PCA.
+    # Threshold heuristic: 1e-4 allows small valid motions but suppresses numerical noise.
+    threshold = 1e-4
+    scale = torch.maximum(data_std, torch.tensor(threshold, device=data.device))
 
     # 3. Standardize (Z-score normalization)
     # This brings q, u, lambda to the same ~unit scale
-    data_normalized = (data - data_mean) / data_std
+    data_normalized = (data - data_mean) / scale
 
     # 4. Perform SVD on Normalized Data
     try:
@@ -193,29 +198,44 @@ def perform_pca(
         S_out = torch.ones(worlds, 2, device=data.device)
 
     # Return mean/std so we can denormalize later
-    return v1, v2, S_out, data_mean.squeeze(1), data_std.squeeze(1)
+    return v1, v2, S_out, data_mean.squeeze(1), scale.squeeze(1)
 
 
 def prepare_trajectory_data(
     q_history: torch.Tensor,  # Shape: (T, N_w, N_b, 7)
     u_history: torch.Tensor,  # Shape: (T, N_w, N_b, 6)
     lambda_history: torch.Tensor,  # Shape: (T, N_w, N_c)
+    dt: float,
 ) -> torch.Tensor:
     """
-    Flattens and concatenates q, u, and lambda into a single feature vector per step.
+    Flattens and scales q, u, and lambda into a unified 'velocity-level' feature vector.
+
+    Scaling strategy:
+    - q (Position/Rotation): Divided by dt -> Velocity / Angular Velocity units
+    - u (Velocity): Kept as is -> Velocity units
+    - lambda (Constraint Force): Multiplied by dt -> Impulse units
     """
     T = q_history.shape[0]
 
     # Flatten spatial/body dimensions
-    # q: (T, N_w * N_b * 7)
     q_flat = q_history.reshape(T, -1)
-    # u: (T, N_w * N_b * 6)
     u_flat = u_history.reshape(T, -1)
-    # lambda: (T, N_w * N_c)
     lambda_flat = lambda_history.reshape(T, -1)
 
-    # Concatenate: [q, u, lambda]
-    return torch.cat([q_flat, u_flat, lambda_flat], dim=1)
+    # --- Apply Scaling ---
+
+    # q: Position (m) and Quaternion (1). Divide by dt to get (m/s) and (1/s)
+    q_scaled = q_flat / dt
+
+    # u: Already in velocity units (rad/s, m/s). No scaling needed.
+    u_scaled = u_flat
+
+    # lambda: Force/Torque. Multiply by dt to get Impulse (N*s).
+    # This brings it to momentum/velocity level (assuming mass ~ 1)
+    lambda_scaled = lambda_flat * dt
+
+    # Concatenate: [q', u', lambda']
+    return torch.cat([q_scaled, u_scaled, lambda_scaled], dim=1)
 
 
 def create_pca_grid_batch(
@@ -223,21 +243,20 @@ def create_pca_grid_batch(
     v1: torch.Tensor,
     v2: torch.Tensor,
     S: torch.Tensor,
-    mean: torch.Tensor,  # NEW: For Denormalization
-    std: torch.Tensor,  # NEW: For Denormalization
+    mean: torch.Tensor,  # For Denormalization
+    scale: torch.Tensor,  # Unused if scale=1, but kept for interface compatibility
     grid_res: int,
     plot_range_scale: float,
-    dims: EngineDimensions,  # NEW: Need full dims to split q/u/lambda
+    dims: EngineDimensions,  # Need full dims to split q/u/lambda
+    dt: float,  # NEW: Need dt to reverse the scaling
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
 
     device = x_center.device
 
-    # --- 1. Determine Plot Range (using Normalized S) ---
-    # S comes from the normalized data, so it represents variance in "std deviations"
+    # --- 1. Determine Plot Range ---
     if S.dim() == 2:
         max_bound_x = S[:, 0].max().item()
         max_bound_y = S[:, 1].max().item()
-        # Default y range if 2nd component is weak
         if max_bound_y < 1e-6:
             max_bound_y = 0.1 * max_bound_x
     else:
@@ -251,31 +270,44 @@ def create_pca_grid_batch(
     betas = torch.linspace(-range_y, range_y, grid_res, device=device)
     alpha_grid, beta_grid = torch.meshgrid(alphas, betas, indexing="ij")
 
-    # --- 2. Normalize the Center Point ---
-    x_center_norm = (x_center - mean) / std
+    # --- 2. Generate Grid in Feature Space (Velocity Level) ---
+    # We perform PCA on standardized data (z-scores).
+    # v1 and v2 are directions in that normalized space.
+    # To step in physical space, we must re-apply the scale (std dev).
+    # Grid units (alpha/beta) now correspond to "number of standard deviations".
+    v1_phys = v1 * scale
+    v2_phys = v2 * scale
 
-    # --- 3. Generate Grid in Normalized Space ---
-    pca_batch_norm = (
-        x_center_norm.unsqueeze(0)
-        + alpha_grid.flatten().view(-1, 1, 1) * v1.unsqueeze(0)
-        + beta_grid.flatten().view(-1, 1, 1) * v2.unsqueeze(0)
+    pca_batch_centered = (
+        (x_center - mean).unsqueeze(0)
+        + alpha_grid.flatten().view(-1, 1, 1) * v1_phys.unsqueeze(0)
+        + beta_grid.flatten().view(-1, 1, 1) * v2_phys.unsqueeze(0)
     )
 
-    # --- 4. Denormalize to Physics Space ---
-    # x_real = x_norm * std + mean
-    pca_batch_points = pca_batch_norm * std.unsqueeze(0) + mean.unsqueeze(0)
+    # Add mean back to get absolute scaled values
+    pca_batch_scaled = pca_batch_centered + mean.unsqueeze(0)
 
-    # --- 5. Split [q, u, lambda] ---
+    # --- 3. Split [q', u', lambda'] ---
     num_bodies = dims.N_b
     dim_q = num_bodies * 7
     dim_u = num_bodies * 6
 
-    pca_q_flat = pca_batch_points[:, :, :dim_q]
-    pca_u_flat = pca_batch_points[:, :, dim_q : dim_q + dim_u]
-    pca_lambda_flat = pca_batch_points[:, :, dim_q + dim_u :]
+    pca_q_scaled = pca_batch_scaled[:, :, :dim_q]
+    pca_u_scaled = pca_batch_scaled[:, :, dim_q : dim_q + dim_u]
+    pca_lambda_scaled = pca_batch_scaled[:, :, dim_q + dim_u :]
 
-    # --- 6. Normalize Quaternions in Q ---
-    # Linear interpolation destroys unit norm of quaternions
+    # --- 4. Un-Scale back to Physics Units ---
+
+    # q = q' * dt
+    pca_q_flat = pca_q_scaled * dt
+
+    # u = u'
+    pca_u_flat = pca_u_scaled
+
+    # lambda = lambda' / dt
+    pca_lambda_flat = pca_lambda_scaled / dt
+
+    # --- 5. Normalize Quaternions in Q ---
     pca_q_reshaped = pca_q_flat.view(-1, dims.N_w, dims.N_b, 7)
     pos = pca_q_reshaped[..., :3]
     rot = pca_q_reshaped[..., 3:]
@@ -294,16 +326,37 @@ def create_pca_grid_batch(
     )
 
 
+@wp.kernel
+def copy_spatial_to_flat_kernel(
+    src_spatial: wp.array(dtype=wp.spatial_vector, ndim=3),
+    dst_flat: wp.array(dtype=float, ndim=3),
+):
+    g, w, b = wp.tid()
+    # dst_flat has shape (G, W, Nu+Nc)
+    # We write to the first Nu elements.
+    # Base index for body b is b*6.
+
+    val = src_spatial[g, w, b]
+    base = b * 6
+
+    dst_flat[g, w, base + 0] = val[0]
+    dst_flat[g, w, base + 1] = val[1]
+    dst_flat[g, w, base + 2] = val[2]
+    dst_flat[g, w, base + 3] = val[3]
+    dst_flat[g, w, base + 4] = val[4]
+    dst_flat[g, w, base + 5] = val[5]
+
+
 def compute_pca_batch_h_norm(
-    model: BatchedModel,
-    data: EngineArrays,
+    model: AxionModel,
+    data: EngineData,
     config: EngineConfig,
     dims: EngineDimensions,
 ):
     device = data.device
-    data.pca_batch_h.full.zero_()
+    data.history.pca_batch_h.full.zero_()
 
-    B = data.pca_batch_body_u.shape[0]  # Grid Size
+    B = data.history.pca_batch_body_u.shape[0]  # Grid Size
 
     # Launch kernels over (GridSize, N_w, ...)
     # All kernels support batch dimensions naturally
@@ -311,8 +364,8 @@ def compute_pca_batch_h_norm(
         kernel=batch_unconstrained_dynamics_kernel,
         dim=(B, dims.N_w, dims.N_b),
         inputs=[
-            data.pca_batch_body_q,
-            data.pca_batch_body_u,
+            data.history.pca_batch_body_q,
+            data.history.pca_batch_body_u,
             data.body_u_prev,
             data.body_f,
             model.body_mass,
@@ -320,7 +373,7 @@ def compute_pca_batch_h_norm(
             data.dt,
             data.g_accel,
         ],
-        outputs=[data.pca_batch_h.d_spatial],
+        outputs=[data.history.pca_batch_h.d_spatial],
         device=device,
     )
 
@@ -329,16 +382,16 @@ def compute_pca_batch_h_norm(
         #     kernel=batch_positional_joint_residual_kernel,
         #     dim=(B, dims.N_w, dims.N_j),
         #     inputs=[
-        #         data.pca_batch_body_u,
-        #         data.pca_batch_body_lambda.j,
+        #         data.history.pca_batch_body_u,
+        #         data.history.pca_batch_body_lambda.j,
         #         data.joint_constraint_data,
         #         data.dt,
         #         config.joint_stabilization_factor,
         #         config.joint_compliance,
         #     ],
         #     outputs=[
-        #         data.pca_batch_h.d_spatial,
-        #         data.pca_batch_h.c.j,
+        #         data.history.pca_batch_h.d_spatial,
+        #         data.history.pca_batch_h.c.j,
         #     ],
         #     device=device,
         # )
@@ -346,8 +399,8 @@ def compute_pca_batch_h_norm(
             kernel=batch_positional_joint_residual_kernel,
             dim=(B, dims.N_w, dims.joint_count),
             inputs=[
-                data.pca_batch_body_q,
-                data.pca_batch_body_lambda.j,
+                data.history.pca_batch_body_q,
+                data.history.pca_batch_body_lambda.j,
                 model.body_com,
                 model.joint_type,
                 model.joint_parent,
@@ -356,13 +409,14 @@ def compute_pca_batch_h_norm(
                 model.joint_X_c,
                 model.joint_axis,
                 model.joint_qd_start,
+                model.joint_enabled,
                 data.joint_constraint_offsets,
                 data.dt,
                 config.joint_compliance,
             ],
             outputs=[
-                data.pca_batch_h.d_spatial,
-                data.pca_batch_h.c.j,
+                data.history.pca_batch_h.d_spatial,
+                data.history.pca_batch_h.c.j,
             ],
             device=device,
         )
@@ -371,16 +425,16 @@ def compute_pca_batch_h_norm(
             kernel=batch_velocity_joint_residual_kernel,
             dim=(B, dims.N_w, dims.N_j),
             inputs=[
-                data.pca_batch_body_u,
-                data.pca_batch_body_lambda.j,
+                data.history.pca_batch_body_u,
+                data.history.pca_batch_body_lambda.j,
                 data.joint_constraint_data,
                 data.dt,
                 config.joint_stabilization_factor,
                 config.joint_compliance,
             ],
             outputs=[
-                data.pca_batch_h.d_spatial,
-                data.pca_batch_h.c.j,
+                data.history.pca_batch_h.d_spatial,
+                data.history.pca_batch_h.c.j,
             ],
             device=device,
         )
@@ -392,21 +446,21 @@ def compute_pca_batch_h_norm(
             kernel=batch_positional_contact_residual_kernel,
             dim=(B, dims.N_w, dims.N_n),
             inputs=[
-                data.pca_batch_body_q,
-                data.pca_batch_body_u,
+                data.history.pca_batch_body_q,
+                data.history.pca_batch_body_u,
                 data.body_u_prev,
-                data.pca_batch_body_lambda.n,
+                data.history.pca_batch_body_lambda.n,
                 data.contact_interaction,
-                model.body_mass,
-                model.body_inertia,
+                model.body_inv_mass,
+                model.body_inv_inertia,
                 data.dt,
                 config.contact_fb_alpha,
                 config.contact_fb_beta,
                 config.contact_compliance,
             ],
             outputs=[
-                data.pca_batch_h.d_spatial,
-                data.pca_batch_h.c.n,
+                data.history.pca_batch_h.d_spatial,
+                data.history.pca_batch_h.c.n,
             ],
             device=device,
         )
@@ -415,9 +469,9 @@ def compute_pca_batch_h_norm(
             kernel=batch_velocity_contact_residual_kernel,
             dim=(B, dims.N_w, dims.N_n),
             inputs=[
-                data.pca_batch_body_u,
+                data.history.pca_batch_body_u,
                 data.body_u_prev,
-                data.pca_batch_body_lambda.n,
+                data.history.pca_batch_body_lambda.n,
                 data.contact_interaction,
                 data.dt,
                 config.contact_stabilization_factor,
@@ -426,8 +480,8 @@ def compute_pca_batch_h_norm(
                 config.contact_compliance,
             ],
             outputs=[
-                data.pca_batch_h.d_spatial,
-                data.pca_batch_h.c.n,
+                data.history.pca_batch_h.d_spatial,
+                data.history.pca_batch_h.c.n,
             ],
             device=device,
         )
@@ -438,8 +492,8 @@ def compute_pca_batch_h_norm(
         kernel=batch_friction_residual_kernel,
         dim=(B, dims.N_w, dims.N_n),
         inputs=[
-            data.pca_batch_body_u,
-            data.pca_batch_body_lambda.f,
+            data.history.pca_batch_body_u,
+            data.history.pca_batch_body_lambda.f,
             data.body_lambda_prev.f,
             data.body_lambda_prev.n,
             data.s_n_prev,
@@ -450,18 +504,18 @@ def compute_pca_batch_h_norm(
             config.friction_compliance,
         ],
         outputs=[
-            data.pca_batch_h.d_spatial,
-            data.pca_batch_h.c.f,
+            data.history.pca_batch_h.d_spatial,
+            data.history.pca_batch_h.c.f,
         ],
         device=device,
     )
 
     # Compute Norm
     # data.pca_batch_h.full is (GridSize, N_w, Dofs)
-    torch_h = wp.to_torch(data.pca_batch_h.full)
+    torch_h = wp.to_torch(data.history.pca_batch_h.full)
     torch_h_norm = torch.norm(torch_h, dim=-1)  # -> (GridSize, N_w)
 
     h_norm = wp.from_torch(torch_h_norm)
-    wp.copy(data.pca_batch_h_norm, h_norm.contiguous())
+    wp.copy(data.history.pca_batch_h_norm, h_norm.contiguous())
 
     return torch_h_norm

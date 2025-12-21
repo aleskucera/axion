@@ -35,7 +35,7 @@ class Simulator(AbstractSimulator):
         )
 
     def build_model(self) -> newton.Model:
-        FRICTION = 0.0
+        FRICTION = 0.1
         RESTITUTION = 0.0
         DENSITY = 1500.0
         KE = 60000.0
@@ -117,14 +117,7 @@ class Simulator(AbstractSimulator):
             )
         )
 
-        final_builder = newton.ModelBuilder()
-        final_builder.replicate(
-            self.builder,
-            num_worlds=self.simulation_config.num_worlds,
-        )
-
-        model = final_builder.finalize()
-        return model
+        return self.builder.finalize_replicated(num_worlds=self.simulation_config.num_worlds)
 
 
 @hydra.main(config_path=str(CONFIG_PATH), config_name="config", version_base=None)

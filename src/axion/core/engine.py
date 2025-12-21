@@ -15,8 +15,6 @@ from axion.optim import SystemLinearData
 from axion.optim import SystemOperator
 from axion.types import compute_joint_constraint_offsets_batched
 from axion.types import contact_interaction_kernel
-from axion.types import joint_constraint_data_kernel
-from axion.types import update_penetration_depth_kernel
 from axion.types import world_spatial_inertia_kernel
 from newton import Contacts
 from newton import Control
@@ -24,17 +22,17 @@ from newton import Model
 from newton import State
 from newton.solvers import SolverBase
 
-from .batched_model import BatchedContacts
-from .batched_model import BatchedModel
+from .contacts import AxionContacts
 from .control_utils import apply_control
 from .engine_config import AxionEngineConfig
-from .engine_data import create_engine_arrays
+from .engine_data import EngineData
 from .engine_dims import EngineDimensions
 from .engine_logger import EngineLogger
 from .linear_utils import compute_dbody_qd_from_dbody_lambda
 from .linear_utils import compute_linear_system
 from .linesearch_utils import perform_linesearch
 from .linesearch_utils import update_body_q
+from .model import AxionModel
 from .pca_utils import copy_state_to_history
 
 
@@ -70,31 +68,30 @@ class AxionEngine(SolverBase):
         self.logger = logger
         self.config = config
 
-        self.batched_model = BatchedModel(model)
-        self.batched_contacts = BatchedContacts(
+        self.axion_model = AxionModel(model)
+        self.axion_contacts = AxionContacts(
             model,
             max_contacts_per_world=self.config.max_contacts_per_world,
         )
 
         joint_constraint_offsets, num_constraints = compute_joint_constraint_offsets_batched(
-            self.batched_model.joint_type,
+            self.axion_model.joint_type,
         )
 
         self.dims = EngineDimensions(
-            num_worlds=self.batched_model.num_worlds,
-            body_count=self.batched_model.body_count,
-            contact_count=self.batched_contacts.max_contacts,
-            joint_count=self.batched_model.joint_count,
+            num_worlds=self.axion_model.num_worlds,
+            body_count=self.axion_model.body_count,
+            contact_count=self.axion_contacts.max_contacts,
+            joint_count=self.axion_model.joint_count,
             linesearch_step_count=self.config.linesearch_step_count,
             joint_constraint_count=num_constraints,
         )
 
-        self.data = create_engine_arrays(
+        self.data = EngineData.create(
             self.dims,
             self.config,
             joint_constraint_offsets,
             self.device,
-            self.logger.uses_dense_matrices,
             self.logger.uses_pca_arrays,
             self.logger.config.pca_grid_res,
         )
@@ -137,11 +134,11 @@ class AxionEngine(SolverBase):
     def _update_mass_matrix(self):
         wp.launch(
             kernel=world_spatial_inertia_kernel,
-            dim=(self.batched_model.num_worlds, self.batched_model.body_count),
+            dim=(self.axion_model.num_worlds, self.axion_model.body_count),
             inputs=[
                 self.data.body_q,
-                self.batched_model.body_mass,
-                self.batched_model.body_inertia,
+                self.axion_model.body_mass,
+                self.axion_model.body_inertia,
             ],
             outputs=[
                 self.data.world_M,
@@ -151,11 +148,11 @@ class AxionEngine(SolverBase):
 
         wp.launch(
             kernel=world_spatial_inertia_kernel,
-            dim=(self.batched_model.num_worlds, self.batched_model.body_count),
+            dim=(self.axion_model.num_worlds, self.axion_model.body_count),
             inputs=[
                 self.data.body_q,
-                self.batched_model.body_inv_mass,
-                self.batched_model.body_inv_inertia,
+                self.axion_model.body_inv_mass,
+                self.axion_model.body_inv_inertia,
             ],
             outputs=[
                 self.data.world_M_inv,
@@ -164,26 +161,26 @@ class AxionEngine(SolverBase):
         )
 
     def _initialize_constraints(self, contacts: Contacts):
-        self.batched_contacts.load_contact_data(contacts)
+        self.axion_contacts.load_contact_data(contacts)
 
         wp.launch(
             kernel=contact_interaction_kernel,
-            dim=(self.batched_model.num_worlds, self.batched_contacts.max_contacts),
+            dim=(self.axion_model.num_worlds, self.axion_contacts.max_contacts),
             inputs=[
                 self.data.body_q,
-                self.batched_model.body_com,
-                self.batched_model.shape_body,
-                self.batched_model.shape_thickness,
-                self.batched_model.shape_material_mu,
-                self.batched_model.shape_material_restitution,
-                self.batched_contacts.contact_count,
-                self.batched_contacts.contact_point0,
-                self.batched_contacts.contact_point1,
-                self.batched_contacts.contact_normal,
-                self.batched_contacts.contact_shape0,
-                self.batched_contacts.contact_shape1,
-                self.batched_contacts.contact_thickness0,
-                self.batched_contacts.contact_thickness1,
+                self.axion_model.body_com,
+                self.axion_model.shape_body,
+                self.axion_model.shape_thickness,
+                self.axion_model.shape_material_mu,
+                self.axion_model.shape_material_restitution,
+                self.axion_contacts.contact_count,
+                self.axion_contacts.contact_point0,
+                self.axion_contacts.contact_point1,
+                self.axion_contacts.contact_normal,
+                self.axion_contacts.contact_shape0,
+                self.axion_contacts.contact_shape1,
+                self.axion_contacts.contact_thickness0,
+                self.axion_contacts.contact_thickness1,
             ],
             outputs=[
                 self.data.contact_interaction,
@@ -192,32 +189,13 @@ class AxionEngine(SolverBase):
         )
 
         wp.launch(
-            kernel=joint_constraint_data_kernel,
-            dim=(self.batched_model.num_worlds, self.batched_model.joint_count),
-            inputs=[
-                self.data.body_q,
-                self.batched_model.body_com,
-                self.batched_model.joint_type,
-                self.batched_model.joint_enabled,
-                self.batched_model.joint_parent,
-                self.batched_model.joint_child,
-                self.batched_model.joint_X_p,
-                self.batched_model.joint_X_c,
-                self.batched_model.joint_qd_start,
-                self.batched_model.joint_axis,
-                self.data.joint_constraint_offsets,
-            ],
-            outputs=[
-                self.data.joint_constraint_data,
-            ],
-            device=self.device,
-        )
-
-        wp.launch(
             kernel=fill_joint_constraint_body_idx_kernel,
-            dim=(self.batched_model.num_worlds, self.dims.N_j),
+            dim=(self.axion_model.num_worlds, self.axion_model.joint_count),
             inputs=[
-                self.data.joint_constraint_data,
+                self.axion_model.joint_type,
+                self.axion_model.joint_parent,
+                self.axion_model.joint_child,
+                self.data.joint_constraint_offsets,
             ],
             outputs=[
                 self.data.constraint_body_idx.j,
@@ -227,7 +205,7 @@ class AxionEngine(SolverBase):
 
         wp.launch(
             kernel=fill_contact_constraint_body_idx_kernel,
-            dim=(self.batched_model.num_worlds, self.dims.N_n),
+            dim=(self.axion_model.num_worlds, self.dims.N_n),
             inputs=[
                 self.data.contact_interaction,
             ],
@@ -239,7 +217,7 @@ class AxionEngine(SolverBase):
 
         wp.launch(
             kernel=fill_friction_constraint_body_idx_kernel,
-            dim=(self.batched_model.num_worlds, self.dims.N_f),
+            dim=(self.axion_model.num_worlds, self.dims.N_f),
             inputs=[
                 self.data.contact_interaction,
             ],
@@ -251,9 +229,12 @@ class AxionEngine(SolverBase):
 
         wp.launch(
             kernel=fill_joint_constraint_active_mask_kernel,
-            dim=(self.batched_model.num_worlds, self.dims.N_j),
+            dim=(self.axion_model.num_worlds, self.axion_model.joint_count),
             inputs=[
-                self.data.joint_constraint_data,
+                self.axion_model.joint_type,
+                self.axion_model.joint_enabled,
+                self.axion_model.joint_child,
+                self.data.joint_constraint_offsets,
             ],
             outputs=[
                 self.data.constraint_active_mask.j,
@@ -263,7 +244,7 @@ class AxionEngine(SolverBase):
 
         wp.launch(
             kernel=fill_contact_constraint_active_mask_kernel,
-            dim=(self.batched_model.num_worlds, self.dims.N_n),
+            dim=(self.axion_model.num_worlds, self.dims.N_n),
             inputs=[
                 self.data.contact_interaction,
             ],
@@ -275,7 +256,7 @@ class AxionEngine(SolverBase):
 
         wp.launch(
             kernel=fill_friction_constraint_active_mask_kernel,
-            dim=(self.batched_model.num_worlds, self.dims.N_f),
+            dim=(self.axion_model.num_worlds, self.dims.N_f),
             inputs=[
                 self.data.contact_interaction,
             ],
@@ -285,39 +266,16 @@ class AxionEngine(SolverBase):
             device=self.device,
         )
 
-    def _update_constraint_positional_errors(self):
-        # TODO: Not necessary, must optimize this
-        wp.launch(
-            kernel=update_penetration_depth_kernel,
-            dim=(self.batched_model.num_worlds, self.batched_contacts.max_contacts),
-            inputs=[
-                self.data.body_q,
-                self.data.contact_interaction,
-            ],
-            device=self.device,
-        )
-
-        wp.launch(
-            kernel=joint_constraint_data_kernel,
-            dim=(self.batched_model.num_worlds, self.batched_model.joint_count),
-            inputs=[
-                self.data.body_q,
-                self.batched_model.body_com,
-                self.batched_model.joint_type,
-                self.batched_model.joint_enabled,
-                self.batched_model.joint_parent,
-                self.batched_model.joint_child,
-                self.batched_model.joint_X_p,
-                self.batched_model.joint_X_c,
-                self.batched_model.joint_qd_start,
-                self.batched_model.joint_axis,
-                self.data.joint_constraint_offsets,
-            ],
-            outputs=[
-                self.data.joint_constraint_data,
-            ],
-            device=self.device,
-        )
+    # def _update_constraint_positional_errors(self):
+    #     wp.launch(
+    #         kernel=update_penetration_depth_kernel,
+    #         dim=(self.axion_model.num_worlds, self.axion_contacts.max_contacts),
+    #         inputs=[
+    #             self.data.body_q,
+    #             self.data.contact_interaction,
+    #         ],
+    #         device=self.device,
+    #     )
 
     def step(
         self,
@@ -329,8 +287,8 @@ class AxionEngine(SolverBase):
     ):
         step_events = self.logger.step_event_pairs[self.logger.current_step_in_segment]
 
-        if contacts.rigid_contact_count.numpy() > 0:
-            print(f"Contact count {contacts.rigid_contact_count} in timestep {self._timestep}.")
+        # if contacts.rigid_contact_count.numpy() > 0:
+        #     print(f"Contact count {contacts.rigid_contact_count} in timestep {self._timestep}.")
 
         self.data.set_dt(dt)
 
@@ -354,13 +312,17 @@ class AxionEngine(SolverBase):
 
             # System linearization block
             with self.logger.timed_block(*newton_iter_events["system_linearization"]):
-                compute_linear_system(self.batched_model, self.data, self.config, self.dims, dt)
+                compute_linear_system(self.axion_model, self.data, self.config, self.dims, dt)
+
+            self.logger.log_newton_iteration_data(self, i)
+            if self.logger.uses_pca_arrays:
+                copy_state_to_history(i, self.data, self.config, self.dims)
 
             self.preconditioner.update()
 
             # Linear system solve block
             with self.logger.timed_block(*newton_iter_events["linear_system_solve"]):
-                self.data.dbody_lambda.zero_()
+                self.data._dbody_lambda.zero_()
                 self.cr_solver.solve(
                     A=self.A_op,
                     b=self.data.b,
@@ -369,17 +331,19 @@ class AxionEngine(SolverBase):
                     M=self.preconditioner,
                 )
                 compute_dbody_qd_from_dbody_lambda(self.data, self.config, self.dims)
+                # if np.max(self.data._dbody_lambda.numpy()) > 0:
+                #     print("Here")
 
             # Linesearch block
             with self.logger.timed_block(*newton_iter_events["linesearch"]):
-                perform_linesearch(self.data, self.config, self.dims)
-                update_body_q(self.batched_model, self.data, self.config, self.dims)
+                perform_linesearch(self.axion_model, self.data, self.config, self.dims)
+                update_body_q(self.axion_model, self.data, self.config, self.dims)
                 self._update_mass_matrix()
-                # self._update_constraint_positional_errors()
 
-            self.logger.log_newton_iteration_data(self, i)
-            if self.logger.uses_pca_arrays:
-                copy_state_to_history(i, self.data, self.config, self.dims)
+        if self.logger.uses_pca_arrays:
+            # Log the final state
+            compute_linear_system(self.axion_model, self.data, self.config, self.dims, dt)
+            copy_state_to_history(self.config.newton_iters, self.data, self.config, self.dims)
 
         self.logger.log_residual_norm_landscape(self)
 
