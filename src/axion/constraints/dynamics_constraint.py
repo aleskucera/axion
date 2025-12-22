@@ -29,7 +29,11 @@ def unconstrained_dynamics_kernel(
 
     f_g = to_spatial_momentum(M, wp.spatial_vector(g_accel[0], wp.vec3()))
 
-    h_d[world_idx, body_idx] = to_spatial_momentum(M, u - u_prev) - (f + f_g) * dt
+    # Gyroscopic term: w x (I @ w)
+    w = wp.spatial_bottom(u)
+    f_gyro = wp.spatial_vector(wp.vec3(), wp.cross(w, M.inertia @ w))
+
+    h_d[world_idx, body_idx] = to_spatial_momentum(M, u - u_prev) - (f + f_g + f_gyro) * dt
 
 
 @wp.kernel
@@ -49,7 +53,7 @@ def batch_unconstrained_dynamics_kernel(
     h_d: wp.array(dtype=wp.spatial_vector, ndim=3),
 ):
     batch_idx, world_idx, body_idx = wp.tid()
-    if body_idx >= batch_body_u.shape[0]:
+    if body_idx >= batch_body_u.shape[2]:
         return
     q = batch_body_q[batch_idx, world_idx, body_idx]
     u = batch_body_u[batch_idx, world_idx, body_idx]
@@ -62,4 +66,10 @@ def batch_unconstrained_dynamics_kernel(
 
     f_g = to_spatial_momentum(M, wp.spatial_vector(g_accel[0], wp.vec3()))
 
-    h_d[batch_idx, world_idx, body_idx] = to_spatial_momentum(M, u - u_prev) - (f + f_g) * dt
+    # Gyroscopic term: w x (I @ w)
+    w = wp.spatial_bottom(u)
+    f_gyro = wp.spatial_vector(wp.vec3(), wp.cross(w, M.inertia @ w))
+
+    h_d[batch_idx, world_idx, body_idx] = (
+        to_spatial_momentum(M, u - u_prev) - (f + f_g + f_gyro) * dt
+    )

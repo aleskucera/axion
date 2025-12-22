@@ -68,7 +68,7 @@ class Simulator(AbstractSimulator):
 
         This method constructs the three-wheeled vehicle, obstacles, and ground plane.
         """
-        FRICTION = 0.5
+        FRICTION = 0.2
         RESTITUTION = 0.0
         WHEEL_DENSITY = 300
         CHASSIS_DENSITY = 1200
@@ -78,11 +78,9 @@ class Simulator(AbstractSimulator):
         mesh_indices = np.array(wheel_m.face_vertex_indices(), dtype=np.int32).flatten()
         wheel_mesh_render = newton.Mesh(mesh_points, mesh_indices)
 
-        self.builder.add_articulation(key="helhest_simple")
-
         # --- Build the Vehicle ---
         # Create main body (chassis)
-        chassis = self.builder.add_body(
+        chassis = self.builder.add_link(
             xform=wp.transform((-2.0, 0.0, 1.0), wp.quat_identity()), key="chassis"
         )
         self.builder.add_shape_box(
@@ -98,7 +96,7 @@ class Simulator(AbstractSimulator):
         )
 
         # Left Wheel
-        left_wheel = self.builder.add_body(
+        left_wheel = self.builder.add_link(
             xform=wp.transform((-2.0, -0.75, 1.0), wp.quat_identity()),
             key="left_wheel",
         )
@@ -127,7 +125,7 @@ class Simulator(AbstractSimulator):
         )
 
         # Right Wheel
-        right_wheel = self.builder.add_body(
+        right_wheel = self.builder.add_link(
             xform=wp.transform((-2.0, 0.75, 1.0), wp.quat_identity()),
             key="right_wheel",
         )
@@ -156,7 +154,7 @@ class Simulator(AbstractSimulator):
         )
 
         # Back Wheel
-        back_wheel = self.builder.add_body(
+        back_wheel = self.builder.add_link(
             xform=wp.transform((-3.25, 0.0, 1.0), wp.quat_identity()),
             key="back_wheel",
         )
@@ -185,11 +183,10 @@ class Simulator(AbstractSimulator):
         )
 
         # --- Define Joints ---
-
-        self.builder.add_joint_free(parent=-1, child=chassis)
+        j0 = self.builder.add_joint_free(parent=-1, child=chassis)
 
         # Left wheel revolute joint (velocity control)
-        self.builder.add_joint_revolute(
+        j1 = self.builder.add_joint_revolute(
             parent=chassis,
             child=left_wheel,
             parent_xform=wp.transform((0.0, -0.75, 0.0), wp.quat_identity()),
@@ -202,7 +199,7 @@ class Simulator(AbstractSimulator):
             },
         )
         # Right wheel revolute joint (velocity control)
-        self.builder.add_joint_revolute(
+        j2 = self.builder.add_joint_revolute(
             parent=chassis,
             child=right_wheel,
             parent_xform=wp.transform((0.0, 0.75, 0.0), wp.quat_identity()),
@@ -215,12 +212,14 @@ class Simulator(AbstractSimulator):
             },
         )
         # Back wheel revolute joint (not actively driven)
-        self.builder.add_joint_revolute(
+        j3 = self.builder.add_joint_revolute(
             parent=chassis,
             child=back_wheel,
             parent_xform=wp.transform((-1.5, 0.0, 0.0), wp.quat_identity()),
             axis=(0.0, 1.0, 0.0),
         )
+
+        self.builder.add_articulation([j0, j1, j2, j3], key="helhest")
 
         # --- Add Static Obstacles and Ground ---
 

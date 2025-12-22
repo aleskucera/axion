@@ -1,10 +1,9 @@
 import warp as wp
+from axion.math import scaled_fisher_burmeister_diff
 from axion.types import ContactInteraction
 from axion.types import SpatialInertia
 from axion.types import to_spatial_momentum
 from axion.types.spatial_inertia import compute_world_inertia
-
-from axion.math import scaled_fisher_burmeister_diff
 
 
 @wp.func

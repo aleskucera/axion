@@ -155,8 +155,8 @@ def friction_constraint_kernel(
         )
 
     # Update h (constraint violation)
-    h_f[world_idx, constr_idx1] = 0.03 * (v_t1 + w * lambda_t1)
-    h_f[world_idx, constr_idx2] = 0.03 * (v_t2 + w * lambda_t2)
+    h_f[world_idx, constr_idx1] = 1.0 * (v_t1 + w * lambda_t1)
+    h_f[world_idx, constr_idx2] = 1.0 * (v_t2 + w * lambda_t2)
 
     # Update J (Jacobian)
     J_hat_f_values[world_idx, constr_idx1, 0] = J_hat_t1_1
@@ -260,5 +260,5 @@ def batch_friction_residual_kernel(
         )
 
     # Update h_f (constraint violation)
-    h_f[batch_idx, world_idx, constr_idx1] = 0.001 * (v_t1 + w * lambda_t1)
-    h_f[batch_idx, world_idx, constr_idx2] = 0.001 * (v_t2 + w * lambda_t2)
+    h_f[batch_idx, world_idx, constr_idx1] = 1.0 * (v_t1 + w * lambda_t1)
+    h_f[batch_idx, world_idx, constr_idx2] = 1.0 * (v_t2 + w * lambda_t2)

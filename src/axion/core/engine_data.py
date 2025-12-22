@@ -22,6 +22,7 @@ class LinesearchData:
     dims: EngineDimensions
     steps: wp.array
     batch_body_u: wp.array
+    batch_body_q: wp.array
     _batch_body_lambda: wp.array
     _batch_h: wp.array
     batch_h_norm_sq: wp.array
@@ -261,6 +262,9 @@ class EngineData:
             linesearch_batch_body_u = _zeros(
                 (step_count, dims.N_w, dims.N_b), wp.spatial_vector
             )
+            linesearch_batch_body_q = _zeros(
+                (step_count, dims.N_w, dims.N_b), wp.transform
+            )
             linesearch_batch_body_lambda = _zeros((step_count, dims.N_w, dims.N_c))
             linesearch_batch_h = _zeros((step_count, dims.N_w, dims.N_u + dims.N_c))
             linesearch_batch_h_norm_sq = _zeros((step_count, dims.N_w))
@@ -270,6 +274,7 @@ class EngineData:
                 dims=dims,
                 steps=linesearch_steps,
                 batch_body_u=linesearch_batch_body_u,
+                batch_body_q=linesearch_batch_body_q,
                 _batch_body_lambda=linesearch_batch_body_lambda,
                 _batch_h=linesearch_batch_h,
                 batch_h_norm_sq=linesearch_batch_h_norm_sq,

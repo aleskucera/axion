@@ -1,5 +1,4 @@
 import warp as wp
-
 from axion.math import orthogonal_basis
 
 
@@ -154,43 +153,3 @@ def contact_interaction_kernel(
 
     # Write the complete struct to the output array
     interactions[world_idx, contact_idx] = interaction
-
-
-@wp.kernel
-def update_penetration_depth_kernel(
-    body_q: wp.array(dtype=wp.transform, ndim=2),
-    interactions: wp.array(dtype=ContactInteraction, ndim=2),
-):
-    world_idx, contact_idx = wp.tid()
-
-    interaction = interactions[world_idx, contact_idx]
-    if not interaction.is_active:
-        return
-
-    n = wp.spatial_top(interaction.basis_a.normal)
-
-    body_a = interaction.body_a_idx
-    body_b = interaction.body_b_idx
-
-    p_a = wp.vec3()
-    p_b = wp.vec3()
-
-    if body_a >= 0:
-        X_wb_a = body_q[world_idx, body_a]
-        offset_a = -interaction.contact_thickness_a * n
-        p_a = wp.transform_point(X_wb_a, interaction.contact_point_a) + offset_a
-    else:
-        offset_a = -interaction.contact_thickness_a * n
-        p_a = interaction.contact_point_a + offset_a
-
-    if body_b >= 0:
-        X_wb_b = body_q[world_idx, body_b]
-        offset_b = interaction.contact_thickness_b * n
-        p_b = wp.transform_point(X_wb_b, interaction.contact_point_b) + offset_b
-    else:
-        offset_b = interaction.contact_thickness_b * n
-        p_b = interaction.contact_point_b + offset_b
-
-    # Update depth
-    interactions[world_idx, contact_idx].penetration_depth = wp.dot(n, p_b - p_a)
-

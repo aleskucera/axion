@@ -36,16 +36,16 @@ def update_system_rhs_kernel(
     body_1 = constraint_body_idx[world_idx, constraint_idx, 0]
     body_2 = constraint_body_idx[world_idx, constraint_idx, 1]
 
-    M_inv_1 = body_M_inv[world_idx, body_1]
-    M_inv_2 = body_M_inv[world_idx, body_2]
+    JHinvg = 0.0
+    if body_1 >= 0:
+        M_inv_1 = body_M_inv[world_idx, body_1]
+        J_1 = J_values[world_idx, constraint_idx, 0]
+        JHinvg += wp.dot(J_1, to_spatial_momentum(M_inv_1, h_d[world_idx, body_1]))
 
-    J_1 = J_values[world_idx, constraint_idx, 0]
-    J_2 = J_values[world_idx, constraint_idx, 1]
-
-    # Calculate (J_i * M^-1 * h_d)
-    a_contrib = wp.dot(J_1, to_spatial_momentum(M_inv_1, h_d[world_idx, body_1]))
-    b_contrib = wp.dot(J_2, to_spatial_momentum(M_inv_2, h_d[world_idx, body_2]))
-    JHinvg = a_contrib + b_contrib
+    if body_2 >= 0:
+        M_inv_2 = body_M_inv[world_idx, body_2]
+        J_2 = J_values[world_idx, constraint_idx, 1]
+        JHinvg += wp.dot(J_2, to_spatial_momentum(M_inv_2, h_d[world_idx, body_2]))
 
     # b = (J * M^-1 * h_d - h_c) / dt
     b[world_idx, constraint_idx] = (JHinvg - h_c[world_idx, constraint_idx]) / dt
@@ -69,10 +69,10 @@ def compute_JT_dbody_lambda_kernel(
     dlambda = dbody_lambda[world_idx, constraint_idx]
 
     if body_1 >= 0:
-        JT_dbody_lambda[world_idx, body_1] += dlambda * J_1
+        wp.atomic_add(JT_dbody_lambda, world_idx, body_1, dlambda * J_1)
 
     if body_2 >= 0:
-        JT_dbody_lambda[world_idx, body_2] += dlambda * J_2
+        wp.atomic_add(JT_dbody_lambda, world_idx, body_2, dlambda * J_2)
 
 
 @wp.kernel

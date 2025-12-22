@@ -24,13 +24,6 @@ dependencies = [
   "warp-lang>=1.7.1",
 ]
 
-[project.scripts]
-ball_bounce_example = "axion.examples:ball_bounce_example"
-collision_mesh_example = "axion.examples:collision_mesh_example"
-collision_primitives_example = "axion.examples:collision_primitives_example"
-helhest_example = "axion.examples:helhest_example"
-helhest_simple_example = "axion.examples:helhest_simple_example"
-
 [project.optional-dependencies]
 docs = [
   "mkdocs-gen-files>=0.5.0",

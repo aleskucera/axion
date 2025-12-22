@@ -39,11 +39,8 @@ class Simulator(AbstractSimulator):
             logging_config,
         )
 
-        # self.mujoco_solver = newton.solvers.SolverMuJoCo(self.model, njmax=40)
-        # self.joint_target = wp.array(6 * [0.0] + [0.5, 0.5, 0.0], dtype=wp.float32)
-
         robot_joint_target = np.concatenate(
-            [np.zeros(6), np.array([400.0, 400.0, 0.0], dtype=wp.float32)]
+            [np.zeros(6), np.array([0.1, 0.1, 0.0], dtype=wp.float32)]
         )
 
         joint_target = np.tile(robot_joint_target, self.simulation_config.num_worlds)
@@ -62,8 +59,8 @@ class Simulator(AbstractSimulator):
 
     @override
     def control_policy(self, current_state: newton.State):
-        # wp.copy(self.control.joint_f, self.joint_target)
-        pass
+        wp.copy(self.control.joint_target, self.joint_target)
+        # pass
 
     def build_model(self) -> newton.Model:
         """
@@ -71,7 +68,7 @@ class Simulator(AbstractSimulator):
 
         This method constructs the three-wheeled vehicle, obstacles, and ground plane.
         """
-        FRICTION = 0.8
+        FRICTION = 1.0
         RESTITUTION = 0.0
         WHEEL_DENSITY = 300
         CHASSIS_DENSITY = 800
@@ -79,10 +76,10 @@ class Simulator(AbstractSimulator):
         KD = 30000.0
         KF = 500.0
 
-        robot_x = 0.2
+        robot_x = -1.5
 
         robot_y = 0.0
-        robot_z = 1.0
+        robot_z = 0.6
 
         wheel_m = openmesh.read_trimesh(f"{ASSETS_DIR}/helhest/wheel2.obj")
         mesh_points = np.array(wheel_m.points())
@@ -215,11 +212,11 @@ class Simulator(AbstractSimulator):
             child=left_wheel,
             parent_xform=wp.transform((0.0, -0.75, 0.0), wp.quat_identity()),
             axis=(0.0, 1.0, 0.0),
-            target_ke=None,  # 400
-            target_kd=4.5,  # 40.5
+            target_ke=400,  # 400
+            target_kd=40.5,  # 40.5
             custom_attributes={
                 "joint_target_ki": [0.5],
-                "joint_dof_mode": [JointMode.NONE],
+                "joint_dof_mode": [JointMode.TARGET_VELOCITY],
             },
         )
         # Right wheel revolute joint (velocity control)
@@ -228,11 +225,11 @@ class Simulator(AbstractSimulator):
             child=right_wheel,
             parent_xform=wp.transform((0.0, 0.75, 0.0), wp.quat_identity()),
             axis=(0.0, 1.0, 0.0),
-            target_ke=None,
-            target_kd=4.5,
+            target_ke=400,
+            target_kd=40.5,
             custom_attributes={
                 "joint_target_ki": [0.5],
-                "joint_dof_mode": [JointMode.NONE],
+                "joint_dof_mode": [JointMode.TARGET_VELOCITY],
             },
         )
         # Back wheel revolute joint (not actively driven)
@@ -259,17 +256,17 @@ class Simulator(AbstractSimulator):
                 restitution=RESTITUTION,
             ),
         )
-        self.builder.add_shape_box(
-            body=-1,
-            xform=wp.transform((2.5, 0.0, 0.0), wp.quat_identity()),
-            hx=0.75,
-            hy=1.75,
-            hz=0.25,
-            cfg=newton.ModelBuilder.ShapeConfig(
-                mu=FRICTION,
-                restitution=RESTITUTION,
-            ),
-        )
+        # self.builder.add_shape_box(
+        #     body=-1,
+        #     xform=wp.transform((2.5, 0.0, 0.0), wp.quat_identity()),
+        #     hx=0.75,
+        #     hy=1.75,
+        #     hz=0.25,
+        #     cfg=newton.ModelBuilder.ShapeConfig(
+        #         mu=FRICTION,
+        #         restitution=RESTITUTION,
+        #     ),
+        # )
 
         # add ground plane
         self.builder.add_ground_plane(

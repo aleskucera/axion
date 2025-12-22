@@ -58,7 +58,7 @@ class Simulator(AbstractSimulator):
             hy=0.5,
             hz=0.5,
             cfg=newton.ModelBuilder.ShapeConfig(
-                density=10.0,
+                density=100.0,
                 ke=6000.0,
                 kd=1000.0,
                 kf=200.0,

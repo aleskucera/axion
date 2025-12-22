@@ -68,16 +68,37 @@ class Simulator(AbstractSimulator):
                 contact_margin=0.1,
             ),
         )
-
-        self.builder.add_ground_plane(
+        ground = self.builder.add_body(
+            xform=wp.transform((0.0, 0.0, 0.0), wp.quat_identity()),
+            key="ground",
+            mass=0.0,
+        )
+        self.builder.add_shape_box(
+            body=ground,
+            hx=5.0,
+            hy=5.0,
+            hz=0.1,
             cfg=newton.ModelBuilder.ShapeConfig(
+                density=0.0,
                 ke=6000.0,
                 kd=1000.0,
                 kf=200.0,
                 mu=FRICTION,
                 restitution=RESTITUTION,
-            )
+                thickness=0.0,
+                contact_margin=0.1,
+            ),
         )
+
+        # self.builder.add_ground_plane(
+        #     cfg=newton.ModelBuilder.ShapeConfig(
+        #         ke=6000.0,
+        #         kd=1000.0,
+        #         kf=200.0,
+        #         mu=FRICTION,
+        #         restitution=RESTITUTION,
+        #     )
+        # )
 
         self.builder.body_qd[0] = initial_velocity
 

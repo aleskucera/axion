@@ -35,95 +35,52 @@ class Simulator(AbstractSimulator):
         )
 
     def build_model(self) -> newton.Model:
-        FRICTION = 0.5
+        FRICTION = 0.0
         RESTITUTION = 0.0
-        DENSITY = 1500.0
-        KE = 60000.0
-        KD = 5000.0
-        KF = 200.0
 
-        box1_hx = 0.2
-        box2_hx = 0.8
-        box3_hx = 1.6
-
-        box1 = self.builder.add_body(
-            xform=wp.transform((0.0, 0.0, box1_hx), wp.quat_identity()), key="box1"
+        ball1 = self.builder.add_body(
+            xform=wp.transform((0.0, 0.0, 0.5), wp.quat_identity()), key="ball1"
         )
+        initial_velocity = wp.spatial_vector(0.0, 2.0, 0.0, 0.0, 0.0, 0.0)
+
         self.builder.add_shape_box(
-            body=box1,
-            hx=box1_hx,
-            hy=box1_hx,
-            hz=box1_hx,
+            body=ball1,
+            hx=0.5,
+            hy=0.5,
+            hz=0.5,
             cfg=newton.ModelBuilder.ShapeConfig(
-                density=DENSITY,
-                ke=KE,
-                kd=KD,
-                kf=KF,
+                density=10.0,
+                ke=6000.0,
+                kd=1000.0,
+                kf=200.0,
                 mu=FRICTION,
                 restitution=RESTITUTION,
                 thickness=0.0,
-            ),
-        )
-
-        box2 = self.builder.add_body(
-            xform=wp.transform((0.0, 0.0, 2 * box1_hx + box2_hx), wp.quat_identity()), key="box2"
-        )
-        self.builder.add_shape_box(
-            body=box2,
-            hx=box2_hx,
-            hy=box2_hx,
-            hz=box2_hx,
-            cfg=newton.ModelBuilder.ShapeConfig(
-                density=DENSITY,
-                ke=KE,
-                kd=KD,
-                kf=KF,
-                mu=FRICTION,
-                restitution=RESTITUTION,
-                thickness=0.0,
-            ),
-        )
-
-        box3 = self.builder.add_body(
-            xform=wp.transform((0.0, 0.0, 2 * box1_hx + 2 * box2_hx + box3_hx), wp.quat_identity()),
-            key="box3",
-        )
-        self.builder.add_shape_box(
-            body=box3,
-            hx=box3_hx,
-            hy=box3_hx,
-            hz=box3_hx,
-            cfg=newton.ModelBuilder.ShapeConfig(
-                density=DENSITY,
-                ke=KE,
-                kd=KD,
-                kf=KF,
-                mu=FRICTION,
-                restitution=RESTITUTION,
-                thickness=0.0,
+                contact_margin=0.1,
             ),
         )
 
         self.builder.add_ground_plane(
             cfg=newton.ModelBuilder.ShapeConfig(
-                ke=KE,
-                kd=KD,
-                kf=KF,
+                ke=6000.0,
+                kd=1000.0,
+                kf=200.0,
                 mu=FRICTION,
                 restitution=RESTITUTION,
             )
         )
 
+        self.builder.body_qd[0] = initial_velocity
         return self.builder.finalize_replicated(num_worlds=self.simulation_config.num_worlds)
 
 
 @hydra.main(config_path=str(CONFIG_PATH), config_name="config", version_base=None)
-def box_stack_example(cfg: DictConfig):
+def ball_bounce_example(cfg: DictConfig):
     sim_config: SimulationConfig = hydra.utils.instantiate(cfg.simulation)
     render_config: RenderingConfig = hydra.utils.instantiate(cfg.rendering)
     exec_config: ExecutionConfig = hydra.utils.instantiate(cfg.execution)
-    engine_config: EngineConfig = hydra.utils.instantiate(cfg.engine)
     logging_config: LoggingConfig = hydra.utils.instantiate(cfg.logging)
+    engine_config: EngineConfig = hydra.utils.instantiate(cfg.engine)
 
     simulator = Simulator(
         sim_config=sim_config,
@@ -137,4 +94,4 @@ def box_stack_example(cfg: DictConfig):
 
 
 if __name__ == "__main__":
-    box_stack_example()
+    ball_bounce_example()
