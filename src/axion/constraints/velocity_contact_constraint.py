@@ -2,7 +2,7 @@ import warp as wp
 from axion.types import ContactInteraction
 from axion.types import SpatialInertia
 
-from .utils import scaled_fisher_burmeister
+from axion.math import scaled_fisher_burmeister_diff
 
 
 @wp.func
@@ -56,6 +56,7 @@ def velocity_contact_constraint_kernel(
     fb_beta: wp.float32,
     compliance: wp.float32,
     # --- Outputs (contributions to the linear system) ---
+    constraint_active_mask: wp.array(dtype=wp.float32, ndim=2),
     h_d: wp.array(dtype=wp.spatial_vector, ndim=2),
     h_n: wp.array(dtype=wp.float32, ndim=2),
     J_hat_n_values: wp.array(dtype=wp.spatial_vector, ndim=3),
@@ -72,11 +73,15 @@ def velocity_contact_constraint_kernel(
     if interaction.penetration_depth <= 0:
         # The constraint residual is simply the impulse (h = λ),
         # which drives it to zero if unconstrained.
+        constraint_active_mask[world_idx, contact_idx] = 0.0
+        body_lambda_n[world_idx, contact_idx] = 0.0
         h_n[world_idx, contact_idx] = 0.0
         J_hat_n_values[world_idx, contact_idx, 0] = wp.spatial_vector()
         J_hat_n_values[world_idx, contact_idx, 1] = wp.spatial_vector()
         C_n_values[world_idx, contact_idx] = 0.0
         return
+
+    constraint_active_mask[world_idx, contact_idx] = 1.0
 
     # Unpack body indices for clarity
     body_1 = interaction.body_a_idx
@@ -109,7 +114,7 @@ def velocity_contact_constraint_kernel(
     )
 
     # Evaluate the Fisher-Burmeister complementarity function φ(v_n, λ)
-    phi_n, dphi_dtarget_v_n, dphi_dlambda_n = scaled_fisher_burmeister(
+    phi_n, dphi_dtarget_v_n, dphi_dlambda_n = scaled_fisher_burmeister_diff(
         target_v_n,
         lambda_n,
         fb_alpha,
@@ -199,7 +204,7 @@ def batch_velocity_contact_residual_kernel(
     )
 
     # Evaluate the Fisher-Burmeister complementarity function φ(v_n, λ)
-    phi_n, dphi_dtarget_v_n, dphi_dlambda_n = scaled_fisher_burmeister(
+    phi_n, dphi_dtarget_v_n, dphi_dlambda_n = scaled_fisher_burmeister_diff(
         target_v_n,
         lambda_n,
         fb_alpha,

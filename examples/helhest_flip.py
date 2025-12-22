@@ -1,5 +1,5 @@
 import os
-from importlib.resources import files
+import pathlib
 from typing import override
 
 import hydra
@@ -18,8 +18,8 @@ from omegaconf import DictConfig
 
 os.environ["PYOPENGL_PLATFORM"] = "glx"
 
-CONFIG_PATH = files("axion").joinpath("examples").joinpath("conf")
-ASSETS_DIR = files("axion").joinpath("examples").joinpath("assets")
+CONFIG_PATH = pathlib.Path(__file__).parent.joinpath("conf")
+ASSETS_DIR = pathlib.Path(__file__).parent.joinpath("assets")
 
 
 class Simulator(AbstractSimulator):
@@ -43,7 +43,7 @@ class Simulator(AbstractSimulator):
         # self.joint_target = wp.array(6 * [0.0] + [0.5, 0.5, 0.0], dtype=wp.float32)
 
         robot_joint_target = np.concatenate(
-            [np.zeros(6), np.array([400.0, 400.0, 0.0], dtype=wp.float32)]
+            [np.zeros(6), np.array([1500.0, 1500.0, 0.0], dtype=wp.float32)]
         )
 
         joint_target = np.tile(robot_joint_target, self.simulation_config.num_worlds)
@@ -62,8 +62,7 @@ class Simulator(AbstractSimulator):
 
     @override
     def control_policy(self, current_state: newton.State):
-        # wp.copy(self.control.joint_f, self.joint_target)
-        pass
+        wp.copy(self.control.joint_f, self.joint_target)
 
     def build_model(self) -> newton.Model:
         """
@@ -75,14 +74,9 @@ class Simulator(AbstractSimulator):
         RESTITUTION = 0.0
         WHEEL_DENSITY = 300
         CHASSIS_DENSITY = 800
-        KE = 60000.0
-        KD = 30000.0
-        KF = 500.0
-
-        robot_x = 0.2
-
-        robot_y = 0.0
-        robot_z = 1.0
+        KE = 90000.0
+        KD = 50000.0
+        KF = 2000.0
 
         wheel_m = openmesh.read_trimesh(f"{ASSETS_DIR}/helhest/wheel2.obj")
         mesh_points = np.array(wheel_m.points())
@@ -92,7 +86,7 @@ class Simulator(AbstractSimulator):
         # --- Build the Vehicle ---
         # Create main body (chassis)
         chassis = self.builder.add_link(
-            xform=wp.transform((robot_x, robot_y, robot_z), wp.quat_identity()), key="chassis"
+            xform=wp.transform((-3.0, 0.0, 1.0), wp.quat_identity()), key="chassis"
         )
         self.builder.add_shape_box(
             body=chassis,
@@ -111,7 +105,7 @@ class Simulator(AbstractSimulator):
 
         # Left Wheel
         left_wheel = self.builder.add_link(
-            xform=wp.transform((robot_x, robot_y - 0.75, robot_z), wp.quat_identity()),
+            xform=wp.transform((-3.0, -0.75, 1.0), wp.quat_identity()),
             key="left_wheel",
         )
         self.builder.add_shape_mesh(
@@ -119,7 +113,7 @@ class Simulator(AbstractSimulator):
             mesh=wheel_mesh_render,
             cfg=newton.ModelBuilder.ShapeConfig(
                 density=0.0,
-                collision_group=0,  # No collisions
+                has_shape_collision=False,
             ),
         )
         self.builder.add_shape_capsule(
@@ -134,6 +128,7 @@ class Simulator(AbstractSimulator):
                 mu=FRICTION,
                 restitution=RESTITUTION,
                 thickness=0.0,
+                contact_margin=0.1,
                 is_visible=False,
                 ke=KE,
                 kd=KD,
@@ -143,7 +138,7 @@ class Simulator(AbstractSimulator):
 
         # Right Wheel
         right_wheel = self.builder.add_link(
-            xform=wp.transform((robot_x, robot_y + 0.75, robot_z), wp.quat_identity()),
+            xform=wp.transform((-3.0, 0.75, 1.0), wp.quat_identity()),
             key="right_wheel",
         )
         self.builder.add_shape_mesh(
@@ -151,7 +146,7 @@ class Simulator(AbstractSimulator):
             mesh=wheel_mesh_render,
             cfg=newton.ModelBuilder.ShapeConfig(
                 density=0.0,
-                collision_group=0,  # No collisions
+                has_shape_collision=False,
             ),
         )
         self.builder.add_shape_capsule(
@@ -166,6 +161,7 @@ class Simulator(AbstractSimulator):
                 mu=FRICTION,
                 restitution=RESTITUTION,
                 thickness=0.0,
+                contact_margin=0.1,
                 is_visible=False,
                 ke=KE,
                 kd=KD,
@@ -175,7 +171,7 @@ class Simulator(AbstractSimulator):
 
         # Back Wheel
         back_wheel = self.builder.add_link(
-            xform=wp.transform((robot_x - 1.25, robot_y, robot_z), wp.quat_identity()),
+            xform=wp.transform((-1.5, 0.0, 1.0), wp.quat_identity()),
             key="back_wheel",
         )
         self.builder.add_shape_mesh(
@@ -183,8 +179,7 @@ class Simulator(AbstractSimulator):
             mesh=wheel_mesh_render,
             cfg=newton.ModelBuilder.ShapeConfig(
                 density=0.0,
-                # has_shape_collision=False,
-                collision_group=0,  # No collisions
+                has_shape_collision=False,
             ),
         )
         self.builder.add_shape_capsule(
@@ -196,9 +191,10 @@ class Simulator(AbstractSimulator):
             half_height=0.1,
             cfg=newton.ModelBuilder.ShapeConfig(
                 density=WHEEL_DENSITY,
-                mu=FRICTION,
+                mu=0.5,
                 restitution=RESTITUTION,
                 thickness=0.0,
+                contact_margin=0.1,
                 is_visible=False,
                 ke=KE,
                 kd=KD,
@@ -207,6 +203,7 @@ class Simulator(AbstractSimulator):
         )
 
         # --- Define Joints ---
+
         j0 = self.builder.add_joint_free(parent=-1, child=chassis)
 
         # Left wheel revolute joint (velocity control)
@@ -239,7 +236,7 @@ class Simulator(AbstractSimulator):
         j3 = self.builder.add_joint_revolute(
             parent=chassis,
             child=back_wheel,
-            parent_xform=wp.transform((-1.5, 0.0, 0.0), wp.quat_identity()),
+            parent_xform=wp.transform((1.5, 0.0, 0.0), wp.quat_identity()),
             axis=(0.0, 1.0, 0.0),
         )
 
@@ -255,8 +252,12 @@ class Simulator(AbstractSimulator):
             hy=1.5,
             hz=0.15,
             cfg=newton.ModelBuilder.ShapeConfig(
+                contact_margin=0.1,
                 mu=FRICTION,
                 restitution=RESTITUTION,
+                ke=KE,
+                kd=KD,
+                kf=KF,
             ),
         )
         self.builder.add_shape_box(
@@ -266,22 +267,28 @@ class Simulator(AbstractSimulator):
             hy=1.75,
             hz=0.25,
             cfg=newton.ModelBuilder.ShapeConfig(
+                contact_margin=0.1,
                 mu=FRICTION,
                 restitution=RESTITUTION,
+                ke=KE,
+                kd=KD,
+                kf=KF,
             ),
         )
 
         # add ground plane
         self.builder.add_ground_plane(
             cfg=newton.ModelBuilder.ShapeConfig(
-                ke=10.0, kd=10.0, kf=0.0, mu=FRICTION, restitution=RESTITUTION
+                contact_margin=0.1,
+                ke=KE,
+                kd=KD,
+                kf=KF,
+                mu=FRICTION,
+                restitution=RESTITUTION,
             )
         )
 
-        return self.builder.finalize_replicated(
-            num_worlds=self.simulation_config.num_worlds,
-            gravity=-9.81,
-        )
+        return self.builder.finalize_replicated(num_worlds=self.simulation_config.num_worlds)
 
 
 @hydra.main(config_path=str(CONFIG_PATH), config_name="helhest", version_base=None)

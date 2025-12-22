@@ -21,11 +21,17 @@ def update_system_rhs_kernel(
     h_d: wp.array(dtype=wp.spatial_vector, ndim=2),
     h_c: wp.array(dtype=wp.float32, ndim=2),
     constraint_body_idx: wp.array(dtype=wp.int32, ndim=3),
+    constraint_active_mask: wp.array(dtype=wp.float32, ndim=2),
     dt: wp.float32,
     # Output array
     b: wp.array(dtype=wp.float32, ndim=2),
 ):
     world_idx, constraint_idx = wp.tid()
+
+    is_active = constraint_active_mask[world_idx, constraint_idx]
+    if is_active == 0.0:
+        b[world_idx, constraint_idx] = 0.0
+        return
 
     body_1 = constraint_body_idx[world_idx, constraint_idx, 0]
     body_2 = constraint_body_idx[world_idx, constraint_idx, 1]
@@ -140,6 +146,7 @@ def compute_linear_system(
                 config.joint_compliance,
             ],
             outputs=[
+                data.constraint_active_mask.j,
                 data.h.d_spatial,
                 data.h.c.j,
                 data.J_values.j,
@@ -171,6 +178,7 @@ def compute_linear_system(
                 config.joint_compliance,
             ],
             outputs=[
+                data.constraint_active_mask.j,
                 data.h.d_spatial,
                 data.h.c.j,
                 data.J_values.j,
@@ -201,6 +209,7 @@ def compute_linear_system(
                 config.contact_compliance,
             ],
             outputs=[
+                data.constraint_active_mask.n,
                 data.h.d_spatial,
                 data.h.c.n,
                 data.J_values.n,
@@ -225,6 +234,7 @@ def compute_linear_system(
                 config.contact_compliance,
             ],
             outputs=[
+                data.constraint_active_mask.n,
                 data.h.d_spatial,
                 data.h.c.n,
                 data.J_values.n,
@@ -254,6 +264,7 @@ def compute_linear_system(
             config.friction_compliance,
         ],
         outputs=[
+            data.constraint_active_mask.f,
             data.h.d_spatial,
             data.h.c.f,
             data.J_values.f,
@@ -271,6 +282,7 @@ def compute_linear_system(
             data.h.d_spatial,
             data.h.c.full,
             data.constraint_body_idx.full,
+            data.constraint_active_mask.full,
             data.dt,
         ],
         outputs=[data.b],

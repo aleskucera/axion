@@ -1,7 +1,6 @@
 import warp as wp
+from axion.math import scaled_fisher_burmeister
 from axion.types import ContactInteraction
-
-from .utils import scaled_fisher_burmeister
 
 
 @wp.struct
@@ -37,7 +36,7 @@ def compute_friction_model(
     # --- Evaluate Friction Cone Complementarity ---
     # beta converts Force to Velocity (Compliance * dt or similar scaling)
     beta = dt * fb_beta
-    phi_f, _, _ = scaled_fisher_burmeister(
+    phi_f = scaled_fisher_burmeister(
         v_t_norm,
         mu * force_n_prev - force_f_norm,
         fb_alpha,
@@ -71,6 +70,7 @@ def friction_constraint_kernel(
     fb_beta: wp.float32,
     compliance: wp.float32,
     # --- Outputs (contributions to the linear system) ---
+    constraint_active_mask: wp.array(dtype=wp.float32, ndim=2),
     h_d: wp.array(dtype=wp.spatial_vector, ndim=2),
     h_f: wp.array(dtype=wp.float32, ndim=2),
     J_hat_f_values: wp.array(dtype=wp.spatial_vector, ndim=3),
@@ -91,6 +91,10 @@ def friction_constraint_kernel(
 
     if mu * force_n_prev <= 1e-3:
         # Unconstrained: h = λ, C = 1, J = 0
+        constraint_active_mask[world_idx, constr_idx1] = 0.0
+        constraint_active_mask[world_idx, constr_idx2] = 0.0
+        body_lambda_f[world_idx, constr_idx1] = 0.0
+        body_lambda_f[world_idx, constr_idx2] = 0.0
         h_f[world_idx, constr_idx1] = 0.0
         h_f[world_idx, constr_idx2] = 0.0
         J_hat_f_values[world_idx, constr_idx1, 0] = wp.spatial_vector()
@@ -101,7 +105,9 @@ def friction_constraint_kernel(
         C_f_values[world_idx, constr_idx2] = 0.0
         return
 
-    # wp.printf("Penetration depth: %f, mu: %f\n", interaction.penetration_depth, mu)
+    constraint_active_mask[world_idx, constr_idx1] = 1.0
+    constraint_active_mask[world_idx, constr_idx2] = 1.0
+
     # --- 2. Gather Inputs for the Friction Model ---
     body_1 = interaction.body_a_idx
     body_2 = interaction.body_b_idx
@@ -194,7 +200,7 @@ def batch_friction_residual_kernel(
     # --- 1. Handle Early Exit for Inactive/Non-Frictional Contacts ---
     force_n_prev = lambda_n_prev / (s_prev + 1e-6)
 
-    if interaction.penetration_depth <= 0 or mu * force_n_prev <= 1e-3:
+    if mu * force_n_prev <= 1e-3:
         h_f[batch_idx, world_idx, constr_idx1] = 0.0
         h_f[batch_idx, world_idx, constr_idx2] = 0.0
         return

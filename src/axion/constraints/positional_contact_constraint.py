@@ -4,7 +4,7 @@ from axion.types import SpatialInertia
 from axion.types import to_spatial_momentum
 from axion.types.spatial_inertia import compute_world_inertia
 
-from .utils import scaled_fisher_burmeister
+from axion.math import scaled_fisher_burmeister_diff
 
 
 @wp.func
@@ -44,6 +44,7 @@ def positional_contact_constraint_kernel(
     fb_beta: wp.float32,
     compliance: wp.float32,
     # --- Outputs (contributions to the linear system) ---
+    constraint_active_mask: wp.array(dtype=wp.float32, ndim=2),
     h_d: wp.array(dtype=wp.spatial_vector, ndim=2),
     h_n: wp.array(dtype=wp.float32, ndim=2),
     J_hat_n_values: wp.array(dtype=wp.spatial_vector, ndim=3),
@@ -60,11 +61,15 @@ def positional_contact_constraint_kernel(
     if not interaction.is_active:
         # The constraint residual is simply the impulse (h = λ),
         # which drives it to zero if unconstrained.
+        constraint_active_mask[world_idx, contact_idx] = 0.0
+        body_lambda_n[world_idx, contact_idx] = 0.0
         h_n[world_idx, contact_idx] = 0.0
         J_hat_n_values[world_idx, contact_idx, 0] = wp.spatial_vector()
         J_hat_n_values[world_idx, contact_idx, 1] = wp.spatial_vector()
         C_n_values[world_idx, contact_idx] = 0.0
         return
+
+    constraint_active_mask[world_idx, contact_idx] = 1.0
 
     # Unpack body indices for clarity
     body_1 = interaction.body_a_idx
@@ -93,7 +98,7 @@ def positional_contact_constraint_kernel(
     signed_distance = compute_signed_distance(body_q_1, body_q_2, interaction)
 
     # Evaluate the Fisher-Burmeister complementarity function φ(C_n, λ)
-    phi_n, dphi_dc_n, dphi_dlambda_n = scaled_fisher_burmeister(
+    phi_n, dphi_dc_n, dphi_dlambda_n = scaled_fisher_burmeister_diff(
         signed_distance,
         lambda_n,
         1.0,
@@ -186,7 +191,7 @@ def batch_positional_contact_residual_kernel(
     signed_distance = compute_signed_distance(body_q_1, body_q_2, interaction)
 
     # Evaluate the Fisher-Burmeister complementarity function φ(C_n, λ)
-    phi_n, dphi_dc_n, dphi_dlambda_n = scaled_fisher_burmeister(
+    phi_n, dphi_dc_n, dphi_dlambda_n = scaled_fisher_burmeister_diff(
         signed_distance,
         lambda_n,
         1.0,

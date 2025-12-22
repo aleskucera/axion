@@ -1,6 +1,6 @@
 import warp as wp
 
-from .utils import orthogonal_basis
+from axion.math import orthogonal_basis
 
 
 @wp.struct

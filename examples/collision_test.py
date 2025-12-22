@@ -1,5 +1,5 @@
 import os
-from importlib.resources import files
+import pathlib
 
 import hydra
 import newton
@@ -14,7 +14,7 @@ from omegaconf import DictConfig
 
 os.environ["PYOPENGL_PLATFORM"] = "glx"
 
-CONFIG_PATH = files("axion").joinpath("examples").joinpath("conf")
+CONFIG_PATH = pathlib.Path(__file__).parent.joinpath("conf")
 
 
 class Simulator(AbstractSimulator):
@@ -35,41 +35,62 @@ class Simulator(AbstractSimulator):
         )
 
     def build_model(self) -> newton.Model:
-
-        rigid_cfg = self.builder.ShapeConfig()
-        rigid_cfg.restitution = 0.0
-        rigid_cfg.has_shape_collision = True
-        rigid_cfg.mu = 1.0
-        rigid_cfg.density = 1000.0
-
-        # add ground plane
-        self.builder.add_ground_plane(cfg=rigid_cfg)
-
         # z height to drop shapes from
-        drop_z = 2.0
+        drop_z = 0.0
 
         # SPHERE
-        self.sphere_pos = wp.vec3(0.0, -2.0, drop_z)
+        self.sphere_pos = wp.vec3(0.0, -0.9, 0.0)
         body_sphere = self.builder.add_body(
             xform=wp.transform(p=self.sphere_pos, q=wp.quat_identity()), key="sphere"
         )
-        self.builder.add_shape_sphere(body_sphere, radius=0.5, cfg=rigid_cfg)
-
-        # CAPSULE
-        self.capsule_pos = wp.vec3(0.0, 0.0, drop_z)
-        body_capsule = self.builder.add_body(
-            xform=wp.transform(p=self.capsule_pos, q=wp.quat_identity()), key="capsule"
+        self.builder.add_shape_sphere(
+            body_sphere,
+            radius=0.5,
+            cfg=self.builder.ShapeConfig(
+                thickness=0.0,
+                contact_margin=0.7,
+                mu=0.0,
+            ),
         )
-        self.builder.add_shape_capsule(body_capsule, radius=0.3, half_height=0.7, cfg=rigid_cfg)
 
         # BOX
-        self.box_pos = wp.vec3(0.0, 2.0, drop_z)
+        self.box_pos = wp.vec3(0.0, 0.0, 0.0)
         body_box = self.builder.add_body(
             xform=wp.transform(p=self.box_pos, q=wp.quat_identity()), key="box"
         )
-        self.builder.add_shape_box(body_box, hx=0.5, hy=0.35, hz=0.25, cfg=rigid_cfg)
+        self.builder.add_shape_box(
+            -1,
+            hx=0.5,
+            hy=0.35,
+            hz=0.25,
+            cfg=self.builder.ShapeConfig(
+                thickness=0.0,
+                contact_margin=0.0,
+                mu=0.0,
+                density=1e6,
+            ),
+        )
 
-        return self.builder.finalize_replicated(num_worlds=self.simulation_config.num_worlds)
+        # # CAPSULE
+        # self.capsule_pos = wp.vec3(0.0, 0.7, 0.0)
+        # body_capsule = self.builder.add_body(
+        #     xform=wp.transform(p=self.capsule_pos, q=wp.quat_identity()), key="capsule"
+        # )
+        # self.builder.add_shape_capsule(
+        #     body_capsule,
+        #     radius=0.3,
+        #     half_height=0.1,
+        #     cfg=self.builder.ShapeConfig(
+        #         thickness=0.0,
+        #         contact_margin=0.1,
+        #         mu=0.0,
+        #     ),
+        # )
+
+        return self.builder.finalize_replicated(
+            num_worlds=self.simulation_config.num_worlds,
+            gravity=0.0,
+        )
 
 
 @hydra.main(config_path=str(CONFIG_PATH), config_name="config", version_base=None)

@@ -2,7 +2,7 @@ import numpy as np
 import warp as wp
 from newton import JointType
 
-from .utils import orthogonal_basis
+from axion.math import orthogonal_basis
 
 
 @wp.struct

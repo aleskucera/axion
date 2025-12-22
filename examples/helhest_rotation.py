@@ -1,5 +1,5 @@
 import os
-from importlib.resources import files
+import pathlib
 from typing import override
 
 import hydra
@@ -18,8 +18,8 @@ from omegaconf import DictConfig
 
 os.environ["PYOPENGL_PLATFORM"] = "glx"
 
-CONFIG_PATH = files("axion").joinpath("examples").joinpath("conf")
-ASSETS_DIR = files("axion").joinpath("examples").joinpath("assets")
+CONFIG_PATH = pathlib.Path(__file__).parent.joinpath("conf")
+ASSETS_DIR = pathlib.Path(__file__).parent.joinpath("assets")
 
 
 class Simulator(AbstractSimulator):
@@ -40,7 +40,7 @@ class Simulator(AbstractSimulator):
         )
 
         robot_joint_target = np.concatenate(
-            [np.zeros(6), np.array([400.5, 400.5, 0.0], dtype=wp.float32)]
+            [np.zeros(6), np.array([-300.0, 300.0, 0.0], dtype=wp.float32)]
         )
 
         joint_target = np.tile(robot_joint_target, self.simulation_config.num_worlds)
@@ -54,24 +54,28 @@ class Simulator(AbstractSimulator):
         contacts: newton.Contacts,
         dt: float,
     ):
+        # self.mujoco_solver.step(current_state, next_state, self.model.control(), contacts, dt)
         self.solver.integrate_bodies(self.model, current_state, next_state, dt)
 
     @override
     def control_policy(self, current_state: newton.State):
         wp.copy(self.control.joint_f, self.joint_target)
-        # wp.copy(self.control.joint_target, self.joint_target)
+        # pass
 
     def build_model(self) -> newton.Model:
-        FRICTION = 1.0
+        """
+        Implements the abstract method to define the physics objects in the scene.
+
+        This method constructs the three-wheeled vehicle, obstacles, and ground plane.
+        """
+        FRICTION = 0.5
         RESTITUTION = 0.0
         WHEEL_DENSITY = 300
-        CHASSIS_DENSITY = 800
+        CHASSIS_DENSITY = 1200
 
-        INITIAL_ROBOT_HEIGHT = 2.0
-
-        surface_m = openmesh.read_trimesh(f"{ASSETS_DIR}/helhest/wheel2.obj")
-        mesh_points = np.array(surface_m.points())
-        mesh_indices = np.array(surface_m.face_vertex_indices(), dtype=np.int32).flatten()
+        wheel_m = openmesh.read_trimesh(f"{ASSETS_DIR}/helhest/wheel2.obj")
+        mesh_points = np.array(wheel_m.points())
+        mesh_indices = np.array(wheel_m.face_vertex_indices(), dtype=np.int32).flatten()
         wheel_mesh_render = newton.Mesh(mesh_points, mesh_indices)
 
         self.builder.add_articulation(key="helhest_simple")
@@ -79,7 +83,7 @@ class Simulator(AbstractSimulator):
         # --- Build the Vehicle ---
         # Create main body (chassis)
         chassis = self.builder.add_body(
-            xform=wp.transform((-2.0, 0.0, INITIAL_ROBOT_HEIGHT), wp.quat_identity()), key="chassis"
+            xform=wp.transform((-2.0, 0.0, 1.0), wp.quat_identity()), key="chassis"
         )
         self.builder.add_shape_box(
             body=chassis,
@@ -95,7 +99,7 @@ class Simulator(AbstractSimulator):
 
         # Left Wheel
         left_wheel = self.builder.add_body(
-            xform=wp.transform((-2.0, -0.75, INITIAL_ROBOT_HEIGHT), wp.quat_identity()),
+            xform=wp.transform((-2.0, -0.75, 1.0), wp.quat_identity()),
             key="left_wheel",
         )
         self.builder.add_shape_mesh(
@@ -124,7 +128,7 @@ class Simulator(AbstractSimulator):
 
         # Right Wheel
         right_wheel = self.builder.add_body(
-            xform=wp.transform((-2.0, 0.75, INITIAL_ROBOT_HEIGHT), wp.quat_identity()),
+            xform=wp.transform((-2.0, 0.75, 1.0), wp.quat_identity()),
             key="right_wheel",
         )
         self.builder.add_shape_mesh(
@@ -153,7 +157,7 @@ class Simulator(AbstractSimulator):
 
         # Back Wheel
         back_wheel = self.builder.add_body(
-            xform=wp.transform((-3.25, 0.0, INITIAL_ROBOT_HEIGHT), wp.quat_identity()),
+            xform=wp.transform((-3.25, 0.0, 1.0), wp.quat_identity()),
             key="back_wheel",
         )
         self.builder.add_shape_mesh(
@@ -173,7 +177,7 @@ class Simulator(AbstractSimulator):
             half_height=0.1,
             cfg=newton.ModelBuilder.ShapeConfig(
                 density=WHEEL_DENSITY,
-                mu=0.5,
+                mu=0.1,
                 restitution=RESTITUTION,
                 thickness=0.0,
                 is_visible=False,
@@ -190,12 +194,11 @@ class Simulator(AbstractSimulator):
             child=left_wheel,
             parent_xform=wp.transform((0.0, -0.75, 0.0), wp.quat_identity()),
             axis=(0.0, 1.0, 0.0),
-            # target_ke=400.0,
-            # target_kd=800.5,
-            # target_kd=20.5,  # 40.5
+            target_ke=None,  # 400
+            target_kd=4.5,  # 40.5
             custom_attributes={
                 "joint_target_ki": [0.5],
-                "joint_dof_mode": [JointMode.TARGET_VELOCITY],
+                "joint_dof_mode": [JointMode.NONE],
             },
         )
         # Right wheel revolute joint (velocity control)
@@ -204,12 +207,11 @@ class Simulator(AbstractSimulator):
             child=right_wheel,
             parent_xform=wp.transform((0.0, 0.75, 0.0), wp.quat_identity()),
             axis=(0.0, 1.0, 0.0),
-            # target_ke=400.0,
-            # target_kd=800.5,
-            # target_kd=20.5,  # 40.5
+            target_ke=None,
+            target_kd=4.5,
             custom_attributes={
                 "joint_target_ki": [0.5],
-                "joint_dof_mode": [JointMode.TARGET_VELOCITY],
+                "joint_dof_mode": [JointMode.NONE],
             },
         )
         # Back wheel revolute joint (not actively driven)
@@ -222,68 +224,48 @@ class Simulator(AbstractSimulator):
 
         # --- Add Static Obstacles and Ground ---
 
-        # # Add a static box obstacle (body=-1 means it's fixed to the world)
-        # self.builder.add_shape_box(
-        #     body=-1,
-        #     xform=wp.transform((2.5, 0.0, 0.0), wp.quat_identity()),
-        #     hx=1.75,
-        #     hy=1.5,
-        #     hz=0.15,
-        #     cfg=newton.ModelBuilder.ShapeConfig(
-        #         mu=FRICTION,
-        #         restitution=RESTITUTION,
-        #     ),
-        # )
-        # self.builder.add_shape_box(
-        #     body=-1,
-        #     xform=wp.transform((2.5, 0.0, 0.0), wp.quat_identity()),
-        #     hx=0.75,
-        #     hy=1.75,
-        #     hz=0.25,
-        #     cfg=newton.ModelBuilder.ShapeConfig(
-        #         mu=FRICTION,
-        #         restitution=RESTITUTION,
-        #     ),
-        # )
-
-        surface_m = openmesh.read_trimesh(f"{ASSETS_DIR}/surface.obj")
-        # mesh_points = np.array(wheel_m.points())
-        mesh_indices = np.array(surface_m.face_vertex_indices(), dtype=np.int32).flatten()
-        # surface_mesh = newton.Mesh(mesh_points, mesh_indices)
-
-        scale = np.array([3.0, 3.0, 4.0])
-        mesh_points = np.array(surface_m.points()) * scale + np.array([0.0, 0.0, 0.05])
-
-        surface_mesh = newton.Mesh(mesh_points, mesh_indices)
-
-        # self.builder.add_ground_plane(
-        #     cfg=newton.ModelBuilder.ShapeConfig(
-        #         ke=10.0,
-        #         kd=10.0,
-        #         kf=0.0,
-        #         mu=FRICTION,
-        #         restitution=RESTITUTION,
-        #     )
-        # )
-        self.builder.add_shape_mesh(
+        # Add a static box obstacle (body=-1 means it's fixed to the world)
+        self.builder.add_shape_box(
             body=-1,
-            mesh=surface_mesh,
+            xform=wp.transform((2.5, 0.0, 0.0), wp.quat_identity()),
+            hx=1.75,
+            hy=1.5,
+            hz=0.15,
             cfg=newton.ModelBuilder.ShapeConfig(
-                density=0.0,
-                has_shape_collision=True,
+                mu=FRICTION,
+                restitution=RESTITUTION,
             ),
+        )
+        self.builder.add_shape_box(
+            body=-1,
+            xform=wp.transform((2.5, 0.0, 0.0), wp.quat_identity()),
+            hx=0.75,
+            hy=1.75,
+            hz=0.25,
+            cfg=newton.ModelBuilder.ShapeConfig(
+                mu=FRICTION,
+                restitution=RESTITUTION,
+            ),
+        )
+
+        # add ground plane
+        self.builder.add_ground_plane(
+            cfg=newton.ModelBuilder.ShapeConfig(
+                ke=10.0, kd=10.0, kf=0.0, mu=FRICTION, restitution=RESTITUTION
+            )
         )
 
         return self.builder.finalize_replicated(num_worlds=self.simulation_config.num_worlds)
 
 
-@hydra.main(config_path=str(CONFIG_PATH), config_name="config", version_base=None)
-def ball_bounce_example(cfg: DictConfig):
+@hydra.main(config_path=str(CONFIG_PATH), config_name="helhest", version_base=None)
+def helhest_simple_example(cfg: DictConfig):
     sim_config: SimulationConfig = hydra.utils.instantiate(cfg.simulation)
     render_config: RenderingConfig = hydra.utils.instantiate(cfg.rendering)
     exec_config: ExecutionConfig = hydra.utils.instantiate(cfg.execution)
-    logging_config: LoggingConfig = hydra.utils.instantiate(cfg.logging)
     engine_config: EngineConfig = hydra.utils.instantiate(cfg.engine)
+
+    logging_config: LoggingConfig = hydra.utils.instantiate(cfg.logging)
 
     simulator = Simulator(
         sim_config=sim_config,
@@ -297,4 +279,4 @@ def ball_bounce_example(cfg: DictConfig):
 
 
 if __name__ == "__main__":
-    ball_bounce_example()
+    helhest_simple_example()

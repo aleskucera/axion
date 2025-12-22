@@ -3,17 +3,14 @@ from typing import Optional
 
 import newton
 import warp as wp
-from axion.constraints import fill_contact_constraint_active_mask_kernel
 from axion.constraints import fill_contact_constraint_body_idx_kernel
-from axion.constraints import fill_friction_constraint_active_mask_kernel
 from axion.constraints import fill_friction_constraint_body_idx_kernel
-from axion.constraints import fill_joint_constraint_active_mask_kernel
 from axion.constraints import fill_joint_constraint_body_idx_kernel
 from axion.optim import CRSolver
 from axion.optim import JacobiPreconditioner
 from axion.optim import SystemLinearData
 from axion.optim import SystemOperator
-from axion.types import compute_joint_constraint_offsets_batched
+from axion.constraints.utils import compute_joint_constraint_offsets_batched
 from axion.types import contact_interaction_kernel
 from axion.types import world_spatial_inertia_kernel
 from newton import Contacts
@@ -223,45 +220,6 @@ class AxionEngine(SolverBase):
             ],
             outputs=[
                 self.data.constraint_body_idx.f,
-            ],
-            device=self.device,
-        )
-
-        wp.launch(
-            kernel=fill_joint_constraint_active_mask_kernel,
-            dim=(self.axion_model.num_worlds, self.axion_model.joint_count),
-            inputs=[
-                self.axion_model.joint_type,
-                self.axion_model.joint_enabled,
-                self.axion_model.joint_child,
-                self.data.joint_constraint_offsets,
-            ],
-            outputs=[
-                self.data.constraint_active_mask.j,
-            ],
-            device=self.device,
-        )
-
-        wp.launch(
-            kernel=fill_contact_constraint_active_mask_kernel,
-            dim=(self.axion_model.num_worlds, self.dims.N_n),
-            inputs=[
-                self.data.contact_interaction,
-            ],
-            outputs=[
-                self.data.constraint_active_mask.n,
-            ],
-            device=self.device,
-        )
-
-        wp.launch(
-            kernel=fill_friction_constraint_active_mask_kernel,
-            dim=(self.axion_model.num_worlds, self.dims.N_f),
-            inputs=[
-                self.data.contact_interaction,
-            ],
-            outputs=[
-                self.data.constraint_active_mask.f,
             ],
             device=self.device,
         )

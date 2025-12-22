@@ -1,28 +1,46 @@
+import numpy as np
 import warp as wp
 from axion.types import ContactInteraction
 
 
-@wp.func
-def scaled_fisher_burmeister(
-    a: wp.float32,
-    b: wp.float32,
-    alpha: wp.float32 = 1.0,
-    beta: wp.float32 = 1.0,
-):
-    scaled_a = alpha * a
-    scaled_b = beta * b
-    norm = wp.sqrt(scaled_a**2.0 + scaled_b**2.0)
+def compute_joint_constraint_offsets_batched(joint_types: wp.array):
+    """
+    joint_types: numpy array of shape (num_worlds, num_joints)
+    """
 
-    value = scaled_a + scaled_b - norm
+    constraint_count_map = np.array(
+        [
+            5,  # PRISMATIC = 0
+            5,  # REVOLUTE  = 1
+            3,  # BALL      = 2
+            6,  # FIXED     = 3
+            0,  # FREE      = 4
+            1,  # DISTANCE  = 5
+            6,  # D6        = 6
+        ],
+        dtype=np.int32,
+    )
 
-    # Avoid division by zero
-    if norm < 1e-5:
-        return value, 0.0, 1.0
+    joint_types_np = joint_types.numpy()  # (num_worlds, num_joints)
+    # Map joint types → constraint counts
+    constraint_counts = constraint_count_map[joint_types_np]  # (num_worlds, num_joints)
 
-    dvalue_da = alpha * (1.0 - scaled_a / norm)
-    dvalue_db = beta * (1.0 - scaled_b / norm)
+    # Total constraints for each batch
+    total_constraints = constraint_counts.sum(axis=1)  # (num_worlds,)
 
-    return value, dvalue_da, dvalue_db
+    # Compute offsets per batch
+    # For each batch: offsets[i, :] = cumsum(counts[i, :]) - counts[i, 0]
+    constraint_offsets = np.zeros_like(constraint_counts)  # (num_worlds, num_joints)
+    constraint_offsets[:, 1:] = np.cumsum(constraint_counts[:, :-1], axis=1)
+
+    # Convert to wp.array (must flatten or provide device explicitly)
+    constraint_offsets_wp = wp.array(
+        constraint_offsets,
+        dtype=wp.int32,
+        device=joint_types.device,
+    )
+
+    return constraint_offsets_wp, total_constraints[0]
 
 
 @wp.kernel

@@ -1,5 +1,5 @@
 import os
-from importlib.resources import files
+import pathlib
 from typing import override
 
 import hydra
@@ -18,8 +18,8 @@ from omegaconf import DictConfig
 
 os.environ["PYOPENGL_PLATFORM"] = "glx"
 
-CONFIG_PATH = files("axion").joinpath("examples").joinpath("conf")
-ASSETS_DIR = files("axion").joinpath("examples").joinpath("assets")
+CONFIG_PATH = pathlib.Path(__file__).parent.joinpath("conf")
+ASSETS_DIR = pathlib.Path(__file__).parent.joinpath("assets")
 
 
 class Simulator(AbstractSimulator):
@@ -65,7 +65,7 @@ class Simulator(AbstractSimulator):
 
         This method constructs the three-wheeled vehicle, obstacles, and ground plane.
         """
-        FRICTION = 1.0
+        FRICTION = 0.0
         RESTITUTION = 0.0
         WHEEL_DENSITY = 300
         CHASSIS_DENSITY = 800

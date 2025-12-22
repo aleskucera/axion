@@ -1,5 +1,5 @@
 import os
-from importlib.resources import files
+import pathlib
 
 import hydra
 import newton
@@ -10,15 +10,14 @@ from axion import ExecutionConfig
 from axion import LoggingConfig
 from axion import RenderingConfig
 from axion import SimulationConfig
-from axion.generation import SceneGenerator
 from omegaconf import DictConfig
 
 os.environ["PYOPENGL_PLATFORM"] = "glx"
 
-CONFIG_PATH = files("axion").joinpath("examples").joinpath("conf")
+CONFIG_PATH = pathlib.Path(__file__).parent.joinpath("conf")
 
 
-class RandomSimulator(AbstractSimulator):
+class Simulator(AbstractSimulator):
     def __init__(
         self,
         sim_config: SimulationConfig,
@@ -36,43 +35,52 @@ class RandomSimulator(AbstractSimulator):
         )
 
     def build_model(self) -> newton.Model:
-        # So we should add ground plane to the builder here.
-        self.builder.add_ground_plane()
 
-        # 2. Initialize SceneGenerator with our builder
-        gen = SceneGenerator(self.builder, seed=42)
+        rigid_cfg = self.builder.ShapeConfig()
+        rigid_cfg.restitution = 0.0
+        rigid_cfg.has_shape_collision = True
+        rigid_cfg.mu = 1.0
+        rigid_cfg.density = 1000.0
 
-        print("Generating grounded objects...")
-        ground_ids = []
-        for i in range(4):
-            idx = gen.generate_random_ground_touching()
-            if idx is not None:
-                ground_ids.append(idx)
+        # add ground plane
+        self.builder.add_ground_plane(cfg=rigid_cfg)
 
-        print("Generating touching objects...")
-        for gid in ground_ids:
-            prev = gid
-            for _ in range(2):
-                new_idx = gen.generate_random_touching(prev)
-                if new_idx is not None:
-                    prev = new_idx
+        # z height to drop shapes from
+        drop_z = 2.0
 
-        print("Generating free objects...")
-        for i in range(4):
-            gen.generate_random_free()
+        # SPHERE
+        self.sphere_pos = wp.vec3(0.0, -2.0, drop_z)
+        body_sphere = self.builder.add_body(
+            xform=wp.transform(p=self.sphere_pos, q=wp.quat_identity()), key="sphere"
+        )
+        self.builder.add_shape_sphere(body_sphere, radius=0.5, cfg=rigid_cfg)
+
+        # CAPSULE
+        self.capsule_pos = wp.vec3(0.0, 0.0, drop_z)
+        body_capsule = self.builder.add_body(
+            xform=wp.transform(p=self.capsule_pos, q=wp.quat_identity()), key="capsule"
+        )
+        self.builder.add_shape_capsule(body_capsule, radius=0.3, half_height=0.7, cfg=rigid_cfg)
+
+        # BOX
+        self.box_pos = wp.vec3(0.0, 2.0, drop_z)
+        body_box = self.builder.add_body(
+            xform=wp.transform(p=self.box_pos, q=wp.quat_identity()), key="box"
+        )
+        self.builder.add_shape_box(body_box, hx=0.5, hy=0.35, hz=0.25, cfg=rigid_cfg)
 
         return self.builder.finalize_replicated(num_worlds=self.simulation_config.num_worlds)
 
 
 @hydra.main(config_path=str(CONFIG_PATH), config_name="config", version_base=None)
-def random_example(cfg: DictConfig):
+def basic_shape_example(cfg: DictConfig):
     sim_config: SimulationConfig = hydra.utils.instantiate(cfg.simulation)
     render_config: RenderingConfig = hydra.utils.instantiate(cfg.rendering)
     exec_config: ExecutionConfig = hydra.utils.instantiate(cfg.execution)
     logging_config: LoggingConfig = hydra.utils.instantiate(cfg.logging)
     engine_config: EngineConfig = hydra.utils.instantiate(cfg.engine)
 
-    simulator = RandomSimulator(
+    simulator = Simulator(
         sim_config=sim_config,
         render_config=render_config,
         exec_config=exec_config,
@@ -84,4 +92,4 @@ def random_example(cfg: DictConfig):
 
 
 if __name__ == "__main__":
-    random_example()
+    basic_shape_example()

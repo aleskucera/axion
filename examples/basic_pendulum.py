@@ -1,5 +1,6 @@
 import os
-from importlib.resources import files
+import pathlib
+from typing import override
 
 import hydra
 import newton
@@ -7,6 +8,7 @@ import warp as wp
 from axion import AbstractSimulator
 from axion import EngineConfig
 from axion import ExecutionConfig
+from axion import JointMode
 from axion import LoggingConfig
 from axion import RenderingConfig
 from axion import SimulationConfig
@@ -14,7 +16,7 @@ from omegaconf import DictConfig
 
 os.environ["PYOPENGL_PLATFORM"] = "glx"
 
-CONFIG_PATH = files("axion").joinpath("examples").joinpath("conf")
+CONFIG_PATH = pathlib.Path(__file__).parent.joinpath("conf")
 
 
 class Simulator(AbstractSimulator):
@@ -34,46 +36,51 @@ class Simulator(AbstractSimulator):
             logging_config,
         )
 
+    @override
+    def control_policy(self, state: newton.State):
+        wp.copy(self.control.joint_f, wp.array([0.0, 800.0], dtype=wp.float32))
+
     def build_model(self) -> newton.Model:
-        FRICTION = 0.0
-        RESTITUTION = 0.0
 
-        ball1 = self.builder.add_body(
-            xform=wp.transform((0.0, 0.0, 2.0), wp.quat_identity()), key="ball1"
+        hx = 1.0
+        hy = 0.1
+        hz = 0.1
+
+        # create first link
+        link_0 = self.builder.add_link()
+        self.builder.add_shape_box(link_0, hx=hx, hy=hy, hz=hz)
+
+        link_1 = self.builder.add_link()
+        self.builder.add_shape_box(link_1, hx=hx, hy=hy, hz=hz)
+
+        # add joints
+        rot = wp.quat_from_axis_angle(wp.vec3(0.0, 0.0, 1.0), -wp.pi * 0.5)
+        j0 = self.builder.add_joint_revolute(
+            parent=-1,
+            child=link_0,
+            axis=wp.vec3(0.0, 1.0, 0.0),
+            # rotate pendulum around the z-axis to appear sideways to the viewer
+            parent_xform=wp.transform(p=wp.vec3(0.0, 0.0, 5.0), q=rot),
+            child_xform=wp.transform(p=wp.vec3(-hx, 0.0, 0.0), q=wp.quat_identity()),
         )
-        initial_velocity = wp.spatial_vector(0.0, 2.0, 0.0, 0.0, 0.0, 0.0)
-
-        self.builder.add_shape_sphere(
-            body=ball1,
-            radius=1.0,
-            cfg=newton.ModelBuilder.ShapeConfig(
-                density=10.0,
-                ke=6000.0,
-                kd=1000.0,
-                kf=200.0,
-                mu=FRICTION,
-                restitution=RESTITUTION,
-                thickness=0.0,
-                contact_margin=0.1,
-            ),
-        )
-
-        self.builder.add_ground_plane(
-            cfg=newton.ModelBuilder.ShapeConfig(
-                ke=6000.0,
-                kd=1000.0,
-                kf=200.0,
-                mu=FRICTION,
-                restitution=RESTITUTION,
-            )
+        j1 = self.builder.add_joint_revolute(
+            parent=link_0,
+            child=link_1,
+            axis=wp.vec3(0.0, 1.0, 0.0),
+            parent_xform=wp.transform(p=wp.vec3(hx, 0.0, 0.0), q=wp.quat_identity()),
+            child_xform=wp.transform(p=wp.vec3(-hx, 0.0, 0.0), q=wp.quat_identity()),
         )
 
-        self.builder.body_qd[0] = initial_velocity
+        # Create articulation from joints
+        self.builder.add_articulation([j0, j1], key="pendulum")
+
+        self.builder.add_ground_plane()
+
         return self.builder.finalize_replicated(num_worlds=self.simulation_config.num_worlds)
 
 
 @hydra.main(config_path=str(CONFIG_PATH), config_name="config", version_base=None)
-def ball_bounce_example(cfg: DictConfig):
+def basic_pendulum_example(cfg: DictConfig):
     sim_config: SimulationConfig = hydra.utils.instantiate(cfg.simulation)
     render_config: RenderingConfig = hydra.utils.instantiate(cfg.rendering)
     exec_config: ExecutionConfig = hydra.utils.instantiate(cfg.execution)
@@ -92,4 +99,4 @@ def ball_bounce_example(cfg: DictConfig):
 
 
 if __name__ == "__main__":
-    ball_bounce_example()
+    basic_pendulum_example()

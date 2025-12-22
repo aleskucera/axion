@@ -69,6 +69,7 @@ def positional_joint_constraint_kernel(
     dt: wp.float32,
     compliance: wp.float32,
     # --- Solver State ---
+    constraint_active_mask: wp.array(dtype=wp.float32, ndim=2),
     h_d: wp.array(dtype=wp.spatial_vector, ndim=2),
     h_j: wp.array(dtype=wp.float32, ndim=2),
     J_hat_j_values: wp.array(dtype=wp.spatial_vector, ndim=3),
@@ -78,16 +79,31 @@ def positional_joint_constraint_kernel(
 
     j_type = joint_type[world_idx, joint_idx]
     
-    if joint_enabled[world_idx, joint_idx] == 0:
-        return
+    count = 0
+    if j_type == 1: # REVOLUTE
+        count = 5
+    elif j_type == 2: # BALL
+        count = 3
+    elif j_type == 3: # FIXED
+        count = 6
+
+    start_offset = constraint_offsets[world_idx, joint_idx]
 
     # 1. Fetch Indices
     p_idx = joint_parent[world_idx, joint_idx]
     c_idx = joint_child[world_idx, joint_idx]
-    if c_idx < 0:
+
+    if joint_enabled[world_idx, joint_idx] == 0 or c_idx < 0:
+        for k in range(count):
+            constraint_active_mask[world_idx, start_offset + k] = 0.0
+            body_lambda_j[world_idx, start_offset + k] = 0.0
+            # Also zero out other outputs to be safe?
+            # h_j[...] = 0.0, etc. is good practice but maybe not strictly required if solver ignores inactive rows
         return
-        
-    start_offset = constraint_offsets[world_idx, joint_idx]
+
+    # Set active
+    for k in range(count):
+        constraint_active_mask[world_idx, start_offset + k] = 1.0
 
     # 2. Compute Kinematics
     # Child

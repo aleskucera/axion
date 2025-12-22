@@ -1,10 +1,9 @@
+import math  # Imported math for degree-to-radian conversion
 import os
-from importlib.resources import files
+import pathlib
 
 import hydra
 import newton
-import numpy as np
-import openmesh
 import warp as wp
 from axion import AbstractSimulator
 from axion import EngineConfig
@@ -16,8 +15,7 @@ from omegaconf import DictConfig
 
 os.environ["PYOPENGL_PLATFORM"] = "glx"
 
-CONFIG_PATH = files("axion").joinpath("examples").joinpath("conf")
-ASSETS_DIR = files("axion").joinpath("examples").joinpath("assets")
+CONFIG_PATH = pathlib.Path(__file__).parent.joinpath("conf")
 
 
 class Simulator(AbstractSimulator):
@@ -38,63 +36,56 @@ class Simulator(AbstractSimulator):
         )
 
     def build_model(self) -> newton.Model:
-        FRICTION = 0.0
-        RESTITUTION = 0.2
+        FRICTION = 1.0
+        RESTITUTION = 0.0
 
-        surface_m = openmesh.read_trimesh(f"{ASSETS_DIR}/surface.obj")
-        # mesh_points = np.array(wheel_m.points())
-        mesh_indices = np.array(surface_m.face_vertex_indices(), dtype=np.int32).flatten()
-        # surface_mesh = newton.Mesh(mesh_points, mesh_indices)
+        # 1. Define a rotation (45 degrees around the X-axis)
+        # We use a normalized vector (1,0,0) for the axis and radians for the angle.
+        rot_angle = math.radians(0.0)
+        rotation_quat = wp.quat_from_axis_angle(wp.vec3(1.0, 0.0, 0.0), rot_angle)
 
-        scale = np.array([3.0, 3.0, 4.0])
-        mesh_points = np.array(surface_m.points()) * scale + np.array([0.0, 0.0, 0.01])
+        # 2. Define initial velocity (Throwing it along Y axis and slightly Up on Z)
+        initial_velocity = wp.spatial_vector(0.0, 2.0, 0.0, 0.0, 0.0, 0.0)
 
-        surface_mesh = newton.Mesh(mesh_points, mesh_indices)
-        # self.builder.add_articulation(key="surface")
-
-        ball1 = self.builder.add_body(
-            xform=wp.transform((0.0, 0.0, 10.0), wp.quat_identity()), key="ball1"
+        # 3. Create the body with the new name, rotation, and velocity
+        box_body = self.builder.add_body(
+            xform=wp.transform((0.0, 0.0, 1.5), rotation_quat), key="box_throw"
         )
 
-        self.builder.add_shape_sphere(
-            body=ball1,
-            radius=1.0,
+        self.builder.add_shape_box(
+            body=box_body,
+            hx=0.5,
+            hy=0.5,
+            hz=0.5,
             cfg=newton.ModelBuilder.ShapeConfig(
                 density=10.0,
-                ke=2000.0,
-                kd=10.0,
+                ke=6000.0,
+                kd=1000.0,
                 kf=200.0,
                 mu=FRICTION,
                 restitution=RESTITUTION,
                 thickness=0.0,
+                contact_margin=0.1,
             ),
         )
 
         self.builder.add_ground_plane(
             cfg=newton.ModelBuilder.ShapeConfig(
-                ke=10.0,
-                kd=10.0,
-                kf=0.0,
+                ke=6000.0,
+                kd=1000.0,
+                kf=200.0,
                 mu=FRICTION,
                 restitution=RESTITUTION,
             )
         )
-        self.builder.add_shape_mesh(
-            body=-1,
-            mesh=surface_mesh,
-            cfg=newton.ModelBuilder.ShapeConfig(
-                density=0.0,
-                has_shape_collision=True,
-                mu=FRICTION,
-                restitution=0.0,
-            ),
-        )
+
+        self.builder.body_qd[0] = initial_velocity
 
         return self.builder.finalize_replicated(num_worlds=self.simulation_config.num_worlds)
 
 
 @hydra.main(config_path=str(CONFIG_PATH), config_name="config", version_base=None)
-def ball_bounce_example(cfg: DictConfig):
+def box_throw_example(cfg: DictConfig):
     sim_config: SimulationConfig = hydra.utils.instantiate(cfg.simulation)
     render_config: RenderingConfig = hydra.utils.instantiate(cfg.rendering)
     exec_config: ExecutionConfig = hydra.utils.instantiate(cfg.execution)
@@ -113,4 +104,4 @@ def ball_bounce_example(cfg: DictConfig):
 
 
 if __name__ == "__main__":
-    ball_bounce_example()
+    box_throw_example()

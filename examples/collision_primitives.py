@@ -1,5 +1,5 @@
 import os
-from importlib.resources import files
+import pathlib
 
 import hydra
 import newton
@@ -14,7 +14,7 @@ from omegaconf import DictConfig
 
 os.environ["PYOPENGL_PLATFORM"] = "glx"
 
-CONFIG_PATH = files("axion").joinpath("examples").joinpath("conf")
+CONFIG_PATH = pathlib.Path(__file__).parent.joinpath("conf")
 
 
 class Simulator(AbstractSimulator):

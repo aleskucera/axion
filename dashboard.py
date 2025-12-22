@@ -184,103 +184,104 @@ col1, col2 = st.columns([1, 1])
 with col1:
     st.subheader("Residual Norm Landscape")
 
-    # Auto-Range Logic for Colors (in actual values, not log)
-    grid_valid = grid[grid > 1e-12]
-    if len(grid_valid) > 0:
-        p05 = np.percentile(grid_valid, 5)
-        p95 = np.percentile(grid_valid, 95)
-        log_min_def = float(np.log10(p05))
-        log_max_def = float(np.log10(p95))
-    else:
-        log_min_def, log_max_def = -6.0, 0.0
+    if st.checkbox("Show Residual Landscape", value=False):
+        # Auto-Range Logic for Colors (in actual values, not log)
+        grid_valid = grid[grid > 1e-12]
+        if len(grid_valid) > 0:
+            p05 = np.percentile(grid_valid, 5)
+            p95 = np.percentile(grid_valid, 95)
+            log_min_def = float(np.log10(p05))
+            log_max_def = float(np.log10(p95))
+        else:
+            log_min_def, log_max_def = -6.0, 0.0
 
-    # Slider with finer step (0.5 allows hitting values like 3e-5 ≈ 10^-4.5)
-    c_min_log, c_max_log = st.slider(
-        "Color Scale Range",
-        min_value=-12.0,
-        max_value=5.0,
-        value=(log_min_def, log_max_def),
-        step=0.5,
-        format="%.1f",
-    )
+        # Slider with finer step (0.5 allows hitting values like 3e-5 ≈ 10^-4.5)
+        c_min_log, c_max_log = st.slider(
+            "Color Scale Range",
+            min_value=-12.0,
+            max_value=5.0,
+            value=(log_min_def, log_max_def),
+            step=0.5,
+            format="%.1f",
+        )
 
-    # Show the actual range in scientific notation
-    st.caption(f"Range: `{10**c_min_log:.1e}` to `{10**c_max_log:.1e}`")
+        # Show the actual range in scientific notation
+        st.caption(f"Range: `{10**c_min_log:.1e}` to `{10**c_max_log:.1e}`")
 
-    # Log-transform for visualization (keeps logarithmic color scaling)
-    grid_log = np.log10(np.clip(grid.T, 1e-12, None))
+        # Log-transform for visualization (keeps logarithmic color scaling)
+        grid_log = np.log10(np.clip(grid.T, 1e-12, None))
 
-    # Create custom tick values in scientific notation
-    tick_vals = []
-    tick_text = []
-    for exp in range(int(np.floor(c_min_log)), int(np.ceil(c_max_log)) + 1):
-        tick_vals.append(exp)
-        tick_text.append(f"1e{exp}")
+        # Create custom tick values in scientific notation
+        tick_vals = []
+        tick_text = []
+        for exp in range(int(np.floor(c_min_log)), int(np.ceil(c_max_log)) + 1):
+            tick_vals.append(exp)
+            tick_text.append(f"1e{exp}")
 
-    # Pre-compute hover text with scientific notation
-    hover_text = [
-        [
-            f"α: {alphas[i]:.3f}<br>β: {betas[j]:.3f}<br>Residual: {grid.T[j, i]:.2e}"
-            for i in range(len(alphas))
+        # Pre-compute hover text with scientific notation
+        hover_text = [
+            [
+                f"α: {alphas[i]:.3f}<br>β: {betas[j]:.3f}<br>Residual: {grid.T[j, i]:.2e}"
+                for i in range(len(alphas))
+            ]
+            for j in range(len(betas))
         ]
-        for j in range(len(betas))
-    ]
 
-    fig_land = go.Figure()
+        fig_land = go.Figure()
 
-    # Use Contour with heatmap coloring (original style)
-    fig_land.add_trace(
-        go.Contour(
-            z=grid_log,
-            x=alphas,
-            y=betas,
-            colorscale="Plasma",
-            zmin=c_min_log,
-            zmax=c_max_log,
-            contours=dict(coloring="heatmap"),
-            colorbar=dict(
-                title="Residual",
-                len=0.5,
-                tickvals=tick_vals,
-                ticktext=tick_text,
-            ),
-            hoverinfo="text",
-            text=hover_text,
+        # Use Contour with heatmap coloring (original style)
+        fig_land.add_trace(
+            go.Contour(
+                z=grid_log,
+                x=alphas,
+                y=betas,
+                colorscale="Plasma",
+                zmin=c_min_log,
+                zmax=c_max_log,
+                contours=dict(coloring="heatmap"),
+                colorbar=dict(
+                    title="Residual",
+                    len=0.5,
+                    tickvals=tick_vals,
+                    ticktext=tick_text,
+                ),
+                hoverinfo="text",
+                text=hover_text,
+            )
         )
-    )
 
-    fig_land.add_trace(
-        go.Scatter(
-            x=traj_2d[:, 0],
-            y=traj_2d[:, 1],
-            mode="lines+markers",
-            line=dict(color="white"),
-            name="Path",
+        fig_land.add_trace(
+            go.Scatter(
+                x=traj_2d[:, 0],
+                y=traj_2d[:, 1],
+                mode="lines+markers",
+                line=dict(color="white"),
+                name="Path",
+            )
         )
-    )
 
-    # Markers
-    fig_land.add_trace(
-        go.Scatter(
-            x=[traj_2d[0, 0]],
-            y=[traj_2d[0, 1]],
-            mode="markers",
-            marker=dict(color="green", size=10),
-            name="Start",
+        # Markers
+        fig_land.add_trace(
+            go.Scatter(
+                x=[traj_2d[0, 0]],
+                y=[traj_2d[0, 1]],
+                mode="markers",
+                marker=dict(color="green", size=10),
+                name="Start",
+            )
         )
-    )
-    fig_land.add_trace(
-        go.Scatter(
-            x=[traj_2d[-1, 0]],
-            y=[traj_2d[-1, 1]],
-            mode="markers",
-            marker=dict(color="red", size=10, symbol="x"),
-            name="End",
+        fig_land.add_trace(
+            go.Scatter(
+                x=[traj_2d[-1, 0]],
+                y=[traj_2d[-1, 1]],
+                mode="markers",
+                marker=dict(color="red", size=10, symbol="x"),
+                name="End",
+            )
         )
-    )
 
-    fig_land.update_layout(height=500, margin=dict(t=0, b=0, l=0, r=0))
-    st.plotly_chart(fig_land, width="stretch")
+        fig_land.update_layout(height=500, margin=dict(t=0, b=0, l=0, r=0))
+        st.plotly_chart(fig_land, width="stretch")
 
 with col2:
     st.subheader("Max Residual per Iteration")

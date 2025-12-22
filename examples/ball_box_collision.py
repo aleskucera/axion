@@ -1,6 +1,6 @@
-import math  # Imported math for degree-to-radian conversion
+import math
 import os
-from importlib.resources import files
+import pathlib
 
 import hydra
 import newton
@@ -15,7 +15,7 @@ from omegaconf import DictConfig
 
 os.environ["PYOPENGL_PLATFORM"] = "glx"
 
-CONFIG_PATH = files("axion").joinpath("examples").joinpath("conf")
+CONFIG_PATH = pathlib.Path(__file__).parent.joinpath("conf")
 
 
 class Simulator(AbstractSimulator):
@@ -36,20 +36,48 @@ class Simulator(AbstractSimulator):
         )
 
     def build_model(self) -> newton.Model:
-        FRICTION = 1.0
+        FRICTION = 0.0
         RESTITUTION = 0.0
+
+        ball1 = self.builder.add_body(
+            xform=wp.transform((0.0, 0.0, 3.0), wp.quat_identity()), key="ball"
+        )
+
+        self.builder.add_shape_sphere(
+            body=ball1,
+            radius=0.5,
+            cfg=newton.ModelBuilder.ShapeConfig(
+                density=10.0,
+                ke=6000.0,
+                kd=1000.0,
+                kf=200.0,
+                mu=FRICTION,
+                restitution=RESTITUTION,
+                thickness=0.0,
+            ),
+        )
+
+        self.builder.add_ground_plane(
+            cfg=newton.ModelBuilder.ShapeConfig(
+                ke=6000.0,
+                kd=1000.0,
+                kf=200.0,
+                mu=FRICTION,
+                restitution=RESTITUTION,
+            )
+        )
 
         # 1. Define a rotation (45 degrees around the X-axis)
         # We use a normalized vector (1,0,0) for the axis and radians for the angle.
-        rot_angle = math.radians(0.0)
+        rot_angle = math.radians(45.0)
         rotation_quat = wp.quat_from_axis_angle(wp.vec3(1.0, 0.0, 0.0), rot_angle)
 
-        # 2. Define initial velocity (Throwing it along Y axis and slightly Up on Z)
-        initial_velocity = wp.spatial_vector(0.0, 2.0, 0.0, 0.0, 0.0, 0.0)
+        # # 2. Define initial velocity (Throwing it along Y axis and slightly Up on Z)
+        # initial_velocity = wp.spatial_vector(0.0, 1.0, 3.0, 3.0, 0.0, 0.0)
 
         # 3. Create the body with the new name, rotation, and velocity
         box_body = self.builder.add_body(
-            xform=wp.transform((0.0, 0.0, 1.5), rotation_quat), key="box_throw"
+            xform=wp.transform((0.0, 0.0, 1.0), rotation_quat), key="box"
         )
 
         self.builder.add_shape_box(
@@ -65,27 +93,15 @@ class Simulator(AbstractSimulator):
                 mu=FRICTION,
                 restitution=RESTITUTION,
                 thickness=0.0,
-                contact_margin=0.1,
             ),
         )
 
-        self.builder.add_ground_plane(
-            cfg=newton.ModelBuilder.ShapeConfig(
-                ke=6000.0,
-                kd=1000.0,
-                kf=200.0,
-                mu=FRICTION,
-                restitution=RESTITUTION,
-            )
-        )
-
-        self.builder.body_qd[0] = initial_velocity
-
+        # self.builder.body_qd[0] = initial_velocity
         return self.builder.finalize_replicated(num_worlds=self.simulation_config.num_worlds)
 
 
 @hydra.main(config_path=str(CONFIG_PATH), config_name="config", version_base=None)
-def box_throw_example(cfg: DictConfig):
+def ball_bounce_example(cfg: DictConfig):
     sim_config: SimulationConfig = hydra.utils.instantiate(cfg.simulation)
     render_config: RenderingConfig = hydra.utils.instantiate(cfg.rendering)
     exec_config: ExecutionConfig = hydra.utils.instantiate(cfg.execution)
@@ -104,4 +120,4 @@ def box_throw_example(cfg: DictConfig):
 
 
 if __name__ == "__main__":
-    box_throw_example()
+    ball_bounce_example()

@@ -1,5 +1,5 @@
 import os
-from importlib.resources import files
+import pathlib
 
 import hydra
 import newton
@@ -14,7 +14,7 @@ from omegaconf import DictConfig
 
 os.environ["PYOPENGL_PLATFORM"] = "glx"
 
-CONFIG_PATH = files("axion").joinpath("examples").joinpath("conf")
+CONFIG_PATH = pathlib.Path(__file__).parent.joinpath("conf")
 
 
 class Simulator(AbstractSimulator):
@@ -35,7 +35,7 @@ class Simulator(AbstractSimulator):
         )
 
     def build_model(self) -> newton.Model:
-        FRICTION = 0.1
+        FRICTION = 0.0
         RESTITUTION = 0.0
         DENSITY = 1500.0
         KE = 60000.0
@@ -103,9 +103,6 @@ class Simulator(AbstractSimulator):
                 thickness=0.0,
             ),
         )
-        # self.builder.add_joint_free(parent=-1, child=box1)
-        # self.builder.add_joint_free(parent=-1, child=box2)
-        # self.builder.add_joint_free(parent=-1, child=box3)
 
         self.builder.add_ground_plane(
             cfg=newton.ModelBuilder.ShapeConfig(
