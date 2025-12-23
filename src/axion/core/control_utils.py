@@ -203,8 +203,8 @@ def apply_control(
             inputs=[
                 # State
                 state_in.body_q,
-                model.joint_q,
-                model.joint_qd,
+                state_in.joint_q,
+                state_in.joint_qd,
                 # Model
                 model.body_com,
                 model.joint_type,

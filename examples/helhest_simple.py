@@ -40,7 +40,7 @@ class Simulator(AbstractSimulator):
         )
 
         robot_joint_target = np.concatenate(
-            [np.zeros(6), np.array([0.1, 0.1, 0.0], dtype=wp.float32)]
+            [np.zeros(6), np.array([4.0, 4.0, 0.0], dtype=wp.float32)]
         )
 
         joint_target = np.tile(robot_joint_target, self.simulation_config.num_worlds)
@@ -212,8 +212,8 @@ class Simulator(AbstractSimulator):
             child=left_wheel,
             parent_xform=wp.transform((0.0, -0.75, 0.0), wp.quat_identity()),
             axis=(0.0, 1.0, 0.0),
-            target_ke=400,  # 400
-            target_kd=40.5,  # 40.5
+            target_ke=150,  # 400
+            target_kd=0.5,  # 40.5
             custom_attributes={
                 "joint_target_ki": [0.5],
                 "joint_dof_mode": [JointMode.TARGET_VELOCITY],
@@ -225,8 +225,8 @@ class Simulator(AbstractSimulator):
             child=right_wheel,
             parent_xform=wp.transform((0.0, 0.75, 0.0), wp.quat_identity()),
             axis=(0.0, 1.0, 0.0),
-            target_ke=400,
-            target_kd=40.5,
+            target_ke=150,
+            target_kd=0.5,
             custom_attributes={
                 "joint_target_ki": [0.5],
                 "joint_dof_mode": [JointMode.TARGET_VELOCITY],
