@@ -17,6 +17,7 @@ def compute_joint_constraint_offsets_batched(joint_types: wp.array):
             0,  # FREE      = 4
             1,  # DISTANCE  = 5
             6,  # D6        = 6
+            0,  # CABLE     = 7
         ],
         dtype=np.int32,
     )
@@ -72,6 +73,8 @@ def fill_joint_constraint_body_idx_kernel(
         count = 3
     elif j_type == 3: # FIXED
         count = 6
+    elif j_type == 7: # CABLE
+        count = 0
         
     for k in range(count):
         offset = start_offset + k
@@ -143,6 +146,8 @@ def fill_joint_constraint_active_mask_kernel(
         count = 3
     elif j_type == 3: # FIXED
         count = 6
+    elif j_type == 7: # CABLE
+        count = 0
         
     val = 1.0 if is_enabled else 0.0
 

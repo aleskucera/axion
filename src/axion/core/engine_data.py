@@ -113,6 +113,7 @@ class EngineData:
     world_M: wp.array
     world_M_inv: wp.array
     joint_constraint_offsets: wp.array
+    equality_constraint_offsets: wp.array
     contact_interaction: wp.array
 
     linesearch: Optional[LinesearchData] = None
@@ -145,6 +146,11 @@ class EngineData:
     def body_lambda(self) -> ConstraintView:
         """Lagrange multipliers view."""
         return ConstraintView(self._body_lambda, self.dims)
+
+    @cached_property
+    def body_lambda_eq(self) -> ConstraintView:
+        """Equality constraint multipliers view."""
+        return ConstraintView(self._body_lambda, self.dims, slice_fn=lambda d: d.slice_eq)
 
     @cached_property
     def body_lambda_prev(self) -> ConstraintView:
@@ -186,6 +192,7 @@ class EngineData:
         dims: EngineDimensions,
         config: EngineConfig,
         joint_constraint_offsets: wp.array,
+        equality_constraint_offsets: wp.array,
         device: wpc.Device,
         allocate_pca: bool = False,
         pca_grid_res: int = 100,
@@ -343,6 +350,7 @@ class EngineData:
             world_M=world_M,
             world_M_inv=world_M_inv,
             joint_constraint_offsets=joint_constraint_offsets,
+            equality_constraint_offsets=equality_constraint_offsets,
             contact_interaction=contact_interaction,
             linesearch=linesearch_data,
             history=history_data,

@@ -2,6 +2,7 @@ import warp as wp
 from axion.constraints import batch_friction_residual_kernel
 from axion.constraints import batch_positional_contact_residual_kernel
 from axion.constraints import batch_positional_joint_residual_kernel
+from axion.constraints.equality_constraint import batch_positional_equality_constraint_residual_kernel
 from axion.constraints import batch_unconstrained_dynamics_kernel
 from axion.constraints import batch_velocity_contact_residual_kernel
 from axion.constraints import batch_velocity_joint_residual_kernel
@@ -389,6 +390,32 @@ def compute_linesearch_batch_h(
         )
     else:
         raise ValueError("Joint constraint level can be only 'pos' or 'vel'.")
+
+    # Evaluate residual for equality constraints (pos only for now)
+    if dims.equality_constraint_count > 0:
+        wp.launch(
+            kernel=batch_positional_equality_constraint_residual_kernel,
+            dim=(B, dims.N_w, dims.equality_constraint_count),
+            inputs=[
+                data.linesearch.batch_body_q,
+                data.linesearch.batch_body_lambda.eq,
+                model.body_com,
+                model.equality_constraint_type,
+                model.equality_constraint_body1,
+                model.equality_constraint_body2,
+                model.equality_constraint_anchor,
+                model.equality_constraint_relpose,
+                model.equality_constraint_enabled,
+                data.equality_constraint_offsets,
+                data.dt,
+                config.joint_compliance,
+            ],
+            outputs=[
+                data.linesearch.batch_h.d_spatial,
+                data.linesearch.batch_h.c.eq,
+            ],
+            device=device,
+        )
 
     # Evaluate residual for normal contact constraints
     if config.contact_constraint_level == "pos":

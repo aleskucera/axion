@@ -1,8 +1,7 @@
 import warp as wp
+from axion.math import scaled_fisher_burmeister_diff
 from axion.types import ContactInteraction
 from axion.types import SpatialInertia
-
-from axion.math import scaled_fisher_burmeister_diff
 
 
 @wp.func
@@ -135,7 +134,7 @@ def velocity_contact_constraint_kernel(
     h_n[world_idx, contact_idx] = phi_n
 
     # 3. Update `C_n` (Compliance block)
-    C_n_values[world_idx, contact_idx] = dphi_dlambda_n / 1000000.0
+    C_n_values[world_idx, contact_idx] = dphi_dlambda_n / 1000000.0 + 1e-5
 
     # 4. Update `J_hat_n`
     J_hat_n_values[world_idx, contact_idx, 0] = J_hat_n_1

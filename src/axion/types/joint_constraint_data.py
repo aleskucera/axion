@@ -32,6 +32,7 @@ def compute_joint_constraint_offsets_batched(joint_types: wp.array):
             0,  # FREE      = 4
             1,  # DISTANCE  = 5
             6,  # D6        = 6
+            0,  # CABLE     = 7
         ],
         dtype=np.int32,
     )

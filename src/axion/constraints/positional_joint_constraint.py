@@ -65,9 +65,10 @@ def positional_joint_constraint_kernel(
     joint_qd_start: wp.array(dtype=wp.int32, ndim=2),
     joint_enabled: wp.array(dtype=wp.int32, ndim=2),
     constraint_offsets: wp.array(dtype=wp.int32, ndim=2),
+    joint_compliance_override: wp.array(dtype=wp.float32, ndim=2),
     # --- Params ---
     dt: wp.float32,
-    compliance: wp.float32,
+    global_compliance: wp.float32,
     # --- Solver State ---
     constraint_active_mask: wp.array(dtype=wp.float32, ndim=2),
     h_d: wp.array(dtype=wp.spatial_vector, ndim=2),
@@ -78,6 +79,10 @@ def positional_joint_constraint_kernel(
     world_idx, joint_idx = wp.tid()
 
     j_type = joint_type[world_idx, joint_idx]
+    
+    comp = joint_compliance_override[world_idx, joint_idx]
+    if comp < 0.0:
+        comp = global_compliance
     
     count = 0
     if j_type == 1: # REVOLUTE
@@ -138,7 +143,7 @@ def positional_joint_constraint_kernel(
                 J_p, J_c, err,
                 world_idx, start_offset + i, p_idx, c_idx,
                 h_d, h_j, J_hat_j_values, C_j_values, body_lambda_j,
-                dt, compliance
+                dt, comp
             )
 
     # === REVOLUTE ANGULAR (1) ===
@@ -152,7 +157,7 @@ def positional_joint_constraint_kernel(
             J_p, J_c, err,
             world_idx, start_offset + 3, p_idx, c_idx,
             h_d, h_j, J_hat_j_values, C_j_values, body_lambda_j,
-            dt, compliance
+            dt, comp
         )
         # Ortho 2
         J_p, J_c, err = get_revolute_angular_component(X_w_p, X_w_c, axis_local, 1)
@@ -160,7 +165,7 @@ def positional_joint_constraint_kernel(
             J_p, J_c, err,
             world_idx, start_offset + 4, p_idx, c_idx,
             h_d, h_j, J_hat_j_values, C_j_values, body_lambda_j,
-            dt, compliance
+            dt, comp
         )
         
     # === FIXED ANGULAR (3) ===
@@ -171,7 +176,7 @@ def positional_joint_constraint_kernel(
                 J_p, J_c, err,
                 world_idx, start_offset + 3 + i, p_idx, c_idx,
                 h_d, h_j, J_hat_j_values, C_j_values, body_lambda_j,
-                dt, compliance
+                dt, comp
             )
 
 

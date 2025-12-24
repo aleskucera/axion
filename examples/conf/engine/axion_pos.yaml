@@ -9,6 +9,7 @@ linesearch_step_max: 1e1
 joint_stabilization_factor: 0.01
 contact_stabilization_factor: 0.02
 joint_compliance: 1e-7
+equality_compliance: 1e-7
 contact_compliance: 1e-6
 friction_compliance: 1e-6
 regularization: 1e-6

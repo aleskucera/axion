@@ -120,11 +120,20 @@ class AxionModel:
             self.joint_enabled = model.joint_enabled.reshape((model.num_worlds, -1))
             self.joint_target_ke = model.joint_target_ke.reshape((model.num_worlds, -1))
             self.joint_target_kd = model.joint_target_kd.reshape((model.num_worlds, -1))
+            self.joint_compliance = model.joint_compliance.reshape((model.num_worlds, -1))
             self.joint_type = model.joint_type.reshape((model.num_worlds, -1))
             self.joint_q_start = wp.zeros((model.num_worlds, self.joint_count), dtype=wp.int32)
             self.joint_qd_start = wp.zeros((model.num_worlds, self.joint_count), dtype=wp.int32)
             self.joint_parent = wp.zeros((model.num_worlds, self.joint_count), dtype=wp.int32)
             self.joint_child = wp.zeros((model.num_worlds, self.joint_count), dtype=wp.int32)
+
+            self.equality_constraint_count = model.equality_constraint_count // model.num_worlds
+            self.equality_constraint_type = model.equality_constraint_type.reshape((model.num_worlds, -1))
+            self.equality_constraint_body1 = model.equality_constraint_body1.reshape((model.num_worlds, -1))
+            self.equality_constraint_body2 = model.equality_constraint_body2.reshape((model.num_worlds, -1))
+            self.equality_constraint_anchor = model.equality_constraint_anchor.reshape((model.num_worlds, -1))
+            self.equality_constraint_relpose = model.equality_constraint_relpose.reshape((model.num_worlds, -1))
+            self.equality_constraint_enabled = model.equality_constraint_enabled.reshape((model.num_worlds, -1))
 
         wp.launch(
             kernel=batch_joint_q_start_kernel,

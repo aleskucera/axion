@@ -66,6 +66,16 @@ class AxionModelBuilder(newton.ModelBuilder):
             )
         )
 
+        self.add_custom_attribute(
+            newton.ModelBuilder.CustomAttribute(
+                name="joint_compliance",
+                frequency=newton.ModelAttributeFrequency.JOINT,
+                dtype=wp.float32,
+                default=-1.0,
+                assignment=newton.ModelAttributeAssignment.MODEL,
+            )
+        )
+
     def finalize_replicated(self, num_worlds: int, gravity: float = -9.81, **kwargs) -> newton.Model:
         """
         Creates a new newton.ModelBuilder, replicates the content of this builder into it
