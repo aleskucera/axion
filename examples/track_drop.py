@@ -173,9 +173,10 @@ def update_track_joints_kernel(
     pos_local = wp.vec3(pos_2d[0], pos_2d[1], 0.0)
 
     X_local = wp.transform(pos_local, q_local)
-    X_world = wp.transform_multiply(X_track, X_local)
+    # X_track is the track frame RELATIVE to the Base
+    X_in_base = wp.transform_multiply(X_track, X_local)
 
-    joint_X_p[joint_idx] = X_world
+    joint_X_p[joint_idx] = X_in_base
 
 
 def generate_track_data(r1, r2, dist, tube_radius=0.1, segments=200, sides=12):
@@ -210,7 +211,7 @@ class Simulator(AbstractSimulator):
     def __init__(self, sim_config, render_config, exec_config, engine_config, logging_config):
         super().__init__(sim_config, render_config, exec_config, engine_config, logging_config)
         self.track_global_u = wp.zeros(1, dtype=wp.float32, device=self.model.device)
-        self.track_velocity = wp.array([2.0], dtype=wp.float32, device=self.model.device)
+        self.track_velocity = wp.array([0.6], dtype=wp.float32, device=self.model.device)
 
         # Identify and upload track joint data to GPU once
         is_track = self.model.is_track_joint.numpy()
@@ -224,42 +225,62 @@ class Simulator(AbstractSimulator):
         )
 
     def build_model(self) -> newton.Model:
+        # --- 1. Ground ---
+        ground_cfg = newton.ModelBuilder.ShapeConfig(mu=1.0)
+        self.builder.add_ground_plane(cfg=ground_cfg)
+        self.builder.add_shape_box(
+            -1,
+            wp.transform(wp.vec3(1.5, 0.0, 0.0), wp.quat_identity()),
+            hx=2.0,
+            hy=3.0,
+            hz=0.8,
+            cfg=ground_cfg,
+        )
+
+        # --- 2. Track & Vehicle Parameters ---
         r_rear, r_front, dist = 1.5, 0.8, 5.0
         self.track_helper = Track2D(r_rear, r_front, dist)
 
         verts, indices = generate_track_data(r_rear, r_front, dist, tube_radius=0.05)
         mesh_obj = newton.Mesh(vertices=verts, indices=indices)
 
-        q_tilt = wp.quat_from_axis_angle(wp.vec3(1.0, 0.0, 0.0), 0.5)
-        p_track_origin = wp.vec3(0.0, 0.0, 1.0)
-        self.X_track = wp.transform(p_track_origin, q_tilt)
+        # Track Transform RELATIVE TO CHASSIS
+        # Let's keep the tilt but center it on the chassis
+        q_tilt = wp.quat_from_axis_angle(wp.vec3(1.0, 0.0, 0.0), 3.1415 / 2.0)
+        p_track_local = wp.vec3(-8.0, 0.0, 0.0)
+        self.X_track = wp.transform(p_track_local, q_tilt)
 
-        # Static Base
-        base = self.builder.add_body(key="base", mass=0.0)
-        base_joint = self.builder.add_joint(newton.JointType.FIXED, -1, base)
-        # We will add base_joint to articulation later
+        # Start 10.0m in the air (track radius is ~1.5m, so it clears the ground)
+        start_xform = wp.transform(wp.vec3(0.0, 0.0, 2.0), wp.quat_identity())
 
+        # --- 3. Dynamic Base (Chassis) ---
+        base = self.builder.add_body(key="base", mass=100.0, xform=start_xform)
+
+        base_joint = self.builder.add_joint(
+            newton.JointType.FREE, -1, base, parent_xform=start_xform
+        )
+        # We will add base_joint to articulation later with track joints
+
+        # Visuals for Chassis and Track Path
         visual_cfg = newton.ModelBuilder.ShapeConfig(is_visible=True, has_shape_collision=False)
         self.builder.add_shape_mesh(
             body=base, mesh=mesh_obj, xform=self.X_track, cfg=visual_cfg, key="track_visual"
         )
 
-        # Add Track Elements using the new builder method
-        box_shape = newton.ModelBuilder.ShapeConfig(
-            is_visible=True,
-            density=100.0,
-        )
-
+        # --- 4. Track Elements ---
+        box_shape = newton.ModelBuilder.ShapeConfig(is_visible=True, density=100.0, mu=1.0)
         track_joints = self.builder.add_track(
             parent_body=base,
             num_boxes=14,
-            box_size=(0.3, 0.1, 0.4),
+            box_size=(0.4, 0.1, 0.4),
             shape_config=box_shape,
             track_helper=self.track_helper,
-            track_center=p_track_origin,
+            track_center=p_track_local,
             track_rotation=q_tilt,
+            parent_world_xform=start_xform,
         )
 
+        # Create SINGLE articulation for Chassis + All Track Links
         self.builder.add_articulation([base_joint] + track_joints)
 
         return self.builder.finalize_replicated(num_worlds=self.simulation_config.num_worlds)
@@ -309,7 +330,7 @@ class Simulator(AbstractSimulator):
 
 
 @hydra.main(config_path=str(CONFIG_PATH), config_name="config", version_base=None)
-def track_chain_example(cfg: DictConfig):
+def track_drop_example(cfg: DictConfig):
     engine_config: EngineConfig = hydra.utils.instantiate(cfg.engine)
     sim_config: SimulationConfig = hydra.utils.instantiate(cfg.simulation)
     render_config: RenderingConfig = hydra.utils.instantiate(cfg.rendering)
@@ -321,4 +342,4 @@ def track_chain_example(cfg: DictConfig):
 
 
 if __name__ == "__main__":
-    track_chain_example()
+    track_drop_example()

@@ -228,7 +228,7 @@ class Simulator(AbstractSimulator):
             )
             X_curr_world = wp.transform_multiply(X_track, wp.transform(wp.vec3(pos_local), q_local))
 
-            curr_link = self.builder.add_link(key=f"link_{i}", mass=0.0, xform=X_curr_world)
+            curr_link = self.builder.Pleaseadd_link(key=f"link_{i}", mass=0.0, xform=X_curr_world)
             self.builder.add_shape_box(
                 curr_link,
                 hx=hx,
