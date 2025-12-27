@@ -109,8 +109,9 @@ class AxionModelBuilder(newton.ModelBuilder):
     def add_track(
         self,
         parent_body: int,
-        num_boxes: int,
-        box_size: tuple[float, float, float],
+        num_elements: int,
+        element_radius: float,
+        element_half_width: float,
         shape_config: newton.ModelBuilder.ShapeConfig,
         track_helper,
         track_center: wp.vec3 = wp.vec3(0.0, 0.0, 0.0),
@@ -119,12 +120,13 @@ class AxionModelBuilder(newton.ModelBuilder):
         name_prefix: str = "track",
     ):
         """
-        Adds a sequence of boxes constrained to a track path.
+        Adds a sequence of capsules constrained to a track path.
 
         Args:
             parent_body: The body index to attach the track elements to (e.g., base/world).
-            num_boxes: Number of elements to place on the track.
-            box_size: Dimensions (hx, hy, hz) of the boxes.
+            num_elements: Number of elements to place on the track.
+            element_radius: Radius of the capsule elements.
+            element_half_width: Half-width (half-height along Z) of the capsule elements.
             shape_config: Configuration for the visual/collision shape.
             track_helper: An object with properties `total_len` and method `get_frame(u)`.
             track_center: Offset for the entire track system.
@@ -135,13 +137,17 @@ class AxionModelBuilder(newton.ModelBuilder):
         """
         import numpy as np
 
-        spacing = track_helper.total_len / num_boxes
+        spacing = track_helper.total_len / num_elements
+
+        # Update shape config to use negative collision group so tracks don't collide with themselves
+        track_shape_config = shape_config.copy()
+        track_shape_config.collision_group = -1
 
         # Transform for the track base
         X_track = wp.transform(track_center, track_rotation)
 
         created_joints = []
-        for i in range(num_boxes):
+        for i in range(num_elements):
             u = i * spacing
 
             # Get track frame (assuming 2D track in XY plane for now)
@@ -181,16 +187,11 @@ class AxionModelBuilder(newton.ModelBuilder):
                 xform=X_link_world,
             )
 
-            # Add Shape
-            # self.add_shape_box(
-            #     body=link, hx=box_size[0], hy=box_size[1], hz=box_size[2], cfg=shape_config
-            # )
-
             self.add_shape_capsule(
                 body=link,
-                radius=box_size[1],
-                half_height=box_size[2],
-                cfg=shape_config,
+                radius=element_radius,
+                half_height=element_half_width,
+                cfg=track_shape_config,
             )
 
             # Add FIXED Joint

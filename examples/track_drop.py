@@ -254,7 +254,7 @@ class Simulator(AbstractSimulator):
         start_xform = wp.transform(wp.vec3(0.0, 0.0, 2.0), wp.quat_identity())
 
         # --- 3. Dynamic Base (Chassis) ---
-        base = self.builder.add_body(key="base", mass=100.0, xform=start_xform)
+        base = self.builder.add_body(key="base", mass=0.0, xform=start_xform)
 
         base_joint = self.builder.add_joint(
             newton.JointType.FREE, -1, base, parent_xform=start_xform
@@ -271,8 +271,9 @@ class Simulator(AbstractSimulator):
         box_shape = newton.ModelBuilder.ShapeConfig(is_visible=True, density=100.0, mu=1.0)
         track_joints = self.builder.add_track(
             parent_body=base,
-            num_boxes=14,
-            box_size=(0.4, 0.1, 0.4),
+            num_elements=20,
+            element_radius=0.45,
+            element_half_width=0.4,
             shape_config=box_shape,
             track_helper=self.track_helper,
             track_center=p_track_local,

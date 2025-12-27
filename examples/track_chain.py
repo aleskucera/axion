@@ -252,8 +252,9 @@ class Simulator(AbstractSimulator):
 
         track_joints = self.builder.add_track(
             parent_body=base,
-            num_boxes=14,
-            box_size=(0.3, 0.1, 0.4),
+            num_elements=14,
+            element_radius=0.1,
+            element_half_width=0.4,
             shape_config=box_shape,
             track_helper=self.track_helper,
             track_center=p_track_origin,

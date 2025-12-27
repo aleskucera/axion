@@ -38,13 +38,12 @@ class Simulator(AbstractSimulator):
         FRICTION = 0.0
         RESTITUTION = 0.0
 
-        ball1 = self.builder.add_body(
-            xform=wp.transform((0.0, 0.0, 0.5), wp.quat_identity()), key="ball1"
+        static_box = self.builder.add_body(
+            xform=wp.transform((0.0, 0.0, 0.5), wp.quat_identity()), key="box"
         )
-        initial_velocity = wp.spatial_vector(0.0, 2.0, 0.0, 0.0, 0.0, 0.0)
 
         self.builder.add_shape_box(
-            body=ball1,
+            body=static_box,
             hx=0.5,
             hy=0.5,
             hz=0.5,
@@ -70,7 +69,6 @@ class Simulator(AbstractSimulator):
             )
         )
 
-        self.builder.body_qd[0] = initial_velocity
         return self.builder.finalize_replicated(num_worlds=self.simulation_config.num_worlds)
 
 

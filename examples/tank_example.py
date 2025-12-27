@@ -246,7 +246,7 @@ class TankSimulator(AbstractSimulator):
             wp.transform(wp.vec3(1.5, 0.0, 0.0), wp.quat_identity()),
             hx=2.0,
             hy=3.0,
-            hz=0.6,
+            hz=0.7,
             cfg=ground_cfg,
         )
 
@@ -325,13 +325,15 @@ class TankSimulator(AbstractSimulator):
             is_visible=True, density=100.0, mu=1.0, contact_margin=0.2
         )
         num_boxes = 16
-        box_size = (0.1, 0.1, 0.6)  # Wide tracks
+        element_radius = 0.25
+        element_half_width = 0.6
 
         # Add Left Track
         self.left_indices_cpu = self.builder.add_track(
             parent_body=base,
-            num_boxes=num_boxes,
-            box_size=box_size,
+            num_elements=num_boxes,
+            element_radius=element_radius,
+            element_half_width=element_half_width,
             shape_config=box_shape,
             track_helper=self.track_helper,
             track_center=p_track_left_local,
@@ -343,8 +345,9 @@ class TankSimulator(AbstractSimulator):
         # Add Right Track
         self.right_indices_cpu = self.builder.add_track(
             parent_body=base,
-            num_boxes=num_boxes,
-            box_size=box_size,
+            num_elements=num_boxes,
+            element_radius=element_radius,
+            element_half_width=element_half_width,
             shape_config=box_shape,
             track_helper=self.track_helper,
             track_center=p_track_right_local,
