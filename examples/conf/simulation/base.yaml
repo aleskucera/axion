@@ -1,5 +1,5 @@
 # @package simulation
 _target_: axion.SimulationConfig
 duration_seconds: 10.0
-target_timestep_seconds: 8e-3
+target_timestep_seconds: 1e-2
 num_worlds: 1

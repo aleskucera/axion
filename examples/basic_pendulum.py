@@ -8,7 +8,6 @@ import warp as wp
 from axion import AbstractSimulator
 from axion import EngineConfig
 from axion import ExecutionConfig
-from axion import JointMode
 from axion import LoggingConfig
 from axion import RenderingConfig
 from axion import SimulationConfig

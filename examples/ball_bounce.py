@@ -38,13 +38,13 @@ class Simulator(AbstractSimulator):
         FRICTION = 0.0
         RESTITUTION = 0.0
 
-        ball1 = self.builder.add_body(
-            xform=wp.transform((0.0, 0.0, 2.0), wp.quat_identity()), key="ball1"
+        ball = self.builder.add_body(
+            xform=wp.transform((0.0, 0.0, 2.0), wp.quat_identity()), key="ball"
         )
-        initial_velocity = wp.spatial_vector(0.0, 2.0, 0.0, 0.0, 0.0, 0.0)
+        initial_velocity = wp.spatial_vector(0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
 
         self.builder.add_shape_sphere(
-            body=ball1,
+            body=ball,
             radius=1.0,
             cfg=newton.ModelBuilder.ShapeConfig(
                 density=10.0,

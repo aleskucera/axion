@@ -113,7 +113,6 @@ class EngineData:
     world_M: wp.array
     world_M_inv: wp.array
     joint_constraint_offsets: wp.array
-    equality_constraint_offsets: wp.array
     contact_interaction: wp.array
 
     linesearch: Optional[LinesearchData] = None
@@ -146,11 +145,6 @@ class EngineData:
     def body_lambda(self) -> ConstraintView:
         """Lagrange multipliers view."""
         return ConstraintView(self._body_lambda, self.dims)
-
-    @cached_property
-    def body_lambda_eq(self) -> ConstraintView:
-        """Equality constraint multipliers view."""
-        return ConstraintView(self._body_lambda, self.dims, slice_fn=lambda d: d.slice_eq)
 
     @cached_property
     def body_lambda_prev(self) -> ConstraintView:
@@ -192,7 +186,6 @@ class EngineData:
         dims: EngineDimensions,
         config: EngineConfig,
         joint_constraint_offsets: wp.array,
-        equality_constraint_offsets: wp.array,
         device: wpc.Device,
         allocate_pca: bool = False,
         pca_grid_res: int = 100,
@@ -266,12 +259,8 @@ class EngineData:
             ls_steps_np[closest] = 1.0
             linesearch_steps = wp.from_numpy(ls_steps_np, dtype=wp.float32)
 
-            linesearch_batch_body_u = _zeros(
-                (step_count, dims.N_w, dims.N_b), wp.spatial_vector
-            )
-            linesearch_batch_body_q = _zeros(
-                (step_count, dims.N_w, dims.N_b), wp.transform
-            )
+            linesearch_batch_body_u = _zeros((step_count, dims.N_w, dims.N_b), wp.spatial_vector)
+            linesearch_batch_body_q = _zeros((step_count, dims.N_w, dims.N_b), wp.transform)
             linesearch_batch_body_lambda = _zeros((step_count, dims.N_w, dims.N_c))
             linesearch_batch_h = _zeros((step_count, dims.N_w, dims.N_u + dims.N_c))
             linesearch_batch_h_norm_sq = _zeros((step_count, dims.N_w))
@@ -304,9 +293,7 @@ class EngineData:
             body_lambda_history = _zeros((config.newton_iters + 1, dims.N_w, dims.N_c))
 
             pca_batch_body_q = _zeros((pca_batch_size, dims.N_w, dims.N_b), wp.transform)
-            pca_batch_body_u = _zeros(
-                (pca_batch_size, dims.N_w, dims.N_b), wp.spatial_vector
-            )
+            pca_batch_body_u = _zeros((pca_batch_size, dims.N_w, dims.N_b), wp.spatial_vector)
             pca_batch_body_lambda = _zeros((pca_batch_size, dims.N_w, dims.N_c))
             pca_batch_h = _zeros((pca_batch_size, dims.N_w, dims.N_u + dims.N_c))
             pca_batch_h_norm = _zeros((pca_batch_size, dims.N_w))
@@ -350,8 +337,8 @@ class EngineData:
             world_M=world_M,
             world_M_inv=world_M_inv,
             joint_constraint_offsets=joint_constraint_offsets,
-            equality_constraint_offsets=equality_constraint_offsets,
             contact_interaction=contact_interaction,
             linesearch=linesearch_data,
             history=history_data,
         )
+

@@ -17,7 +17,6 @@ class EngineDimensions:
     joint_count: int
     linesearch_step_count: int
     joint_constraint_count: int
-    equality_constraint_count: int
 
     @cached_property
     def N_w(self) -> int:
@@ -38,10 +37,6 @@ class EngineDimensions:
     @cached_property
     def N_j(self) -> int:
         return self.joint_constraint_count
-    
-    @cached_property
-    def N_eq(self) -> int:
-        return self.equality_constraint_count
 
     @cached_property
     def N_n(self) -> int:
@@ -53,7 +48,7 @@ class EngineDimensions:
 
     @cached_property
     def N_c(self) -> int:
-        return self.N_j + self.N_eq + self.N_n + self.N_f
+        return self.N_j + self.N_n + self.N_f
 
     @cached_property
     def N_alpha(self) -> int:
@@ -64,37 +59,28 @@ class EngineDimensions:
     def offset_j(self) -> int:
         """Start offset of joint constraints block."""
         return 0
-    
-    @cached_property
-    def offset_eq(self) -> int:
-        """Start offset of equality constraints block."""
-        return self.N_j
 
     @cached_property
     def offset_n(self) -> int:
         """Start offset of normal contact constraints block."""
-        return self.N_j + self.N_eq
+        return self.N_j
 
     @cached_property
     def offset_f(self) -> int:
         """Start offset of friction constraints block."""
-        return self.N_j + self.N_eq + self.N_n
+        return self.N_j + self.N_n
 
     # --- Slicing Helper Properties ---
     @cached_property
     def slice_j(self) -> slice:
         """Returns a slice object for the joint-constraint block."""
-        return slice(self.offset_j, self.offset_eq)
-    
-    @cached_property
-    def slice_eq(self) -> slice:
-        """Returns a slice object for the equality-constraint block."""
-        return slice(self.offset_eq, self.offset_n)
+        return slice(self.offset_j, self.offset_n)
 
     @cached_property
     def slice_n(self) -> slice:
         """Returns a slice object for the normal-constraint block."""
         return slice(self.offset_n, self.offset_f)
+
     @cached_property
     def slice_f(self) -> slice:
         """Returns a slice object for the friction-constraint block."""

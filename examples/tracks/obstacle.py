@@ -16,7 +16,7 @@ from omegaconf import DictConfig
 
 os.environ["PYOPENGL_PLATFORM"] = "glx"
 
-CONFIG_PATH = pathlib.Path(__file__).parent.joinpath("conf")
+CONFIG_PATH = pathlib.Path(__file__).parent.parent.joinpath("conf")
 
 
 class Track2D:
@@ -127,6 +127,8 @@ def update_track_joints_kernel(
     joint_idx = joint_indices[tid]
     u_offset = u_offsets[tid]
     u_curr = wp.mod(global_u[0] + u_offset, total_len)
+    if u_curr < 0.0:
+        u_curr = u_curr + total_len
 
     pos_2d = wp.vec2(0.0, 0.0)
     tan_2d = wp.vec2(0.0, 0.0)

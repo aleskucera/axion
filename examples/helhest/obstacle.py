@@ -18,8 +18,8 @@ from omegaconf import DictConfig
 
 os.environ["PYOPENGL_PLATFORM"] = "glx"
 
-CONFIG_PATH = pathlib.Path(__file__).parent.joinpath("conf")
-ASSETS_DIR = pathlib.Path(__file__).parent.joinpath("assets")
+CONFIG_PATH = pathlib.Path(__file__).parent.parent.joinpath("conf")
+ASSETS_DIR = pathlib.Path(__file__).parent.parent.joinpath("assets")
 
 
 class Simulator(AbstractSimulator):
@@ -250,23 +250,12 @@ class Simulator(AbstractSimulator):
             xform=wp.transform((2.5, 0.0, 0.0), wp.quat_identity()),
             hx=1.75,
             hy=1.5,
-            hz=0.15,
+            hz=0.2,
             cfg=newton.ModelBuilder.ShapeConfig(
                 mu=FRICTION,
                 restitution=RESTITUTION,
             ),
         )
-        # self.builder.add_shape_box(
-        #     body=-1,
-        #     xform=wp.transform((2.5, 0.0, 0.0), wp.quat_identity()),
-        #     hx=0.75,
-        #     hy=1.75,
-        #     hz=0.25,
-        #     cfg=newton.ModelBuilder.ShapeConfig(
-        #         mu=FRICTION,
-        #         restitution=RESTITUTION,
-        #     ),
-        # )
 
         # add ground plane
         self.builder.add_ground_plane(

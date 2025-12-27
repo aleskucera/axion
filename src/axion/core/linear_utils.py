@@ -2,7 +2,6 @@ import warp as wp
 from axion.constraints import friction_constraint_kernel
 from axion.constraints import positional_contact_constraint_kernel
 from axion.constraints import positional_joint_constraint_kernel
-from axion.constraints.equality_constraint import positional_equality_constraint_kernel
 from axion.constraints import unconstrained_dynamics_kernel
 from axion.constraints import velocity_contact_constraint_kernel
 from axion.constraints import velocity_joint_constraint_kernel
@@ -156,34 +155,6 @@ def compute_linear_system(
             ],
             device=device,
         )
-
-        if dims.equality_constraint_count > 0:
-            wp.launch(
-                kernel=positional_equality_constraint_kernel,
-                dim=(dims.N_w, dims.equality_constraint_count),
-                inputs=[
-                    data.body_q,
-                    data.body_lambda.eq,
-                    model.body_com,
-                    model.equality_constraint_type,
-                    model.equality_constraint_body1,
-                    model.equality_constraint_body2,
-                    model.equality_constraint_anchor,
-                    model.equality_constraint_relpose,
-                    model.equality_constraint_enabled,
-                    data.equality_constraint_offsets,
-                    dt,
-                    config.equality_compliance,
-                ],
-                outputs=[
-                    data.constraint_active_mask.eq,
-                    data.h.d_spatial,
-                    data.h.c.eq,
-                    data.J_values.eq,
-                    data.C_values.eq,
-                ],
-                device=device,
-            )
 
     elif config.joint_constraint_level == "vel":
         wp.launch(

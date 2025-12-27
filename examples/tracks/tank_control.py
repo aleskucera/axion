@@ -16,7 +16,7 @@ from omegaconf import DictConfig
 
 os.environ["PYOPENGL_PLATFORM"] = "glx"
 
-CONFIG_PATH = pathlib.Path(__file__).parent.joinpath("conf")
+CONFIG_PATH = pathlib.Path(__file__).parent.parent.joinpath("conf")
 
 
 class Track2D:
@@ -127,6 +127,8 @@ def update_track_joints_kernel(
     joint_idx = joint_indices[tid]
     u_offset = u_offsets[tid]
     u_curr = wp.mod(global_u[0] + u_offset, total_len)
+    if u_curr < 0.0:
+        u_curr = u_curr + total_len
 
     pos_2d = wp.vec2(0.0, 0.0)
     tan_2d = wp.vec2(0.0, 0.0)
@@ -216,9 +218,9 @@ class TankSimulator(AbstractSimulator):
         self.track_left_u = wp.zeros(1, dtype=wp.float32, device=self.model.device)
         self.track_right_u = wp.zeros(1, dtype=wp.float32, device=self.model.device)
 
-        # Initial velocities (drive forward)
-        self.track_left_velocity = wp.array([2.0], dtype=wp.float32, device=self.model.device)
-        self.track_right_velocity = wp.array([1.0], dtype=wp.float32, device=self.model.device)
+        # Initial velocities (start stationary)
+        self.track_left_velocity = wp.zeros(1, dtype=wp.float32, device=self.model.device)
+        self.track_right_velocity = wp.zeros(1, dtype=wp.float32, device=self.model.device)
 
         # Upload indices
         self.left_joint_indices = wp.array(
@@ -237,17 +239,127 @@ class TankSimulator(AbstractSimulator):
             all_offsets[self.right_indices_cpu], dtype=wp.float32, device=self.model.device
         )
 
+    @override
+    def _run_simulation_segment(self, segment_num: int):
+        self._update_input()
+        super()._run_simulation_segment(segment_num)
+
+    def _update_input(self):
+        """Check keyboard input and update track velocities."""
+        left_v = 0.0
+        right_v = 0.0
+
+        if hasattr(self.viewer, "is_key_down"):
+            # Forward (I) / Backward (K)
+            if self.viewer.is_key_down("i"):
+                left_v += 2.0
+                right_v += 2.0
+            if self.viewer.is_key_down("k"):
+                left_v -= 2.0
+                right_v -= 2.0
+
+            # Turn Left (J) / Right (L)
+            if self.viewer.is_key_down("j"):
+                left_v -= 1.5
+                right_v += 1.5
+            if self.viewer.is_key_down("l"):
+                left_v += 1.5
+                right_v -= 1.5
+
+        # Update Warp arrays (copying from CPU to Device)
+        # We use a temporary CPU array to facilitate the copy
+        src_left = wp.array([left_v], dtype=wp.float32, device="cpu")
+        src_right = wp.array([right_v], dtype=wp.float32, device="cpu")
+
+        wp.copy(self.track_left_velocity, src_left)
+        wp.copy(self.track_right_velocity, src_right)
+
     def build_model(self) -> newton.Model:
         # --- 1. Ground ---
         ground_cfg = newton.ModelBuilder.ShapeConfig(mu=1.0)
         self.builder.add_ground_plane(cfg=ground_cfg)
+
+        # Obstacle 1: Stairs (Stepped boxes)
+        num_steps = 6
+        step_depth = 1.0
+        step_height = 0.25
+        step_width = 6.0
+        start_x = 4.0
+        start_y = -6.0
+
+        for i in range(num_steps):
+            h_curr = (i + 1) * step_height
+            z_curr = h_curr / 2.0
+            x_curr = start_x + i * step_depth
+
+            self.builder.add_shape_box(
+                -1,
+                wp.transform(wp.vec3(x_curr, start_y, z_curr), wp.quat_identity()),
+                hx=step_depth / 2.0,
+                hy=step_width / 2.0,
+                hz=h_curr / 2.0,
+                cfg=ground_cfg,
+            )
+
+        # Obstacle 2: Ramp
+        ramp_length = 10.0
+        ramp_width = 6.0
+        ramp_height = 3.0
+        ramp_angle = float(np.arctan2(ramp_height, ramp_length))
+
+        ramp_x = 8.0
+        ramp_y = 6.0
+        ramp_z = ramp_height / 2.0 - 0.2
+
+        q_ramp = wp.quat_from_axis_angle(wp.vec3(0.0, 1.0, 0.0), -ramp_angle)
+
         self.builder.add_shape_box(
             -1,
-            wp.transform(wp.vec3(1.5, 0.0, 0.0), wp.quat_identity()),
-            hx=2.0,
-            hy=3.0,
-            hz=0.7,
+            wp.transform(wp.vec3(ramp_x, ramp_y, ramp_z), q_ramp),
+            hx=ramp_length / 2.0,
+            hy=ramp_width / 2.0,
+            hz=0.2,  # Slightly thicker ramp surface
             cfg=ground_cfg,
+        )
+
+        # Obstacle 3: Large Boulders / Uneven terrain
+        import random
+
+        random.seed(42)
+        for _ in range(15):
+            rx = random.uniform(2.0, 15.0)
+            ry = random.uniform(-2.0, 2.0)
+            rz = 0.2
+            self.builder.add_shape_box(
+                -1,
+                wp.transform(
+                    wp.vec3(rx, ry, rz),
+                    wp.quat_from_axis_angle(wp.vec3(0.0, 0.0, 1.0), random.uniform(0, 3.14)),
+                ),
+                hx=random.uniform(0.5, 1.5),
+                hy=random.uniform(0.5, 1.5),
+                hz=random.uniform(0.2, 0.5),
+                cfg=ground_cfg,
+            )
+
+        # Boundary Walls (moved further out)
+        wall_cfg = newton.ModelBuilder.ShapeConfig(mu=0.5)
+        self.builder.add_shape_box(
+            -1,
+            wp.transform(wp.vec3(5.0, 12.0, 0.0), wp.quat_identity()),
+            hx=15.0,
+            hy=1.0,
+            hz=2.0,
+            cfg=wall_cfg,
+        )
+
+        self.builder.add_shape_box(
+            -1,
+            wp.transform(wp.vec3(5.0, -12.0, 0.0), wp.quat_identity()),
+            hx=15.0,
+            hy=1.0,
+            hz=2.0,
+            cfg=wall_cfg,
         )
 
         # --- 2. Track Parameters ---
@@ -286,7 +398,7 @@ class TankSimulator(AbstractSimulator):
         # Box chassis
         chassis_hx, chassis_hy, chassis_hz = 1.4, 1.0, 0.3
         chassis_cfg = newton.ModelBuilder.ShapeConfig(
-            density=1000.0, is_visible=True, contact_margin=0.2
+            density=2000.0, is_visible=True, contact_margin=0.2
         )
 
         base = self.builder.add_link(key="chassis", mass=0.0, xform=start_xform)

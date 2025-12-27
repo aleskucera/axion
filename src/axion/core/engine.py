@@ -6,15 +6,11 @@ import warp as wp
 from axion.constraints import fill_contact_constraint_body_idx_kernel
 from axion.constraints import fill_friction_constraint_body_idx_kernel
 from axion.constraints import fill_joint_constraint_body_idx_kernel
-from axion.constraints.equality_constraint import (
-    compute_equality_constraint_offsets_batched,
-    fill_equality_constraint_body_idx_kernel,
-)
+from axion.constraints.utils import compute_joint_constraint_offsets_batched
 from axion.optim import CRSolver
 from axion.optim import JacobiPreconditioner
 from axion.optim import SystemLinearData
 from axion.optim import SystemOperator
-from axion.constraints.utils import compute_joint_constraint_offsets_batched
 from axion.types import contact_interaction_kernel
 from axion.types import world_spatial_inertia_kernel
 from newton import Contacts
@@ -79,10 +75,6 @@ class AxionEngine(SolverBase):
             self.axion_model.joint_type,
         )
 
-        eq_constraint_offsets, num_eq_constraints = compute_equality_constraint_offsets_batched(
-            self.axion_model.equality_constraint_type,
-        )
-
         self.dims = EngineDimensions(
             num_worlds=self.axion_model.num_worlds,
             body_count=self.axion_model.body_count,
@@ -90,14 +82,12 @@ class AxionEngine(SolverBase):
             joint_count=self.axion_model.joint_count,
             linesearch_step_count=self.config.linesearch_step_count,
             joint_constraint_count=num_constraints,
-            equality_constraint_count=num_eq_constraints,
         )
 
         self.data = EngineData.create(
             self.dims,
             self.config,
             joint_constraint_offsets,
-            eq_constraint_offsets,
             self.device,
             self.logger.uses_pca_arrays,
             self.logger.config.pca_grid_res,
@@ -210,22 +200,6 @@ class AxionEngine(SolverBase):
             device=self.device,
         )
 
-        if self.dims.equality_constraint_count > 0:
-            wp.launch(
-                kernel=fill_equality_constraint_body_idx_kernel,
-                dim=(self.axion_model.num_worlds, self.axion_model.equality_constraint_count),
-                inputs=[
-                    self.axion_model.equality_constraint_type,
-                    self.axion_model.equality_constraint_body1,
-                    self.axion_model.equality_constraint_body2,
-                    self.data.equality_constraint_offsets,
-                ],
-                outputs=[
-                    self.data.constraint_body_idx.eq,
-                ],
-                device=self.device,
-            )
-
         wp.launch(
             kernel=fill_contact_constraint_body_idx_kernel,
             dim=(self.axion_model.num_worlds, self.dims.N_n),
@@ -249,17 +223,6 @@ class AxionEngine(SolverBase):
             ],
             device=self.device,
         )
-
-    # def _update_constraint_positional_errors(self):
-    #     wp.launch(
-    #         kernel=update_penetration_depth_kernel,
-    #         dim=(self.axion_model.num_worlds, self.axion_contacts.max_contacts),
-    #         inputs=[
-    #             self.data.body_q,
-    #             self.data.contact_interaction,
-    #         ],
-    #         device=self.device,
-    #     )
 
     def step(
         self,
@@ -315,8 +278,6 @@ class AxionEngine(SolverBase):
                     M=self.preconditioner,
                 )
                 compute_dbody_qd_from_dbody_lambda(self.data, self.config, self.dims)
-                # if np.max(self.data._dbody_lambda.numpy()) > 0:
-                #     print("Here")
 
             # Linesearch block
             with self.logger.timed_block(*newton_iter_events["linesearch"]):

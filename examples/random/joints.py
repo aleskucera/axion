@@ -15,10 +15,10 @@ from omegaconf import DictConfig
 
 os.environ["PYOPENGL_PLATFORM"] = "glx"
 
-CONFIG_PATH = pathlib.Path(__file__).parent.joinpath("conf")
+CONFIG_PATH = pathlib.Path(__file__).parent.parent.joinpath("conf")
 
 
-class RandomSimulator(AbstractSimulator):
+class JointsSimulator(AbstractSimulator):
     def __init__(
         self,
         sim_config: SimulationConfig,
@@ -36,43 +36,35 @@ class RandomSimulator(AbstractSimulator):
         )
 
     def build_model(self) -> newton.Model:
-        # So we should add ground plane to the builder here.
+        # Add ground plane
         self.builder.add_ground_plane()
 
-        # 2. Initialize SceneGenerator with our builder
-        gen = SceneGenerator(self.builder, seed=42)
+        # Initialize SceneGenerator
+        gen = SceneGenerator(self.builder, seed=123)
 
-        print("Generating grounded objects...")
-        ground_ids = []
-        for i in range(4):
-            idx = gen.generate_random_ground_touching()
-            if idx is not None:
-                ground_ids.append(idx)
+        # 1. Revolute Chain (Snake-like)
+        gen.generate_chain(length=2, start_pos=(-3, -3, 1), shape_type="box", joint_type="revolute")
 
-        print("Generating touching objects...")
-        for gid in ground_ids:
-            prev = gid
-            for _ in range(2):
-                new_idx = gen.generate_random_touching(prev)
-                if new_idx is not None:
-                    prev = new_idx
+        # 2. Ball Joint Chain (Rope-like)
+        print("Generating Ball Joint Chain...")
+        gen.generate_chain(length=2, start_pos=(3, 3, 1), shape_type="capsule", joint_type="ball")
 
-        print("Generating free objects...")
-        for i in range(4):
-            gen.generate_random_free()
+        # 3. Fixed Chain (Structure)
+        print("Generating Fixed Structure...")
+        gen.generate_chain(length=2, start_pos=(-3, 3, 1), shape_type="box", joint_type="fixed")
 
         return self.builder.finalize_replicated(num_worlds=self.simulation_config.num_worlds)
 
 
 @hydra.main(config_path=str(CONFIG_PATH), config_name="config", version_base=None)
-def random_example(cfg: DictConfig):
+def joints_example(cfg: DictConfig):
     sim_config: SimulationConfig = hydra.utils.instantiate(cfg.simulation)
     render_config: RenderingConfig = hydra.utils.instantiate(cfg.rendering)
     exec_config: ExecutionConfig = hydra.utils.instantiate(cfg.execution)
     logging_config: LoggingConfig = hydra.utils.instantiate(cfg.logging)
     engine_config: EngineConfig = hydra.utils.instantiate(cfg.engine)
 
-    simulator = RandomSimulator(
+    simulator = JointsSimulator(
         sim_config=sim_config,
         render_config=render_config,
         exec_config=exec_config,
@@ -84,4 +76,4 @@ def random_example(cfg: DictConfig):
 
 
 if __name__ == "__main__":
-    random_example()
+    joints_example()
