@@ -5,7 +5,6 @@ from typing import override
 import hydra
 import newton
 import numpy as np
-import openmesh
 import warp as wp
 from axion import AbstractSimulator
 from axion import EngineConfig
@@ -23,7 +22,6 @@ except ImportError:
 os.environ["PYOPENGL_PLATFORM"] = "glx"
 
 CONFIG_PATH = pathlib.Path(__file__).parent.parent.joinpath("conf")
-ASSETS_DIR = pathlib.Path(__file__).parent.parent.joinpath("assets")
 
 
 class Simulator(AbstractSimulator):
@@ -44,7 +42,11 @@ class Simulator(AbstractSimulator):
         )
 
         # Helhest DOFs: 6 (Base) + 1 (Left) + 1 (Right) + 1 (Rear) = 9
-        robot_joint_target = np.array([0.0] * 6 + [5.0, 5.0, 5.0], dtype=np.float32)
+        # Base: Free (6 DOFs)
+        # Left/Right: Velocity Controlled (10 rad/s)
+        # Rear: Passive (0)
+
+        robot_joint_target = np.array([0.0] * 6 + [16.0, 0.0, 0.0], dtype=np.float32)
 
         joint_target = np.tile(robot_joint_target, self.simulation_config.num_worlds)
         self.joint_target = wp.from_numpy(joint_target, dtype=wp.float32)
@@ -65,40 +67,38 @@ class Simulator(AbstractSimulator):
 
     def build_model(self) -> newton.Model:
         """
-        Builds the unified Helhest model on a surface.
+        Builds the unified Helhest model.
         """
 
-        # Robot position
-        robot_x = -1.5
-        robot_y = 0.0
-        robot_z = 1.7
+        # Create the Helhest robot
+        # We place it slightly above ground
+        create_helhest_model(self.builder, xform=wp.transform((0.0, 0.0, 0.5), wp.quat_identity()))
 
-        create_helhest_model(
-            self.builder, xform=wp.transform((robot_x, robot_y, robot_z), wp.quat_identity())
-        )
+        # Ground Plane
+        FRICTION = 0.8
+        RESTITUTION = 0.0
+        KE = 1.0e4
+        KD = 1.0e3
+        KF = 1.0e3
 
-        # Surface Mesh
-        surface_m = openmesh.read_trimesh(str(ASSETS_DIR.joinpath("surface.obj")))
-        mesh_indices = np.array(surface_m.face_vertex_indices(), dtype=np.int32).flatten()
-
-        scale = np.array([6.0, 6.0, 4.0])
-        mesh_points = np.array(surface_m.points()) * scale + np.array([0.0, 0.0, 0.05])
-
-        surface_mesh = newton.Mesh(mesh_points, mesh_indices)
-
-        self.builder.add_shape_mesh(
-            body=-1,
-            mesh=surface_mesh,
+        self.builder.add_ground_plane(
             cfg=newton.ModelBuilder.ShapeConfig(
-                density=0.0, has_shape_collision=True, mu=1.0, contact_margin=0.1
-            ),
+                contact_margin=0.1,
+                ke=KE,
+                kd=KD,
+                kf=KF,
+                mu=FRICTION,
+                restitution=RESTITUTION,
+            )
         )
 
-        return self.builder.finalize_replicated(num_worlds=self.simulation_config.num_worlds)
+        return self.builder.finalize_replicated(
+            num_worlds=self.simulation_config.num_worlds, gravity=-9.81
+        )
 
 
 @hydra.main(config_path=str(CONFIG_PATH), config_name="helhest", version_base=None)
-def helhest_surface_drive_example(cfg: DictConfig):
+def helhest_unified_example(cfg: DictConfig):
     sim_config: SimulationConfig = hydra.utils.instantiate(cfg.simulation)
     render_config: RenderingConfig = hydra.utils.instantiate(cfg.rendering)
     exec_config: ExecutionConfig = hydra.utils.instantiate(cfg.execution)
@@ -118,5 +118,4 @@ def helhest_surface_drive_example(cfg: DictConfig):
 
 
 if __name__ == "__main__":
-    helhest_surface_drive_example()
-
+    helhest_unified_example()

@@ -87,9 +87,10 @@ def friction_constraint_kernel(
     s_prev = s_n_prev[world_idx, contact_idx]
 
     # --- 1. Handle Early Exit for Inactive/Non-Frictional Contacts ---
+    # force_n_prev = lambda_n_prev / (s_prev)
     force_n_prev = lambda_n_prev / (s_prev + 1e-6)
 
-    if mu * force_n_prev <= 1e-3:
+    if mu * force_n_prev <= 1e-4:
         # Unconstrained: h = λ, C = 1, J = 0
         constraint_active_mask[world_idx, constr_idx1] = 0.0
         constraint_active_mask[world_idx, constr_idx2] = 0.0
@@ -198,9 +199,10 @@ def batch_friction_residual_kernel(
     s_prev = s_n_prev[world_idx, contact_idx]
 
     # --- 1. Handle Early Exit for Inactive/Non-Frictional Contacts ---
+    # force_n_prev = lambda_n_prev / (s_prev)
     force_n_prev = lambda_n_prev / (s_prev + 1e-6)
 
-    if mu * force_n_prev <= 1e-3:
+    if mu * force_n_prev <= 1e-4:
         h_f[batch_idx, world_idx, constr_idx1] = 0.0
         h_f[batch_idx, world_idx, constr_idx2] = 0.0
         return
