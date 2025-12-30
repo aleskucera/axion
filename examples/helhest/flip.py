@@ -43,7 +43,7 @@ class Simulator(AbstractSimulator):
 
         # Helhest DOFs: 6 (Base) + 1 (Left) + 1 (Right) + 1 (Rear) = 9
         # High speed for flipping: 19.0 rad/s
-        robot_joint_target = np.array([0.0] * 6 + [-10.0, -10.0, 0.0], dtype=np.float32)
+        robot_joint_target = np.array([0.0] * 6 + [-15.0, -15.0, 0.0], dtype=np.float32)
 
         joint_target = np.tile(robot_joint_target, self.simulation_config.num_worlds)
         self.joint_target = wp.from_numpy(joint_target, dtype=wp.float32)
@@ -162,4 +162,3 @@ def helhest_flip_example(cfg: DictConfig):
 
 if __name__ == "__main__":
     helhest_flip_example()
-

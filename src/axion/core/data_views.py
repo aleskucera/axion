@@ -57,6 +57,10 @@ class ConstraintView(Generic[T]):
         return self._slice_at_axis(self.dims.slice_j)
 
     @property
+    def ctrl(self) -> Optional[wp.array]:
+        return self._slice_at_axis(self.dims.slice_ctrl)
+
+    @property
     def eq(self) -> Optional[wp.array]:
         return self._slice_at_axis(self.dims.slice_eq)
 

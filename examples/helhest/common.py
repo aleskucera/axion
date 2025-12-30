@@ -34,7 +34,7 @@ class HelhestConfig:
     REAR_WHEEL_POS = wp.vec3(-0.697, 0.0, 0.0)
 
     # Joint Control
-    TARGET_KE = 20.0
+    TARGET_KE = 50.0
     TARGET_KI = 0.04
     TARGET_KD = 0.04
 
@@ -159,6 +159,7 @@ def _add_wheel(
             is_visible=False,
             collision_group=-1,
             mu=mu,
+            contact_margin=0.3,
         ),
     )
     return wheel_link

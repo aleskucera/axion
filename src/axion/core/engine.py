@@ -6,6 +6,9 @@ import warp as wp
 from axion.constraints import fill_contact_constraint_body_idx_kernel
 from axion.constraints import fill_friction_constraint_body_idx_kernel
 from axion.constraints import fill_joint_constraint_body_idx_kernel
+from axion.constraints.control_constraint import compute_control_constraint_offsets_batched
+from axion.constraints.control_constraint import control_constraint_kernel
+from axion.constraints.control_constraint import fill_control_constraint_body_idx_kernel
 from axion.constraints.utils import compute_joint_constraint_offsets_batched
 from axion.optim import CRSolver
 from axion.optim import JacobiPreconditioner
@@ -75,6 +78,16 @@ class AxionEngine(SolverBase):
             self.axion_model.joint_type,
         )
 
+        control_constraint_offsets, num_control_constraints = (
+            compute_control_constraint_offsets_batched(
+                self.axion_model.joint_type,
+                self.axion_model.joint_dof_mode,
+                self.axion_model.joint_qd_start,
+            )
+        )
+
+        dof_count = self.axion_model.joint_dof_count
+
         self.dims = EngineDimensions(
             num_worlds=self.axion_model.num_worlds,
             body_count=self.axion_model.body_count,
@@ -82,12 +95,15 @@ class AxionEngine(SolverBase):
             joint_count=self.axion_model.joint_count,
             linesearch_step_count=self.config.linesearch_step_count,
             joint_constraint_count=num_constraints,
+            control_constraint_count=num_control_constraints,
         )
 
         self.data = EngineData.create(
             self.dims,
             self.config,
             joint_constraint_offsets,
+            control_constraint_offsets,
+            dof_count,
             self.device,
             self.logger.uses_pca_arrays,
             self.logger.config.pca_grid_res,
@@ -113,9 +129,10 @@ class AxionEngine(SolverBase):
         self._timestep = 0
 
     def _apply_control(self, state: State, control: Control):
-        newton.eval_ik(self.model, state, state.joint_q, state.joint_qd)
-        apply_control(self.model, state, self.data.dt, control)
+        # newton.eval_ik(self.model, state, state.joint_q, state.joint_qd)
+        # apply_control(self.model, state, self.data.dt, control)
         wp.copy(dest=self.data.body_f, src=state.body_f)
+        wp.copy(dest=self.data.joint_target, src=control.joint_target)
 
     def _initialize_variables(self, state_in: State, state_out: State, contacts: Contacts):
         self.init_state_fn(state_in, state_out, contacts, self.data.dt)
@@ -196,6 +213,23 @@ class AxionEngine(SolverBase):
             ],
             outputs=[
                 self.data.constraint_body_idx.j,
+            ],
+            device=self.device,
+        )
+
+        wp.launch(
+            kernel=fill_control_constraint_body_idx_kernel,
+            dim=(self.axion_model.num_worlds, self.axion_model.joint_count),
+            inputs=[
+                self.axion_model.joint_parent,
+                self.axion_model.joint_child,
+                self.axion_model.joint_type,
+                self.axion_model.joint_dof_mode,
+                self.axion_model.joint_qd_start,
+                self.data.control_constraint_offsets,
+            ],
+            outputs=[
+                self.data.constraint_body_idx.ctrl,
             ],
             device=self.device,
         )

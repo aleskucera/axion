@@ -2,6 +2,7 @@ import warp as wp
 from axion.constraints import friction_constraint_kernel
 from axion.constraints import positional_contact_constraint_kernel
 from axion.constraints import positional_joint_constraint_kernel
+from axion.constraints.control_constraint import control_constraint_kernel
 from axion.constraints import unconstrained_dynamics_kernel
 from axion.constraints import velocity_contact_constraint_kernel
 from axion.constraints import velocity_joint_constraint_kernel
@@ -191,6 +192,39 @@ def compute_linear_system(
         raise ValueError(
             f"Joint constraint level can be only 'pos' or 'vel' ({config.joint_constraint_level})."
         )
+        
+    wp.launch(
+        kernel=control_constraint_kernel,
+        dim=(dims.N_w, dims.joint_count),
+        inputs=[
+            data.body_q,
+            data.body_u,
+            data.body_lambda.ctrl,
+            model.body_com,
+            model.joint_type,
+            model.joint_parent,
+            model.joint_child,
+            model.joint_X_p,
+            model.joint_X_c,
+            model.joint_axis,
+            model.joint_qd_start,
+            model.joint_enabled,
+            model.joint_dof_mode,
+            data.control_constraint_offsets,
+            data.joint_target,
+            model.joint_target_ke,
+            model.joint_target_kd,
+            data.dt,
+        ],
+        outputs=[
+            data.constraint_active_mask.ctrl,
+            data.h.d_spatial,
+            data.h.c.ctrl,
+            data.J_values.ctrl,
+            data.C_values.ctrl,
+        ],
+        device=device,
+    )
 
     if config.contact_constraint_level == "pos":
         wp.launch(

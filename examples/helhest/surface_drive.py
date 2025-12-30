@@ -43,11 +43,50 @@ class Simulator(AbstractSimulator):
             logging_config,
         )
 
-        # Helhest DOFs: 6 (Base) + 1 (Left) + 1 (Right) + 1 (Rear) = 9
-        robot_joint_target = np.array([0.0] * 6 + [5.0, 5.0, 5.0], dtype=np.float32)
+        # Helhest DOFs: 6 (Base) + 3 (Left, Right, Rear)
+        self.joint_target = wp.zeros(9, dtype=wp.float32, device=self.model.device)
 
-        joint_target = np.tile(robot_joint_target, self.simulation_config.num_worlds)
-        self.joint_target = wp.from_numpy(joint_target, dtype=wp.float32)
+    @override
+    def _run_simulation_segment(self, segment_num: int):
+        self._update_input()
+        super()._run_simulation_segment(segment_num)
+
+    def _update_input(self):
+        """Check keyboard input and update wheel velocities."""
+        base_speed = 5.0
+        turn_speed = 2.5
+
+        left_v = 0.0
+        right_v = 0.0
+
+        # Simple WASD/Arrow style logic
+        if hasattr(self.viewer, "is_key_down"):
+            if self.viewer.is_key_down("i"):  # Forward
+                left_v += base_speed
+                right_v += base_speed
+            if self.viewer.is_key_down("k"):  # Backward
+                left_v -= base_speed
+                right_v -= base_speed
+
+            # Turn Left/Right
+            if self.viewer.is_key_down("j"):  # Left
+                left_v -= turn_speed
+                right_v += turn_speed
+            if self.viewer.is_key_down("l"):  # Right
+                left_v += turn_speed
+                right_v -= turn_speed
+
+        rear_v = (left_v + right_v) / 2.0
+
+        # Update targets
+        targets_cpu = np.zeros(9, dtype=np.float32)
+        targets_cpu[6] = left_v
+        targets_cpu[7] = right_v
+        targets_cpu[8] = rear_v
+
+        wp.copy(
+            self.joint_target, wp.array(targets_cpu, dtype=wp.float32, device=self.model.device)
+        )
 
     @override
     def init_state_fn(
@@ -90,7 +129,7 @@ class Simulator(AbstractSimulator):
             body=-1,
             mesh=surface_mesh,
             cfg=newton.ModelBuilder.ShapeConfig(
-                density=0.0, has_shape_collision=True, mu=1.0, contact_margin=0.1
+                density=0.0, has_shape_collision=True, mu=1.0, contact_margin=0.3
             ),
         )
 
@@ -119,4 +158,3 @@ def helhest_surface_drive_example(cfg: DictConfig):
 
 if __name__ == "__main__":
     helhest_surface_drive_example()
-

@@ -117,6 +117,7 @@ class AxionModel:
             self.joint_X_p = model.joint_X_p.reshape((model.num_worlds, -1))
             self.joint_axis = model.joint_axis.reshape((model.num_worlds, -1))
             self.joint_dof_dim = model.joint_dof_dim.reshape((model.num_worlds, -1))
+            self.joint_dof_mode = model.joint_dof_mode.reshape((model.num_worlds, -1))
             self.joint_enabled = model.joint_enabled.reshape((model.num_worlds, -1))
             self.joint_target_ke = model.joint_target_ke.reshape((model.num_worlds, -1))
             self.joint_target_kd = model.joint_target_kd.reshape((model.num_worlds, -1))

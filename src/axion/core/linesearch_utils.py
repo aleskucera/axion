@@ -5,6 +5,7 @@ from axion.constraints import batch_positional_joint_residual_kernel
 from axion.constraints import batch_unconstrained_dynamics_kernel
 from axion.constraints import batch_velocity_contact_residual_kernel
 from axion.constraints import batch_velocity_joint_residual_kernel
+from axion.constraints.control_constraint import batch_control_constraint_residual_kernel
 
 from .engine_config import EngineConfig
 from .engine_data import EngineData
@@ -389,6 +390,37 @@ def compute_linesearch_batch_h(
         )
     else:
         raise ValueError("Joint constraint level can be only 'pos' or 'vel'.")
+
+    # Evaluate residual for control constraints
+    wp.launch(
+        kernel=batch_control_constraint_residual_kernel,
+        dim=(B, dims.N_w, dims.joint_count),
+        inputs=[
+            data.linesearch.batch_body_q,
+            data.linesearch.batch_body_u,
+            data.linesearch.batch_body_lambda.ctrl,
+            model.body_com,
+            model.joint_type,
+            model.joint_parent,
+            model.joint_child,
+            model.joint_X_p,
+            model.joint_X_c,
+            model.joint_axis,
+            model.joint_qd_start,
+            model.joint_enabled,
+            model.joint_dof_mode,
+            data.control_constraint_offsets,
+            data.joint_target,
+            model.joint_target_ke,
+            model.joint_target_kd,
+            data.dt,
+        ],
+        outputs=[
+            data.linesearch.batch_h.d_spatial,
+            data.linesearch.batch_h.c.ctrl,
+        ],
+        device=device,
+    )
 
     # Evaluate residual for normal contact constraints
     if config.contact_constraint_level == "pos":

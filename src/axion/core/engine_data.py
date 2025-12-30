@@ -113,7 +113,9 @@ class EngineData:
     world_M: wp.array
     world_M_inv: wp.array
     joint_constraint_offsets: wp.array
+    control_constraint_offsets: wp.array
     contact_interaction: wp.array
+    joint_target: wp.array
 
     linesearch: Optional[LinesearchData] = None
     history: Optional[HistoryData] = None
@@ -186,6 +188,8 @@ class EngineData:
         dims: EngineDimensions,
         config: EngineConfig,
         joint_constraint_offsets: wp.array,
+        control_constraint_offsets: wp.array,
+        dof_count: int,
         device: wpc.Device,
         allocate_pca: bool = False,
         pca_grid_res: int = 100,
@@ -243,6 +247,8 @@ class EngineData:
         world_M_inv = _empty((dims.N_w, dims.N_b), SpatialInertia)
 
         contact_interaction = _empty((dims.N_w, dims.N_n), ContactInteraction)
+
+        joint_target = _zeros((dims.N_w, dof_count))
 
         # ---- Linesearch Arrays ----
         linesearch_data = None
@@ -323,22 +329,23 @@ class EngineData:
             body_q_prev=body_q_prev,
             body_u=body_u,
             body_u_prev=body_u_prev,
-            dbody_u=dbody_u,
             _body_lambda=body_lambda,
             _body_lambda_prev=body_lambda_prev,
-            s_n=s_n,
-            s_n_prev=s_n_prev,
-            _constraint_body_idx=constraint_body_idx,
-            _constraint_active_mask=constraint_active_mask,
+            _dbody_lambda=dbody_lambda,
+            dbody_u=dbody_u,
             JT_delta_lambda=JT_delta_lambda,
             system_diag=system_diag,
-            _dbody_lambda=dbody_lambda,
             b=b,
             world_M=world_M,
             world_M_inv=world_M_inv,
-            joint_constraint_offsets=joint_constraint_offsets,
+            _constraint_body_idx=constraint_body_idx,
+            _constraint_active_mask=constraint_active_mask,
+            s_n=s_n,
+            s_n_prev=s_n_prev,
             contact_interaction=contact_interaction,
+            joint_constraint_offsets=joint_constraint_offsets,
+            control_constraint_offsets=control_constraint_offsets,
+            joint_target=joint_target,
             linesearch=linesearch_data,
             history=history_data,
         )
-
