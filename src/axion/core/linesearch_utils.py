@@ -6,6 +6,13 @@ from axion.constraints import batch_unconstrained_dynamics_kernel
 from axion.constraints import batch_velocity_contact_residual_kernel
 from axion.constraints import batch_velocity_joint_residual_kernel
 from axion.constraints.control_constraint import batch_control_constraint_residual_kernel
+from axion.constraints import fused_batch_friction_residual_kernel
+from axion.constraints import fused_batch_positional_contact_residual_kernel
+from axion.constraints import fused_batch_positional_joint_residual_kernel
+from axion.constraints import fused_batch_unconstrained_dynamics_kernel
+from axion.constraints import fused_batch_velocity_contact_residual_kernel
+from axion.constraints import fused_batch_velocity_joint_residual_kernel
+from axion.constraints.control_constraint import fused_batch_control_constraint_residual_kernel
 
 from .engine_config import EngineConfig
 from .engine_data import EngineData
@@ -301,8 +308,8 @@ def compute_linesearch_batch_h(
 
     # Evaluate residual for unconstrained dynamics
     wp.launch(
-        kernel=batch_unconstrained_dynamics_kernel,
-        dim=(B, dims.N_w, dims.N_b),
+        kernel=fused_batch_unconstrained_dynamics_kernel,
+        dim=(dims.N_w, dims.N_b),
         inputs=[
             data.linesearch.batch_body_q,
             data.linesearch.batch_body_u,
@@ -312,6 +319,7 @@ def compute_linesearch_batch_h(
             model.body_inertia,
             data.dt,
             data.g_accel,
+            B,
         ],
         outputs=[data.linesearch.batch_h.d_spatial],
         device=device,
@@ -377,8 +385,8 @@ def compute_linesearch_batch_h(
 
     # Evaluate residual for control constraints
     wp.launch(
-        kernel=batch_control_constraint_residual_kernel,
-        dim=(B, dims.N_w, dims.joint_count),
+        kernel=fused_batch_control_constraint_residual_kernel,
+        dim=(dims.N_w, dims.joint_count),
         inputs=[
             data.linesearch.batch_body_q,
             data.linesearch.batch_body_u,
@@ -398,6 +406,7 @@ def compute_linesearch_batch_h(
             model.joint_target_ke,
             model.joint_target_kd,
             data.dt,
+            B,
         ],
         outputs=[
             data.linesearch.batch_h.d_spatial,
@@ -409,8 +418,8 @@ def compute_linesearch_batch_h(
     # Evaluate residual for normal contact constraints
     if config.contact_constraint_level == "pos":
         wp.launch(
-            kernel=batch_positional_contact_residual_kernel,
-            dim=(B, dims.N_w, dims.N_n),
+            kernel=fused_batch_positional_contact_residual_kernel,
+            dim=(dims.N_w, dims.N_n),
             inputs=[
                 data.linesearch.batch_body_q,
                 data.linesearch.batch_body_u,
@@ -423,6 +432,7 @@ def compute_linesearch_batch_h(
                 config.contact_fb_alpha,
                 config.contact_fb_beta,
                 config.contact_compliance,
+                B,
             ],
             outputs=[
                 data.linesearch.batch_h.d_spatial,
@@ -432,8 +442,8 @@ def compute_linesearch_batch_h(
         )
     elif config.contact_constraint_level == "vel":
         wp.launch(
-            kernel=batch_velocity_contact_residual_kernel,
-            dim=(B, dims.N_w, dims.N_n),
+            kernel=fused_batch_velocity_contact_residual_kernel,
+            dim=(dims.N_w, dims.N_n),
             inputs=[
                 data.linesearch.batch_body_u,
                 data.body_u_prev,
@@ -444,6 +454,7 @@ def compute_linesearch_batch_h(
                 config.contact_fb_alpha,
                 config.contact_fb_beta,
                 config.contact_compliance,
+                B,
             ],
             outputs=[
                 data.linesearch.batch_h.d_spatial,
@@ -456,8 +467,8 @@ def compute_linesearch_batch_h(
 
     # Evaluate residual for friction constraints
     wp.launch(
-        kernel=batch_friction_residual_kernel,
-        dim=(B, dims.N_w, dims.N_n),
+        kernel=fused_batch_friction_residual_kernel,
+        dim=(dims.N_w, dims.N_n),
         inputs=[
             data.linesearch.batch_body_u,
             data.linesearch.batch_body_lambda.f,
@@ -469,6 +480,7 @@ def compute_linesearch_batch_h(
             config.friction_fb_alpha,
             config.friction_fb_beta,
             config.friction_compliance,
+            B,
         ],
         outputs=[
             data.linesearch.batch_h.d_spatial,

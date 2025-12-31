@@ -222,3 +222,97 @@ def batch_velocity_contact_residual_kernel(
 
     # 2. Update `h_n`
     h_n[batch_idx, world_idx, contact_idx] = phi_n
+
+
+@wp.kernel
+def fused_batch_velocity_contact_residual_kernel(
+    # --- Body State Inputs ---
+    body_u: wp.array(dtype=wp.spatial_vector, ndim=3),
+    body_u_prev: wp.array(dtype=wp.spatial_vector, ndim=2),
+    body_lambda_n: wp.array(dtype=wp.float32, ndim=3),
+    interactions: wp.array(dtype=ContactInteraction, ndim=2),
+    # --- Simulation & Solver Parameters ---
+    dt: wp.float32,
+    stabilization_factor: wp.float32,
+    fb_alpha: wp.float32,
+    fb_beta: wp.float32,
+    compliance: wp.float32,
+    num_batches: int,
+    # --- Outputs (contributions to the linear system) ---
+    h_d: wp.array(dtype=wp.spatial_vector, ndim=3),
+    h_n: wp.array(dtype=wp.float32, ndim=3),
+):
+    world_idx, contact_idx = wp.tid()
+    
+    if contact_idx >= interactions.shape[1]:
+        return
+
+    interaction = interactions[world_idx, contact_idx]
+
+    # Early exit for inactive contacts.
+    if interaction.penetration_depth <= 0:
+        for b in range(num_batches):
+            h_n[b, world_idx, contact_idx] = 0.0
+        return
+
+    # Unpack body indices for clarity
+    body_1 = interaction.body_a_idx
+    body_2 = interaction.body_b_idx
+
+    # Unpack Jacobian basis vectors
+    J_n_1 = interaction.basis_a.normal
+    J_n_2 = interaction.basis_b.normal
+
+    # Pre-load Static Previous Velocities
+    u_1_prev = wp.spatial_vector()
+    if body_1 >= 0:
+        u_1_prev = body_u_prev[world_idx, body_1]
+
+    u_2_prev = wp.spatial_vector()
+    if body_2 >= 0:
+        u_2_prev = body_u_prev[world_idx, body_2]
+
+    for b in range(num_batches):
+        # The normal impulse for this specific contact
+        lambda_n = body_lambda_n[b, world_idx, contact_idx]
+
+        # Safely get body velocities (handles fixed bodies with index -1)
+        u_1 = wp.spatial_vector()
+        if body_1 >= 0:
+            u_1 = body_u[b, world_idx, body_1]
+
+        u_2 = wp.spatial_vector()
+        if body_2 >= 0:
+            u_2 = body_u[b, world_idx, body_2]
+
+        # Compute the velocity-level term for the complementarity function
+        target_v_n = compute_target_v_n(
+            interaction,
+            u_1,
+            u_2,
+            u_1_prev,
+            u_2_prev,
+            dt,
+            stabilization_factor,
+        )
+
+        # Evaluate the Fisher-Burmeister complementarity function φ(v_n, λ)
+        phi_n, dphi_dtarget_v_n, dphi_dlambda_n = scaled_fisher_burmeister_diff(
+            target_v_n,
+            lambda_n,
+            fb_alpha,
+            1e-5 * dt * fb_beta,
+        )
+
+        J_hat_n_1 = dphi_dtarget_v_n * J_n_1
+        J_hat_n_2 = dphi_dtarget_v_n * J_n_2
+
+        # --- Update global system components ---
+        # 1. Update `h_d`
+        if body_1 >= 0:
+            wp.atomic_add(h_d, b, world_idx, body_1, -dt * J_hat_n_1 * lambda_n)
+        if body_2 >= 0:
+            wp.atomic_add(h_d, b, world_idx, body_2, -dt * J_hat_n_2 * lambda_n)
+
+        # 2. Update `h_n`
+        h_n[b, world_idx, contact_idx] = phi_n

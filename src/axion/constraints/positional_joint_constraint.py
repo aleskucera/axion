@@ -385,3 +385,124 @@ def batch_positional_joint_residual_kernel(
                 compliance,
             )
 
+
+@wp.kernel
+def fused_batch_positional_joint_residual_kernel(
+    # --- State (Batched) ---
+    body_q: wp.array(dtype=wp.transform, ndim=3),  # [Batch, World, Body]
+    body_lambda_j: wp.array(dtype=wp.float32, ndim=3),  # [Batch, World, Constraint]
+    # --- Model Data (Shared) ---
+    body_com: wp.array(dtype=wp.vec3, ndim=2),
+    # --- Joint Definition (Shared) ---
+    joint_type: wp.array(dtype=wp.int32, ndim=2),
+    joint_parent: wp.array(dtype=wp.int32, ndim=2),
+    joint_child: wp.array(dtype=wp.int32, ndim=2),
+    joint_X_p: wp.array(dtype=wp.transform, ndim=2),
+    joint_X_c: wp.array(dtype=wp.transform, ndim=2),
+    joint_axis: wp.array(dtype=wp.vec3, ndim=2),
+    joint_qd_start: wp.array(dtype=wp.int32, ndim=2),
+    joint_enabled: wp.array(dtype=wp.int32, ndim=2),
+    constraint_offsets: wp.array(dtype=wp.int32, ndim=2),
+    # --- Params ---
+    dt: wp.float32,
+    compliance: wp.float32,
+    num_batches: int,
+    # --- Outputs (Batched) ---
+    h_d: wp.array(dtype=wp.spatial_vector, ndim=3),  # [Batch, World, Body]
+    h_j: wp.array(dtype=wp.float32, ndim=3),  # [Batch, World, Constraint]
+):
+    # Grid: (num_worlds, num_joints)
+    world_idx, joint_idx = wp.tid()
+
+    if joint_idx >= joint_type.shape[1]:
+        return
+
+    if joint_enabled[world_idx, joint_idx] == 0:
+        return
+
+    j_type = joint_type[world_idx, joint_idx]
+    
+    # 1. Fetch Indices
+    p_idx = joint_parent[world_idx, joint_idx]
+    c_idx = joint_child[world_idx, joint_idx]
+    if c_idx < 0:
+        return
+
+    start_offset = constraint_offsets[world_idx, joint_idx]
+    
+    # Static Data Loading
+    joint_X_c_val = joint_X_c[world_idx, joint_idx]
+    com_c = body_com[world_idx, c_idx]
+    
+    joint_X_p_val = joint_X_p[world_idx, joint_idx]
+    com_p = wp.vec3(0.0)
+    if p_idx >= 0:
+        com_p = body_com[world_idx, p_idx]
+        
+    axis_idx = joint_qd_start[world_idx, joint_idx]
+    axis_local = joint_axis[world_idx, axis_idx]
+
+    for b in range(num_batches):
+        # Child
+        X_w_c, r_c, pos_c = compute_joint_transforms(
+            body_q[b, world_idx, c_idx],
+            com_c,
+            joint_X_c_val,
+        )
+
+        # Parent
+        X_body_p = wp.transform_identity()
+        if p_idx >= 0:
+            X_body_p = body_q[b, world_idx, p_idx]
+
+        X_w_p, r_p, pos_p = compute_joint_transforms(X_body_p, com_p, joint_X_p_val)
+
+        # 3. Apply Constraints
+
+        # === LINEAR (XYZ) ===
+        if j_type == 1 or j_type == 2 or j_type == 3:
+            for i in range(wp.static(3)):
+                J_p, J_c, err = get_linear_component(r_p, r_c, pos_p, pos_c, i)
+                
+                # INLINE submit
+                c_idx_local = start_offset + i
+                lam = body_lambda_j[b, world_idx, c_idx_local]
+                if p_idx >= 0:
+                    wp.atomic_add(h_d, b, world_idx, p_idx, -J_p * lam * dt)
+                wp.atomic_add(h_d, b, world_idx, c_idx, -J_c * lam * dt)
+                h_j[b, world_idx, c_idx_local] = (err + compliance * lam) / dt
+
+        # === REVOLUTE (Angular) ===
+        if j_type == 1:
+            # Ortho 1
+            J_p, J_c, err = get_revolute_angular_component(X_w_p, X_w_c, axis_local, 0)
+            
+            c_idx_local = start_offset + 3
+            lam = body_lambda_j[b, world_idx, c_idx_local]
+            if p_idx >= 0:
+                wp.atomic_add(h_d, b, world_idx, p_idx, -J_p * lam * dt)
+            wp.atomic_add(h_d, b, world_idx, c_idx, -J_c * lam * dt)
+            h_j[b, world_idx, c_idx_local] = (err + compliance * lam) / dt
+            
+            # Ortho 2
+            J_p, J_c, err = get_revolute_angular_component(X_w_p, X_w_c, axis_local, 1)
+
+            c_idx_local = start_offset + 4
+            lam = body_lambda_j[b, world_idx, c_idx_local]
+            if p_idx >= 0:
+                wp.atomic_add(h_d, b, world_idx, p_idx, -J_p * lam * dt)
+            wp.atomic_add(h_d, b, world_idx, c_idx, -J_c * lam * dt)
+            h_j[b, world_idx, c_idx_local] = (err + compliance * lam) / dt
+
+        # === FIXED (Angular) ===
+        if j_type == 3:
+            for i in range(wp.static(3)):
+                J_p, J_c, err = get_angular_component(X_w_p, X_w_c, i)
+                
+                c_idx_local = start_offset + 3 + i
+                lam = body_lambda_j[b, world_idx, c_idx_local]
+                if p_idx >= 0:
+                    wp.atomic_add(h_d, b, world_idx, p_idx, -J_p * lam * dt)
+                wp.atomic_add(h_d, b, world_idx, c_idx, -J_c * lam * dt)
+                h_j[b, world_idx, c_idx_local] = (err + compliance * lam) / dt
+
