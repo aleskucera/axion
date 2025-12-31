@@ -138,22 +138,6 @@ def copy_batch_sample_body_lambda_kernel(
 
 
 @wp.kernel
-def compute_batch_h_norm_squared_kernel(
-    linesearch_batch_h: wp.array(dtype=wp.float32, ndim=3),
-    # Outputs
-    batch_h_norm_sq: wp.array(dtype=wp.float32, ndim=2),
-):
-    batch_idx, world_idx = wp.tid()
-
-    norm_sq = wp.float32(0.0)
-    for i in range(linesearch_batch_h.shape[2]):
-        val = linesearch_batch_h[batch_idx, world_idx, i]
-        norm_sq += val * val
-
-    batch_h_norm_sq[batch_idx, world_idx] = norm_sq
-
-
-@wp.kernel
 def find_minimal_residual_index_kernel(
     batch_h_norm_sq: wp.array(dtype=wp.float32, ndim=2),
     # Outputs
@@ -502,13 +486,9 @@ def select_minimal_residual_variables(
     device = data.device
     B = data.linesearch.batch_h.full.shape[0]
 
-    # Compute norm squared for each batch using Warp kernels
-    wp.launch(
-        kernel=compute_batch_h_norm_squared_kernel,
-        dim=(B, dims.N_w),
-        inputs=[data.linesearch.batch_h.full],
-        outputs=[data.linesearch.batch_h_norm_sq],
-        device=device,
+    # Compute norm squared for each batch using TiledSqNorm
+    data.linesearch.tiled_sq_norm.compute(
+        data.linesearch.batch_h.full, data.linesearch.batch_h_norm_sq
     )
 
     # Find the index with minimal residual norm (per world)

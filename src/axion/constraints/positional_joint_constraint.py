@@ -1,10 +1,9 @@
 import warp as wp
-from .joint_kinematics import (
-    compute_joint_transforms,
-    get_linear_component,
-    get_angular_component,
-    get_revolute_angular_component,
-)
+
+from .joint_kinematics import compute_joint_transforms
+from .joint_kinematics import get_angular_component
+from .joint_kinematics import get_linear_component
+from .joint_kinematics import get_revolute_angular_component
 
 
 @wp.func
@@ -79,17 +78,17 @@ def positional_joint_constraint_kernel(
     world_idx, joint_idx = wp.tid()
 
     j_type = joint_type[world_idx, joint_idx]
-    
+
     comp = joint_compliance_override[world_idx, joint_idx]
     if comp < 0.0:
         comp = global_compliance
-    
+
     count = 0
-    if j_type == 1: # REVOLUTE
+    if j_type == 1:  # REVOLUTE
         count = 5
-    elif j_type == 2: # BALL
+    elif j_type == 2:  # BALL
         count = 3
-    elif j_type == 3: # FIXED
+    elif j_type == 3:  # FIXED
         count = 6
 
     start_offset = constraint_offsets[world_idx, joint_idx]
@@ -113,24 +112,17 @@ def positional_joint_constraint_kernel(
     # 2. Compute Kinematics
     # Child
     X_w_c, r_c, pos_c = compute_joint_transforms(
-        body_q[world_idx, c_idx],
-        body_com[world_idx, c_idx],
-        joint_X_c[world_idx, joint_idx]
+        body_q[world_idx, c_idx], body_com[world_idx, c_idx], joint_X_c[world_idx, joint_idx]
     )
-    
+
     # Parent
     X_body_p = wp.transform_identity()
     com_p = wp.vec3(0.0)
     if p_idx >= 0:
         X_body_p = body_q[world_idx, p_idx]
         com_p = body_com[world_idx, p_idx]
-        
-    X_w_p, r_p, pos_p = compute_joint_transforms(
-        X_body_p,
-        com_p,
-        joint_X_p[world_idx, joint_idx]
-    )
 
+    X_w_p, r_p, pos_p = compute_joint_transforms(X_body_p, com_p, joint_X_p[world_idx, joint_idx])
 
     # 3. Apply Constraints based on Joint Type
 
@@ -140,10 +132,20 @@ def positional_joint_constraint_kernel(
         for i in range(wp.static(3)):
             J_p, J_c, err = get_linear_component(r_p, r_c, pos_p, pos_c, i)
             submit_position_component(
-                J_p, J_c, err,
-                world_idx, start_offset + i, p_idx, c_idx,
-                h_d, h_j, J_hat_j_values, C_j_values, body_lambda_j,
-                dt, comp
+                J_p,
+                J_c,
+                err,
+                world_idx,
+                start_offset + i,
+                p_idx,
+                c_idx,
+                h_d,
+                h_j,
+                J_hat_j_values,
+                C_j_values,
+                body_lambda_j,
+                dt,
+                comp,
             )
 
     # === REVOLUTE ANGULAR (1) ===
@@ -154,29 +156,59 @@ def positional_joint_constraint_kernel(
         # Ortho 1
         J_p, J_c, err = get_revolute_angular_component(X_w_p, X_w_c, axis_local, 0)
         submit_position_component(
-            J_p, J_c, err,
-            world_idx, start_offset + 3, p_idx, c_idx,
-            h_d, h_j, J_hat_j_values, C_j_values, body_lambda_j,
-            dt, comp
+            J_p,
+            J_c,
+            err,
+            world_idx,
+            start_offset + 3,
+            p_idx,
+            c_idx,
+            h_d,
+            h_j,
+            J_hat_j_values,
+            C_j_values,
+            body_lambda_j,
+            dt,
+            comp,
         )
         # Ortho 2
         J_p, J_c, err = get_revolute_angular_component(X_w_p, X_w_c, axis_local, 1)
         submit_position_component(
-            J_p, J_c, err,
-            world_idx, start_offset + 4, p_idx, c_idx,
-            h_d, h_j, J_hat_j_values, C_j_values, body_lambda_j,
-            dt, comp
+            J_p,
+            J_c,
+            err,
+            world_idx,
+            start_offset + 4,
+            p_idx,
+            c_idx,
+            h_d,
+            h_j,
+            J_hat_j_values,
+            C_j_values,
+            body_lambda_j,
+            dt,
+            comp,
         )
-        
+
     # === FIXED ANGULAR (3) ===
     if j_type == 3:
         for i in range(wp.static(3)):
             J_p, J_c, err = get_angular_component(X_w_p, X_w_c, i)
             submit_position_component(
-                J_p, J_c, err,
-                world_idx, start_offset + 3 + i, p_idx, c_idx,
-                h_d, h_j, J_hat_j_values, C_j_values, body_lambda_j,
-                dt, comp
+                J_p,
+                J_c,
+                err,
+                world_idx,
+                start_offset + 3 + i,
+                p_idx,
+                c_idx,
+                h_d,
+                h_j,
+                J_hat_j_values,
+                C_j_values,
+                body_lambda_j,
+                dt,
+                comp,
             )
 
 
@@ -259,22 +291,17 @@ def batch_positional_joint_residual_kernel(
     X_w_c, r_c, pos_c = compute_joint_transforms(
         body_q[batch_idx, world_idx, c_idx],
         body_com[world_idx, c_idx],
-        joint_X_c[world_idx, joint_idx]
+        joint_X_c[world_idx, joint_idx],
     )
-    
+
     # Parent
     X_body_p = wp.transform_identity()
     com_p = wp.vec3(0.0)
     if p_idx >= 0:
         X_body_p = body_q[batch_idx, world_idx, p_idx]
         com_p = body_com[world_idx, p_idx]
-        
-    X_w_p, r_p, pos_p = compute_joint_transforms(
-        X_body_p,
-        com_p,
-        joint_X_p[world_idx, joint_idx]
-    )
 
+    X_w_p, r_p, pos_p = compute_joint_transforms(X_body_p, com_p, joint_X_p[world_idx, joint_idx])
 
     # 3. Apply Constraints
 
@@ -283,10 +310,19 @@ def batch_positional_joint_residual_kernel(
         for i in range(wp.static(3)):
             J_p, J_c, err = get_linear_component(r_p, r_c, pos_p, pos_c, i)
             submit_batch_position_component(
-                J_p, J_c, err,
-                batch_idx, world_idx, start_offset + i, p_idx, c_idx,
-                h_d, h_j, body_lambda_j,
-                dt, compliance
+                J_p,
+                J_c,
+                err,
+                batch_idx,
+                world_idx,
+                start_offset + i,
+                p_idx,
+                c_idx,
+                h_d,
+                h_j,
+                body_lambda_j,
+                dt,
+                compliance,
             )
 
     # === REVOLUTE (Angular) ===
@@ -297,27 +333,55 @@ def batch_positional_joint_residual_kernel(
         # Ortho 1
         J_p, J_c, err = get_revolute_angular_component(X_w_p, X_w_c, axis_local, 0)
         submit_batch_position_component(
-            J_p, J_c, err,
-            batch_idx, world_idx, start_offset + 3, p_idx, c_idx,
-            h_d, h_j, body_lambda_j,
-            dt, compliance
+            J_p,
+            J_c,
+            err,
+            batch_idx,
+            world_idx,
+            start_offset + 3,
+            p_idx,
+            c_idx,
+            h_d,
+            h_j,
+            body_lambda_j,
+            dt,
+            compliance,
         )
         # Ortho 2
         J_p, J_c, err = get_revolute_angular_component(X_w_p, X_w_c, axis_local, 1)
         submit_batch_position_component(
-            J_p, J_c, err,
-            batch_idx, world_idx, start_offset + 4, p_idx, c_idx,
-            h_d, h_j, body_lambda_j,
-            dt, compliance
+            J_p,
+            J_c,
+            err,
+            batch_idx,
+            world_idx,
+            start_offset + 4,
+            p_idx,
+            c_idx,
+            h_d,
+            h_j,
+            body_lambda_j,
+            dt,
+            compliance,
         )
-        
+
     # === FIXED (Angular) ===
     if j_type == 3:
         for i in range(wp.static(3)):
             J_p, J_c, err = get_angular_component(X_w_p, X_w_c, i)
             submit_batch_position_component(
-                J_p, J_c, err,
-                batch_idx, world_idx, start_offset + 3 + i, p_idx, c_idx,
-                h_d, h_j, body_lambda_j,
-                dt, compliance
+                J_p,
+                J_c,
+                err,
+                batch_idx,
+                world_idx,
+                start_offset + 3 + i,
+                p_idx,
+                c_idx,
+                h_d,
+                h_j,
+                body_lambda_j,
+                dt,
+                compliance,
             )
+

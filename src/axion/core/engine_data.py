@@ -9,6 +9,7 @@ import warp as wp
 import warp.context as wpc
 from axion.types import ContactInteraction
 from axion.types import SpatialInertia
+from axion.tiled.tiled_utils import TiledSqNorm
 from newton import Model
 
 from .data_views import ConstraintView
@@ -27,6 +28,7 @@ class LinesearchData:
     _batch_h: wp.array
     batch_h_norm_sq: wp.array
     minimal_index: wp.array
+    tiled_sq_norm: Optional[TiledSqNorm] = None
 
     @cached_property
     def batch_h(self) -> SystemView:
@@ -272,6 +274,12 @@ class EngineData:
             linesearch_batch_h_norm_sq = _zeros((step_count, dims.N_w))
             linesearch_minimal_index = _zeros((dims.N_w,), wp.int32)
 
+            tiled_sq_norm = TiledSqNorm(
+                shape=linesearch_batch_h.shape,
+                dtype=wp.float32,
+                device=device,
+            )
+
             linesearch_data = LinesearchData(
                 dims=dims,
                 steps=linesearch_steps,
@@ -281,6 +289,7 @@ class EngineData:
                 _batch_h=linesearch_batch_h,
                 batch_h_norm_sq=linesearch_batch_h_norm_sq,
                 minimal_index=linesearch_minimal_index,
+                tiled_sq_norm=tiled_sq_norm,
             )
 
         # ---- PCA Storage Buffers ----

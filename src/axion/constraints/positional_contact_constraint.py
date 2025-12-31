@@ -58,7 +58,7 @@ def positional_contact_constraint_kernel(
 
     # Early exit for inactive contacts.
     if not interaction.is_active:
-        # The constraint residual is simply the impulse (h = λ),
+        # The constraint residual is simply the impulse (h = λ),tems (indices k=0
         # which drives it to zero if unconstrained.
         constraint_active_mask[world_idx, contact_idx] = 0.0
         body_lambda_n[world_idx, contact_idx] = 0.0
