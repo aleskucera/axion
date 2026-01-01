@@ -439,8 +439,11 @@ def fused_batch_positional_joint_residual_kernel(
     if p_idx >= 0:
         com_p = body_com[world_idx, p_idx]
         
-    axis_idx = joint_qd_start[world_idx, joint_idx]
-    axis_local = joint_axis[world_idx, axis_idx]
+    axis_idx = 0
+    axis_local = wp.vec3(0.0)
+    if j_type == 1:
+        axis_idx = joint_qd_start[world_idx, joint_idx]
+        axis_local = joint_axis[world_idx, axis_idx]
 
     for b in range(num_batches):
         # Child

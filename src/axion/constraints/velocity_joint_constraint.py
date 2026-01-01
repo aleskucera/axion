@@ -486,8 +486,11 @@ def fused_batch_velocity_joint_residual_kernel(
 
     X_w_p, r_p, pos_p = compute_joint_transforms(X_body_p, com_p, joint_X_p[world_idx, joint_idx])
 
-    axis_idx = joint_qd_start[world_idx, joint_idx]
-    axis_local = joint_axis[world_idx, axis_idx]
+    axis_idx = 0
+    axis_local = wp.vec3(0.0)
+    if j_type == 1:
+        axis_idx = joint_qd_start[world_idx, joint_idx]
+        axis_local = joint_axis[world_idx, axis_idx]
 
     for b in range(num_batches):
         # === LINEAR (XYZ) ===

@@ -5,13 +5,13 @@ from axion.constraints import batch_positional_joint_residual_kernel
 from axion.constraints import batch_unconstrained_dynamics_kernel
 from axion.constraints import batch_velocity_contact_residual_kernel
 from axion.constraints import batch_velocity_joint_residual_kernel
-from axion.constraints.control_constraint import batch_control_constraint_residual_kernel
 from axion.constraints import fused_batch_friction_residual_kernel
 from axion.constraints import fused_batch_positional_contact_residual_kernel
 from axion.constraints import fused_batch_positional_joint_residual_kernel
 from axion.constraints import fused_batch_unconstrained_dynamics_kernel
 from axion.constraints import fused_batch_velocity_contact_residual_kernel
 from axion.constraints import fused_batch_velocity_joint_residual_kernel
+from axion.constraints.control_constraint import batch_control_constraint_residual_kernel
 from axion.constraints.control_constraint import fused_batch_control_constraint_residual_kernel
 
 from .engine_config import EngineConfig
@@ -328,8 +328,8 @@ def compute_linesearch_batch_h(
     # Evaluate residual for joint constraints
     if config.joint_constraint_level == "pos":
         wp.launch(
-            kernel=batch_positional_joint_residual_kernel,
-            dim=(B, dims.N_w, dims.joint_count),
+            kernel=fused_batch_positional_joint_residual_kernel,
+            dim=(dims.N_w, dims.joint_count),
             inputs=[
                 data.linesearch.batch_body_q,
                 data.linesearch.batch_body_lambda.j,
@@ -345,6 +345,7 @@ def compute_linesearch_batch_h(
                 data.joint_constraint_offsets,
                 data.dt,
                 config.joint_compliance,
+                B,
             ],
             outputs=[
                 data.linesearch.batch_h.d_spatial,
@@ -354,8 +355,8 @@ def compute_linesearch_batch_h(
         )
     elif config.joint_constraint_level == "vel":
         wp.launch(
-            kernel=batch_velocity_joint_residual_kernel,
-            dim=(B, dims.N_w, dims.joint_count),
+            kernel=fused_batch_velocity_joint_residual_kernel,
+            dim=(dims.N_w, dims.joint_count),
             inputs=[
                 data.body_q,
                 model.body_com,
@@ -373,6 +374,7 @@ def compute_linesearch_batch_h(
                 data.dt,
                 config.joint_stabilization_factor,
                 config.joint_compliance,
+                B,
             ],
             outputs=[
                 data.linesearch.batch_h.d_spatial,
