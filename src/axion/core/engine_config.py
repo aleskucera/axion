@@ -24,7 +24,8 @@ class AxionEngineConfig(EngineConfig):
     contact_stabilization_factor: float = 0.02
 
     joint_compliance: float = 1e-5
-    contact_compliance: float = 1e-5
+    equality_compliance: float = 1e-8
+    contact_compliance: float = 1e-6
     friction_compliance: float = 1e-6
 
     regularization: float = 1e-6
@@ -40,6 +41,9 @@ class AxionEngineConfig(EngineConfig):
     linesearch_step_max: float = 10.0
 
     max_contacts_per_world: int = 20
+
+    joint_constraint_level: str = "vel"  # pos / vel
+    contact_constraint_level: str = "vel"  # pos / vel
 
     def __post_init__(self):
         """Validate all configuration parameters."""
@@ -74,6 +78,7 @@ class AxionEngineConfig(EngineConfig):
             self.contact_stabilization_factor, "contact_stabilization_factor"
         )
         _validate_non_negative_float(self.joint_compliance, "joint_compliance")
+        _validate_non_negative_float(self.equality_compliance, "equality_compliance")
         _validate_non_negative_float(self.contact_compliance, "contact_compliance")
         _validate_non_negative_float(self.friction_compliance, "friction_compliance")
 
@@ -124,7 +129,6 @@ class MuJoCoEngineConfig(EngineConfig):
     save_to_mjcf: str | None = None
     ls_parallel: bool = False
     use_mujoco_contacts: bool = True
-    joint_solimp_limit: tuple[float, float, float, float, float] | None = None
 
 
 @dataclass(frozen=True)

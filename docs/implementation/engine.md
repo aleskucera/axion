@@ -102,7 +102,7 @@ The engine then enters the main Newton iteration loop for `EngineConfig.newton_i
 ```python
 def compute_linear_system(
     model: Model,
-    data: EngineArrays,
+    data: EngineData,
     config: EngineConfig,
     dims: EngineDimensions,
     dt: float
@@ -130,7 +130,7 @@ The [`cr_solver`](https://github.com/aleskucera/axion/blob/main/src/axion/optim/
 
 ```python
 def compute_delta_body_qd_from_delta_lambda(
-    data: EngineArrays,
+    data: EngineData,
     config: EngineConfig,
     dims: EngineDimensions,
 )
@@ -141,7 +141,7 @@ Given the change in constraint impulses `Δλ`, the corresponding change in body
 ```python
 def update_variables(
     model: Model,
-    data: EngineArrays,
+    data: EngineData,
     config: EngineConfig,
     dims: EngineDimensions,
     dt: float,

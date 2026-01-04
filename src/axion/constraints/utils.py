@@ -1,44 +1,87 @@
+import numpy as np
 import warp as wp
 from axion.types import ContactInteraction
-from axion.types import JointConstraintData
 
 
-@wp.func
-def scaled_fisher_burmeister(
-    a: wp.float32,
-    b: wp.float32,
-    alpha: wp.float32 = 1.0,
-    beta: wp.float32 = 1.0,
-):
-    scaled_a = alpha * a
-    scaled_b = beta * b
-    norm = wp.sqrt(scaled_a**2.0 + scaled_b**2.0)
+def compute_joint_constraint_offsets_batched(joint_types: wp.array):
+    """
+    joint_types: numpy array of shape (num_worlds, num_joints)
+    """
 
-    value = scaled_a + scaled_b - norm
+    constraint_count_map = np.array(
+        [
+            5,  # PRISMATIC = 0
+            5,  # REVOLUTE  = 1
+            3,  # BALL      = 2
+            6,  # FIXED     = 3
+            0,  # FREE      = 4
+            1,  # DISTANCE  = 5
+            6,  # D6        = 6
+            0,  # CABLE     = 7
+        ],
+        dtype=np.int32,
+    )
 
-    # Avoid division by zero
-    if norm < 1e-5:
-        return value, 0.0, 1.0
+    joint_types_np = joint_types.numpy()  # (num_worlds, num_joints)
+    # Map joint types → constraint counts
+    constraint_counts = constraint_count_map[joint_types_np]  # (num_worlds, num_joints)
 
-    dvalue_da = alpha * (1.0 - scaled_a / norm)
-    dvalue_db = beta * (1.0 - scaled_b / norm)
+    # Total constraints for each batch
+    total_constraints = constraint_counts.sum(axis=1)  # (num_worlds,)
 
-    return value, dvalue_da, dvalue_db
+    # Compute offsets per batch
+    # For each batch: offsets[i, :] = cumsum(counts[i, :]) - counts[i, 0]
+    constraint_offsets = np.zeros_like(constraint_counts)  # (num_worlds, num_joints)
+    constraint_offsets[:, 1:] = np.cumsum(constraint_counts[:, :-1], axis=1)
+
+    # Convert to wp.array (must flatten or provide device explicitly)
+    constraint_offsets_wp = wp.array(
+        constraint_offsets,
+        dtype=wp.int32,
+        device=joint_types.device,
+    )
+
+    return constraint_offsets_wp, total_constraints[0]
 
 
 @wp.kernel
 def fill_joint_constraint_body_idx_kernel(
-    joint_constraints: wp.array(dtype=JointConstraintData, ndim=2),
+    # --- Joint Definition ---
+    joint_type: wp.array(dtype=wp.int32, ndim=2),
+    joint_parent: wp.array(dtype=wp.int32, ndim=2),
+    joint_child: wp.array(dtype=wp.int32, ndim=2),
+    constraint_offsets: wp.array(dtype=wp.int32, ndim=2),
+    # --- Output ---
     joint_constraint_body_idx: wp.array(dtype=wp.int32, ndim=3),
 ):
-    world_idx, constraint_idx = wp.tid()
-
-    if world_idx >= joint_constraints.shape[0] or constraint_idx >= joint_constraints.shape[1]:
+    world_idx, joint_idx = wp.tid()
+    
+    # Check bounds (though dims should match)
+    if world_idx >= joint_type.shape[0] or joint_idx >= joint_type.shape[1]:
         return
 
-    c = joint_constraints[world_idx, constraint_idx]
-    joint_constraint_body_idx[world_idx, constraint_idx, 0] = c.parent_idx
-    joint_constraint_body_idx[world_idx, constraint_idx, 1] = c.child_idx
+    j_type = joint_type[world_idx, joint_idx]
+    p_idx = joint_parent[world_idx, joint_idx]
+    c_idx = joint_child[world_idx, joint_idx]
+    start_offset = constraint_offsets[world_idx, joint_idx]
+
+    # Determine constraint count
+    count = 0
+    if j_type == 1: # REVOLUTE
+        count = 5
+    elif j_type == 2: # BALL
+        count = 3
+    elif j_type == 3: # FIXED
+        count = 6
+    elif j_type == 7: # CABLE
+        count = 0
+        
+    for k in range(count):
+        offset = start_offset + k
+        # Safety check for output bounds
+        if offset < joint_constraint_body_idx.shape[1]:
+            joint_constraint_body_idx[world_idx, offset, 0] = p_idx
+            joint_constraint_body_idx[world_idx, offset, 1] = c_idx
 
 
 @wp.kernel
@@ -74,20 +117,44 @@ def fill_friction_constraint_body_idx_kernel(
 
 @wp.kernel
 def fill_joint_constraint_active_mask_kernel(
-    joint_constraints: wp.array(dtype=JointConstraintData, ndim=2),
+    # --- Joint Definition ---
+    joint_type: wp.array(dtype=wp.int32, ndim=2),
+    joint_enabled: wp.array(dtype=wp.int32, ndim=2),
+    joint_child: wp.array(dtype=wp.int32, ndim=2),
+    constraint_offsets: wp.array(dtype=wp.int32, ndim=2),
+    # --- Output ---
     joint_constraint_active_mask: wp.array(dtype=wp.float32, ndim=2),
 ):
-    world_idx, constraint_idx = wp.tid()
+    world_idx, joint_idx = wp.tid()
 
-    if world_idx >= joint_constraints.shape[0] or constraint_idx >= joint_constraints.shape[1]:
+    if world_idx >= joint_type.shape[0] or joint_idx >= joint_type.shape[1]:
         return
 
-    c = joint_constraints[world_idx, constraint_idx]
+    j_type = joint_type[world_idx, joint_idx]
+    is_enabled = (joint_enabled[world_idx, joint_idx] != 0)
+    
+    # Check if valid child
+    if joint_child[world_idx, joint_idx] < 0:
+        is_enabled = False
 
-    if c.is_active:
-        joint_constraint_active_mask[world_idx, constraint_idx] = 1.0
-    else:
-        joint_constraint_active_mask[world_idx, constraint_idx] = 0.0
+    start_offset = constraint_offsets[world_idx, joint_idx]
+
+    count = 0
+    if j_type == 1: # REVOLUTE
+        count = 5
+    elif j_type == 2: # BALL
+        count = 3
+    elif j_type == 3: # FIXED
+        count = 6
+    elif j_type == 7: # CABLE
+        count = 0
+        
+    val = 1.0 if is_enabled else 0.0
+
+    for k in range(count):
+        offset = start_offset + k
+        if offset < joint_constraint_active_mask.shape[1]:
+            joint_constraint_active_mask[world_idx, offset] = val
 
 
 @wp.kernel

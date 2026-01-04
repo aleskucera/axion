@@ -22,6 +22,7 @@ from .engine_config import MuJoCoEngineConfig
 from .engine_config import XPBDEngineConfig
 from .engine_logger import EngineLogger
 from .engine_logger import LoggingConfig
+from .model_builder import AxionModelBuilder
 
 
 @dataclass
@@ -41,6 +42,7 @@ class RenderingConfig:
     target_fps: int | None = 30
     usd_file: str | None = "sim.usd"
     usd_scaling: float | None = 100.0
+    start_paused: bool = True
 
 
 @dataclass
@@ -119,7 +121,7 @@ class AbstractSimulator(ABC):
         self.effective_duration: float = 0.0
         self._resolve_timing_parameters()
 
-        self.builder = self._create_builder_with_custom_attributes()
+        self.builder = AxionModelBuilder()
         self.model = self.build_model()
 
         self.current_state = self.model.state()
@@ -139,7 +141,6 @@ class AbstractSimulator(ABC):
             self.solver = SolverXPBD(self.model, **vars(self.engine_config))
         else:
             raise ValueError(f"Unsupported engine configuration type: {type(self.engine_config)}")
-
         newton.eval_fk(self.model, self.model.joint_q, self.model.joint_qd, self.current_state)
 
         if self.rendering_config.vis_type == "usd":
@@ -171,6 +172,10 @@ class AbstractSimulator(ABC):
             desc="Simulating",
         )
 
+        # Set initial paused state if requested (only for GL viewer)
+        if self.rendering_config.start_paused and isinstance(self.viewer, newton.viewer.ViewerGL):
+            self.viewer._paused = True
+
         try:
             segment_num = 0
             while self.viewer.is_running():
@@ -186,6 +191,25 @@ class AbstractSimulator(ABC):
             if self.rendering_config.vis_type == "usd":
                 self.viewer.close()
                 print(f"Rendering complete. Output saved to {self.rendering_config.usd_file}")
+
+    def run_visualization(self):
+        """Runs the visualization loop without advancing the physics simulation."""
+        if not isinstance(self.viewer, newton.viewer.ViewerGL):
+            print(
+                "Error: run_visualization() only supports ViewerGL. Please set rendering.vis_type='gl'."
+            )
+            return
+
+        print("Starting visualization mode (Physics paused)...")
+
+        # Ensure we have initial contacts for visualization
+        self.contacts = self.model.collide(self.current_state)
+
+        while self.viewer.is_running():
+            self.viewer.begin_frame(0.0)
+            self.viewer.log_state(self.current_state)
+            self.viewer.log_contacts(self.contacts, self.current_state)
+            self.viewer.end_frame()
 
     def _render(self, segment_num: int):
         """Renders the current state to the appropriate viewers."""
@@ -319,70 +343,6 @@ class AbstractSimulator(ABC):
         )
         if self.rendering_config.vis_type == "gl":
             self.num_segments = None
-
-    def _create_builder_with_custom_attributes(self) -> newton.ModelBuilder:
-        """
-        Adds the custom attributes to the ModelBuilder and adds the instance of the builder
-        to self attributes of AbstractSimulator class.
-        """
-        builder = newton.ModelBuilder()
-
-        # --- Add custom attributes to the model class ---
-
-        # integral constant (PID control)
-        builder.add_custom_attribute(
-            newton.ModelBuilder.CustomAttribute(
-                name="joint_target_ki",
-                frequency=newton.ModelAttributeFrequency.JOINT_DOF,
-                dtype=wp.float32,
-                default=0.0,  # Explicit default value
-                assignment=newton.ModelAttributeAssignment.MODEL,
-            )
-        )
-
-        # previous instance of the control error (PID control)
-        builder.add_custom_attribute(
-            newton.ModelBuilder.CustomAttribute(
-                name="joint_err_prev",
-                frequency=newton.ModelAttributeFrequency.JOINT_DOF,
-                dtype=wp.float32,
-                default=0.0,
-                assignment=newton.ModelAttributeAssignment.CONTROL,
-            )
-        )
-
-        # cummulative error of the integral part (PID control)
-        builder.add_custom_attribute(
-            newton.ModelBuilder.CustomAttribute(
-                name="joint_err_i",
-                frequency=newton.ModelAttributeFrequency.JOINT_DOF,
-                dtype=wp.float32,
-                default=0.0,
-                assignment=newton.ModelAttributeAssignment.CONTROL,
-            )
-        )
-
-        builder.add_custom_attribute(
-            newton.ModelBuilder.CustomAttribute(
-                name="joint_dof_mode",
-                frequency=newton.ModelAttributeFrequency.JOINT_DOF,
-                dtype=wp.int32,
-                default=JointMode.NONE,
-                assignment=newton.ModelAttributeAssignment.MODEL,
-            )
-        )
-
-        builder.add_custom_attribute(
-            newton.ModelBuilder.CustomAttribute(
-                name="joint_target",
-                frequency=newton.ModelAttributeFrequency.JOINT_DOF,
-                dtype=wp.float32,
-                default=0,
-                assignment=newton.ModelAttributeAssignment.CONTROL,
-            )
-        )
-
-        return builder
 
     @property
     def use_cuda_graph(self) -> bool:

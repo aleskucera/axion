@@ -2,131 +2,240 @@ from __future__ import annotations
 
 import torch
 import warp as wp
-from axion.constraints import batch_contact_residual_kernel
 from axion.constraints import batch_friction_residual_kernel
-from axion.constraints import batch_joint_residual_kernel
+from axion.constraints import batch_positional_contact_residual_kernel
+from axion.constraints import batch_positional_joint_residual_kernel
 from axion.constraints import batch_unconstrained_dynamics_kernel
-from newton import Model
+from axion.constraints import batch_velocity_contact_residual_kernel
+from axion.constraints import batch_velocity_joint_residual_kernel
 
 from .engine_config import EngineConfig
-from .engine_data import EngineArrays
+from .engine_data import EngineData
 from .engine_dims import EngineDimensions
+from .model import AxionModel
+
+
+@wp.kernel
+def copy_grid_q_kernel(
+    src: wp.array(dtype=wp.float32, ndim=3),
+    dest: wp.array(dtype=wp.transform, ndim=3),
+):
+    grid_idx, world_idx, body_idx = wp.tid()
+
+    # src shape: (GridSize, World, N_q) where N_q = Body * 7
+    base_idx = body_idx * 7
+
+    # Layout: pos(3), quat(4) -> [px, py, pz, qx, qy, qz, qw]
+    pos = wp.vec3(
+        src[grid_idx, world_idx, base_idx + 0],
+        src[grid_idx, world_idx, base_idx + 1],
+        src[grid_idx, world_idx, base_idx + 2],
+    )
+    rot = wp.quat(
+        src[grid_idx, world_idx, base_idx + 3],
+        src[grid_idx, world_idx, base_idx + 4],
+        src[grid_idx, world_idx, base_idx + 5],
+        src[grid_idx, world_idx, base_idx + 6],
+    )
+    dest[grid_idx, world_idx, body_idx] = wp.transform(pos, rot)
+
+
+@wp.kernel
+def copy_grid_u_kernel(
+    src: wp.array(dtype=float, ndim=3),  # Shape: (Grid, World, Body*6)
+    dst: wp.array(dtype=wp.spatial_vector, ndim=3),  # Shape: (Grid, World, Body)
+):
+    g, w, b = wp.tid()
+
+    # Each body has 6 DOFs in the flat source array
+    base_idx = b * 6
+
+    # Manually construct the spatial vector from the 6 floats
+    # Warp's spatial_vector is (w_x, w_y, w_z, v_x, v_y, v_z)
+    val = wp.spatial_vector(
+        src[g, w, base_idx + 0],
+        src[g, w, base_idx + 1],
+        src[g, w, base_idx + 2],
+        src[g, w, base_idx + 3],
+        src[g, w, base_idx + 4],
+        src[g, w, base_idx + 5],
+    )
+
+    dst[g, w, b] = val
+
+
+@wp.kernel
+def copy_grid_lambda_kernel(
+    src: wp.array(dtype=float, ndim=3),  # Shape: (Grid, World, Constraints)
+    dst: wp.array(dtype=float, ndim=3),  # Shape: (Grid, World, Constraints)
+):
+    g, w, c = wp.tid()
+    dst[g, w, c] = src[g, w, c]
 
 
 @wp.kernel
 def copy_h_to_history(
-    h: wp.array(dtype=wp.float32),
-    h_history: wp.array(dtype=wp.float32),
+    h: wp.array(dtype=wp.float32, ndim=2),
+    h_history: wp.array(dtype=wp.float32, ndim=2),
 ):
     world_idx, h_idx = wp.tid()
-
     h_history[world_idx, h_idx] = h[world_idx, h_idx]
 
 
 @wp.kernel
-def copy_body_u_to_history(
-    body_u: wp.array(dtype=wp.spatial_vector),
-    body_u_history: wp.array(dtype=wp.spatial_vector),
+def copy_body_q_to_history(
+    body_q: wp.array(dtype=wp.transform, ndim=2),
+    body_q_history: wp.array(dtype=wp.transform, ndim=2),
 ):
     world_idx, body_idx = wp.tid()
+    body_q_history[world_idx, body_idx] = body_q[world_idx, body_idx]
 
+
+@wp.kernel
+def copy_body_u_to_history(
+    body_u: wp.array(dtype=wp.spatial_vector, ndim=2),
+    body_u_history: wp.array(dtype=wp.spatial_vector, ndim=2),
+):
+    world_idx, body_idx = wp.tid()
     body_u_history[world_idx, body_idx] = body_u[world_idx, body_idx]
 
 
 @wp.kernel
 def copy_body_lambda_to_history(
-    body_lambda: wp.array(dtype=wp.float32),
-    body_lambda_history: wp.array(dtype=wp.float32),
+    body_lambda: wp.array(dtype=wp.float32, ndim=2),
+    body_lambda_history: wp.array(dtype=wp.float32, ndim=2),
 ):
     world_idx, constraint_idx = wp.tid()
-
     body_lambda_history[world_idx, constraint_idx] = body_lambda[world_idx, constraint_idx]
 
 
 def copy_state_to_history(
     newton_iteration: int,
-    data: EngineArrays,
+    data: EngineData,
     config: EngineConfig,
     dims: EngineDimensions,
 ):
     device = data.device
 
-    # Evaluate residual for unconstrained dynamics
     wp.launch(
         kernel=copy_h_to_history,
-        dim=(config.newton_iters, dims.N_w, dims.N_u + dims.N_c),
-        inputs=[
-            data._h_history[newton_iteration, :, :],
-        ],
-        outputs=[data._h],
+        dim=(dims.N_w, dims.N_u + dims.N_c),
+        inputs=[data._h],
+        outputs=[data.history._h_history[newton_iteration, :, :]],
+        device=device,
+    )
+    wp.launch(
+        kernel=copy_body_q_to_history,
+        dim=(dims.N_w, dims.N_b),
+        inputs=[data.body_q],
+        outputs=[data.history.body_q_history[newton_iteration, :, :]],
         device=device,
     )
     wp.launch(
         kernel=copy_body_u_to_history,
-        dim=(config.newton_iters, dims.N_w, dims.N_b),
-        inputs=[
-            data.body_u_history[newton_iteration, :, :],
-        ],
-        outputs=[data.body_u],
+        dim=(dims.N_w, dims.N_b),
+        inputs=[data.body_u],
+        outputs=[data.history.body_u_history[newton_iteration, :, :]],
         device=device,
     )
     wp.launch(
         kernel=copy_body_lambda_to_history,
-        dim=(config.newton_iters, dims.N_w, dims.N_c),
-        inputs=[
-            data._body_lambda[newton_iteration, :, :],
-        ],
-        outputs=[data._body_lambda],
+        dim=(dims.N_w, dims.N_c),
+        inputs=[data._body_lambda],
+        outputs=[data.history._body_lambda_history[newton_iteration, :, :]],
         device=device,
     )
 
 
 def perform_pca(
     trajectory_data: torch.Tensor,
-) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     """
-    Performs PCA on the given trajectory data to find the top two principal directions.
+    Performs PCA on STANDARDIZED (Whitened) data.
 
-    These directions represent the axes of greatest variance in the data, which for an
-    optimization trajectory, correspond to the most significant movements of the solver.
-
-    Args:
-        trajectory_data: A (num_steps, feature_dim) tensor of optimization variable states (x).
-
-    Returns:
-        A tuple containing:
-        - v1 (torch.Tensor): The first principal component (direction of max variance).
-        - v2 (torch.Tensor): The second principal component.
-        - S (torch.Tensor): The first two singular values, representing the magnitude
-          (approx. standard deviation) of the data along the principal components.
+    Returns: v1, v2, S, mean, std
     """
-    # Center the data by subtracting the mean for PCA
-    data_mean = trajectory_data.mean(dim=0)
-    data_centered = trajectory_data - data_mean
+    # 1. Permute if 3D: (Steps, Worlds, Dofs) -> (Worlds, Steps, Dofs)
+    # We want statistics over Steps (dim 1 in the permuted tensor)
+    if trajectory_data.ndim == 3:
+        data = trajectory_data.permute(1, 0, 2)
+    else:
+        data = trajectory_data.unsqueeze(0)
 
-    # Perform PCA via Singular Value Decomposition (SVD)
+    # 2. Compute Statistics per World per DOF
+    data_mean = data.mean(dim=1, keepdim=True)
+    data_std = data.std(dim=1, keepdim=True)
+
+    # 3. Robust Scaling (Whitening)
+    # Instead of dividing by std (which explodes for stationary/constrained DOFs),
+    # we clamp the denominator. If variation is below 'threshold', we don't scale it up.
+    # This keeps noise as noise and prevents it from dominating the PCA.
+    # Threshold heuristic: 1e-4 allows small valid motions but suppresses numerical noise.
+    threshold = 1e-4
+    scale = torch.maximum(data_std, torch.tensor(threshold, device=data.device))
+
+    # 3. Standardize (Z-score normalization)
+    # This brings q, u, lambda to the same ~unit scale
+    data_normalized = (data - data_mean) / scale
+
+    # 4. Perform SVD on Normalized Data
     try:
-        # We only need the top 2 components for a 2D visualization
-        k = min(2, data_centered.shape[1], trajectory_data.shape[0])
-        _U, S, Vh = torch.linalg.svd(data_centered, full_matrices=False)
-        # The principal components are the rows of Vh
-        v1 = Vh[0]
-        # If there's only one valid point or dimension, the second component is zero
-        v2 = Vh[1] if k > 1 else torch.zeros_like(v1)
-        S_out = S[:k]
-    except torch.linalg.LinAlgError:
-        # As a fallback, use random orthogonal directions if SVD fails.
-        # This can happen with ill-conditioned or zero-variance data.
-        print("SVD failed. Using random directions for visualization.")
-        x_shape = data_centered.shape[1]
-        v1 = torch.randn(x_shape, device=data_centered.device)
-        v1 /= torch.linalg.norm(v1)
-        v2 = torch.randn(x_shape, device=data_centered.device)
-        v2 = v2 - v1 * torch.dot(v2, v1)  # Orthogonalize v2 w.r.t. v1
-        v2 /= torch.linalg.norm(v2)
-        S_out = torch.ones(2, device=data_centered.device)
+        k = min(2, data_normalized.shape[1], data_normalized.shape[2])
+        _U, S, Vh = torch.linalg.svd(data_normalized, full_matrices=False)
 
-    return v1, v2, S_out
+        v1 = Vh[:, 0, :]
+        v2 = Vh[:, 1, :] if k > 1 else torch.zeros_like(v1)
+        S_out = S[:, :2]
+
+    except torch.linalg.LinAlgError:
+        print("SVD failed. Using random directions.")
+        worlds, _, dofs = data.shape
+        v1 = torch.randn(worlds, dofs, device=data.device)
+        v1 /= torch.norm(v1, dim=-1, keepdim=True)
+        v2 = torch.randn(worlds, dofs, device=data.device)
+        v2 -= v1 * (v2 * v1).sum(dim=-1, keepdim=True)
+        v2 /= torch.norm(v2, dim=-1, keepdim=True)
+        S_out = torch.ones(worlds, 2, device=data.device)
+
+    # Return mean/std so we can denormalize later
+    return v1, v2, S_out, data_mean.squeeze(1), scale.squeeze(1)
+
+
+def prepare_trajectory_data(
+    q_history: torch.Tensor,  # Shape: (T, N_w, N_b, 7)
+    u_history: torch.Tensor,  # Shape: (T, N_w, N_b, 6)
+    lambda_history: torch.Tensor,  # Shape: (T, N_w, N_c)
+    dt: float,
+) -> torch.Tensor:
+    """
+    Flattens and scales q, u, and lambda into a unified 'velocity-level' feature vector.
+
+    Scaling strategy:
+    - q (Position/Rotation): Divided by dt -> Velocity / Angular Velocity units
+    - u (Velocity): Kept as is -> Velocity units
+    - lambda (Constraint Force): Multiplied by dt -> Impulse units
+    """
+    T = q_history.shape[0]
+
+    # Flatten spatial/body dimensions
+    q_flat = q_history.reshape(T, -1)
+    u_flat = u_history.reshape(T, -1)
+    lambda_flat = lambda_history.reshape(T, -1)
+
+    # --- Apply Scaling ---
+
+    # q: Position (m) and Quaternion (1). Divide by dt to get (m/s) and (1/s)
+    q_scaled = q_flat / dt
+
+    # u: Already in velocity units (rad/s, m/s). No scaling needed.
+    u_scaled = u_flat
+
+    # lambda: Force/Torque. Multiply by dt to get Impulse (N*s).
+    # This brings it to momentum/velocity level (assuming mass ~ 1)
+    lambda_scaled = lambda_flat * dt
+
+    # Concatenate: [q', u', lambda']
+    return torch.cat([q_scaled, u_scaled, lambda_scaled], dim=1)
 
 
 def create_pca_grid_batch(
@@ -134,173 +243,279 @@ def create_pca_grid_batch(
     v1: torch.Tensor,
     v2: torch.Tensor,
     S: torch.Tensor,
+    mean: torch.Tensor,  # For Denormalization
+    scale: torch.Tensor,  # Unused if scale=1, but kept for interface compatibility
     grid_res: int,
     plot_range_scale: float,
-    N_u: int,
-) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-    """
-    Creates a batch of points on a 2D grid defined by the principal components.
+    dims: EngineDimensions,  # Need full dims to split q/u/lambda
+    dt: float,  # NEW: Need dt to reverse the scaling
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
 
-    This grid forms the 2D plane on which the loss landscape will be evaluated. The plane is
-    centered at `x_center` and spanned by the directions `v1` and `v2`.
-
-    Args:
-        x_center: The point in high-dimensional space to center the grid on (usually the final solution).
-        v1: The first principal component vector.
-        v2: The second principal component vector.
-        S: The singular values. S[0] is used to set a data-driven scale for the grid.
-        grid_res: The resolution of the grid (grid_res x grid_res).
-        plot_range_scale: A multiplier for the grid size. Acts as a "zoom" factor.
-        N_u: The number of degrees of freedom for generalized velocities, used for splitting x.
-
-    Returns:
-        A tuple containing the points on the grid and the grid coordinates.
-    """
     device = x_center.device
 
-    # Use the largest singular value (S[0]) to define a data-driven plot range.
-    # S[0] represents the "spread" of the trajectory data along its main direction.
-    # Multiplying by `plot_range_scale` allows us to "zoom" in or out.
-    # A scale of 3.0 is like plotting +/- 3 standard deviations, which usually provides a good view.
-    max_range = plot_range_scale * (S[0].item() if S.numel() > 0 and S[0].item() > 1e-6 else 1.0)
+    # --- 1. Determine Plot Range ---
+    if S.dim() == 2:
+        max_bound_x = S[:, 0].max().item()
+        max_bound_y = S[:, 1].max().item()
+        if max_bound_y < 1e-6:
+            max_bound_y = 0.1 * max_bound_x
+    else:
+        max_bound_x = S[0].item()
+        max_bound_y = 0.1 * max_bound_x
 
-    # `alphas` are the coordinates along the v1 direction.
-    alphas = torch.linspace(-max_range, max_range, grid_res, device=device)
-    # `betas` are the coordinates along the v2 direction.
-    # Note: The range for beta is intentionally smaller (10x smaller). This is because the
-    # variance along the second PC is often much less than the first. This creates a
-    # rectangular plot that focuses on the most significant direction of change.
-    betas = torch.linspace(-0.1 * max_range, 0.1 * max_range, grid_res, device=device)
+    range_x = plot_range_scale * (max_bound_x if max_bound_x > 1e-6 else 1.0)
+    range_y = plot_range_scale * (max_bound_y if max_bound_y > 1e-6 else 1.0)
+
+    alphas = torch.linspace(-range_x, range_x, grid_res, device=device)
+    betas = torch.linspace(-range_y, range_y, grid_res, device=device)
     alpha_grid, beta_grid = torch.meshgrid(alphas, betas, indexing="ij")
 
-    # Generate grid points in high-dimensional space using the 2D grid coordinates:
-    # x_grid_point = x_center + alpha * v1 + beta * v2
-    pca_batch_points = (
-        x_center.unsqueeze(0)
-        + alpha_grid.flatten().unsqueeze(1) * v1.unsqueeze(0)
-        + beta_grid.flatten().unsqueeze(1) * v2.unsqueeze(0)
+    # --- 2. Generate Grid in Feature Space (Velocity Level) ---
+    # We perform PCA on standardized data (z-scores).
+    # v1 and v2 are directions in that normalized space.
+    # To step in physical space, we must re-apply the scale (std dev).
+    # Grid units (alpha/beta) now correspond to "number of standard deviations".
+    v1_phys = v1 * scale
+    v2_phys = v2 * scale
+
+    pca_batch_centered = (
+        (x_center - mean).unsqueeze(0)
+        + alpha_grid.flatten().view(-1, 1, 1) * v1_phys.unsqueeze(0)
+        + beta_grid.flatten().view(-1, 1, 1) * v2_phys.unsqueeze(0)
     )
 
-    # Split the high-dimensional points back into u (velocity) and lambda (forces)
-    pca_u = pca_batch_points[:, :N_u]
-    pca_lambda = pca_batch_points[:, N_u:]
-    return pca_u, pca_lambda, alphas, betas, alpha_grid, beta_grid
+    # Add mean back to get absolute scaled values
+    pca_batch_scaled = pca_batch_centered + mean.unsqueeze(0)
+
+    # --- 3. Split [q', u', lambda'] ---
+    num_bodies = dims.N_b
+    dim_q = num_bodies * 7
+    dim_u = num_bodies * 6
+
+    pca_q_scaled = pca_batch_scaled[:, :, :dim_q]
+    pca_u_scaled = pca_batch_scaled[:, :, dim_q : dim_q + dim_u]
+    pca_lambda_scaled = pca_batch_scaled[:, :, dim_q + dim_u :]
+
+    # --- 4. Un-Scale back to Physics Units ---
+
+    # q = q' * dt
+    pca_q_flat = pca_q_scaled * dt
+
+    # u = u'
+    pca_u_flat = pca_u_scaled
+
+    # lambda = lambda' / dt
+    pca_lambda_flat = pca_lambda_scaled / dt
+
+    # --- 5. Normalize Quaternions in Q ---
+    pca_q_reshaped = pca_q_flat.view(-1, dims.N_w, dims.N_b, 7)
+    pos = pca_q_reshaped[..., :3]
+    rot = pca_q_reshaped[..., 3:]
+    rot = torch.nn.functional.normalize(rot, p=2, dim=-1)
+
+    pca_q_final = torch.cat([pos, rot], dim=-1)
+
+    return (
+        pca_q_final.reshape(-1, dims.N_w, dim_q),
+        pca_u_flat,
+        pca_lambda_flat,
+        alphas,
+        betas,
+        alpha_grid,
+        beta_grid,
+    )
+
+
+@wp.kernel
+def copy_spatial_to_flat_kernel(
+    src_spatial: wp.array(dtype=wp.spatial_vector, ndim=3),
+    dst_flat: wp.array(dtype=float, ndim=3),
+):
+    g, w, b = wp.tid()
+    # dst_flat has shape (G, W, Nu+Nc)
+    # We write to the first Nu elements.
+    # Base index for body b is b*6.
+
+    val = src_spatial[g, w, b]
+    base = b * 6
+
+    dst_flat[g, w, base + 0] = val[0]
+    dst_flat[g, w, base + 1] = val[1]
+    dst_flat[g, w, base + 2] = val[2]
+    dst_flat[g, w, base + 3] = val[3]
+    dst_flat[g, w, base + 4] = val[4]
+    dst_flat[g, w, base + 5] = val[5]
 
 
 def compute_pca_batch_h_norm(
-    model: Model,
-    data: EngineArrays,
+    model: AxionModel,
+    data: EngineData,
     config: EngineConfig,
     dims: EngineDimensions,
 ):
-    """
-    Computes the L2 norm of the residual vector `h` for a batch of points in parallel.
-
-    This function orchestrates the launch of several Warp kernels, each calculating a
-    part of the full residual vector `h = [h_d_v, h_j, h_n, h_f]`. Finally, it computes
-    the norm of `h` for each point in the batch.
-
-    Args:
-        model: The newton.Model instance.
-        data: The engine's data arrays, including the `pca_batch_*` arrays.
-        config: The engine's configuration.
-        dims: The engine's dimensions.
-
-    Returns:
-        A torch.Tensor of shape (B,) where B is the batch size, containing the L2 norm
-        of the residual for each input point.
-    """
     device = data.device
+    data.history.pca_batch_h.full.zero_()
 
-    data.pca_batch_h.full.zero_()
+    B = data.history.pca_batch_body_u.shape[0]  # Grid Size
 
-    B = data.pca_batch_body_u.shape[0]
-
-    # Evaluate residual for unconstrained dynamics
+    # Launch kernels over (GridSize, N_w, ...)
+    # All kernels support batch dimensions naturally
     wp.launch(
         kernel=batch_unconstrained_dynamics_kernel,
-        dim=(B, dims.N_b),
+        dim=(B, dims.N_w, dims.N_b),
         inputs=[
-            data.pca_batch_body_u,
+            data.history.pca_batch_body_q,
+            data.history.pca_batch_body_u,
             data.body_u_prev,
             data.body_f,
-            data.body_M,
+            model.body_mass,
+            model.body_inertia,
             data.dt,
             data.g_accel,
         ],
-        outputs=[data.pca_batch_h.d_spatial],
+        outputs=[data.history.pca_batch_h.d_spatial],
         device=device,
     )
 
-    # Evaluate residual for joint constraints
-    wp.launch(
-        kernel=batch_joint_residual_kernel,
-        dim=(B, dims.N_j),
-        inputs=[
-            data.pca_batch_body_u,
-            data.pca_batch_body_lambda.j,
-            data.joint_constraint_data,
-            data.dt,
-            config.joint_stabilization_factor,
-            config.joint_compliance,
-        ],
-        outputs=[
-            data.pca_batch_h.d_spatial,
-            data.pca_batch_h.j,
-        ],
-        device=device,
-    )
+    if config.joint_constraint_level == "pos":
+        # wp.launch(
+        #     kernel=batch_positional_joint_residual_kernel,
+        #     dim=(B, dims.N_w, dims.N_j),
+        #     inputs=[
+        #         data.history.pca_batch_body_u,
+        #         data.history.pca_batch_body_lambda.j,
+        #         data.joint_constraint_data,
+        #         data.dt,
+        #         config.joint_stabilization_factor,
+        #         config.joint_compliance,
+        #     ],
+        #     outputs=[
+        #         data.history.pca_batch_h.d_spatial,
+        #         data.history.pca_batch_h.c.j,
+        #     ],
+        #     device=device,
+        # )
+        wp.launch(
+            kernel=batch_positional_joint_residual_kernel,
+            dim=(B, dims.N_w, dims.joint_count),
+            inputs=[
+                data.history.pca_batch_body_q,
+                data.history.pca_batch_body_lambda.j,
+                model.body_com,
+                model.joint_type,
+                model.joint_parent,
+                model.joint_child,
+                model.joint_X_p,
+                model.joint_X_c,
+                model.joint_axis,
+                model.joint_qd_start,
+                model.joint_enabled,
+                data.joint_constraint_offsets,
+                data.dt,
+                config.joint_compliance,
+            ],
+            outputs=[
+                data.history.pca_batch_h.d_spatial,
+                data.history.pca_batch_h.c.j,
+            ],
+            device=device,
+        )
+    elif config.joint_constraint_level == "vel":
+        wp.launch(
+            kernel=batch_velocity_joint_residual_kernel,
+            dim=(B, dims.N_w, dims.N_j),
+            inputs=[
+                data.history.pca_batch_body_u,
+                data.history.pca_batch_body_lambda.j,
+                data.joint_constraint_data,
+                data.dt,
+                config.joint_stabilization_factor,
+                config.joint_compliance,
+            ],
+            outputs=[
+                data.history.pca_batch_h.d_spatial,
+                data.history.pca_batch_h.c.j,
+            ],
+            device=device,
+        )
+    else:
+        raise ValueError("Joint constraint level can be only 'pos' or 'vel'.")
 
-    # Evaluate residual for normal contact constraints
-    wp.launch(
-        kernel=batch_contact_residual_kernel,
-        dim=(B, dims.N_n),
-        inputs=[
-            data.pca_batch_body_u,
-            data.body_u_prev,
-            data.pca_batch_body_lambda.n,
-            data.contact_interaction,
-            data.body_M_inv,
-            data.dt,
-            config.contact_stabilization_factor,
-            config.contact_fb_alpha,
-            config.contact_fb_beta,
-            config.contact_compliance,
-        ],
-        outputs=[
-            data.pca_batch_h.d_spatial,
-            data.pca_batch_h.n,
-        ],
-        device=device,
-    )
+    if config.contact_constraint_level == "pos":
+        wp.launch(
+            kernel=batch_positional_contact_residual_kernel,
+            dim=(B, dims.N_w, dims.N_n),
+            inputs=[
+                data.history.pca_batch_body_q,
+                data.history.pca_batch_body_u,
+                data.body_u_prev,
+                data.history.pca_batch_body_lambda.n,
+                data.contact_interaction,
+                model.body_inv_mass,
+                model.body_inv_inertia,
+                data.dt,
+                config.contact_fb_alpha,
+                config.contact_fb_beta,
+                config.contact_compliance,
+            ],
+            outputs=[
+                data.history.pca_batch_h.d_spatial,
+                data.history.pca_batch_h.c.n,
+            ],
+            device=device,
+        )
+    elif config.contact_constraint_level == "vel":
+        wp.launch(
+            kernel=batch_velocity_contact_residual_kernel,
+            dim=(B, dims.N_w, dims.N_n),
+            inputs=[
+                data.history.pca_batch_body_u,
+                data.body_u_prev,
+                data.history.pca_batch_body_lambda.n,
+                data.contact_interaction,
+                data.dt,
+                config.contact_stabilization_factor,
+                config.contact_fb_alpha,
+                config.contact_fb_beta,
+                config.contact_compliance,
+            ],
+            outputs=[
+                data.history.pca_batch_h.d_spatial,
+                data.history.pca_batch_h.c.n,
+            ],
+            device=device,
+        )
+    else:
+        raise ValueError("Contact constraint level can be only 'pos' or 'vel'.")
 
-    # Evaluate residual for friction constraints
     wp.launch(
         kernel=batch_friction_residual_kernel,
-        dim=(B, dims.N_n),
+        dim=(B, dims.N_w, dims.N_n),
         inputs=[
-            data.pca_batch_body_u,
-            data.pca_batch_body_lambda.f,
+            data.history.pca_batch_body_u,
+            data.history.pca_batch_body_lambda.f,
             data.body_lambda_prev.f,
             data.body_lambda_prev.n,
             data.s_n_prev,
             data.contact_interaction,
+            data.dt,
             config.friction_fb_alpha,
             config.friction_fb_beta,
             config.friction_compliance,
         ],
         outputs=[
-            data.pca_batch_h.d_spatial,
-            data.pca_batch_h.f,
+            data.history.pca_batch_h.d_spatial,
+            data.history.pca_batch_h.c.f,
         ],
         device=device,
     )
 
-    # Finally, compute the L2 norm of the full residual vector h for each item in the batch.
-    torch_h = wp.to_torch(data.pca_batch_h.full)
-    torch_h_norm = torch.norm(torch_h, dim=1)  # The "loss" for each point on the grid
+    # Compute Norm
+    # data.pca_batch_h.full is (GridSize, N_w, Dofs)
+    torch_h = wp.to_torch(data.history.pca_batch_h.full)
+    torch_h_norm = torch.norm(torch_h, dim=-1)  # -> (GridSize, N_w)
 
-    # Copy the result back to its warp array (optional, but good practice)
     h_norm = wp.from_torch(torch_h_norm)
-    wp.copy(data.pca_batch_h_norm, h_norm.contiguous())
+    wp.copy(data.history.pca_batch_h_norm, h_norm.contiguous())
+
     return torch_h_norm

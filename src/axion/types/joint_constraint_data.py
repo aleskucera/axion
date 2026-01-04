@@ -2,7 +2,7 @@ import numpy as np
 import warp as wp
 from newton import JointType
 
-from .utils import orthogonal_basis
+from axion.math import orthogonal_basis
 
 
 @wp.struct
@@ -16,33 +16,6 @@ class JointConstraintData:
 
     J_parent: wp.spatial_vector
     J_child: wp.spatial_vector
-
-
-def compute_joint_constraint_offsets(joint_types: wp.array) -> tuple[wp.array, int]:
-    constraint_count_map = np.array(
-        [
-            5,  # PRISMATIC = 0
-            5,  # REVOLUTE  = 1
-            3,  # BALL      = 2
-            6,  # FIXED     = 3
-            0,  # FREE      = 4
-            1,  # DISTANCE  = 5
-            6,  # D6        = 6
-        ],
-        dtype=np.int32,
-    )
-
-    joint_types_np = joint_types.numpy()
-    constraint_counts_np = constraint_count_map[joint_types_np]
-    total_constraints = int(np.sum(constraint_counts_np))
-
-    constraint_offsets_np = np.zeros_like(constraint_counts_np)
-    constraint_offsets_np[1:] = np.cumsum(constraint_counts_np[:-1])
-
-    constraint_offsets_wp = wp.array(
-        constraint_offsets_np, dtype=wp.int32, device=joint_types.device
-    )
-    return constraint_offsets_wp, total_constraints
 
 
 def compute_joint_constraint_offsets_batched(joint_types: wp.array):
@@ -59,6 +32,7 @@ def compute_joint_constraint_offsets_batched(joint_types: wp.array):
             0,  # FREE      = 4
             1,  # DISTANCE  = 5
             6,  # D6        = 6
+            0,  # CABLE     = 7
         ],
         dtype=np.int32,
     )

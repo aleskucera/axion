@@ -1,0 +1,10 @@
+defaults:
+  - simulation: featherstone
+  - rendering: gl
+  - execution: cuda_graph
+  - logging: disabled
+  - engine: featherstone 
+  - _self_
+
+# Use the recommended hybrid approach for project names
+project_name: ${hydra:job.name}
