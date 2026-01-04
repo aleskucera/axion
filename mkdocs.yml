@@ -39,6 +39,7 @@ plugins:
             group_by_category: true
             filters:
             - "!^_[^_]"
+            docstring_style: google
 
   
 theme:

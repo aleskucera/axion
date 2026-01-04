@@ -1,5 +1,32 @@
 """Generate the code reference pages and navigation."""
 
+import sys
+from unittest.mock import MagicMock
+
+# Mock heavy dependencies that are not installed in the docs environment
+MOCK_MODULES = [
+    "newton",
+    "newton.solvers",
+    "newton.viewer",
+    "warp",
+    "torch",
+    "hydra",
+    "matplotlib",
+    "matplotlib.pyplot",
+    "nvtx",
+    "openmesh",
+    "pandas",
+    "plotly",
+    "scipy",
+    "taichi",
+    "tqdm",
+    "trimesh",
+    "pxr",  # usd-core
+]
+
+for mod_name in MOCK_MODULES:
+    sys.modules[mod_name] = MagicMock()
+
 from importlib.resources import files
 import ast
 import mkdocs_gen_files
