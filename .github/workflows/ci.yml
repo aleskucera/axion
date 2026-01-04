@@ -34,7 +34,7 @@ jobs:
             mkdocs-material-
 
       - name: Install package with docs dependencies
-        run: pip install -e ".[docs]"
+        run: pip install -e ".[docs]" --extra-index-url https://pypi.nvidia.com
 
       - name: Build documentation
         run: mkdocs build
