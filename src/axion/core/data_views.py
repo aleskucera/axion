@@ -85,6 +85,7 @@ class SystemView(Generic[T]):
 
     data: wp.array
     dims: EngineDimensions
+    _d_spatial: Optional[wp.array] = None
 
     def _get_split_slice(self, start, stop) -> Tuple[slice]:
         """Helper to generate tuple slice for last dimension."""
@@ -100,7 +101,7 @@ class SystemView(Generic[T]):
     def d(self) -> wp.array:
         """Dynamics part (..., :N_u)."""
         indexer = self._get_split_slice(None, self.dims.N_u)
-        return self.data[indexer].contiguous()
+        return self.data[indexer]
 
     @property
     def d_spatial(self) -> wp.array:
@@ -108,6 +109,9 @@ class SystemView(Generic[T]):
         Dynamics part reinterpreted as spatial vectors.
         Shape change: (..., N_u) -> (..., N_b) [dtype=spatial]
         """
+        if self._d_spatial is not None:
+            return self._d_spatial
+
         d_data = self.d
 
         # Calculate new shape: preserve batch dims, set last dim to N_b

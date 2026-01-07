@@ -29,10 +29,11 @@ class LinesearchData:
     batch_h_norm_sq: wp.array
     minimal_index: wp.array
     tiled_sq_norm: Optional[TiledSqNorm] = None
+    _batch_h_spatial: Optional[wp.array] = None
 
     @cached_property
     def batch_h(self) -> SystemView:
-        return SystemView(self._batch_h, self.dims)
+        return SystemView(self._batch_h, self.dims, _d_spatial=self._batch_h_spatial)
 
     @cached_property
     def batch_body_lambda(self) -> ConstraintView:
@@ -53,9 +54,12 @@ class HistoryData:
     _pca_batch_h: wp.array
     pca_batch_h_norm: wp.array
 
+    _h_history_spatial: Optional[wp.array] = None
+    _pca_batch_h_spatial: Optional[wp.array] = None
+
     @cached_property
     def h_history(self) -> SystemView:
-        return SystemView(self._h_history, self.dims)
+        return SystemView(self._h_history, self.dims, _d_spatial=self._h_history_spatial)
 
     @cached_property
     def body_lambda_history(self) -> ConstraintView:
@@ -63,7 +67,7 @@ class HistoryData:
 
     @cached_property
     def pca_batch_h(self) -> SystemView:
-        return SystemView(self._pca_batch_h, self.dims)
+        return SystemView(self._pca_batch_h, self.dims, _d_spatial=self._pca_batch_h_spatial)
 
     @cached_property
     def pca_batch_body_lambda(self) -> ConstraintView:
@@ -123,6 +127,7 @@ class EngineData:
     history: Optional[HistoryData] = None
 
     g_accel: wp.array = None
+    _h_spatial: Optional[wp.array] = None
 
     # 1. System Views (Combined Dynamics + Constraints)
     #    Access pattern: sys.d (dynamics), sys.c.j (joint constraints), etc.
@@ -130,7 +135,7 @@ class EngineData:
     @cached_property
     def h(self) -> SystemView:
         """Residual vector [h_d, h_c]."""
-        return SystemView(self._h, self.dims)
+        return SystemView(self._h, self.dims, _d_spatial=self._h_spatial)
 
     # 2. Constraint Views (Constraints Only)
     #    Access pattern: const.j, const.n, const.f
@@ -218,8 +223,23 @@ class EngineData:
         def _empty(shape, dtype, device=device):
             return wp.empty(shape, dtype=dtype, device=device).contiguous()
 
+        def _make_spatial_view(src, n_b):
+            # src is (..., N_u + N_c)
+            # we want (..., n_b) spatial
+            new_shape = src.shape[:-1] + (n_b,)
+            new_strides = src.strides[:-1] + (24,)
+            return wp.array(
+                ptr=src.ptr,
+                shape=new_shape,
+                dtype=wp.spatial_vector,
+                strides=new_strides,
+                device=src.device,
+            )
+
         # ---- Core arrays using tuple shapes ----
         h = _zeros((dims.N_w, dims.N_u + dims.N_c))
+        h_spatial = _make_spatial_view(h, dims.N_b)
+        
         J_values = _zeros((dims.N_w, dims.N_c, 2), wp.spatial_vector)
         C_values = _zeros((dims.N_w, dims.N_c))
 
@@ -271,6 +291,8 @@ class EngineData:
             linesearch_batch_body_q = _zeros((step_count, dims.N_w, dims.N_b), wp.transform)
             linesearch_batch_body_lambda = _zeros((step_count, dims.N_w, dims.N_c))
             linesearch_batch_h = _zeros((step_count, dims.N_w, dims.N_u + dims.N_c))
+            ls_h_spatial = _make_spatial_view(linesearch_batch_h, dims.N_b)
+
             linesearch_batch_h_norm_sq = _zeros((step_count, dims.N_w))
             linesearch_minimal_index = _zeros((dims.N_w,), wp.int32)
 
@@ -290,6 +312,7 @@ class EngineData:
                 batch_h_norm_sq=linesearch_batch_h_norm_sq,
                 minimal_index=linesearch_minimal_index,
                 tiled_sq_norm=tiled_sq_norm,
+                _batch_h_spatial=ls_h_spatial,
             )
 
         # ---- PCA Storage Buffers ----
@@ -299,6 +322,8 @@ class EngineData:
             pca_batch_size = pca_grid_res * pca_grid_res
 
             h_history = _zeros((config.newton_iters + 1, dims.N_w, dims.N_u + dims.N_c))
+            h_history_spatial = _make_spatial_view(h_history, dims.N_b)
+            
             body_q_history = _zeros(
                 (config.newton_iters + 1, dims.N_w, dims.N_b), dtype=wp.transform
             )
@@ -311,6 +336,8 @@ class EngineData:
             pca_batch_body_u = _zeros((pca_batch_size, dims.N_w, dims.N_b), wp.spatial_vector)
             pca_batch_body_lambda = _zeros((pca_batch_size, dims.N_w, dims.N_c))
             pca_batch_h = _zeros((pca_batch_size, dims.N_w, dims.N_u + dims.N_c))
+            pca_batch_h_spatial = _make_spatial_view(pca_batch_h, dims.N_b)
+            
             pca_batch_h_norm = _zeros((pca_batch_size, dims.N_w))
 
             history_data = HistoryData(
@@ -324,6 +351,8 @@ class EngineData:
                 _pca_batch_body_lambda=pca_batch_body_lambda,
                 _pca_batch_h=pca_batch_h,
                 pca_batch_h_norm=pca_batch_h_norm,
+                _h_history_spatial=h_history_spatial,
+                _pca_batch_h_spatial=pca_batch_h_spatial,
             )
 
         return EngineData(
@@ -357,4 +386,5 @@ class EngineData:
             joint_target=joint_target,
             linesearch=linesearch_data,
             history=history_data,
+            _h_spatial=h_spatial,
         )

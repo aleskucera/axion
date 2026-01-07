@@ -83,7 +83,7 @@ class HelhestConfig:
 def _load_wheel_mesh():
     """Loads and prepares the wheel mesh."""
     wheel_m = openmesh.read_trimesh(str(ASSETS_DIR.joinpath("helhest/wheel2.obj")))
-    scale = np.array([0.8, 0.8, 0.8])
+    scale = np.array([0.78, 0.78, 0.78])
     mesh_points = np.array(wheel_m.points()) * scale
     mesh_indices = np.array(wheel_m.face_vertex_indices(), dtype=np.int32).flatten()
     return newton.Mesh(mesh_points, mesh_indices)
