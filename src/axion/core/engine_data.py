@@ -33,7 +33,8 @@ class LinesearchData:
 
     @cached_property
     def batch_h(self) -> SystemView:
-        return SystemView(self._batch_h, self.dims, _d_spatial=self._batch_h_spatial)
+        # return SystemView(self._batch_h, self.dims, _d_spatial=self._batch_h_spatial)
+        return SystemView(self._batch_h, self.dims)
 
     @cached_property
     def batch_body_lambda(self) -> ConstraintView:
@@ -59,7 +60,8 @@ class HistoryData:
 
     @cached_property
     def h_history(self) -> SystemView:
-        return SystemView(self._h_history, self.dims, _d_spatial=self._h_history_spatial)
+        # return SystemView(self._h_history, self.dims, _d_spatial=self._h_history_spatial)
+        return SystemView(self._h_history, self.dims)
 
     @cached_property
     def body_lambda_history(self) -> ConstraintView:
@@ -67,7 +69,8 @@ class HistoryData:
 
     @cached_property
     def pca_batch_h(self) -> SystemView:
-        return SystemView(self._pca_batch_h, self.dims, _d_spatial=self._pca_batch_h_spatial)
+        # return SystemView(self._pca_batch_h, self.dims, _d_spatial=self._pca_batch_h_spatial)
+        return SystemView(self._pca_batch_h, self.dims)
 
     @cached_property
     def pca_batch_body_lambda(self) -> ConstraintView:
@@ -135,7 +138,8 @@ class EngineData:
     @cached_property
     def h(self) -> SystemView:
         """Residual vector [h_d, h_c]."""
-        return SystemView(self._h, self.dims, _d_spatial=self._h_spatial)
+        # return SystemView(self._h, self.dims, _d_spatial=self._h_spatial)
+        return SystemView(self._h, self.dims)
 
     # 2. Constraint Views (Constraints Only)
     #    Access pattern: const.j, const.n, const.f

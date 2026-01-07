@@ -112,7 +112,7 @@ class SystemView(Generic[T]):
         if self._d_spatial is not None:
             return self._d_spatial
 
-        d_data = self.d
+        d_data = self.d.contiguous()
 
         # Calculate new shape: preserve batch dims, set last dim to N_b
         base_shape = d_data.shape[:-1]
