@@ -176,81 +176,6 @@ class NeRDPredictor:
         """Reset the history buffer (call at start of new trajectory)."""
         self.states_history.clear()
 
-    def predict(
-        self,
-        step
-    ) -> torch.Tensor:
-        """
-        Predict next robot state.
-        
-        Args:
-            states: Current states (num_envs, state_dim) in generalized coordinates [joint_q, joint_qd]
-            joint_acts: Joint actions/torques (num_envs, joint_act_dim)
-            root_body_q: Root body pose (num_envs, 7) [x, y, z, qx, qy, qz, qw]
-            contacts: Dictionary with contact information:
-                - 'contact_normals': (num_envs, num_contacts * 3)
-                - 'contact_depths': (num_envs, num_contacts)
-                - 'contact_thicknesses': (num_envs, num_contacts)
-                - 'contact_points_0': (num_envs, num_contacts * 3)
-                - 'contact_points_1': (num_envs, num_contacts * 3)
-            gravity_dir: Gravity direction vector (num_envs, 3)
-            dt: Time step (optional, not used in current implementation)
-        
-        Returns:
-            next_states: Next states (num_envs, state_dim)
-        """
-
-        # FIX: zeroing the output of _process_inputs once again,remove it ideally
-        self.model_inputs["contact_normals"] = torch.zeros_like(self.model_inputs["contact_normals"])
-        self.model_inputs["contact_depths"] = torch.zeros_like(self.model_inputs["contact_depths"])
-        self.model_inputs["contact_thicknesses"] = torch.zeros_like(self.model_inputs["contact_thicknesses"])
-        self.model_inputs["contact_points_0"] = torch.zeros_like(self.model_inputs["contact_points_0"])
-        self.model_inputs["contact_points_1"] = torch.zeros_like(self.model_inputs["contact_points_1"])
-        self.model_inputs["contact_masks"] = torch.zeros_like(self.model_inputs["contact_masks"])
-
-        model_inputs_csv_filename = Path(__file__).parent / 'pendulum_model_inputs.csv'
-        write_model_inputs_to_csv(model_inputs_csv_filename, step, self.model_inputs)
-
-        # Run model inference
-        with torch.no_grad():
-            prediction = self.model.evaluate(self.model_inputs)  # (num_envs, 1, pred_dim)
-            # Take prediction from last timestep
-            if prediction.shape[1] > 1:
-                prediction = prediction[:, -1, :]  # (num_envs, pred_dim)
-            else:
-                prediction = prediction.squeeze(1)  # (num_envs, pred_dim)
-        
-        # Convert prediction to next states
-        cur_states = self.model_inputs["states"][:, -1, :]  # (num_envs, state_dim)
-        next_states = convert_prediction_to_next_states(
-            cur_states,
-            prediction,
-            self.prediction_type,
-            self.orientation_prediction_parameterization,
-            self.dof_q_per_env,
-            self.dof_qd_per_env,
-            self.num_joints_per_env,
-            self.joint_q_start,
-            self.joint_q_end,
-            self.joint_types
-        )
-        
-        # Convert back to world frame if needed
-        next_states = convert_states_back_to_world(
-            self.model_inputs["root_body_q"],
-            next_states,
-            self.states_frame,
-            self.anchor_frame_step,
-            self.state_dim,
-            self.dof_q_per_env,
-            self.joint_types
-        )
-        
-        # Wrap continuous DOFs
-        wrap2PI(next_states, self.is_continuous_dof)
-        
-        return next_states
-    
     def process_inputs(
         self,
         states: torch.Tensor,
@@ -371,4 +296,79 @@ class NeRDPredictor:
                     self.model_inputs[key] = masked.view(original_shape)
         
         return self.model_inputs
+    
+    def predict(
+        self,
+        step
+    ) -> torch.Tensor:
+        """
+        Predict next robot state.
+        
+        Args:
+            states: Current states (num_envs, state_dim) in generalized coordinates [joint_q, joint_qd]
+            joint_acts: Joint actions/torques (num_envs, joint_act_dim)
+            root_body_q: Root body pose (num_envs, 7) [x, y, z, qx, qy, qz, qw]
+            contacts: Dictionary with contact information:
+                - 'contact_normals': (num_envs, num_contacts * 3)
+                - 'contact_depths': (num_envs, num_contacts)
+                - 'contact_thicknesses': (num_envs, num_contacts)
+                - 'contact_points_0': (num_envs, num_contacts * 3)
+                - 'contact_points_1': (num_envs, num_contacts * 3)
+            gravity_dir: Gravity direction vector (num_envs, 3)
+            dt: Time step (optional, not used in current implementation)
+        
+        Returns:
+            next_states: Next states (num_envs, state_dim)
+        """
+
+        # FIX: zeroing the output of _process_inputs once again,remove it ideally
+        self.model_inputs["contact_normals"] = torch.zeros_like(self.model_inputs["contact_normals"])
+        self.model_inputs["contact_depths"] = torch.zeros_like(self.model_inputs["contact_depths"])
+        self.model_inputs["contact_thicknesses"] = torch.zeros_like(self.model_inputs["contact_thicknesses"])
+        self.model_inputs["contact_points_0"] = torch.zeros_like(self.model_inputs["contact_points_0"])
+        self.model_inputs["contact_points_1"] = torch.zeros_like(self.model_inputs["contact_points_1"])
+        self.model_inputs["contact_masks"] = torch.zeros_like(self.model_inputs["contact_masks"])
+
+        model_inputs_csv_filename = Path(__file__).parent / 'pendulum_model_inputs.csv'
+        write_model_inputs_to_csv(model_inputs_csv_filename, step, self.model_inputs)
+
+        # Run model inference
+        with torch.no_grad():
+            prediction = self.model.evaluate(self.model_inputs)  # (num_envs, 1, pred_dim)
+            # Take prediction from last timestep
+            if prediction.shape[1] > 1:
+                prediction = prediction[:, -1, :]  # (num_envs, pred_dim)
+            else:
+                prediction = prediction.squeeze(1)  # (num_envs, pred_dim)
+        
+        # Convert prediction to next states
+        cur_states = self.model_inputs["states"][:, -1, :]  # (num_envs, state_dim)
+        next_states = convert_prediction_to_next_states(
+            cur_states,
+            prediction,
+            self.prediction_type,
+            self.orientation_prediction_parameterization,
+            self.dof_q_per_env,
+            self.dof_qd_per_env,
+            self.num_joints_per_env,
+            self.joint_q_start,
+            self.joint_q_end,
+            self.joint_types
+        )
+        
+        # Convert back to world frame if needed
+        next_states = convert_states_back_to_world(
+            self.model_inputs["root_body_q"],
+            next_states,
+            self.states_frame,
+            self.anchor_frame_step,
+            self.state_dim,
+            self.dof_q_per_env,
+            self.joint_types
+        )
+        
+        # Wrap continuous DOFs
+        wrap2PI(next_states, self.is_continuous_dof)
+        
+        return next_states
 

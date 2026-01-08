@@ -18,6 +18,7 @@ from newton import Model
 # from .engine_config import AxionEngineConfig
 from .engine_config import NerdEngineConfig
 from .engine_logger import EngineLogger
+from axion.types import contact_penetration_depth_kernel, reorder_ground_contacts_kernel
 # from axion.optim import JacobiPreconditioner
 # from axion.optim import MatrixFreeSystemOperator
 # from axion.optim import MatrixSystemOperator
@@ -80,6 +81,7 @@ class NerdEngine(SolverBase):
         #self.init_state_fn = init_state_fn
         self.logger = logger
         self.config = config
+        self.model = model
 
         # joint_constraint_offsets, num_constraints = compute_joint_constraint_offsets(
         #     model.joint_type,
@@ -92,6 +94,7 @@ class NerdEngine(SolverBase):
         #     linesearch_step_count=self.config.linesearch_step_count,
         #     joint_constraint_count=num_constraints,
         # )
+
 
         # self.data = create_engine_arrays(
         #     self.dims,
@@ -175,14 +178,112 @@ class NerdEngine(SolverBase):
         # TO-DO: Add Control from function input
         joint_acts = torch.zeros((self.num_models, 1), device= str(self.device))
 
-        # Preprocess contacts
-        # WARNING!!! I am rewriting contact info to all zeros inside .predict()!!!!
+        #---Preprocess contacts-------------------------------------------
         max_num_contacts_per_model = 4
-        contact_normals = wp.to_torch(contacts.rigid_contact_normal).flatten().unsqueeze(0).clone()
-        contact_depths = -100* torch.zeros((self.num_models, max_num_contacts_per_model)) # FIX: wp.to_torch(contacts.rigid_contact_d)
-        contact_thickness = wp.to_torch(contacts.rigid_contact_thickness0).flatten().unsqueeze(0).clone()  # FIX: pick 0 or 1?
-        contact_points_0 =  wp.to_torch(contacts.rigid_contact_point1).flatten().unsqueeze(0).clone()
-        contact_points_1 = wp.to_torch(contacts.rigid_contact_point1).flatten().unsqueeze(0).clone()
+
+        # Reshape shape_body to 2D if needed (Newton provides 1D, kernel expects 2D)
+        if len(self.model.shape_body.shape) == 1:
+            shape_body_2d = self.model.shape_body.reshape((1, -1))  # (shape_count,) -> (1, shape_count)
+        else:
+            shape_body_2d = self.model.shape_body
+
+        # Reorder contact data so body is always in position 0, ground in position 1
+        reordered_point0 = wp.zeros(
+            (self.num_models, max_num_contacts_per_model), 
+            dtype=wp.vec3, 
+            device=str(self.device)
+        )
+        reordered_point1 = wp.zeros(
+            (self.num_models, max_num_contacts_per_model), 
+            dtype=wp.vec3, 
+            device=str(self.device)
+        )
+        reordered_normal = wp.zeros(
+            (self.num_models, max_num_contacts_per_model), 
+            dtype=wp.vec3, 
+            device=str(self.device)
+        )
+        reordered_thickness0 = wp.zeros(
+            (self.num_models, max_num_contacts_per_model), 
+            dtype=wp.float32, 
+            device=str(self.device)
+        )
+        reordered_thickness1 = wp.zeros(
+            (self.num_models, max_num_contacts_per_model), 
+            dtype=wp.float32, 
+            device=str(self.device)
+        )
+        reordered_body_shape = wp.zeros(
+            (self.num_models, max_num_contacts_per_model), 
+            dtype=wp.int32, 
+            device=str(self.device)
+        )
+
+        wp.launch(
+            kernel=reorder_ground_contacts_kernel,
+            dim=(self.num_models, max_num_contacts_per_model),
+            inputs=[
+                contacts.rigid_contact_count,
+                contacts.rigid_contact_shape0,
+                contacts.rigid_contact_shape1,
+                contacts.rigid_contact_point0,
+                contacts.rigid_contact_point1,
+                contacts.rigid_contact_normal,
+                contacts.rigid_contact_thickness0,
+                contacts.rigid_contact_thickness1,
+                shape_body_2d,
+            ],
+            outputs=[
+                reordered_point0,  # Always body
+                reordered_point1,  # Always ground
+                reordered_normal,
+                reordered_thickness0,  # Always body
+                reordered_thickness1,  # Always ground
+                reordered_body_shape,  # Body shape index for each contact
+            ],
+            device=str(self.device)
+        )
+
+        # Calculate Penetration depth using reordered contact data
+        contact_depths_wp_array = wp.zeros(
+            (self.num_models, max_num_contacts_per_model), 
+            dtype=wp.float32, 
+            device=str(self.device)
+        )
+        
+        # If state_in.body_q is 1D, reshape it
+        if len(state_in.body_q.shape) == 1:
+            body_q_2d = state_in.body_q.reshape((1, -1))    # (body_count,) -> (1, body_count)
+        else:
+            body_q_2d = state_in.body_q
+
+        wp.launch(
+            kernel=contact_penetration_depth_kernel,
+            dim=(self.num_models, max_num_contacts_per_model),
+            inputs=[
+                body_q_2d,
+                shape_body_2d,
+                contacts.rigid_contact_count,
+                reordered_point0,  # Body points (reordered)
+                reordered_point1,  # Ground points (reordered)
+                reordered_normal,  # Normal from body to ground (reordered)
+                reordered_thickness0,  # Body thickness (reordered)
+                reordered_thickness1,  # Ground thickness (reordered)
+                reordered_body_shape,  # Body shape indices
+            ],
+            outputs=[
+                contact_depths_wp_array
+            ],
+            device=str(self.device)
+        )
+
+        # Convert to torch if needed for your neural network
+        contact_depths = wp.to_torch(contact_depths_wp_array)
+        contact_normals = wp.to_torch(reordered_normal).flatten().unsqueeze(0).clone()
+        contact_thickness = wp.to_torch(reordered_thickness0).flatten().unsqueeze(0).clone()  # Body thickness
+        contact_points_0 = wp.to_torch(reordered_point0).flatten().unsqueeze(0).clone()  # Body points
+        contact_points_1 = wp.to_torch(reordered_point1).flatten().unsqueeze(0).clone()  # Ground points
+        
         contacts = {
             "contact_normals": contact_normals,
             "contact_depths": contact_depths,
@@ -190,6 +291,7 @@ class NerdEngine(SolverBase):
             "contact_points_0": contact_points_0,
             "contact_points_1": contact_points_1
         }
+        #-------------------------------------------------------------------
         
         # Edit 1: switching axis because NeRD had up_axis=Y and axion has up_axis = z
         # Edit 2: Nerd expects root_body_q to be the pos/orient of the first pendulum link, but only its rotational part for some reason? 
@@ -223,6 +325,8 @@ class NerdEngine(SolverBase):
         # Edit: the newton.eval_fk has probably different convention on the sign of joint angles than NeRD, 
         # that's why I added minus here: 
         newton.eval_fk(self.model, -state_out.joint_q, -state_out.joint_qd, state_out)
+
+        print(state_out.joint_q, state_out.joint_qd)
 
         # increase step counter
         self.step_cnt += 1

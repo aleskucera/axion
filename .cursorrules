@@ -5,7 +5,7 @@
 5. All code, symbol names and alike must be in English.
 6. Any comments you add must be in English.
 
-Here is my current file structure:
+Here is the file structure (only the most important files):
 ├── docs
 │   ├── advanced
 │   │   ├── differentiable.md
@@ -33,44 +33,168 @@ Here is my current file structure:
 │       ├── non-linear-system.md
 │       ├── notation.md
 │       └── numerical-solution.md
+├── examples
+│   ├── assets
+│   │   ├── carter
+│   │   │   ├── meshes
+│   │   │   │   ├── caster_wheel.obj
+│   │   │   │   ├── chassis.obj
+│   │   │   │   ├── pivot.obj
+│   │   │   │   └── side_wheel.obj
+│   │   │   └── urdf
+│   │   │       └── carter.urdf
+│   │   ├── cube.obj
+│   │   ├── cylinder.mtl
+│   │   ├── cylinder.obj
+│   │   ├── helhest
+│   │   │   ├── wheel2.mtl
+│   │   │   ├── wheel2.obj
+│   │   │   ├── wheel_collision.mtl
+│   │   │   ├── wheel_collision.obj
+│   │   │   └── wheel.obj
+│   │   ├── helhest.urdf
+│   │   ├── marv
+│   │   │   ├── track_collision2.mtl
+│   │   │   ├── track_collision2.obj
+│   │   │   ├── track_collision3.mtl
+│   │   │   ├── track_collision3.obj
+│   │   │   ├── track_collision4.mtl
+│   │   │   ├── track_collision4.obj
+│   │   │   ├── track_collision.mtl
+│   │   │   └── track_collision.obj
+│   │   ├── sphere.gif
+│   │   ├── sphere.mp4
+│   │   ├── surface.mtl
+│   │   ├── surface.obj
+│   │   ├── taros-4
+│   │   │   ├── offroad_wheel.mtl
+│   │   │   ├── offroad_wheel.obj
+│   │   │   ├── wheel2.mtl
+│   │   │   ├── wheel2.obj
+│   │   │   ├── wheel_collision.mtl
+│   │   │   ├── wheel_collision.obj
+│   │   │   └── wheel.obj
+│   │   └── taros-4.urdf
+│   ├── ball_bounce.py
+│   ├── ball_box_collision.py
+│   ├── basic_pendulum.py
+│   ├── basic_shape.py
+│   ├── box_stack.py
+│   ├── collision_primitives.py
+│   ├── conf
+│   │   ├── config.yaml
+│   │   ├── engine
+│   │   │   ├── axion_pos.yaml
+│   │   │   ├── axion_vel.yaml
+│   │   │   ├── featherstone.yaml
+│   │   │   ├── mujoco.yaml
+│   │   │   ├── nerd.yaml
+│   │   │   └── xpbd.yaml
+│   │   ├── execution
+│   │   │   ├── cuda_graph.yaml
+│   │   │   └── no_graph.yaml
+│   │   ├── featherstone.yaml
+│   │   ├── helhest.yaml
+│   │   ├── logging
+│   │   │   ├── disabled.yaml
+│   │   │   ├── hdf5.yaml
+│   │   │   └── timing.yaml
+│   │   ├── nerdPendulum.yaml
+│   │   ├── rendering
+│   │   │   ├── gl.yaml
+│   │   │   ├── headless.yaml
+│   │   │   └── usd.yaml
+│   │   ├── simulation
+│   │   │   ├── base.yaml
+│   │   │   ├── featherstone.yaml
+│   │   │   ├── helhest.yaml
+│   │   │   ├── nerd.yaml
+│   │   │   └── taros-4.yaml
+│   │   └── taros-4.yaml
+│   ├── diffsim_bear.py
+│   ├── example_robot_policy.py
+│   ├── helhest
+│   │   ├── common.py
+│   │   ├── control.py
+│   │   ├── flip.py
+│   │   ├── obstacle.py
+│   │   ├── rotation.py
+│   │   ├── surface_drive.py
+│   │   └── unified_model.py
+│   ├── pendulum_NerdEngine.py
+│   ├── random
+│   │   ├── collisions.py
+│   │   └── joints.py
+│   ├── static_box.py
+│   ├── surface.py
+│   ├── taros_4
+│   │   ├── common.py
+│   │   ├── control.py
+│   │   ├── flip.py
+│   │   ├── obstacle.py
+│   │   ├── rotation.py
+│   │   ├── surface_drive.py
+│   │   └── unified_model.py
+│   └── tracks
+│       ├── control.py
+│       ├── obstacle.py
+│       ├── tank_control.py
+│       ├── tank_obstacle.py
+│       ├── tank_rotation.py
+│       └── tank_surface.py
 ├── pyproject.toml
 ├── README.md
 ├── src
 │   └── axion
-│       ├── adapters
-│       │   └── __pycache__
-│       │       └── sim_adapter.cpython-312.pyc
 │       ├── constraints
-│       │   ├── contact_constraint.py
+│       │   ├── control_constraint.py
 │       │   ├── dynamics_constraint.py
 │       │   ├── friction_constraint.py
 │       │   ├── __init__.py
-│       │   ├── joint_constraint.py
+│       │   ├── joint_kinematics.py
+│       │   ├── positional_contact_constraint.py
+│       │   ├── positional_joint_constraint.py
 │       │   ├── __pycache__
 │       │   │   ├── contact_constraint.cpython-312.pyc
+│       │   │   ├── control_constraint.cpython-312.pyc
 │       │   │   ├── dynamics_constraint.cpython-312.pyc
 │       │   │   ├── friction_constraint.cpython-312.pyc
 │       │   │   ├── __init__.cpython-312.pyc
 │       │   │   ├── joint_constraint.cpython-312.pyc
-│       │   │   └── utils.cpython-312.pyc
-│       │   └── utils.py
+│       │   │   ├── joint_kinematics.cpython-312.pyc
+│       │   │   ├── positional_contact_constraint.cpython-312.pyc
+│       │   │   ├── positional_joint_constraint.cpython-312.pyc
+│       │   │   ├── utils.cpython-312.pyc
+│       │   │   ├── velocity_contact_constraint.cpython-312.pyc
+│       │   │   └── velocity_joint_constraint.cpython-312.pyc
+│       │   ├── track_curve.py
+│       │   ├── utils.py
+│       │   ├── velocity_contact_constraint.py
+│       │   └── velocity_joint_constraint.py
 │       ├── core
 │       │   ├── abstract_simulator.py
+│       │   ├── contacts.py
 │       │   ├── control_utils.py
-│       │   ├── dense_utils.py
+│       │   ├── data_views.py
 │       │   ├── engine_config.py
 │       │   ├── engine_data.py
 │       │   ├── engine_dims.py
 │       │   ├── engine_logger.py
 │       │   ├── engine.py
-│       │   ├── general_utils.py
 │       │   ├── __init__.py
 │       │   ├── linear_utils.py
 │       │   ├── linesearch_utils.py
+│       │   ├── model_builder.py
+│       │   ├── model.py
+│       │   ├── nerd_engine.py
 │       │   ├── pca_utils.py
+│       │   ├── pendulum_states_NerdEngine.csv
+│       │   ├── pendulum_states_NerdEngine_plot.pdf
 │       │   └── __pycache__
 │       │       ├── abstract_simulator.cpython-312.pyc
+│       │       ├── contacts.cpython-312.pyc
 │       │       ├── control_utils.cpython-312.pyc
+│       │       ├── data_views.cpython-312.pyc
 │       │       ├── dense_utils.cpython-312.pyc
 │       │       ├── engine_config.cpython-312.pyc
 │       │       ├── engine.cpython-312.pyc
@@ -82,61 +206,14 @@ Here is my current file structure:
 │       │       ├── linear_utils.cpython-312.pyc
 │       │       ├── linesearch_utils.cpython-312.pyc
 │       │       ├── logging_utils.cpython-312.pyc
+│       │       ├── model_builder.cpython-312.pyc
+│       │       ├── model.cpython-312.pyc
+│       │       ├── nerd_engine.cpython-312.pyc
 │       │       └── pca_utils.cpython-312.pyc
 │       ├── examples
-│       │   ├── assets
-│       │   │   ├── carter
-│       │   │   │   ├── meshes
-│       │   │   │   │   ├── caster_wheel.obj
-│       │   │   │   │   ├── chassis.obj
-│       │   │   │   │   ├── pivot.obj
-│       │   │   │   │   └── side_wheel.obj
-│       │   │   │   └── urdf
-│       │   │   │       └── carter.urdf
-│       │   │   ├── cube.obj
-│       │   │   ├── cylinder.mtl
-│       │   │   ├── cylinder.obj
-│       │   │   ├── helhest
-│       │   │   │   ├── wheel2.mtl
-│       │   │   │   ├── wheel2.obj
-│       │   │   │   ├── wheel_collision.mtl
-│       │   │   │   ├── wheel_collision.obj
-│       │   │   │   └── wheel.obj
-│       │   │   ├── sphere.gif
-│       │   │   ├── sphere.mp4
-│       │   │   ├── surface.mtl
-│       │   │   └── surface.obj
-│       │   ├── ball_bounce.py
-│       │   ├── basic_joints.py
-│       │   ├── basic_pendulum.py
-│       │   ├── basic_shape.py
-│       │   ├── box_stack.py
-│       │   ├── collision_primitives.py
 │       │   ├── conf
-│       │   │   ├── config.yaml
-│       │   │   ├── engine
-│       │   │   │   ├── axion.yaml
-│       │   │   │   ├── featherstone.yaml
-│       │   │   │   ├── mujoco.yaml
-│       │   │   │   └── xpbd.yaml
-│       │   │   ├── execution
-│       │   │   │   ├── cuda_graph.yaml
-│       │   │   │   └── no_graph.yaml
-│       │   │   ├── helhest.yaml
-│       │   │   ├── logging
-│       │   │   │   ├── disabled.yaml
-│       │   │   │   ├── hdf5.yaml
-│       │   │   │   └── timing.yaml
-│       │   │   ├── rendering
-│       │   │   │   ├── gl.yaml
-│       │   │   │   ├── headless.yaml
-│       │   │   │   └── usd.yaml
 │       │   │   └── simulation
-│       │   │       ├── base.yaml
-│       │   │       └── helhest.yaml
-│       │   ├── helhest.py
-│       │   ├── helhest_simple.py
-│       │   ├── __init__.py
+│       │   │       └── nerd.yaml
 │       │   └── __pycache__
 │       │       ├── _assets.cpython-312.pyc
 │       │       ├── ball_bounce.cpython-312.pyc
@@ -144,6 +221,9 @@ Here is my current file structure:
 │       │       ├── helhest.cpython-312.pyc
 │       │       ├── helhest_simple.cpython-312.pyc
 │       │       └── __init__.cpython-312.pyc
+│       ├── generation
+│       │   ├── __init__.py
+│       │   └── scene_generator.py
 │       ├── __init__.py
 │       ├── logging
 │       │   ├── hdf5_logger.py
@@ -155,10 +235,19 @@ Here is my current file structure:
 │       │       ├── hdf5_reader.cpython-312.pyc
 │       │       ├── __init__.cpython-312.pyc
 │       │       └── null_logger.cpython-312.pyc
+│       ├── math
+│       │   ├── complementarity.py
+│       │   ├── geometry.py
+│       │   ├── __init__.py
+│       │   └── __pycache__
+│       │       ├── complementarity.cpython-312.pyc
+│       │       ├── geometry.cpython-312.pyc
+│       │       └── __init__.cpython-312.pyc
 │       ├── nn_prediction
 │       │   ├── cli_usage.md
 │       │   ├── example_usage.py
 │       │   ├── EXTRACTION_SUMMARY.md
+│       │   ├── extract_normalization_stats.py
 │       │   ├── __init__.py
 │       │   ├── integrators
 │       │   │   ├── __init__.py
@@ -185,20 +274,31 @@ Here is my current file structure:
 │       │   │       ├── model_transformer.cpython-312.pyc
 │       │   │       ├── model_utils.cpython-311.pyc
 │       │   │       └── model_utils.cpython-312.pyc
+│       │   ├── nerd_pendulum_model_inputs.csv
 │       │   ├── nerd_predictor.py
+│       │   ├── pendulum_model_inputs.csv
+│       │   ├── pendulum_model_inputs_gravity_dir_plot.pdf
+│       │   ├── pendulum_model_inputs_joint_act_plot.pdf
+│       │   ├── pendulum_model_inputs_root_body_q_plot.pdf
+│       │   ├── pendulum_model_inputs_states_plot.pdf
+│       │   ├── pendulum_states_axion_example_usage.csv
+│       │   ├── pendulum_states_axion_example_usage_plot.pdf
 │       │   ├── __pycache__
 │       │   │   ├── __init__.cpython-312.pyc
 │       │   │   └── nerd_predictor.cpython-312.pyc
 │       │   ├── README.md
+│       │   ├── test_pt_import.py
 │       │   ├── trained_models
 │       │   │   └── NeRD_pretrained
 │       │   │       └── pendulum
 │       │   │           ├── cfg.yaml
 │       │   │           └── model.pt
 │       │   └── utils
+│       │       ├── analysis_utils.py
 │       │       ├── commons.py
 │       │       ├── __init__.py
 │       │       ├── __pycache__
+│       │       │   ├── analysis_utils.cpython-312.pyc
 │       │       │   ├── commons.cpython-311.pyc
 │       │       │   ├── commons.cpython-312.pyc
 │       │       │   ├── __init__.cpython-311.pyc
@@ -211,18 +311,20 @@ Here is my current file structure:
 │       │       └── torch_utils.py
 │       ├── optim
 │       │   ├── cr.py
+│       │   ├── cr_solver.py
 │       │   ├── __init__.py
-│       │   ├── matrixfree_operator_optimized.py
-│       │   ├── matrixfree_operator.py
-│       │   ├── matrix_operator.py
 │       │   ├── preconditioner.py
-│       │   └── __pycache__
-│       │       ├── cr.cpython-312.pyc
-│       │       ├── __init__.cpython-312.pyc
-│       │       ├── matrixfree_operator.cpython-312.pyc
-│       │       ├── matrixfree_operator_optimized.cpython-312.pyc
-│       │       ├── matrix_operator.cpython-312.pyc
-│       │       └── preconditioner.cpython-312.pyc
+│       │   ├── __pycache__
+│       │   │   ├── cr.cpython-312.pyc
+│       │   │   ├── cr_solver.cpython-312.pyc
+│       │   │   ├── __init__.cpython-312.pyc
+│       │   │   ├── matrixfree_operator.cpython-312.pyc
+│       │   │   ├── matrixfree_operator_optimized.cpython-312.pyc
+│       │   │   ├── matrix_operator.cpython-312.pyc
+│       │   │   ├── preconditioner.cpython-312.pyc
+│       │   │   └── system_operator.cpython-312.pyc
+│       │   ├── system_operator_old.py
+│       │   └── system_operator.py
 │       ├── __pycache__
 │       │   └── __init__.cpython-312.pyc
 │       ├── tiled
@@ -231,7 +333,6 @@ Here is my current file structure:
 │       │   │   ├── __init__.cpython-312.pyc
 │       │   │   ├── tiled_kernels.cpython-312.pyc
 │       │   │   └── tiled_utils.cpython-312.pyc
-│       │   ├── tiled_kernels.py
 │       │   └── tiled_utils.py
 │       └── types
 │           ├── contact_interaction.py
@@ -245,7 +346,52 @@ Here is my current file structure:
 │           │   ├── joint_interaction.cpython-312.pyc
 │           │   ├── spatial_inertia.cpython-312.pyc
 │           │   └── utils.cpython-312.pyc
-│           ├── spatial_inertia.py
-│           └── utils.py
-├── uv.lock
-└── visualize_loss_landscape.py
+│           └── spatial_inertia.py
+├── third_party
+│   ├── nerd
+│   │   ├── nerd
+│   │   │   ├── envs
+│   │   │   │   ├── __pycache__
+│   │   │   │   │   ├── abstract_contact.cpython-312.pyc
+│   │   │   │   │   ├── abstract_contact_environment.cpython-312.pyc
+│   │   │   │   │   ├── __init__.cpython-312.pyc
+│   │   │   │   │   └── neural_environment.cpython-312.pyc
+│   │   │   │   └── warp_sim_envs
+│   │   │   │       └── __pycache__
+│   │   │   │           ├── env_cartpole.cpython-312.pyc
+│   │   │   │           ├── environment.cpython-312.pyc
+│   │   │   │           ├── env_pendulum_with_contact.cpython-312.pyc
+│   │   │   │           ├── __init__.cpython-312.pyc
+│   │   │   │           └── utils.cpython-312.pyc
+│   │   │   ├── figures
+│   │   │   │   └── overview.png
+│   │   │   ├── integrators
+│   │   │   │   └── __pycache__
+│   │   │   │       ├── integrator_neural.cpython-312.pyc
+│   │   │   │       ├── integrator_neural_rnn.cpython-312.pyc
+│   │   │   │       ├── integrator_neural_stateful.cpython-312.pyc
+│   │   │   │       └── integrator_neural_transformer.cpython-312.pyc
+│   │   │   ├── models
+│   │   │   │   └── __pycache__
+│   │   │   │       ├── base_models.cpython-312.pyc
+│   │   │   │       ├── models.cpython-312.pyc
+│   │   │   │       ├── model_transformer.cpython-312.pyc
+│   │   │   │       └── model_utils.cpython-312.pyc
+│   │   │   └── utils
+│   │   │       └── __pycache__
+│   │   │           ├── commons.cpython-312.pyc
+│   │   │           ├── env_utils.cpython-312.pyc
+│   │   │           ├── python_utils.cpython-312.pyc
+│   │   │           ├── running_mean_std.cpython-312.pyc
+│   │   │           ├── time_report.cpython-312.pyc
+│   │   │           ├── torch_utils.cpython-312.pyc
+│   │   │           └── warp_utils.cpython-312.pyc
+│   │   └── nerd.egg-info
+│   │       ├── dependency_links.txt
+│   │       ├── PKG-INFO
+│   │       ├── requires.txt
+│   │       ├── SOURCES.txt
+│   │       └── top_level.txt
+│   └── newton
+├── track.md
+└── uv.lock
