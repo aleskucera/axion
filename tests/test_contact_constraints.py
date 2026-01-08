@@ -2,7 +2,7 @@ import newton
 import numpy as np
 import pytest
 import warp as wp
-from axion.core.engine import AxionEngine
+from axion.core.engine_new import AxionEngine
 from axion.core.engine_config import AxionEngineConfig
 from axion.core.engine_logger import EngineLogger
 from axion.core.engine_logger import LoggingConfig
@@ -66,15 +66,12 @@ def run_contact_test(shape_type):
     model = builder.finalize_replicated(num_worlds=1, gravity=-9.81)
 
     config = AxionEngineConfig(
-        contact_constraint_level="pos",
-        contact_stabilization_factor=1.0,
-        joint_compliance=1e-8,
-        contact_compliance=1e-8,
-        newton_iters=20,
-        linear_iters=20,
+        max_newton_iters=20,
+        max_linear_iters=20,
     )
-    logger = EngineLogger(LoggingConfig(enable_timing=False))
-    logger.initialize_events(steps_per_segment=1, newton_iters=config.newton_iters)
+
+    logger = EngineLogger(LoggingConfig())
+    logger.initialize_events(steps_per_segment=1, newton_iters=config.max_newton_iters)
 
     def init_state_fn(state_in, state_out, contacts, dt):
         engine.integrate_bodies(model, state_in, state_out, dt)

@@ -2,7 +2,7 @@ import newton
 import numpy as np
 import pytest
 import warp as wp
-from axion.core.engine import AxionEngine
+from axion.core.engine_new import AxionEngine
 from axion.core.engine_config import AxionEngineConfig
 from axion.core.engine_logger import EngineLogger
 from axion.core.engine_logger import LoggingConfig
@@ -79,12 +79,12 @@ def _run_friction_test_logic(test_case: str):
         contact_stabilization_factor=1.0,
         joint_compliance=1e-8,
         contact_compliance=1e-8,
-        newton_iters=10,
-        linear_iters=10,
+        max_newton_iters=10,
+        max_linear_iters=10,
     )
     # Disable logging overhead
     logger = EngineLogger(LoggingConfig(enable_timing=False))
-    logger.initialize_events(steps_per_segment=1, newton_iters=config.newton_iters)
+    logger.initialize_events(steps_per_segment=1, newton_iters=config.max_newton_iters)
 
     engine = AxionEngine(
         model=model,

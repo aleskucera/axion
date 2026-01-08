@@ -17,7 +17,12 @@ def batch_joint_q_start_kernel(
     world_idx = joint_idx // joint_count_per_world
     slot = joint_idx % joint_count_per_world
 
-    batched_joint_q_start[world_idx, slot] = joint_q_start[joint_idx] % joint_coord_count_per_world
+    if joint_coord_count_per_world > 0:
+        batched_joint_q_start[world_idx, slot] = (
+            joint_q_start[joint_idx] % joint_coord_count_per_world
+        )
+    else:
+        batched_joint_q_start[world_idx, slot] = 0
 
 
 @wp.kernel
@@ -35,9 +40,12 @@ def batch_joint_qd_start_kernel(
     world_idx = joint_idx // joint_count_per_world
     slot = joint_idx % joint_count_per_world
 
-    batched_joint_qd_start[world_idx, slot] = joint_qd_start[joint_idx] % (
-        joint_dof_count_per_world - 1
-    )
+    if joint_dof_count_per_world > 1:
+        batched_joint_qd_start[world_idx, slot] = joint_qd_start[joint_idx] % (
+            joint_dof_count_per_world - 1
+        )
+    else:
+        batched_joint_qd_start[world_idx, slot] = 0
 
 
 @wp.kernel

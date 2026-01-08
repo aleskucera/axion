@@ -162,7 +162,7 @@ class CRSolver:
         self.tiled_dot = TiledDot(
             shape=(num_worlds, 1, vec_dim),
             dtype=self.scalar_dtype,
-            tile_size=1024,
+            tile_size=256,
             device=device,
         )
 

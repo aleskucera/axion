@@ -2,7 +2,7 @@ import newton
 import numpy as np
 import pytest
 import warp as wp
-from axion.core.engine import AxionEngine
+from axion.core.engine_new import AxionEngine
 from axion.core.engine_config import AxionEngineConfig
 from axion.core.engine_logger import EngineLogger
 from axion.core.engine_logger import LoggingConfig
@@ -16,11 +16,11 @@ def setup_test_engine():
     config = AxionEngineConfig(
         joint_constraint_level="pos",
         joint_compliance=0.0,
-        newton_iters=20,
-        linear_iters=50,
+        max_newton_iters=20,
+        max_linear_iters=50,
     )
     logger = EngineLogger(LoggingConfig(enable_timing=False))
-    logger.initialize_events(steps_per_segment=1, newton_iters=config.newton_iters)
+    logger.initialize_events(steps_per_segment=1, newton_iters=config.max_newton_iters)
 
     return config, logger
 

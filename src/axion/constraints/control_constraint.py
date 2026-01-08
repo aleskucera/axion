@@ -459,13 +459,14 @@ def count_control_constraints_kernel(
     world_idx, joint_idx = wp.tid()
 
     j_type = joint_type[world_idx, joint_idx]
-    qd_start = joint_qd_start[world_idx, joint_idx]
-    mode = joint_dof_mode[world_idx, qd_start]
 
     count = 0
     # Only Revolute(1) supported for now
-    if j_type == 1 and mode != 0:
-        count = 1
+    if j_type == 1:
+        qd_start = joint_qd_start[world_idx, joint_idx]
+        mode = joint_dof_mode[world_idx, qd_start]
+        if mode != 0:
+            count = 1
 
     counts[world_idx, joint_idx] = count
 
@@ -518,13 +519,14 @@ def fill_control_constraint_body_idx_kernel(
     world_idx, joint_idx = wp.tid()
 
     j_type = joint_type[world_idx, joint_idx]
-    qd_start = joint_qd_start[world_idx, joint_idx]
-    mode = joint_dof_mode[world_idx, qd_start]
 
     count = 0
     # Only Revolute(1) supported for now
-    if j_type == 1 and mode != 0:
-        count = 1
+    if j_type == 1:
+        qd_start = joint_qd_start[world_idx, joint_idx]
+        mode = joint_dof_mode[world_idx, qd_start]
+        if mode != 0:
+            count = 1
 
     if count == 0:
         return

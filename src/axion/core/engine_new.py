@@ -169,6 +169,7 @@ class AxionEngine(SolverBase):
         self.tiled_sq_norm = TiledSqNorm(
             shape=(self.dims.num_worlds, self.dims.N_u + self.dims.N_c),
             dtype=wp.float32,
+            tile_size=256,
             device=self.device,
         )
 
@@ -221,86 +222,91 @@ class AxionEngine(SolverBase):
     def _initialize_constraints(self, contacts: Contacts):
         self.axion_contacts.load_contact_data(contacts)
 
-        wp.launch(
-            kernel=contact_interaction_kernel,
-            dim=(self.axion_model.num_worlds, self.axion_contacts.max_contacts),
-            inputs=[
-                self.data.body_q,
-                self.axion_model.body_com,
-                self.axion_model.shape_body,
-                self.axion_model.shape_thickness,
-                self.axion_model.shape_material_mu,
-                self.axion_model.shape_material_restitution,
-                self.axion_contacts.contact_count,
-                self.axion_contacts.contact_point0,
-                self.axion_contacts.contact_point1,
-                self.axion_contacts.contact_normal,
-                self.axion_contacts.contact_shape0,
-                self.axion_contacts.contact_shape1,
-                self.axion_contacts.contact_thickness0,
-                self.axion_contacts.contact_thickness1,
-            ],
-            outputs=[
-                self.data.contact_interaction,
-            ],
-            device=self.device,
-        )
+        if self.dims.N_n > 0:
+            wp.launch(
+                kernel=contact_interaction_kernel,
+                dim=(self.axion_model.num_worlds, self.axion_contacts.max_contacts),
+                inputs=[
+                    self.data.body_q,
+                    self.axion_model.body_com,
+                    self.axion_model.shape_body,
+                    self.axion_model.shape_thickness,
+                    self.axion_model.shape_material_mu,
+                    self.axion_model.shape_material_restitution,
+                    self.axion_contacts.contact_count,
+                    self.axion_contacts.contact_point0,
+                    self.axion_contacts.contact_point1,
+                    self.axion_contacts.contact_normal,
+                    self.axion_contacts.contact_shape0,
+                    self.axion_contacts.contact_shape1,
+                    self.axion_contacts.contact_thickness0,
+                    self.axion_contacts.contact_thickness1,
+                ],
+                outputs=[
+                    self.data.contact_interaction,
+                ],
+                device=self.device,
+            )
 
-        wp.launch(
-            kernel=fill_joint_constraint_body_idx_kernel,
-            dim=(self.axion_model.num_worlds, self.axion_model.joint_count),
-            inputs=[
-                self.axion_model.joint_type,
-                self.axion_model.joint_parent,
-                self.axion_model.joint_child,
-                self.data.joint_constraint_offsets,
-            ],
-            outputs=[
-                self.data.constraint_body_idx.j,
-            ],
-            device=self.device,
-        )
+        if self.dims.N_j > 0:
+            wp.launch(
+                kernel=fill_joint_constraint_body_idx_kernel,
+                dim=(self.axion_model.num_worlds, self.axion_model.joint_count),
+                inputs=[
+                    self.axion_model.joint_type,
+                    self.axion_model.joint_parent,
+                    self.axion_model.joint_child,
+                    self.data.joint_constraint_offsets,
+                ],
+                outputs=[
+                    self.data.constraint_body_idx.j,
+                ],
+                device=self.device,
+            )
 
-        wp.launch(
-            kernel=fill_control_constraint_body_idx_kernel,
-            dim=(self.axion_model.num_worlds, self.axion_model.joint_count),
-            inputs=[
-                self.axion_model.joint_parent,
-                self.axion_model.joint_child,
-                self.axion_model.joint_type,
-                self.axion_model.joint_dof_mode,
-                self.axion_model.joint_qd_start,
-                self.data.control_constraint_offsets,
-            ],
-            outputs=[
-                self.data.constraint_body_idx.ctrl,
-            ],
-            device=self.device,
-        )
+        if self.dims.N_ctrl > 0:
+            wp.launch(
+                kernel=fill_control_constraint_body_idx_kernel,
+                dim=(self.axion_model.num_worlds, self.axion_model.joint_count),
+                inputs=[
+                    self.axion_model.joint_parent,
+                    self.axion_model.joint_child,
+                    self.axion_model.joint_type,
+                    self.axion_model.joint_dof_mode,
+                    self.axion_model.joint_qd_start,
+                    self.data.control_constraint_offsets,
+                ],
+                outputs=[
+                    self.data.constraint_body_idx.ctrl,
+                ],
+                device=self.device,
+            )
 
-        wp.launch(
-            kernel=fill_contact_constraint_body_idx_kernel,
-            dim=(self.axion_model.num_worlds, self.dims.N_n),
-            inputs=[
-                self.data.contact_interaction,
-            ],
-            outputs=[
-                self.data.constraint_body_idx.n,
-            ],
-            device=self.device,
-        )
+        if self.dims.N_n > 0:
+            wp.launch(
+                kernel=fill_contact_constraint_body_idx_kernel,
+                dim=(self.axion_model.num_worlds, self.dims.N_n),
+                inputs=[
+                    self.data.contact_interaction,
+                ],
+                outputs=[
+                    self.data.constraint_body_idx.n,
+                ],
+                device=self.device,
+            )
 
-        wp.launch(
-            kernel=fill_friction_constraint_body_idx_kernel,
-            dim=(self.axion_model.num_worlds, self.dims.N_f),
-            inputs=[
-                self.data.contact_interaction,
-            ],
-            outputs=[
-                self.data.constraint_body_idx.f,
-            ],
-            device=self.device,
-        )
+        if self.dims.N_f > 0:
+            wp.launch(
+                kernel=fill_friction_constraint_body_idx_kernel,
+                dim=(self.axion_model.num_worlds, self.dims.N_f),
+                inputs=[
+                    self.data.contact_interaction,
+                ],
+                outputs=[
+                    self.data.constraint_body_idx.f,
+                ],
+                device=self.device,
+            )
 
     def _step_linearize(self, dt: float):
         compute_linear_system(self.axion_model, self.data, self.config, self.dims, dt)
