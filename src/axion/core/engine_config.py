@@ -17,8 +17,17 @@ class AxionEngineConfig(EngineConfig):
     during a simulation run.
     """
 
-    newton_iters: int = 8
-    linear_iters: int = 8
+    max_newton_iters: int = 8
+    max_linear_iters: int = 8
+
+    newton_mode: str = "convergence"  # "convergence" / "fixed"
+    linear_mode: str = "convergence"  # "convergence" / "fixed"
+
+    newton_tol: float = 1e-2
+    newton_atol: float = 5e-2
+
+    linear_tol: float = 1e-5
+    linear_atol: float = 1e-7
 
     joint_stabilization_factor: float = 0.01
     contact_stabilization_factor: float = 0.02
@@ -69,8 +78,20 @@ class AxionEngineConfig(EngineConfig):
                 raise ValueError(f"{name} must be >= 0, got {value}")
 
         # Validate iteration counts
-        _validate_positive_int(self.newton_iters, "newton_iters")
-        _validate_positive_int(self.linear_iters, "linear_iters")
+        _validate_positive_int(self.max_newton_iters, "max_newton_iters")
+        _validate_positive_int(self.max_linear_iters, "max_linear_iters")
+
+        # Validate modes
+        if self.newton_mode not in ("convergence", "fixed"):
+            raise ValueError(f"newton_mode must be 'convergence' or 'fixed', got {self.newton_mode}")
+        if self.linear_mode not in ("convergence", "fixed"):
+            raise ValueError(f"linear_mode must be 'convergence' or 'fixed', got {self.linear_mode}")
+
+        # Validate tolerances
+        _validate_non_negative_float(self.newton_tol, "newton_tol")
+        _validate_non_negative_float(self.newton_atol, "newton_atol")
+        _validate_non_negative_float(self.linear_tol, "linear_tol")
+        _validate_non_negative_float(self.linear_atol, "linear_atol")
 
         # Validate non-negative values
         _validate_non_negative_float(self.joint_stabilization_factor, "joint_stabilization_factor")

@@ -12,41 +12,54 @@ from .engine_dims import EngineDimensions
 T = TypeVar("T")
 
 
+@wp.kernel
+def _cast_float_to_spatial_2d(
+    src: wp.array(dtype=float, ndim=2),
+    dst: wp.array(dtype=wp.spatial_vector, ndim=2),
+):
+    # i: world index, j: body index
+    i, j = wp.tid()
+    offset = j * 6
+    dst[i, j] = wp.spatial_vector(
+        src[i, offset + 0],
+        src[i, offset + 1],
+        src[i, offset + 2],
+        src[i, offset + 3],
+        src[i, offset + 4],
+        src[i, offset + 5],
+    )
+
+
+@wp.kernel
+def _cast_spatial_to_float_2d(
+    src: wp.array(dtype=wp.spatial_vector, ndim=2),
+    dst: wp.array(dtype=float, ndim=2),
+):
+    i, j = wp.tid()
+    vec = src[i, j]
+    offset = j * 6
+    dst[i, offset + 0] = vec[0]
+    dst[i, offset + 1] = vec[1]
+    dst[i, offset + 2] = vec[2]
+    dst[i, offset + 3] = vec[3]
+    dst[i, offset + 4] = vec[4]
+    dst[i, offset + 5] = vec[5]
+
+
 @dataclass(frozen=True)
 class ConstraintView(Generic[T]):
-    """
-    Wrapper for constraint data that handles slicing for j/n/f parts.
-    Supports specifying which axis contains the stacked constraints.
-    """
-
     data: wp.array
     dims: EngineDimensions
-    axis: int = -1  # Default to last dimension (works for flat 1D and stacked Batches)
+    axis: int = -1
 
     def _slice_at_axis(self, s: slice) -> Optional[wp.array]:
-        """
-        Slices self.data at self.axis using slice s.
-        Replaces Ellipsis usage with explicit slice tuples for compatibility.
-        """
-        # 1. Return None if the slice is empty (e.g. no joints)
         if s.start == s.stop:
             return None
-
-        # 2. Normalise bounds (handle negative axis)
         ndim = self.data.ndim
         target_axis = self.axis % ndim
-
-        # 3. Construct explicit indexer tuple: (:, :, ..., s, ..., :)
-        #    Pre-axis: slice(None) for 0 to target_axis
-        #    At-axis:  s
-        #    Post-axis: slice(None) for target_axis+1 to ndim
-
         pre_slice = (slice(None),) * target_axis
         post_slice = (slice(None),) * (ndim - target_axis - 1)
-
-        indexer = pre_slice + (s,) + post_slice
-
-        return self.data[indexer]
+        return self.data[pre_slice + (s,) + post_slice]
 
     @property
     def full(self) -> wp.array:
@@ -78,19 +91,12 @@ class ConstraintView(Generic[T]):
 
 @dataclass(frozen=True)
 class SystemView(Generic[T]):
-    """
-    Wraps (..., N_u + N_c) arrays.
-    Always assumes the split dimension is the last one.
-    """
-
     data: wp.array
     dims: EngineDimensions
     _d_spatial: Optional[wp.array] = None
 
     def _get_split_slice(self, start, stop) -> Tuple[slice]:
-        """Helper to generate tuple slice for last dimension."""
         ndim = self.data.ndim
-        # (:, :, ..., start:stop)
         return (slice(None),) * (ndim - 1) + (slice(start, stop),)
 
     @property
@@ -99,7 +105,7 @@ class SystemView(Generic[T]):
 
     @property
     def d(self) -> wp.array:
-        """Dynamics part (..., :N_u)."""
+        """Dynamics part (float view)."""
         indexer = self._get_split_slice(None, self.dims.N_u)
         return self.data[indexer]
 
@@ -107,25 +113,40 @@ class SystemView(Generic[T]):
     def d_spatial(self) -> wp.array:
         """
         Dynamics part reinterpreted as spatial vectors.
-        Shape change: (..., N_u) -> (..., N_b) [dtype=spatial]
+        Returns the persistent auxiliary buffer.
         """
         if self._d_spatial is not None:
             return self._d_spatial
 
+        # Fallback (Slow path)
+        print("WARNING: This should not happen.")
         d_data = self.d.contiguous()
-
-        # Calculate new shape: preserve batch dims, set last dim to N_b
         base_shape = d_data.shape[:-1]
         new_shape = base_shape + (self.dims.N_b,)
-
         return wp.array(d_data, shape=new_shape, dtype=wp.spatial_vector)
+
+    def sync_to_float(self):
+        """Copies data from the spatial buffer to the main float array."""
+        if self._d_spatial is not None:
+            wp.launch(
+                kernel=_cast_spatial_to_float_2d,
+                dim=self._d_spatial.shape,
+                inputs=[self._d_spatial, self.d],
+                device=self.data.device,
+            )
+
+    def sync_to_spatial(self):
+        """Copies data from the main float array to the spatial buffer."""
+        if self._d_spatial is not None:
+            wp.launch(
+                kernel=_cast_float_to_spatial_2d,
+                dim=self._d_spatial.shape,
+                inputs=[self.d, self._d_spatial],
+                device=self.data.device,
+            )
 
     @property
     def c(self) -> ConstraintView[T]:
-        """
-        Constraint part (..., N_u:).
-        Returns a View configured for axis=-1 (the natural ends of the system vector).
-        """
         indexer = self._get_split_slice(self.dims.N_u, None)
         return ConstraintView(self.data[indexer], self.dims, axis=-1)
 

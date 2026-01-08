@@ -1,19 +1,18 @@
 from typing import Callable
 from typing import Optional
 
-import newton
 import warp as wp
 from axion.constraints import fill_contact_constraint_body_idx_kernel
 from axion.constraints import fill_friction_constraint_body_idx_kernel
 from axion.constraints import fill_joint_constraint_body_idx_kernel
 from axion.constraints.control_constraint import compute_control_constraint_offsets_batched
-from axion.constraints.control_constraint import control_constraint_kernel
 from axion.constraints.control_constraint import fill_control_constraint_body_idx_kernel
 from axion.constraints.utils import compute_joint_constraint_offsets_batched
 from axion.optim import CRSolver
 from axion.optim import JacobiPreconditioner
 from axion.optim import SystemLinearData
 from axion.optim import SystemOperator
+from axion.tiled.tiled_utils import TiledSqNorm
 from axion.types import contact_interaction_kernel
 from axion.types import world_spatial_inertia_kernel
 from newton import Contacts
@@ -23,7 +22,6 @@ from newton import State
 from newton.solvers import SolverBase
 
 from .contacts import AxionContacts
-from .control_utils import apply_control
 from .engine_config import AxionEngineConfig
 from .engine_data import EngineData
 from .engine_dims import EngineDimensions
@@ -34,6 +32,42 @@ from .linesearch_utils import perform_linesearch
 from .linesearch_utils import update_body_q
 from .model import AxionModel
 from .pca_utils import copy_state_to_history
+
+
+@wp.kernel
+def _check_newton_convergence(
+    h_norm_sq: wp.array(dtype=float),
+    atol_sq: float,
+    iter_count: wp.array(dtype=int),
+    max_iters: int,
+    keep_running: wp.array(dtype=int),
+):
+    tid = wp.tid()
+
+    # 1. Update Iteration Count (thread 0)
+    if tid == 0:
+        current_iter = iter_count[0] + 1
+        iter_count[0] = current_iter
+        if current_iter >= max_iters:
+            keep_running[0] = 0
+            return
+
+    # 2. Check Convergence (All threads)
+    current_iter = iter_count[0]
+    if current_iter >= max_iters:
+        return
+
+    # Check bounds
+    if tid >= h_norm_sq.shape[0]:
+        return
+
+    if h_norm_sq[tid] > atol_sq:
+        keep_running[0] = 1
+
+
+@wp.kernel
+def _print_newton_stats(iter_count: wp.array(dtype=int)):
+    wp.printf("Newton iterations: %d\n", iter_count[0])
 
 
 class AxionEngine(SolverBase):
@@ -126,11 +160,21 @@ class AxionEngine(SolverBase):
 
         self.data.set_g_accel(model)
 
+        # Loop control buffers
+        self.keep_running = wp.zeros(shape=(1,), dtype=int, device=self.device)
+        self.iter_count = wp.zeros(shape=(1,), dtype=int, device=self.device)
+        self.h_norm_sq = wp.zeros(
+            shape=(self.dims.num_worlds,), dtype=wp.float32, device=self.device
+        )
+        self.tiled_sq_norm = TiledSqNorm(
+            shape=(self.dims.num_worlds, self.dims.N_u + self.dims.N_c),
+            dtype=wp.float32,
+            device=self.device,
+        )
+
         self._timestep = 0
 
-    def _apply_control(self, state: State, control: Control):
-        # newton.eval_ik(self.model, state, state.joint_q, state.joint_qd)
-        # apply_control(self.model, state, self.data.dt, control)
+    def _load_control_inputs(self, state: State, control: Control):
         wp.copy(dest=self.data.body_f, src=state.body_f)
         wp.copy(dest=self.data.joint_target, src=control.joint_target)
 
@@ -258,6 +302,146 @@ class AxionEngine(SolverBase):
             device=self.device,
         )
 
+    def _step_linearize(self, dt: float):
+        compute_linear_system(self.axion_model, self.data, self.config, self.dims, dt)
+        self.data.h.sync_to_float()
+        self.preconditioner.update()
+
+    def _step_solve(self, linear_tol: float, linear_atol: float):
+        self.data._dbody_lambda.zero_()
+        self.cr_solver.solve(
+            A=self.A_op,
+            b=self.data.b,
+            x=self.data.dbody_lambda.full,
+            iters=self.config.max_linear_iters,
+            tol=linear_tol,
+            atol=linear_atol,
+            M=self.preconditioner,
+        )
+        compute_dbody_qd_from_dbody_lambda(self.data, self.config, self.dims)
+
+    def _step_linesearch(self):
+        perform_linesearch(self.axion_model, self.data, self.config, self.dims)
+        update_body_q(self.axion_model, self.data, self.config, self.dims)
+        self._update_mass_matrix()
+
+    def _solve_nonlinear_system(self, dt: float):
+        """
+        Solves the nonlinear system using Newton's method.
+        Uses CUDA graph capture for performance if timing is disabled.
+        Uses explicit Python loop with timing blocks if timing is enabled.
+        """
+        self.keep_running.fill_(1)
+        self.iter_count.zero_()
+
+        # Check if 0 iters requested (edge case)
+        if self.config.max_newton_iters <= 0:
+            self.keep_running.zero_()
+            return
+
+        # Newton convergence parameters
+        newton_atol_sq = float(self.config.newton_atol**2)
+        if self.config.newton_mode == "fixed":
+            newton_atol_sq = -1.0
+
+        # Linear solver parameters
+        linear_tol = self.config.linear_tol
+        linear_atol = self.config.linear_atol
+        if self.config.linear_mode == "fixed":
+            linear_tol = -1.0
+            linear_atol = -1.0
+
+        if not self.logger.config.enable_timing:
+            # --- FAST PATH: CUDA Graph Capture ---
+            def newton_step_graph():
+                self.keep_running.zero_()
+
+                wp.copy(dest=self.data._body_lambda_prev, src=self.data._body_lambda)
+                wp.copy(dest=self.data.s_n_prev, src=self.data.s_n)
+
+                self._step_linearize(dt)
+                self._step_solve(linear_tol, linear_atol)
+                self._step_linesearch()
+
+                # Increment and Check
+                self.tiled_sq_norm.compute(self.data.h.full, self.h_norm_sq)
+                wp.launch(
+                    kernel=_check_newton_convergence,
+                    dim=(self.dims.num_worlds,),
+                    device=self.device,
+                    inputs=[
+                        self.h_norm_sq,
+                        newton_atol_sq,
+                        self.iter_count,
+                        self.config.max_newton_iters,
+                        self.keep_running,
+                    ],
+                )
+
+            wp.capture_while(self.keep_running, newton_step_graph)
+
+            wp.launch(
+                kernel=_print_newton_stats,
+                dim=(1,),
+                device=self.device,
+                inputs=[self.iter_count],
+            )
+
+        else:
+            # --- PROFILING PATH: Python Loop with Timing ---
+            step_idx = self.logger.current_step_in_segment
+
+            for current_iter in range(self.config.max_newton_iters):
+                events = self.logger.engine_event_pairs[step_idx][current_iter]
+
+                wp.copy(dest=self.data._body_lambda_prev, src=self.data._body_lambda)
+                wp.copy(dest=self.data.s_n_prev, src=self.data.s_n)
+
+                with self.logger.timed_block(*events["system_linearization"]):
+                    self._step_linearize(dt)
+
+                self.logger.log_newton_iteration_data(self, current_iter)
+                if self.logger.uses_pca_arrays:
+                    copy_state_to_history(current_iter, self.data, self.config, self.dims)
+
+                with self.logger.timed_block(*events["linear_system_solve"]):
+                    self._step_solve(linear_tol, linear_atol)
+
+                with self.logger.timed_block(*events["linesearch"]):
+                    self._step_linesearch()
+
+                # Check convergence (Optional: update GPU count for consistency)
+                self.tiled_sq_norm.compute(self.data.h.full, self.h_norm_sq)
+                self.keep_running.zero_()
+                wp.launch(
+                    kernel=_check_newton_convergence,
+                    dim=(self.dims.num_worlds,),
+                    device=self.device,
+                    inputs=[
+                        self.h_norm_sq,
+                        newton_atol_sq,
+                        self.iter_count,
+                        self.config.max_newton_iters,
+                        self.keep_running,
+                    ],
+                )
+
+        if self.logger.uses_pca_arrays:
+            # Log the final state
+            compute_linear_system(self.axion_model, self.data, self.config, self.dims, dt)
+            copy_state_to_history(self.config.max_newton_iters, self.data, self.config, self.dims)
+
+        self.logger.log_residual_norm_landscape(self)
+
+    def _finalize_step(self, state_out: State):
+        """
+        Finalizes the step by copying the engine's internal state to the output State object.
+        """
+        wp.copy(dest=state_out.body_qd, src=self.data.body_u)
+        wp.copy(dest=state_out.body_q, src=self.data.body_q)
+
+        self._timestep += 1
+
     def step(
         self,
         state_in: State,
@@ -268,65 +452,20 @@ class AxionEngine(SolverBase):
     ):
         step_events = self.logger.step_event_pairs[self.logger.current_step_in_segment]
 
-        # if contacts.rigid_contact_count.numpy()[0] > 0:
-        #     print(f"Contact count {contacts.rigid_contact_count} in timestep {self._timestep}.")
-
         self.data.set_dt(dt)
 
-        # Control block
+        # 1. Load Inputs
         with self.logger.timed_block(*step_events["control"]):
-            self._apply_control(state_in, control)
+            self._load_control_inputs(state_in, control)
 
-        # Initial guess block
+        # 2. Initialize Guess
         with self.logger.timed_block(*step_events["initial_guess"]):
             self._initialize_variables(state_in, state_out, contacts)
             self._update_mass_matrix()
             self._initialize_constraints(contacts)
 
-        for i in range(self.config.max_newton_iters):
-            wp.copy(dest=self.data._body_lambda_prev, src=self.data._body_lambda)
-            wp.copy(dest=self.data.s_n_prev, src=self.data.s_n)
+        # 3. Solve
+        self._solve_nonlinear_system(dt)
 
-            newton_iter_events = self.logger.engine_event_pairs[
-                self.logger.current_step_in_segment
-            ][i]
-
-            # System linearization block
-            with self.logger.timed_block(*newton_iter_events["system_linearization"]):
-                compute_linear_system(self.axion_model, self.data, self.config, self.dims, dt)
-
-            self.logger.log_newton_iteration_data(self, i)
-            if self.logger.uses_pca_arrays:
-                copy_state_to_history(i, self.data, self.config, self.dims)
-
-            self.preconditioner.update()
-
-            # Linear system solve block
-            with self.logger.timed_block(*newton_iter_events["linear_system_solve"]):
-                self.data._dbody_lambda.zero_()
-                self.cr_solver.solve(
-                    A=self.A_op,
-                    b=self.data.b,
-                    x=self.data.dbody_lambda.full,
-                    iters=self.config.max_linear_iters,
-                    M=self.preconditioner,
-                )
-                compute_dbody_qd_from_dbody_lambda(self.data, self.config, self.dims)
-
-            # Linesearch block
-            with self.logger.timed_block(*newton_iter_events["linesearch"]):
-                perform_linesearch(self.axion_model, self.data, self.config, self.dims)
-                update_body_q(self.axion_model, self.data, self.config, self.dims)
-                self._update_mass_matrix()
-
-        if self.logger.uses_pca_arrays:
-            # Log the final state
-            compute_linear_system(self.axion_model, self.data, self.config, self.dims, dt)
-            copy_state_to_history(self.config.max_newton_iters, self.data, self.config, self.dims)
-
-        self.logger.log_residual_norm_landscape(self)
-
-        wp.copy(dest=state_out.body_qd, src=self.data.body_u)
-        wp.copy(dest=state_out.body_q, src=self.data.body_q)
-
-        self._timestep += 1
+        # 4. Finalize
+        self._finalize_step(state_out)

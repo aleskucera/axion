@@ -268,7 +268,7 @@ class AbstractSimulator(ABC):
             if self.events[step]["integration_parts"] is None:
                 continue
 
-            for newton_iter in range(self.engine_config.newton_iters):
+            for newton_iter in range(self.engine_config.max_newton_iters):
                 events = self.events[step]["integration_parts"][newton_iter]
                 linearize_time = wp.get_event_elapsed_time(
                     events["iter_start"], events["system_linearization"]
@@ -355,7 +355,7 @@ class AbstractSimulator(ABC):
 
     def _get_newton_iters(self) -> int:
         """Get the number of Newton iterations, or 0 if not using AxionEngine."""
-        return self.engine_config.newton_iters if isinstance(self.solver, AxionEngine) else 0
+        return self.engine_config.max_newton_iters if isinstance(self.solver, AxionEngine) else 0
 
     @abstractmethod
     def build_model(self) -> Model:
