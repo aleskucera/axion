@@ -1,12 +1,37 @@
 import numpy as np
 import warp as wp
 from axion.types import ContactInteraction
+from axion.types import SpatialInertia
 from axion.types import to_spatial_momentum
 from axion.types.spatial_inertia import compute_world_inertia
 
 
 @wp.func
 def compute_effective_mass(
+    J_1: wp.spatial_vector,
+    J_2: wp.spatial_vector,
+    M_inv_1: SpatialInertia,
+    M_inv_2: SpatialInertia,
+    body_1_idx: int,
+    body_2_idx: int,
+) -> float:
+    """
+    Computes the diagonal term (effective mass) J M^-1 J^T.
+    Expects M_inv to be in WORLD frame.
+    """
+    val = 0.0
+    if body_1_idx >= 0:
+        # compute J M^-1 J^T
+        val += wp.dot(J_1, to_spatial_momentum(M_inv_1, J_1))
+
+    if body_2_idx >= 0:
+        val += wp.dot(J_2, to_spatial_momentum(M_inv_2, J_2))
+
+    return val
+
+
+@wp.func
+def compute_effective_mass2(
     J: wp.spatial_vector,
     body_idx: int,
     body_q: wp.array(dtype=wp.transform, ndim=2),
@@ -49,10 +74,10 @@ def compute_constraint_compliance(
     """
     Computes total w = J_1 M_1^-1 J_1^T + J_2 M_2^-1 J_2^T
     """
-    w_1 = compute_effective_mass(
+    w_1 = compute_effective_mass2(
         J_1, body_1_idx, body_q, body_inv_mass, body_inv_inertia, world_idx
     )
-    w_2 = compute_effective_mass(
+    w_2 = compute_effective_mass2(
         J_2, body_2_idx, body_q, body_inv_mass, body_inv_inertia, world_idx
     )
     return w_1 + w_2
@@ -300,4 +325,3 @@ def fill_friction_constraint_active_mask_kernel(
         friction_constraint_active_mask[world_idx, constraint_idx] = 1.0
     else:
         friction_constraint_active_mask[world_idx, constraint_idx] = 0.0
-

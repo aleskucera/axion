@@ -2,10 +2,10 @@ import warp as wp
 from axion.constraints import friction_constraint_kernel
 from axion.constraints import positional_contact_constraint_kernel
 from axion.constraints import positional_joint_constraint_kernel
-from axion.constraints.control_constraint import control_constraint_kernel
 from axion.constraints import unconstrained_dynamics_kernel
 from axion.constraints import velocity_contact_constraint_kernel
 from axion.constraints import velocity_joint_constraint_kernel
+from axion.constraints.control_constraint import control_constraint_kernel
 from axion.types import SpatialInertia
 from axion.types import to_spatial_momentum
 
@@ -192,7 +192,7 @@ def compute_linear_system(
         raise ValueError(
             f"Joint constraint level can be only 'pos' or 'vel' ({config.joint_constraint_level})."
         )
-        
+
     wp.launch(
         kernel=control_constraint_kernel,
         dim=(dims.N_w, dims.joint_count),
@@ -239,8 +239,6 @@ def compute_linear_system(
                 data.world_M_inv,
                 dt,
                 config.contact_stabilization_factor,
-                config.contact_fb_alpha,
-                config.contact_fb_beta,
                 config.contact_compliance,
             ],
             outputs=[
@@ -264,8 +262,6 @@ def compute_linear_system(
                 data.contact_interaction,
                 dt,
                 config.contact_stabilization_factor,
-                config.contact_fb_alpha,
-                config.contact_fb_beta,
                 config.contact_compliance,
             ],
             outputs=[
@@ -294,11 +290,8 @@ def compute_linear_system(
             data.body_lambda_prev.n,
             data.s_n_prev,
             data.contact_interaction,
-            model.body_inv_mass,
-            model.body_inv_inertia,
+            data.world_M_inv,
             data.dt,
-            config.friction_fb_alpha,
-            config.friction_fb_beta,
             config.friction_compliance,
         ],
         outputs=[

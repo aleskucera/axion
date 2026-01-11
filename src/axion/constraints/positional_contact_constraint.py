@@ -2,8 +2,8 @@ import warp as wp
 from axion.math import scaled_fisher_burmeister_diff
 from axion.types import ContactInteraction
 from axion.types import SpatialInertia
-from axion.types import to_spatial_momentum
-from axion.types.spatial_inertia import compute_world_inertia
+
+from .utils import compute_effective_mass
 
 
 @wp.func
@@ -35,12 +35,10 @@ def positional_contact_constraint_kernel(
     body_u_prev: wp.array(dtype=wp.spatial_vector, ndim=2),
     body_lambda_n: wp.array(dtype=wp.float32, ndim=2),
     interactions: wp.array(dtype=ContactInteraction, ndim=2),
-    body_M_inv: wp.array(dtype=SpatialInertia, ndim=2),
+    world_M_inv: wp.array(dtype=SpatialInertia, ndim=2),
     # --- Simulation & Solver Parameters ---
     dt: wp.float32,
     stabilization_factor: wp.float32,
-    fb_alpha: wp.float32,
-    fb_beta: wp.float32,
     compliance: wp.float32,
     # --- Outputs (contributions to the linear system) ---
     constraint_active_mask: wp.array(dtype=wp.float32, ndim=2),
@@ -86,13 +84,17 @@ def positional_contact_constraint_kernel(
     J_n_1 = interaction.basis_a.normal
     J_n_2 = interaction.basis_b.normal
 
-    precond = 0.0
+    # precond = 0.0
+    # ----- Compute Preconditioning -----
     if body_1 >= 0:
-        M_inv_1 = body_M_inv[world_idx, body_1]
-        precond += wp.dot(J_n_1, to_spatial_momentum(M_inv_1, J_n_1))
+        M_inv_1 = world_M_inv[world_idx, body_1]
+        # precond += wp.dot(J_n_1, to_spatial_momentum(M_inv_1, J_n_1))
     if body_2 >= 0:
-        M_inv_2 = body_M_inv[world_idx, body_2]
-        precond += wp.dot(J_n_2, to_spatial_momentum(M_inv_2, J_n_2))
+        M_inv_2 = world_M_inv[world_idx, body_2]
+        # precond += wp.dot(J_n_2, to_spatial_momentum(M_inv_2, J_n_2))
+
+    effective_mass = compute_effective_mass(J_n_1, J_n_2, M_inv_1, M_inv_2, body_1, body_2)
+    precond = wp.pow(dt, 2.0) * effective_mass
 
     signed_distance = compute_signed_distance(body_q_1, body_q_2, interaction)
 
@@ -101,7 +103,7 @@ def positional_contact_constraint_kernel(
         signed_distance,
         lambda_n,
         1.0,
-        wp.pow(dt, 2.0) * precond,
+        precond,
     )
 
     J_hat_n_1 = dphi_dc_n * J_n_1
@@ -136,13 +138,9 @@ def batch_positional_contact_residual_kernel(
     body_u_prev: wp.array(dtype=wp.spatial_vector, ndim=2),
     body_lambda_n: wp.array(dtype=wp.float32, ndim=3),
     interactions: wp.array(dtype=ContactInteraction, ndim=2),
-    # --- Body Property Inputs ---
-    body_inv_mass: wp.array(dtype=wp.float32, ndim=2),
-    body_inv_inertia: wp.array(dtype=wp.mat33, ndim=2),
+    world_M_inv: wp.array(dtype=SpatialInertia, ndim=2),
     # --- Simulation & Solver Parameters ---
     dt: wp.float32,
-    fb_alpha: wp.float32,
-    fb_beta: wp.float32,
     compliance: wp.float32,
     # --- Outputs (contributions to the linear system) ---
     h_d: wp.array(dtype=wp.spatial_vector, ndim=3),
@@ -175,17 +173,17 @@ def batch_positional_contact_residual_kernel(
     J_n_1 = interaction.basis_a.normal
     J_n_2 = interaction.basis_b.normal
 
-    precond = 0.0
+    M_inv_1 = SpatialInertia()
     if body_1 >= 0:
-        m_inv_1 = body_inv_mass[world_idx, body_1]
-        I_inv_1 = body_inv_inertia[world_idx, body_1]
-        M_inv_1 = compute_world_inertia(body_q_1, m_inv_1, I_inv_1)
-        precond += wp.dot(J_n_1, to_spatial_momentum(M_inv_1, J_n_1))
+        M_inv_1 = world_M_inv[world_idx, body_1]
+
+    M_inv_2 = SpatialInertia()
     if body_2 >= 0:
-        m_inv_2 = body_inv_mass[world_idx, body_2]
-        I_inv_2 = body_inv_inertia[world_idx, body_2]
-        M_inv_2 = compute_world_inertia(body_q_2, m_inv_2, I_inv_2)
-        precond += wp.dot(J_n_2, to_spatial_momentum(M_inv_2, J_n_2))
+        M_inv_2 = world_M_inv[world_idx, body_2]
+
+    # Compute effective mass
+    effective_mass = compute_effective_mass(J_n_1, J_n_2, M_inv_1, M_inv_2, body_1, body_2)
+    precond = wp.pow(dt, 2.0) * effective_mass
 
     signed_distance = compute_signed_distance(body_q_1, body_q_2, interaction)
 
@@ -194,7 +192,7 @@ def batch_positional_contact_residual_kernel(
         signed_distance,
         lambda_n,
         1.0,
-        wp.pow(dt, 2.0) * precond,
+        precond,
     )
 
     J_hat_n_1 = dphi_dc_n * J_n_1
@@ -216,20 +214,16 @@ def fused_batch_positional_contact_residual_kernel(
     # --- Body State Inputs ---
     body_q: wp.array(dtype=wp.transform, ndim=3),
     body_u: wp.array(dtype=wp.spatial_vector, ndim=3),
-    body_u_prev: wp.array(dtype=wp.spatial_vector, ndim=2), # Not used in batch kernel? 
+    body_u_prev: wp.array(dtype=wp.spatial_vector, ndim=2),  # Not used in batch kernel?
     # Wait, check original batch kernel. It has body_u_prev but doesn't seem to use it in the body?
     # Original: body_u_prev: wp.array(dtype=wp.spatial_vector, ndim=2),
     # It is NOT used in the logic. I will keep it to match signature or remove it if I can confirm it's unused.
     # The original kernel definition includes it. I will include it.
     body_lambda_n: wp.array(dtype=wp.float32, ndim=3),
     interactions: wp.array(dtype=ContactInteraction, ndim=2),
-    # --- Body Property Inputs ---
-    body_inv_mass: wp.array(dtype=wp.float32, ndim=2),
-    body_inv_inertia: wp.array(dtype=wp.mat33, ndim=2),
+    world_M_inv: wp.array(dtype=SpatialInertia, ndim=2),
     # --- Simulation & Solver Parameters ---
     dt: wp.float32,
-    fb_alpha: wp.float32,
-    fb_beta: wp.float32,
     compliance: wp.float32,
     num_batches: int,
     # --- Outputs (contributions to the linear system) ---
@@ -237,7 +231,7 @@ def fused_batch_positional_contact_residual_kernel(
     h_n: wp.array(dtype=wp.float32, ndim=3),
 ):
     world_idx, contact_idx = wp.tid()
-    
+
     if contact_idx >= interactions.shape[1]:
         return
 
@@ -256,19 +250,17 @@ def fused_batch_positional_contact_residual_kernel(
     # Unpack Jacobian basis vectors
     J_n_1 = interaction.basis_a.normal
     J_n_2 = interaction.basis_b.normal
-    
-    # Load Static Body Properties
-    m_inv_1 = 0.0
-    I_inv_1 = wp.mat33(0.0)
-    if body_1 >= 0:
-        m_inv_1 = body_inv_mass[world_idx, body_1]
-        I_inv_1 = body_inv_inertia[world_idx, body_1]
 
-    m_inv_2 = 0.0
-    I_inv_2 = wp.mat33(0.0)
+    M_inv_1 = SpatialInertia()
+    if body_1 >= 0:
+        M_inv_1 = world_M_inv[world_idx, body_1]
+
+    M_inv_2 = SpatialInertia()
     if body_2 >= 0:
-        m_inv_2 = body_inv_mass[world_idx, body_2]
-        I_inv_2 = body_inv_inertia[world_idx, body_2]
+        M_inv_2 = world_M_inv[world_idx, body_2]
+
+    effective_mass = compute_effective_mass(J_n_1, J_n_2, M_inv_1, M_inv_2, body_1, body_2)
+    precond = wp.pow(dt, 2.0) * effective_mass
 
     for b in range(num_batches):
         # The normal impulse for this specific contact
@@ -282,14 +274,6 @@ def fused_batch_positional_contact_residual_kernel(
         if body_2 >= 0:
             body_q_2 = body_q[b, world_idx, interaction.body_b_idx]
 
-        precond = 0.0
-        if body_1 >= 0:
-            M_inv_1 = compute_world_inertia(body_q_1, m_inv_1, I_inv_1)
-            precond += wp.dot(J_n_1, to_spatial_momentum(M_inv_1, J_n_1))
-        if body_2 >= 0:
-            M_inv_2 = compute_world_inertia(body_q_2, m_inv_2, I_inv_2)
-            precond += wp.dot(J_n_2, to_spatial_momentum(M_inv_2, J_n_2))
-
         signed_distance = compute_signed_distance(body_q_1, body_q_2, interaction)
 
         # Evaluate the Fisher-Burmeister complementarity function φ(C_n, λ)
@@ -297,7 +281,7 @@ def fused_batch_positional_contact_residual_kernel(
             signed_distance,
             lambda_n,
             1.0,
-            wp.pow(dt, 2.0) * precond,
+            precond,
         )
 
         J_hat_n_1 = dphi_dc_n * J_n_1
