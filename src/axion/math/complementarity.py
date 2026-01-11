@@ -21,26 +21,22 @@ def scaled_fisher_burmeister(
 
 @wp.func
 def scaled_fisher_burmeister_diff(
-    a: wp.float32,
-    b: wp.float32,
-    alpha: wp.float32 = 1.0,
-    beta: wp.float32 = 1.0,
+    a: wp.float32, b: wp.float32, alpha: wp.float32, beta: wp.float32
 ):
-    """
-    Computes the Scaled Fisher-Burmeister NCP function value and its partial derivatives.
-    Returns: (value, dvalue_da, dvalue_db)
-    """
     scaled_a = alpha * a
     scaled_b = beta * b
-    norm = wp.sqrt(scaled_a**2.0 + scaled_b**2.0)
+
+    # Use a small epsilon for smoothing (prevents singularity at 0,0)
+    eps = 1e-8
+
+    # Smooth norm
+    norm = wp.sqrt(scaled_a * scaled_a + scaled_b * scaled_b + eps)
 
     value = scaled_a + scaled_b - norm
 
-    # Avoid division by zero
-    if norm < 1e-5:
-        return value, 0.0, 1.0
-
+    # Analytic derivatives (valid everywhere)
     dvalue_da = alpha * (1.0 - scaled_a / norm)
     dvalue_db = beta * (1.0 - scaled_b / norm)
 
     return value, dvalue_da, dvalue_db
+

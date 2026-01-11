@@ -1,6 +1,6 @@
 # @package engine
 _target_: axion.AxionEngineConfig
-max_newton_iters: 8
+max_newton_iters: 10
 max_linear_iters: 8
 enable_linesearch: true
 linesearch_step_count: 64
@@ -17,6 +17,6 @@ contact_fb_alpha: 0.5
 contact_fb_beta: 1.0
 friction_fb_alpha: 1.0
 friction_fb_beta: 1.0
-max_contacts_per_world: 128
+max_contacts_per_world: 256
 joint_constraint_level: 'pos'
 contact_constraint_level: 'pos'
