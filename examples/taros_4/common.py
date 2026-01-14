@@ -19,7 +19,7 @@ class Taros4Config:
     # Dimensions (L x W x H) = 2.74 m x 1.77 m x 2.04 m
     CHASSIS_SIZE = [2.74, 1.5, 1.0]  # Reduced height for main body box to look reasonable
     CHASSIS_MASS = 1200.0
-    CHASSIS_OFFSET = wp.vec3(0.0, 0.0, 0.0)
+    CHASSIS_OFFSET = wp.vec3(0.0, 0.0, 0.2)
     # Approx Inertia for box of this size/mass
     # Ixx = m/12 * (w^2 + h^2)
     # Iyy = m/12 * (l^2 + h^2)
@@ -49,7 +49,7 @@ class Taros4Config:
     REAR_RIGHT_WHEEL_POS = wp.vec3(-1.0, -0.9, -0.3)
 
     # Joint Control
-    TARGET_KE = 5000.0  # Stiffer for heavier robot
+    TARGET_KE = 2000.0  # Stiffer for heavier robot
     TARGET_KI = 100.0
     TARGET_KD = 500.0
 
@@ -159,7 +159,7 @@ def _add_wheel(
             is_visible=False,
             collision_group=-1,
             mu=mu,
-            contact_margin=0.05,
+            contact_margin=0.2,
         ),
     )
     return wheel_link
@@ -182,6 +182,8 @@ def create_taros4_model(
 
     wheel_mesh_render = _load_wheel_mesh()
 
+    MU = 0.0
+
     # 1. Chassis
     chassis = _add_chassis(builder, xform, is_visible)
     j_base = builder.add_joint_free(parent=-1, child=chassis, key="base_joint")
@@ -192,7 +194,7 @@ def create_taros4_model(
         xform,
         "front_left_wheel",
         Taros4Config.FRONT_LEFT_WHEEL_POS,
-        1.0,
+        MU,
         wheel_mesh_render,
         is_visible,
         mesh_rotation=Taros4Config.WHEEL_MESH_ROT_LEFT,
@@ -202,7 +204,7 @@ def create_taros4_model(
         xform,
         "front_right_wheel",
         Taros4Config.FRONT_RIGHT_WHEEL_POS,
-        1.0,
+        MU,
         wheel_mesh_render,
         is_visible,
         mesh_rotation=Taros4Config.WHEEL_MESH_ROT_RIGHT,
@@ -212,7 +214,7 @@ def create_taros4_model(
         xform,
         "rear_left_wheel",
         Taros4Config.REAR_LEFT_WHEEL_POS,
-        1.0,
+        MU,
         wheel_mesh_render,
         is_visible,
         mesh_rotation=Taros4Config.WHEEL_MESH_ROT_LEFT,
@@ -222,7 +224,7 @@ def create_taros4_model(
         xform,
         "rear_right_wheel",
         Taros4Config.REAR_RIGHT_WHEEL_POS,
-        1.0,
+        MU,
         wheel_mesh_render,
         is_visible,
         mesh_rotation=Taros4Config.WHEEL_MESH_ROT_RIGHT,

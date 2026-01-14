@@ -6,17 +6,10 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 import pandas as pd
-import torch
 import warp as wp
 from axion.logging import HDF5Logger
 from axion.logging import NullLogger
 
-from .pca_utils import compute_pca_batch_h_norm
-from .pca_utils import copy_grid_lambda_kernel
-from .pca_utils import copy_grid_q_kernel
-from .pca_utils import copy_grid_u_kernel
-from .pca_utils import create_pca_grid_batch
-from .pca_utils import perform_pca
 
 if TYPE_CHECKING:
     from .engine import AxionEngine
@@ -41,42 +34,17 @@ class LoggingConfig:
     # HDF5 logging options
     log_dynamics_state: bool = True
     log_linear_system_data: bool = True
+    log_linear_solver_iterations: bool = True
+    log_linesearch_data: bool = True
 
     log_joint_constraint_data: bool = True
+    log_control_constraint_data: bool = True
     log_contact_constraint_data: bool = True
     log_friction_constraint_data: bool = True
 
-    log_residual_norm_landscape: bool = True
-    pca_grid_res: int = 100
-    pca_plot_range_scale: float = 3.0
+    log_history_data: bool = True  # To support constraint heatmap and future debugging
 
     hdf5_log_file: str = "simulation_log.h5"
-
-    def __post_init__(self):
-        """Validate all configuration parameters."""
-
-        def _validate_positive_int(value: int, name: str, min_value: int = 1) -> None:
-            """Validate that a value is a positive integer >= min_value."""
-            if value < min_value:
-                raise ValueError(f"{name} must be >= {min_value}, got {value}")
-
-        def _validate_non_negative_float(value: float, name: str) -> None:
-            """Validate that a value is a non-negative float."""
-            if value < 0:
-                raise ValueError(f"{name} must be >= 0, got {value}")
-
-        def _validate_unit_interval(value: float, name: str) -> None:
-            """Validate that a value is in the unit interval [0, 1]."""
-            if not (0 <= value <= 1):
-                raise ValueError(f"{name} must be in [0, 1], got {value}")
-
-        def _validate_non_negative_int(value: int, name: str) -> None:
-            """Validate that a value is a non-negative integer."""
-            if value < 0:
-                raise ValueError(f"{name} must be >= 0, got {value}")
-
-        _validate_positive_int(self.pca_grid_res, "pca_grid_res")
-        _validate_non_negative_float(self.pca_plot_range_scale, "pca_plot_range_scale")
 
 
 class EngineLogger:
@@ -103,8 +71,9 @@ class EngineLogger:
         return self._current_step_in_segment
 
     @property
-    def uses_pca_arrays(self):
-        return self.config.enable_hdf5_logging and self.config.log_residual_norm_landscape
+    def uses_history_arrays(self):
+        """Returns True if history arrays should be allocated and populated."""
+        return self.config.enable_hdf5_logging and self.config.log_history_data
 
     # --- NEW: Setter method ---
     def set_current_step_in_segment(self, step_num: int):
@@ -204,9 +173,20 @@ class EngineLogger:
                     self.hdf5_logger.log_wp_dataset(
                         "constraint_body_idx", engine.data.constraint_body_idx.j
                     )
-                    # self.hdf5_logger.log_struct_array(
-                    #     "joint_constraint_data", engine.data.joint_constraint_data
+
+            # Log control constraints data
+            if self.config.log_control_constraint_data:
+                with self.hdf5_logger.scope("Control constraint data"):
+                    self.hdf5_logger.log_wp_dataset("h", engine.data.h.c.ctrl)
+                    self.hdf5_logger.log_wp_dataset("J_values", engine.data.J_values.ctrl)
+                    self.hdf5_logger.log_wp_dataset("C_values", engine.data.C_values.ctrl)
+                    self.hdf5_logger.log_wp_dataset("body_lambda", engine.data.body_lambda.ctrl)
+                    # self.hdf5_logger.log_wp_dataset(
+                    #     "body_lambda_prev", engine.data.body_lambda_prev.ctrl
                     # )
+                    self.hdf5_logger.log_wp_dataset(
+                        "constraint_body_idx", engine.data.constraint_body_idx.ctrl
+                    )
 
             # Log contact constraints data
             if self.config.log_contact_constraint_data:
@@ -250,155 +230,46 @@ class EngineLogger:
                     self.hdf5_logger.log_wp_dataset("dbody_qd", engine.data.dbody_u)
                     self.hdf5_logger.log_wp_dataset("dbody_lambda", engine.data.dbody_lambda.full)
 
-    def log_residual_norm_landscape(self, engine: AxionEngine):
-        if not self.config.enable_hdf5_logging or not self.config.log_residual_norm_landscape:
+    def log_linear_solver_history(self, history: dict, iteration: int):
+        if not self.config.enable_hdf5_logging or not self.config.log_linear_solver_iterations:
             return
 
-        # 1. Reconstruct Trajectory from History Arrays
-        # State vector x = [q, u, lambda]
+        with self.hdf5_logger.scope(f"newton_iteration_{iteration:02d}"):
+            with self.hdf5_logger.scope("linear_solver_history"):
+                self.hdf5_logger.log_np_dataset(
+                    "residual_sq_history", history["residual_sq_history"]
+                )
+                self.hdf5_logger.log_scalar("iterations", history["iterations"])
 
-        # --- A. Body Positions (q) ---
-        # shape: (Steps, Worlds, BodyCount) of wp.transform (7 floats)
-        q_hist = wp.to_torch(engine.data.history.body_q_history)
-        steps, n_w, n_b, _ = q_hist.shape
-        # Flatten: (Steps, Worlds, N_b * 7)
-        q_flat = q_hist.reshape(steps, n_w, n_b * 7)
+    def log_linesearch_step(self, engine: AxionEngine, iteration: int):
+        if (
+            not self.config.enable_hdf5_logging
+            or not self.config.log_linesearch_data
+            or not engine.data.has_linesearch
+        ):
+            return
 
-        # --- B. Body Velocities (u) ---
-        # shape: (Steps, Worlds, BodyCount) of wp.spatial_vector (6 floats)
-        u_hist = wp.to_torch(engine.data.history.body_u_history)
-        # Flatten: (Steps, Worlds, N_b * 6)
-        u_flat = u_hist.reshape(steps, n_w, n_b * 6)
+        with self.hdf5_logger.scope(f"newton_iteration_{iteration:02d}"):
+            with self.hdf5_logger.scope("linesearch"):
+                self.hdf5_logger.log_wp_dataset("steps", engine.data.linesearch.steps)
+                self.hdf5_logger.log_wp_dataset(
+                    "batch_h_norm_sq", engine.data.linesearch.batch_h_norm_sq
+                )
+                self.hdf5_logger.log_wp_dataset(
+                    "minimal_index", engine.data.linesearch.minimal_index
+                )
 
-        # --- C. Constraint Impulses (lambda) ---
-        # shape: (Steps, Worlds, N_c)
-        lambda_hist = wp.to_torch(engine.data.history._body_lambda_history)
+    def log_history_arrays(self, engine: AxionEngine):
+        """Logs the accumulated history arrays if enabled."""
+        if not self.config.enable_hdf5_logging or not self.config.log_history_data:
+            return
 
-        # --- D. Full Trajectory Concatenation ---
-        # shape: (Steps, Worlds, Dofs) where Dofs = (N_b*7 + N_b*6 + N_c)
-        trajectory_all = torch.cat([q_flat, u_flat, lambda_hist], dim=2)
+        with self.hdf5_logger.scope("history_data"):
+            # Reconstruct trajectory for consistency (though raw arrays are logged below)
+            # This logic mimics old 'trajectory_all' construction but keeps it simple or just logs arrays
 
-        # Residuals for norm calculation
-        residuals_all = wp.to_torch(engine.data.history._h_history)
-
-        if steps < 2:
-            raise ValueError(
-                f"Trajectory has {steps} points. PCA requires at least 2 points. "
-                "Ensure 'newton_iters' is >= 2."
-            )
-
-        # 2. Compute Norms for Visualization
-        trajectory_residual_norms = torch.norm(residuals_all, dim=2)
-
-        # Warning threshold logic
-        last_step_norms = trajectory_residual_norms[-1, :]
-        max_residual = torch.max(last_step_norms)
-        threshold = 1e-1
-        if max_residual > threshold:
-            print(
-                f"Warning: Max residual norm ({max_residual.item():.6f}) exceeds limit ({threshold}) in timestep {engine._timestep}"
-            )
-
-        # 3. Perform PCA (Batched over Worlds)
-        # v1, v2: (Worlds, Dofs) | S: (Worlds, 2)
-        v1, v2, S, mean, std = perform_pca(trajectory_all)
-        x_center = trajectory_all[-1]
-
-        # 4. Project Trajectory to 2D
-        # Project normalized deviations onto normalized eigenvectors
-        vecs_from_center = trajectory_all - x_center.unsqueeze(0)
-        vecs_normalized = vecs_from_center / std.unsqueeze(0)
-
-        alpha_coords = (vecs_normalized * v1.unsqueeze(0)).sum(dim=2)
-        beta_coords = (vecs_normalized * v2.unsqueeze(0)).sum(dim=2)
-        trajectory_2d = torch.stack([alpha_coords, beta_coords], dim=2)
-
-        # --- Auto-Scale Logic ---
-        max_alpha = torch.max(torch.abs(alpha_coords), dim=0).values
-        max_beta = torch.max(torch.abs(beta_coords), dim=0).values
-
-        # Safety for zero movement
-        max_alpha = torch.maximum(max_alpha, torch.tensor(1e-6, device=max_alpha.device))
-        max_beta = torch.maximum(max_beta, torch.tensor(1e-6, device=max_beta.device))
-
-        trajectory_bounds = torch.zeros_like(S)
-        trajectory_bounds[:, 0] = max_alpha
-        trajectory_bounds[:, 1] = max_beta
-        auto_scale_margin = 1.2
-
-        # 5. Create Grid Batch (Now includes Q)
-        grid_res = self.config.pca_grid_res
-
-        # Note: We pass the full dimensions object now so the function knows how to split N_b*7 vs N_b*6
-        # Returns: pca_q, pca_u, pca_lambda, alphas, betas, ...
-        pca_q, pca_u, pca_lambda, alphas, betas, _, _ = create_pca_grid_batch(
-            x_center,
-            v1,
-            v2,
-            trajectory_bounds,  # passing bounds as S
-            mean,
-            std,
-            grid_res,
-            auto_scale_margin,
-            engine.dims,  # passing dims to handle q/u splitting
-            engine.data.dt,
-        )
-
-        # 6. Copy Grid Points to Engine Data
-        src_q = wp.from_torch(pca_q, dtype=wp.float32)
-        src_u = wp.from_torch(pca_u, dtype=wp.float32)
-        src_lambda = wp.from_torch(pca_lambda, dtype=wp.float32)
-
-        grid_size = pca_q.shape[0]
-        n_w = pca_q.shape[1]
-        n_b = engine.dims.N_b
-        n_c = engine.dims.N_c
-
-        wp.launch(
-            kernel=copy_grid_q_kernel,
-            dim=(grid_size, n_w, n_b),
-            inputs=[src_u],
-            outputs=[engine.data.history.pca_batch_body_q],
-            device=engine.data.device,
-        )
-
-        wp.launch(
-            kernel=copy_grid_u_kernel,
-            dim=(grid_size, n_w, n_b),
-            inputs=[src_q],
-            outputs=[engine.data.history.pca_batch_body_u],
-            device=engine.data.device,
-        )
-
-        wp.launch(
-            kernel=copy_grid_lambda_kernel,
-            dim=(grid_size, n_w, n_c),
-            inputs=[src_lambda],
-            outputs=[engine.data.history.pca_batch_body_lambda.full],
-            device=engine.data.device,
-        )
-        # 7. Compute Norms with Q-aware kernels
-        # This will now trigger the dynamic mass matrix re-computation
-        norm_results = compute_pca_batch_h_norm(
-            engine.axion_model, engine.data, engine.config, engine.dims
-        )
-
-        residual_norm_grid = norm_results.reshape(grid_res, grid_res, n_w)
-
-        # 8. Log Data
-        with self.hdf5_logger.scope("residual_norm_landscape_data"):
-            self.hdf5_logger.log_np_dataset("residual_norm_grid", residual_norm_grid.cpu().numpy())
-            self.hdf5_logger.log_np_dataset("pca_alphas", alphas.cpu().numpy())
-            self.hdf5_logger.log_np_dataset("pca_betas", betas.cpu().numpy())
-            self.hdf5_logger.log_np_dataset("trajectory_2d_projected", trajectory_2d.cpu().numpy())
-
-            self.hdf5_logger.log_np_dataset("pca_v1", v1.cpu().numpy())
-            self.hdf5_logger.log_np_dataset("pca_v2", v2.cpu().numpy())
-            self.hdf5_logger.log_np_dataset("pca_singular_values", S.cpu().numpy())
-            self.hdf5_logger.log_np_dataset("pca_center_point", x_center.cpu().numpy())
-
-            # Log history arrays including Q
-            self.hdf5_logger.log_np_dataset("optimization_trajectory", trajectory_all.cpu().numpy())
+            # Log history arrays
+            # These have shape (NewtonIters+1, Worlds, ...)
             self.hdf5_logger.log_np_dataset(
                 "body_q_history", engine.data.history.body_q_history.numpy()
             )
@@ -408,20 +279,14 @@ class EngineLogger:
             self.hdf5_logger.log_np_dataset(
                 "body_lambda_history", engine.data.history._body_lambda_history.numpy()
             )
-
-            self.hdf5_logger.log_np_dataset("trajectory_residuals", residuals_all.cpu().numpy())
-            self.hdf5_logger.log_np_dataset(
-                "trajectory_residual_norms", trajectory_residual_norms.cpu().numpy()
-            )
+            self.hdf5_logger.log_np_dataset("h_history", engine.data.history._h_history.numpy())
 
             # Metadata
             dims = engine.dims
-            # Add N_q (7 per body) to metadata if needed, otherwise dashboard assumes N_u
-            dims_metadata = np.array([dims.N_u, dims.N_j, dims.N_n, dims.N_f], dtype=np.int32)
+            dims_metadata = np.array(
+                [dims.N_u, dims.N_j, dims.N_ctrl, dims.N_n, dims.N_f], dtype=np.int32
+            )
             self.hdf5_logger.log_np_dataset("simulation_dims", dims_metadata)
-
-            metadata = np.array([grid_res, self.config.pca_plot_range_scale, steps, n_w])
-            self.hdf5_logger.log_np_dataset("pca_metadata", metadata)
 
     def timestep_start(self, timestep: int, current_time: float):
         """Start logging for a timestep and log the current time."""
@@ -557,7 +422,7 @@ class EngineLogger:
                 "Mean": s["mean_s"],
                 "Std Dev": s["std_s"],
                 "Min - Max": s["range_s"],
-                "% Total": s["perc_s"],
+                "% Total": s["% Total"],
                 "Samples": s["count_s"],
             }
         )
@@ -570,7 +435,7 @@ class EngineLogger:
                 "Mean": s["mean_s"],
                 "Std Dev": s["std_s"],
                 "Min - Max": s["range_s"],
-                "% Total": s["perc_s"],
+                "% Total": s["% Total"],
                 "Samples": s["count_s"],
             }
         )
@@ -583,7 +448,7 @@ class EngineLogger:
                 "Mean": s["mean_s"],
                 "Std Dev": s["std_s"],
                 "Min - Max": s["range_s"],
-                "% Total": s["perc_s"],
+                "% Total": s["% Total"],
                 "Samples": s["count_s"],
             }
         )
@@ -596,7 +461,7 @@ class EngineLogger:
                 "Mean": s["mean_s"],
                 "Std Dev": s["std_s"],
                 "Min - Max": s["range_s"],
-                "% Total": s["perc_s"],
+                "% Total": s["% Total"],
                 "Samples": s["count_s"],
             }
         )
@@ -609,7 +474,7 @@ class EngineLogger:
                 "Mean": s["mean_s"],
                 "Std Dev": s["std_s"],
                 "Min - Max": s["range_s"],
-                "% Total": s["perc_s"],
+                "% Total": s["% Total"],
                 "Samples": s["count_s"],
             }
         )
@@ -629,7 +494,7 @@ class EngineLogger:
                 "Mean": s["mean_s"],
                 "Std Dev": s["std_s"],
                 "Min - Max": s["range_s"],
-                "% Total": s["perc_s"],
+                "% Total": s["% Total"],
                 "Samples": s["count_s"],
             }
         )
@@ -642,7 +507,7 @@ class EngineLogger:
                 "Mean": s["mean_s"],
                 "Std Dev": s["std_s"],
                 "Min - Max": s["range_s"],
-                "% Total": s["perc_s"],
+                "% Total": s["% Total"],
                 "Samples": s["count_s"],
             }
         )
@@ -655,7 +520,7 @@ class EngineLogger:
                 "Mean": s["mean_s"],
                 "Std Dev": s["std_s"],
                 "Min - Max": s["range_s"],
-                "% Total": s["perc_s"],
+                "% Total": s["% Total"],
                 "Samples": s["count_s"],
             }
         )
@@ -668,7 +533,7 @@ class EngineLogger:
                 "Mean": s["mean_s"],
                 "Std Dev": s["std_s"],
                 "Min - Max": s["range_s"],
-                "% Total": s["perc_s"],
+                "% Total": s["% Total"],
                 "Samples": s["count_s"],
             }
         )
@@ -703,3 +568,4 @@ class EngineLogger:
             print(line)
 
         print()
+

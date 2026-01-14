@@ -178,7 +178,7 @@ class EngineData:
         return self.linesearch is not None
 
     @property
-    def allocated_pca_arrays(self) -> bool:
+    def allocated_history_arrays(self) -> bool:
         return self.history is not None
 
     def set_g_accel(self, model: Model):
@@ -199,8 +199,13 @@ class EngineData:
         dof_count: int,
         device: wpc.Device,
         allocate_pca: bool = False,
+        allocate_history: bool = False,
         pca_grid_res: int = 100,
     ) -> EngineData:
+
+        # Backwards compatibility if allocate_pca is used as positional arg or kwarg
+        if allocate_pca and not allocate_history:
+            allocate_history = True
 
         def _zeros(shape, dtype=wp.float32, ndim=None):
             return wp.zeros(shape, dtype=dtype, device=device, ndim=ndim).contiguous()
@@ -296,7 +301,7 @@ class EngineData:
 
         # ---- PCA Storage Buffers ----
         history_data = None
-        if allocate_pca:
+        if allocate_history:
             pca_batch_size = pca_grid_res * pca_grid_res
 
             # Separate Allocations

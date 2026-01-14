@@ -120,7 +120,7 @@ class Simulator(AbstractSimulator):
         mesh_indices = np.array(surface_m.face_vertex_indices(), dtype=np.int32).flatten()
 
         scale = np.array([6.0, 6.0, 4.0])
-        mesh_points = np.array(surface_m.points()) * scale + np.array([0.0, 0.0, 0.05])
+        mesh_points = np.array(surface_m.points()) * scale + np.array([0.0, 0.0, -0.1])
 
         surface_mesh = newton.Mesh(mesh_points, mesh_indices)
 

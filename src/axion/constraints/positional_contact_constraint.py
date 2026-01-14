@@ -94,7 +94,7 @@ def positional_contact_constraint_kernel(
         # precond += wp.dot(J_n_2, to_spatial_momentum(M_inv_2, J_n_2))
 
     effective_mass = compute_effective_mass(J_n_1, J_n_2, M_inv_1, M_inv_2, body_1, body_2)
-    precond = wp.pow(dt, 2.0) * effective_mass
+    precond = wp.pow(dt, 2.0) * effective_mass + 1e-6
 
     signed_distance = compute_signed_distance(body_q_1, body_q_2, interaction)
 
@@ -120,7 +120,7 @@ def positional_contact_constraint_kernel(
     h_n[world_idx, contact_idx] = phi_n / dt
 
     # 3. Update `C_n` (Compliance block)
-    C_n_values[world_idx, contact_idx] = dphi_dlambda_n / wp.pow(dt, 2.0)
+    C_n_values[world_idx, contact_idx] = dphi_dlambda_n / wp.pow(dt, 2.0) + 1e-1
 
     # 4. Update `J_hat_n`
     J_hat_n_values[world_idx, contact_idx, 0] = J_hat_n_1

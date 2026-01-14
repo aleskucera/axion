@@ -12,6 +12,50 @@ class FrictionModelResult:
     slip_coupling_factor: wp.float32
 
 
+# @wp.func
+# def compute_friction_model(
+#     interaction: ContactInteraction,
+#     u_1: wp.spatial_vector,
+#     u_2: wp.spatial_vector,
+#     force_f_prev: wp.vec2,
+#     force_n_prev: wp.float32,
+#     dt: wp.float32,
+#     precond: wp.float32,  # Represents (dt * effective_mass)
+# ) -> FrictionModelResult:
+#     mu = interaction.friction_coeff
+#     J_t1_1, J_t2_1 = interaction.basis_a.tangent1, interaction.basis_a.tangent2
+#     J_t1_2, J_t2_2 = interaction.basis_b.tangent1, interaction.basis_b.tangent2
+#
+#     v_t_1 = wp.dot(J_t1_1, u_1) + wp.dot(J_t1_2, u_2)
+#     v_t_2 = wp.dot(J_t2_1, u_1) + wp.dot(J_t2_2, u_2)
+#     v_t = wp.vec2(v_t_1, v_t_2)
+#     v_t_norm = wp.length(v_t)
+#
+#     force_f_norm = wp.length(force_f_prev)
+#
+#     # Solve 1D complementarity for friction magnitude
+#     phi_f = scaled_fisher_burmeister(
+#         v_t_norm,
+#         mu * force_n_prev - force_f_norm,
+#         1.0,  # alpha for friction usually 1.0 (pure force/velocity)
+#         0.1 * precond,
+#     )
+#
+#     # Compute coupling factor w
+#     # (v_t_norm - phi_f) is the "clamped" velocity magnitude
+#     denom = precond * force_f_norm + phi_f + 1e-6  # Increased epsilon
+#     w = 0.1 * precond * wp.max((v_t_norm - phi_f) / denom, 0.1)
+#
+#     # Clamp w to avoid exploding gradients if effective mass is weird
+#     w = wp.min(w, 1e1)
+#     w = wp.max(w, 1e-4)
+#
+#     result = FrictionModelResult()
+#     result.slip_velocity = v_t
+#     result.slip_coupling_factor = w
+#     return result
+
+
 @wp.func
 def compute_friction_model(
     interaction: ContactInteraction,
@@ -20,7 +64,7 @@ def compute_friction_model(
     force_f_prev: wp.vec2,
     force_n_prev: wp.float32,
     dt: wp.float32,
-    precond: wp.float32,  # Represents (dt * effective_mass)
+    precond: wp.float32,
 ) -> FrictionModelResult:
     mu = interaction.friction_coeff
     J_t1_1, J_t2_1 = interaction.basis_a.tangent1, interaction.basis_a.tangent2
@@ -33,17 +77,36 @@ def compute_friction_model(
 
     force_f_norm = wp.length(force_f_prev)
 
-    # Solve 1D complementarity for friction magnitude
-    phi_f = scaled_fisher_burmeister(
-        v_t_norm,
-        mu * force_n_prev - force_f_norm,
-        1.0,  # alpha for friction usually 1.0 (pure force/velocity)
-        precond,
-    )
+    # 1. Define the scaling factor r
+    # The paper suggests r = h / effective_mass.
+    # Your 'precond' is (dt * effective_mass), which is roughly correct
+    # for mapping Force -> Velocity.
+    r = precond
 
-    # Compute coupling factor w
-    # (v_t_norm - phi_f) is the "clamped" velocity magnitude
-    w = precond * wp.max((v_t_norm - phi_f) / (precond * force_f_norm + phi_f + 1e-8), 0.0)
+    # 2. Compute Scaled Residual (phi)
+    # NO 0.1 factor here. Use r directly.
+    gap = mu * force_n_prev - force_f_norm
+    phi_f = scaled_fisher_burmeister(v_t_norm, gap, 1.0, r)
+
+    # 3. Compute Compliance (w)
+    # Using the fixed point derivation derived from the scaled phi
+    # The 'r' factor must match EXACTLY what was used in scaled_fisher_burmeister
+
+    # Robust denominator with consistent scaling
+    denom_eps = 1e-6
+    denominator = r * force_f_norm + phi_f + denom_eps
+
+    # Calculate w
+    # Note: If phi_f is close to v_t_norm, w approaches 0 (slip)
+    # If phi_f is negative (stick), w becomes large.
+    numerator = v_t_norm - phi_f
+    w = r * (numerator / denominator)
+
+    # 4. Safety Clamping
+    # We must clamp w to prevent the condition number from exploding.
+    # A max value of 1e4 or 1e5 is safe for float32. 10.0 (1e1) is too soft.
+    w = wp.max(w, 0.0)
+    w = wp.min(w, 1e5)
 
     result = FrictionModelResult()
     result.slip_velocity = v_t
@@ -84,8 +147,7 @@ def friction_constraint_kernel(
     # --- 1. Handle Early Exit for Inactive/Non-Frictional Contacts ---
     force_n_prev = lambda_n_prev
 
-    if mu * force_n_prev <= 1e-4:
-        # Unconstrained: h = λ, C = 1, J = 0
+    if mu * force_n_prev <= 1e-6:
         constraint_active_mask[world_idx, constr_idx1] = 0.0
         constraint_active_mask[world_idx, constr_idx2] = 0.0
         body_lambda_f[world_idx, constr_idx1] = 0.0
@@ -160,6 +222,24 @@ def friction_constraint_kernel(
     v_t1, v_t2 = model_result.slip_velocity.x, model_result.slip_velocity.y
     w = model_result.slip_coupling_factor
 
+    # # DEBUG: Friction Convergence
+    # if world_idx == 0 and contact_idx == 0:
+    #     v_t_norm = wp.length(model_result.slip_velocity)
+    #     f_prev_norm = wp.length(force_f_prev)
+    #     gap = mu * force_n_prev - f_prev_norm
+    #     # Re-compute phi for logging (it's internal to the function otherwise)
+    #     phi_debug = scaled_fisher_burmeister(v_t_norm, gap, 1.0, precond)
+    #
+    #     wp.printf(
+    #         "Fric[0]: v_t=%.6f | mu*N=%.6f | |f_prev|=%.6f | phi=%.6f | w=%.6f | pre=%.6f\n",
+    #         v_t_norm,
+    #         mu * force_n_prev,
+    #         f_prev_norm,
+    #         phi_debug,
+    #         w,
+    #         precond,
+    #     )
+
     # --- 4. Assemble System Matrix Components ---
     J_hat_t1_1, J_hat_t2_1 = interaction.basis_a.tangent1, interaction.basis_a.tangent2
     J_hat_t1_2, J_hat_t2_2 = interaction.basis_b.tangent1, interaction.basis_b.tangent2
@@ -221,7 +301,7 @@ def batch_friction_residual_kernel(
     # --- 1. Handle Early Exit ---
     force_n_prev = lambda_n_prev
 
-    if mu * force_n_prev <= 1e-4:
+    if mu * force_n_prev <= 1e-6:
         h_f[batch_idx, world_idx, constr_idx1] = 0.0
         h_f[batch_idx, world_idx, constr_idx2] = 0.0
         return
@@ -346,7 +426,7 @@ def fused_batch_friction_residual_kernel(
     # --- 1. Handle Early Exit ---
     force_n_prev = lambda_n_prev
 
-    if mu * force_n_prev <= 1e-4:
+    if mu * force_n_prev <= 1e-6:
         for b in range(num_batches):
             h_f[b, world_idx, constr_idx1] = 0.0
             h_f[b, world_idx, constr_idx2] = 0.0
