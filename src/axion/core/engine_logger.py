@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from dataclasses import dataclass
+from typing import Dict
+from typing import List
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -47,40 +49,16 @@ class LoggingConfig:
     hdf5_log_file: str = "simulation_log.h5"
 
 
-class EngineLogger:
+class PerformanceLogger:
+    """
+    Handles performance timing and profiling events for the engine.
+    """
+
     def __init__(self, config: LoggingConfig) -> None:
         self.config = config
-
-        self.hdf5_logger = NullLogger()
-        if self.config.enable_hdf5_logging:
-            self.hdf5_logger = HDF5Logger(filepath=config.hdf5_log_file)
-
         self.simulator_event_pairs = []
         self.engine_event_pairs = []
-        self._current_step_in_segment = 0
-
-    @property
-    def can_cuda_graph_be_used(self):
-        if self.config.enable_hdf5_logging:
-            return False
-        return True
-
-    @property
-    def current_step_in_segment(self) -> int:
-        """The current physics substep index within the segment."""
-        return self._current_step_in_segment
-
-    @property
-    def uses_history_arrays(self):
-        """Returns True if history arrays should be allocated and populated."""
-        return self.config.enable_hdf5_logging and self.config.log_history_data
-
-    # --- NEW: Setter method ---
-    def set_current_step_in_segment(self, step_num: int):
-        """
-        Sets the current step index. Called by the simulator before each physics step.
-        """
-        self._current_step_in_segment = step_num
+        self.step_event_pairs = []
 
     def initialize_events(self, steps_per_segment: int, newton_iters: int):
         """Creates pairs of (start, end) events for each timed block."""
@@ -131,6 +109,280 @@ class EngineLogger:
             wp.record_event(end_event)
         else:
             yield
+
+    def log_segment_timings(self, steps_per_segment: int, newton_iters: int):
+        """
+        Calculates, aggregates, and prints a statistical summary of timing info
+        from the recorded events for the last segment.
+        """
+        if not self.config.enable_timing:
+            return
+
+        # 1. Aggregate all raw timing values
+        timings: Dict[str, List[float]] = {
+            "collision_detection": [],
+            "step": [],
+            "control": [],
+            "initial_guess": [],
+            "system_linearization": [],
+            "linear_system_solve": [],
+            "linesearch": [],
+        }
+
+        for step in range(steps_per_segment):
+            sim_events = self.simulator_event_pairs[step]
+            timings["collision_detection"].append(
+                wp.get_event_elapsed_time(*sim_events["collision_detection"])
+            )
+            timings["step"].append(wp.get_event_elapsed_time(*sim_events["step"]))
+
+            step_events = self.step_event_pairs[step]
+            timings["control"].append(wp.get_event_elapsed_time(*step_events["control"]))
+            timings["initial_guess"].append(
+                wp.get_event_elapsed_time(*step_events["initial_guess"])
+            )
+
+            for newton_iter in range(newton_iters):
+                engine_events = self.engine_event_pairs[step][newton_iter]
+                for key in ["system_linearization", "linear_system_solve", "linesearch"]:
+                    timings[key].append(wp.get_event_elapsed_time(*engine_events[key]))
+
+        # 2. Compute statistics for each timed operation
+        stats: Dict[str, dict] = {}
+        for name, data in timings.items():
+            if not data:
+                continue
+            data_np = np.array(data)
+            stats[name] = {
+                "mean": np.mean(data_np),
+                "std": np.std(data_np),
+                "v_min": np.min(data_np),
+                "v_max": np.max(data_np),
+                "count": len(data_np),
+            }
+
+        if not stats:
+            return
+
+        # 3. Calculate Derived Totals
+        total_physics_step_time = stats.get("collision_detection", {}).get("mean", 0.0) + stats.get(
+            "step", {}
+        ).get("mean", 0.0)
+        physics_update_total = stats.get("step", {}).get("mean", 0.0)
+        avg_newton_iters = newton_iters
+        per_newton_iter_total = sum(
+            stats.get(op, {}).get("mean", 0.0)
+            for op in ["system_linearization", "linear_system_solve", "linesearch"]
+        )
+        total_newton_time = per_newton_iter_total * avg_newton_iters
+
+        def format_stat(stat_data, parent_total, is_summary=False):
+            if not stat_data:
+                return {
+                    "mean_s": "N/A",
+                    "std_s": "N/A",
+                    "range_s": "N/A",
+                    "perc_s": "N/A",
+                    "count_s": "N/A",
+                }
+
+            mean = stat_data.get("mean", 0)
+            std = stat_data.get("std", 0)
+            v_min = stat_data.get("v_min", 0)
+            v_max = stat_data.get("v_max", 0)
+            count = stat_data.get("count", 0)
+
+            mean_s = f"{mean:.3f} ms"
+            std_s = f"± {std:.3f}" if not is_summary else "N/A"
+            range_s = f"{v_min:.3f} - {v_max:.3f}" if not is_summary else "N/A"
+            perc_s = f"{(mean / parent_total * 100):.1f}%" if parent_total > 0 else "0.0%"
+            count_s = str(count)
+            return {
+                "mean_s": mean_s,
+                "std_s": std_s,
+                "range_s": range_s,
+                "perc_s": perc_s,
+                "count_s": count_s,
+            }
+
+        # Collect data for DataFrame
+        data = []
+
+        # Total
+        s = format_stat(
+            {"mean": total_physics_step_time, "count": stats["step"]["count"]},
+            total_physics_step_time,
+            is_summary=True,
+        )
+        data.append(
+            {
+                "Operation": "TOTAL PHYSICS STEP",
+                "Mean": s["mean_s"],
+                "Std Dev": s["std_s"],
+                "Min - Max": s["range_s"],
+                "% Total": s["perc_s"],
+                "Samples": s["count_s"],
+            }
+        )
+
+        # Collision
+        s = format_stat(stats.get("collision_detection"), total_physics_step_time)
+        data.append(
+            {
+                "Operation": "├─ collision_detection",
+                "Mean": s["mean_s"],
+                "Std Dev": s["std_s"],
+                "Min - Max": s["range_s"],
+                "% Total": s["perc_s"],
+                "Samples": s["count_s"],
+            }
+        )
+
+        # Physics update
+        s = format_stat(stats.get("step"), total_physics_step_time)
+        data.append(
+            {
+                "Operation": "└─ physics_update",
+                "Mean": s["mean_s"],
+                "Std Dev": s["std_s"],
+                "Min - Max": s["range_s"],
+                "% Total": s["perc_s"],
+                "Samples": s["count_s"],
+            }
+        )
+
+        # Control
+        s = format_stat(stats.get("control"), physics_update_total)
+        data.append(
+            {
+                "Operation": "   ├─ control",
+                "Mean": s["mean_s"],
+                "Std Dev": s["std_s"],
+                "Min - Max": s["range_s"],
+                "% Total": s["perc_s"],
+                "Samples": s["count_s"],
+            }
+        )
+
+        # Initial guess
+        s = format_stat(stats.get("initial_guess"), physics_update_total)
+        data.append(
+            {
+                "Operation": "   ├─ initial_guess",
+                "Mean": s["mean_s"],
+                "Std Dev": s["std_s"],
+                "Min - Max": s["range_s"],
+                "% Total": s["perc_s"],
+                "Samples": s["count_s"],
+            }
+        )
+
+        # Newton iterations
+        s = format_stat(
+            {
+                "mean": total_newton_time,
+                "count": stats.get("system_linearization", {}).get("count", 0),
+            },
+            physics_update_total,
+            is_summary=True,
+        )
+        data.append(
+            {
+                "Operation": f"   └─ newton_iterations ({avg_newton_iters})",
+                "Mean": s["mean_s"],
+                "Std Dev": s["std_s"],
+                "Min - Max": s["range_s"],
+                "% Total": s["perc_s"],
+                "Samples": s["count_s"],
+            }
+        )
+
+        # Linearization
+        s = format_stat(stats.get("system_linearization"), per_newton_iter_total)
+        data.append(
+            {
+                "Operation": "      ├─ system_linearization",
+                "Mean": s["mean_s"],
+                "Std Dev": s["std_s"],
+                "Min - Max": s["range_s"],
+                "% Total": s["perc_s"],
+                "Samples": s["count_s"],
+            }
+        )
+
+        # Solve
+        s = format_stat(stats.get("linear_system_solve"), per_newton_iter_total)
+        data.append(
+            {
+                "Operation": "      ├─ linear_system_solve",
+                "Mean": s["mean_s"],
+                "Std Dev": s["std_s"],
+                "Min - Max": s["range_s"],
+                "% Total": s["perc_s"],
+                "Samples": s["count_s"],
+            }
+        )
+
+        # Linesearch
+        s = format_stat(stats.get("linesearch"), per_newton_iter_total)
+        data.append(
+            {
+                "Operation": "      └─ linesearch",
+                "Mean": s["mean_s"],
+                "Std Dev": s["std_s"],
+                "Min - Max": s["range_s"],
+                "% Total": s["perc_s"],
+                "Samples": s["count_s"],
+            }
+        )
+
+        df = pd.DataFrame(data)
+
+        # Format the table with better spacing and alignment
+        print("\nTIMING PERFORMANCE REPORT\n")
+
+        # Custom formatting for better readability
+        col_widths = {
+            "Operation": 35,
+            "Mean": 10,
+            "Std Dev": 12,
+            "Min - Max": 15,
+            "% Total": 8,
+            "Samples": 8,
+        }
+
+        # Print header
+        header = ""
+        for col, width in col_widths.items():
+            header += f"{col:<{width}}"
+        print(header)
+        print("-" * sum(col_widths.values()))
+
+        # Print data rows
+        for _, row in df.iterrows():
+            line = ""
+            for col, width in col_widths.items():
+                line += f"{str(row[col]):<{width}}"
+            print(line)
+
+        print()
+
+
+class StateLogger:
+    """
+    Handles logging of simulation state and data to HDF5.
+    """
+
+    def __init__(self, config: LoggingConfig) -> None:
+        self.config = config
+        self.hdf5_logger = NullLogger()
+        if self.config.enable_hdf5_logging:
+            self.hdf5_logger = HDF5Logger(filepath=config.hdf5_log_file)
+
+    @property
+    def uses_history_arrays(self):
+        """Returns True if history arrays should be allocated and populated."""
+        return self.config.enable_hdf5_logging and self.config.log_history_data
 
     def open(self):
         if not self.config.enable_hdf5_logging:
@@ -236,10 +488,15 @@ class EngineLogger:
 
         with self.hdf5_logger.scope(f"newton_iteration_{iteration:02d}"):
             with self.hdf5_logger.scope("linear_solver_history"):
-                self.hdf5_logger.log_np_dataset(
-                    "residual_sq_history", history["residual_sq_history"]
+                iters = int(history["iterations"].numpy().item())
+                # Slice history to include only valid iterations (0 to iters)
+                valid_history = history["residual_squared_history"].numpy()[: iters + 1]
+
+                self.hdf5_logger.log_np_dataset("residual_squared_history", valid_history)
+                self.hdf5_logger.log_scalar("iterations", iters)
+                self.hdf5_logger.log_wp_dataset(
+                    "final_residual_squared", history["final_residual_squared"]
                 )
-                self.hdf5_logger.log_scalar("iterations", history["iterations"])
 
     def log_linesearch_step(self, engine: AxionEngine, iteration: int):
         if (
@@ -312,260 +569,92 @@ class EngineLogger:
 
         self.hdf5_logger.log_wp_dataset("rigid_contact_count", contacts.rigid_contact_count)
 
+
+class EngineLogger:
+    """
+    Facade for PerformanceLogger and StateLogger.
+    Maintains backward compatibility while separating concerns.
+    """
+
+    def __init__(self, config: LoggingConfig) -> None:
+        self.config = config
+
+        self.perf = PerformanceLogger(config)
+        self.state = StateLogger(config)
+
+        self._current_step_in_segment = 0
+
+    @property
+    def can_cuda_graph_be_used(self):
+        if self.config.enable_hdf5_logging:
+            return False
+        return True
+
+    @property
+    def current_step_in_segment(self) -> int:
+        """The current physics substep index within the segment."""
+        return self._current_step_in_segment
+
+    @property
+    def uses_history_arrays(self):
+        """Returns True if history arrays should be allocated and populated."""
+        return self.state.uses_history_arrays
+
+    @property
+    def hdf5_logger(self):
+        """Expose hdf5_logger for backward compatibility if accessed directly."""
+        return self.state.hdf5_logger
+
+    @property
+    def simulator_event_pairs(self):
+        return self.perf.simulator_event_pairs
+
+    @property
+    def engine_event_pairs(self):
+        return self.perf.engine_event_pairs
+
+    @property
+    def step_event_pairs(self):
+        return self.perf.step_event_pairs
+
+    def set_current_step_in_segment(self, step_num: int):
+        """
+        Sets the current step index. Called by the simulator before each physics step.
+        """
+        self._current_step_in_segment = step_num
+
+    def initialize_events(self, steps_per_segment: int, newton_iters: int):
+        self.perf.initialize_events(steps_per_segment, newton_iters)
+
+    def timed_block(self, start_event: wp.Event, end_event: wp.Event):
+        return self.perf.timed_block(start_event, end_event)
+
+    def open(self):
+        self.state.open()
+
+    def close(self):
+        self.state.close()
+
+    def log_newton_iteration_data(self, engine: AxionEngine, iteration: int):
+        self.state.log_newton_iteration_data(engine, iteration)
+
+    def log_linear_solver_history(self, history: dict, iteration: int):
+        self.state.log_linear_solver_history(history, iteration)
+
+    def log_linesearch_step(self, engine: AxionEngine, iteration: int):
+        self.state.log_linesearch_step(engine, iteration)
+
+    def log_history_arrays(self, engine: AxionEngine):
+        self.state.log_history_arrays(engine)
+
+    def timestep_start(self, timestep: int, current_time: float):
+        self.state.timestep_start(timestep, current_time)
+
+    def timestep_end(self):
+        self.state.timestep_end()
+
+    def log_contact_count(self, contacts):
+        self.state.log_contact_count(contacts)
+
     def log_segment_timings(self, steps_per_segment: int, newton_iters: int):
-        """
-        Calculates, aggregates, and prints a statistical summary of timing info
-        from the recorded events for the last segment.
-        """
-        if not self.config.enable_timing:
-            return
-
-        # 1. Aggregate all raw timing values
-        timings: dict[str, list[float]] = {
-            "collision_detection": [],
-            "step": [],
-            "control": [],
-            "initial_guess": [],
-            "system_linearization": [],
-            "linear_system_solve": [],
-            "linesearch": [],
-        }
-
-        for step in range(steps_per_segment):
-            sim_events = self.simulator_event_pairs[step]
-            timings["collision_detection"].append(
-                wp.get_event_elapsed_time(*sim_events["collision_detection"])
-            )
-            timings["step"].append(wp.get_event_elapsed_time(*sim_events["step"]))
-
-            step_events = self.step_event_pairs[step]
-            timings["control"].append(wp.get_event_elapsed_time(*step_events["control"]))
-            timings["initial_guess"].append(
-                wp.get_event_elapsed_time(*step_events["initial_guess"])
-            )
-
-            for newton_iter in range(newton_iters):
-                engine_events = self.engine_event_pairs[step][newton_iter]
-                for key in ["system_linearization", "linear_system_solve", "linesearch"]:
-                    timings[key].append(wp.get_event_elapsed_time(*engine_events[key]))
-
-        # 2. Compute statistics for each timed operation
-        stats: dict[str, dict] = {}
-        for name, data in timings.items():
-            if not data:
-                continue
-            data_np = np.array(data)
-            stats[name] = {
-                "mean": np.mean(data_np),
-                "std": np.std(data_np),
-                "v_min": np.min(data_np),
-                "v_max": np.max(data_np),
-                "count": len(data_np),
-            }
-
-        if not stats:
-            return
-
-        # 3. Calculate Derived Totals
-        total_physics_step_time = stats.get("collision_detection", {}).get("mean", 0.0) + stats.get(
-            "step", {}
-        ).get("mean", 0.0)
-        physics_update_total = stats.get("step", {}).get("mean", 0.0)
-        avg_newton_iters = newton_iters
-        per_newton_iter_total = sum(
-            stats.get(op, {}).get("mean", 0.0)
-            for op in ["system_linearization", "linear_system_solve", "linesearch"]
-        )
-        total_newton_time = per_newton_iter_total * avg_newton_iters
-
-        def format_stat(stat_data, parent_total, is_summary=False):
-            if not stat_data:
-                return {
-                    "mean_s": "N/A",
-                    "std_s": "N/A",
-                    "range_s": "N/A",
-                    "perc_s": "N/A",
-                    "count_s": "N/A",
-                }
-
-            mean = stat_data.get("mean", 0)
-            std = stat_data.get("std", 0)
-            v_min = stat_data.get("v_min", 0)
-            v_max = stat_data.get("v_max", 0)
-            count = stat_data.get("count", 0)
-
-            mean_s = f"{mean:.3f} ms"
-            std_s = f"± {std:.3f}" if not is_summary else "N/A"
-            range_s = f"{v_min:.3f} - {v_max:.3f}" if not is_summary else "N/A"
-            perc_s = f"{(mean / parent_total * 100):.1f}%" if parent_total > 0 else "0.0%"
-            count_s = str(count)
-            return {
-                "mean_s": mean_s,
-                "std_s": std_s,
-                "range_s": range_s,
-                "perc_s": perc_s,
-                "count_s": count_s,
-            }
-
-        # Collect data for DataFrame
-        data = []
-
-        # Total
-        s = format_stat(
-            {"mean": total_physics_step_time, "count": stats["step"]["count"]},
-            total_physics_step_time,
-            is_summary=True,
-        )
-        data.append(
-            {
-                "Operation": "TOTAL PHYSICS STEP",
-                "Mean": s["mean_s"],
-                "Std Dev": s["std_s"],
-                "Min - Max": s["range_s"],
-                "% Total": s["% Total"],
-                "Samples": s["count_s"],
-            }
-        )
-
-        # Collision
-        s = format_stat(stats.get("collision_detection"), total_physics_step_time)
-        data.append(
-            {
-                "Operation": "├─ collision_detection",
-                "Mean": s["mean_s"],
-                "Std Dev": s["std_s"],
-                "Min - Max": s["range_s"],
-                "% Total": s["% Total"],
-                "Samples": s["count_s"],
-            }
-        )
-
-        # Physics update
-        s = format_stat(stats.get("step"), total_physics_step_time)
-        data.append(
-            {
-                "Operation": "└─ physics_update",
-                "Mean": s["mean_s"],
-                "Std Dev": s["std_s"],
-                "Min - Max": s["range_s"],
-                "% Total": s["% Total"],
-                "Samples": s["count_s"],
-            }
-        )
-
-        # Control
-        s = format_stat(stats.get("control"), physics_update_total)
-        data.append(
-            {
-                "Operation": "   ├─ control",
-                "Mean": s["mean_s"],
-                "Std Dev": s["std_s"],
-                "Min - Max": s["range_s"],
-                "% Total": s["% Total"],
-                "Samples": s["count_s"],
-            }
-        )
-
-        # Initial guess
-        s = format_stat(stats.get("initial_guess"), physics_update_total)
-        data.append(
-            {
-                "Operation": "   ├─ initial_guess",
-                "Mean": s["mean_s"],
-                "Std Dev": s["std_s"],
-                "Min - Max": s["range_s"],
-                "% Total": s["% Total"],
-                "Samples": s["count_s"],
-            }
-        )
-
-        # Newton iterations
-        s = format_stat(
-            {
-                "mean": total_newton_time,
-                "count": stats.get("system_linearization", {}).get("count", 0),
-            },
-            physics_update_total,
-            is_summary=True,
-        )
-        data.append(
-            {
-                "Operation": f"   └─ newton_iterations ({avg_newton_iters})",
-                "Mean": s["mean_s"],
-                "Std Dev": s["std_s"],
-                "Min - Max": s["range_s"],
-                "% Total": s["% Total"],
-                "Samples": s["count_s"],
-            }
-        )
-
-        # Linearization
-        s = format_stat(stats.get("system_linearization"), per_newton_iter_total)
-        data.append(
-            {
-                "Operation": "      ├─ system_linearization",
-                "Mean": s["mean_s"],
-                "Std Dev": s["std_s"],
-                "Min - Max": s["range_s"],
-                "% Total": s["% Total"],
-                "Samples": s["count_s"],
-            }
-        )
-
-        # Solve
-        s = format_stat(stats.get("linear_system_solve"), per_newton_iter_total)
-        data.append(
-            {
-                "Operation": "      ├─ linear_system_solve",
-                "Mean": s["mean_s"],
-                "Std Dev": s["std_s"],
-                "Min - Max": s["range_s"],
-                "% Total": s["% Total"],
-                "Samples": s["count_s"],
-            }
-        )
-
-        # Linesearch
-        s = format_stat(stats.get("linesearch"), per_newton_iter_total)
-        data.append(
-            {
-                "Operation": "      └─ linesearch",
-                "Mean": s["mean_s"],
-                "Std Dev": s["std_s"],
-                "Min - Max": s["range_s"],
-                "% Total": s["% Total"],
-                "Samples": s["count_s"],
-            }
-        )
-
-        df = pd.DataFrame(data)
-
-        # Format the table with better spacing and alignment
-        print("\nTIMING PERFORMANCE REPORT\n")
-
-        # Custom formatting for better readability
-        col_widths = {
-            "Operation": 35,
-            "Mean": 10,
-            "Std Dev": 12,
-            "Min - Max": 15,
-            "% Total": 8,
-            "Samples": 8,
-        }
-
-        # Print header
-        header = ""
-        for col, width in col_widths.items():
-            header += f"{col:<{width}}"
-        print(header)
-        print("-" * sum(col_widths.values()))
-
-        # Print data rows
-        for _, row in df.iterrows():
-            line = ""
-            for col, width in col_widths.items():
-                line += f"{str(row[col]):<{width}}"
-            print(line)
-
-        print()
-
+        self.perf.log_segment_timings(steps_per_segment, newton_iters)

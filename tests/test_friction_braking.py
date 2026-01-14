@@ -1,8 +1,6 @@
 import newton
-import numpy as np
-import pytest
 import warp as wp
-from axion.core.engine_new import AxionEngine
+from axion.core.engine import AxionEngine
 from axion.core.engine_config import AxionEngineConfig
 from axion.core.engine_logger import EngineLogger
 from axion.core.engine_logger import LoggingConfig

@@ -18,7 +18,7 @@ class AxionEngineConfig(EngineConfig):
     """
 
     max_newton_iters: int = 8
-    max_linear_iters: int = 8
+    max_linear_iters: int = 16
 
     newton_mode: str = "convergence"  # "convergence" / "fixed"
     linear_mode: str = "convergence"  # "convergence" / "fixed"
@@ -27,7 +27,7 @@ class AxionEngineConfig(EngineConfig):
     newton_atol: float = 5e-2
 
     linear_tol: float = 1e-5
-    linear_atol: float = 1e-7
+    linear_atol: float = 1e-5
 
     joint_stabilization_factor: float = 0.01
     contact_stabilization_factor: float = 0.02
@@ -37,22 +37,22 @@ class AxionEngineConfig(EngineConfig):
     contact_compliance: float = 1e-6
     friction_compliance: float = 1e-6
 
-    regularization: float = 1e-6
+    regularization: float = 1e-5
 
-    contact_fb_alpha: float = 0.25
-    contact_fb_beta: float = 0.25
+    contact_fb_alpha: float = 1.0
+    contact_fb_beta: float = 1.0
     friction_fb_alpha: float = 1.0
     friction_fb_beta: float = 1.0
 
     enable_linesearch: bool = False
-    linesearch_step_count: int = 200
-    linesearch_step_min: float = 1e-6
-    linesearch_step_max: float = 10.0
+    linesearch_step_count: int = 64
+    linesearch_step_min: float = 1e-5
+    linesearch_step_max: float = 1e1
 
-    max_contacts_per_world: int = 20
+    max_contacts_per_world: int = 128
 
-    joint_constraint_level: str = "vel"  # pos / vel
-    contact_constraint_level: str = "vel"  # pos / vel
+    joint_constraint_level: str = "pos"  # pos / vel
+    contact_constraint_level: str = "pos"  # pos / vel
 
     def __post_init__(self):
         """Validate all configuration parameters."""
@@ -83,9 +83,13 @@ class AxionEngineConfig(EngineConfig):
 
         # Validate modes
         if self.newton_mode not in ("convergence", "fixed"):
-            raise ValueError(f"newton_mode must be 'convergence' or 'fixed', got {self.newton_mode}")
+            raise ValueError(
+                f"newton_mode must be 'convergence' or 'fixed', got {self.newton_mode}"
+            )
         if self.linear_mode not in ("convergence", "fixed"):
-            raise ValueError(f"linear_mode must be 'convergence' or 'fixed', got {self.linear_mode}")
+            raise ValueError(
+                f"linear_mode must be 'convergence' or 'fixed', got {self.linear_mode}"
+            )
 
         # Validate tolerances
         _validate_non_negative_float(self.newton_tol, "newton_tol")

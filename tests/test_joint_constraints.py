@@ -2,7 +2,7 @@ import newton
 import numpy as np
 import pytest
 import warp as wp
-from axion.core.engine_new import AxionEngine
+from axion.core.engine import AxionEngine
 from axion.core.engine_config import AxionEngineConfig
 from axion.core.engine_logger import EngineLogger
 from axion.core.engine_logger import LoggingConfig
@@ -159,6 +159,7 @@ def run_joint_test(joint_type, joint_axis=wp.vec3(0.0, 1.0, 0.0)):
     # 2. Setup Engine
     config = AxionEngineConfig(
         joint_constraint_level="pos",
+        contact_constraint_level="pos",
         joint_compliance=1e-8,
         max_newton_iters=10,
         max_linear_iters=10,

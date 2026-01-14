@@ -304,7 +304,7 @@ class PCRSolver:
         wp.capture_while(self.keep_running, solver_step)
 
         return {
-            "final_residual": self.r_sq,
+            "final_residual_squared": self.r_sq,
             "iterations": self.iter_count,
-            "residual_history": self.history_r_sq,
+            "residual_squared_history": self.history_r_sq,
         }
