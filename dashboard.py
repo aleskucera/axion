@@ -1,452 +1,418 @@
 import glob
 import os
-import time
-from pathlib import Path
 
 import h5py
 import numpy as np
 import pandas as pd
+import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
-# --- PAGE CONFIG ---
-st.set_page_config(layout="wide", page_title="Axion Debugger")
-st.title("Axion Physics Debugger 🔍")
+# --- CONFIGURATION ---
+st.set_page_config(layout="wide", page_title="Axion Analyzer 2.2")
+st.title("Axion Physics Debugger 2.2 🔍")
 
-# --- SIDEBAR: DATA LOADING ---
-st.sidebar.header("1. Select Simulation")
-# Search in data/logs/ folder first, then data/, then current
-search_paths = ["data/logs/*.h5", "data/*.h5", "*.h5"]
-data_files = []
-for p in search_paths:
-    data_files.extend(glob.glob(p))
-    if data_files:
-        break
-
-if not data_files:
-    st.error("No .h5 files found in `data/logs`, `data/`, or current directory.")
-    st.stop()
-
-selected_file = st.sidebar.selectbox("File", sorted(data_files, reverse=True), index=0)
-
-# Manual Refresh Button
-if st.sidebar.button("Refresh Data"):
-    st.rerun()
-
-# Check modification time for auto-refresh
-current_mtime = os.path.getmtime(selected_file)
-
-# --- SIDEBAR: WORLD FILTERING ---
-st.sidebar.markdown("---")
-st.sidebar.header("2. World Selection")
+# --- SESSION STATE INITIALIZATION ---
+if "run_index" not in st.session_state:
+    st.session_state.run_index = pd.DataFrame()
+if "loaded_file" not in st.session_state:
+    st.session_state.loaded_file = None
 
 
-# Function to get max world count efficiently
-@st.cache_data
-def get_world_count(file_path, _mtime):
-    with h5py.File(file_path, "r") as f:
-        # Check first available timestep
-        steps = sorted([k for k in f.keys() if k.startswith("timestep_")])
-        if not steps:
+# --- UTILITIES ---
+class LogReader:
+    def __init__(self, filepath):
+        self.filepath = filepath
+        self.file = None
+
+    def __enter__(self):
+        if self.filepath and os.path.exists(self.filepath):
+            self.file = h5py.File(self.filepath, "r")
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if self.file:
+            self.file.close()
+
+    def get_timesteps(self):
+        if not self.file:
+            return []
+        return sorted([k for k in self.file.keys() if k.startswith("timestep_")])
+
+    def get_newton_iterations(self, step_key):
+        if not self.file or step_key not in self.file:
+            return []
+        return sorted([k for k in self.file[step_key].keys() if k.startswith("newton_iteration_")])
+
+    def get_world_count(self, step_key):
+        if not self.file or step_key not in self.file:
             return 0
-        g = f[steps[0]]
-        
-        # Try new history data location
-        if "history_data" in g:
-            # h_history shape: (Iter, World, Dof)
-            if "h_history" in g["history_data"]:
-                return g["history_data"]["h_history"].shape[1]
+        try:
+            # Try to find any iteration to infer world count from data shape
+            iter_keys = [k for k in self.file[step_key].keys() if k.startswith("newton_iteration_")]
+            if not iter_keys:
+                return 0
 
-        # Try legacy residual_norm_landscape_data
-        if "residual_norm_landscape_data" in g:
-            if "pca_metadata" in g["residual_norm_landscape_data"]:
-                # Metadata is [grid_res, plot_scale, steps, num_worlds]
-                meta = g["residual_norm_landscape_data"]["pca_metadata"][()]
-                return int(meta[3])
-            if "trajectory_residuals" in g["residual_norm_landscape_data"]:
-                return g["residual_norm_landscape_data"]["trajectory_residuals"].shape[1]
-                
-    return 0
+            # Look at dynamics/body_q for shape
+            first_iter = iter_keys[0]
+            dq = self.file[f"{step_key}/{first_iter}/dynamics/body_q"]
+            return dq.shape[0]
+        except Exception:
+            return 0
 
 
-total_worlds = get_world_count(selected_file, current_mtime)
+# --- 1. FILE SELECTION & LOADING ---
+st.sidebar.header("1. File Selection")
+search_paths = ["data/logs/*.h5", "data/*.h5", "*.h5"]
+files = []
+for p in search_paths:
+    files.extend(glob.glob(p))
 
-if total_worlds > 0:
-    st.sidebar.caption(f"Total Worlds in File: {total_worlds}")
-
-    # Range Input
-    w_min = st.sidebar.number_input("Min World", 0, total_worlds - 1, 0)
-    w_max = st.sidebar.number_input("Max World", 0, total_worlds - 1, min(10, total_worlds - 1))
-
-    if w_min > w_max:
-        st.sidebar.error("Min World cannot be greater than Max World")
-else:
-    st.sidebar.warning("Could not determine world count. File might be empty or format unknown.")
-    w_min, w_max = 0, 0
-
-
-# --- DATA LOADING ---
-@st.cache_data
-def load_timestep_table(file_path, w_start, w_end, _mtime):
-    """Loads and filters data, returning only rows within the requested world range."""
-    if not Path(file_path).exists():
-        return None
-
-    data_rows = []
-
-    with h5py.File(file_path, "r") as f:
-        steps = sorted([k for k in f.keys() if k.startswith("timestep_")])
-
-        for step in steps:
-            g = f[step]
-            
-            # 1. Try Loading from History Data (New Standard)
-            if "history_data" in g and "h_history" in g["history_data"]:
-                # h_history: (Iter, World, Dof)
-                # We want the norm of the last iteration for the selected worlds
-                # Slice: Last Iter (-1), Worlds (w_start:w_end+1), All Dofs (:)
-                last_h = g["history_data"]["h_history"][-1, w_start : w_end + 1, :]
-                norms = np.linalg.norm(last_h, axis=1)
-                
-            # 2. Fallback to Legacy Data
-            elif "residual_norm_landscape_data" in g and "trajectory_residuals" in g["residual_norm_landscape_data"]:
-                last_h = g["residual_norm_landscape_data"]["trajectory_residuals"][-1, w_start : w_end + 1, :]
-                norms = np.linalg.norm(last_h, axis=1)
-            else:
-                continue
-
-            for i, val in enumerate(norms):
-                data_rows.append(
-                    {
-                        "Timestep": int(step.split("_")[1]),
-                        "World": w_start + i,
-                        "Final Residual": float(val),
-                    }
-                )
-
-    return pd.DataFrame(data_rows)
-
-
-df = load_timestep_table(selected_file, w_min, w_max, current_mtime)
-
-if df is None or df.empty:
-    st.warning(f"No valid data found in range [{w_min}-{w_max}].")
+if not files:
+    st.error("No HDF5 logs found.")
     st.stop()
 
-# --- SIDEBAR: TIMESTEP SELECTION ---
-with st.sidebar:
-    st.markdown("---")
-    st.header("3. Select Timestep")
-    st.caption("Sort by 'Final Residual' to find broken steps.")
+selected_file = st.sidebar.selectbox("Log File", sorted(files, reverse=True))
 
-    # Sort default so worst steps are at the top
-    df_sorted = df.sort_values("Final Residual", ascending=False)
+# LOAD BUTTON
+if st.sidebar.button("Load Data", type="primary"):
+    with st.spinner(f"Indexing {os.path.basename(selected_file)}..."):
+        rows = []
+        if os.path.exists(selected_file):
+            with h5py.File(selected_file, "r") as f:
+                steps = sorted([k for k in f.keys() if k.startswith("timestep_")])
 
-    selection = st.dataframe(
-        df_sorted,
-        use_container_width=True,
-        hide_index=True,
-        selection_mode="single-row",
-        on_select="rerun",
-        column_config={
-            "Final Residual": st.column_config.NumberColumn(format="%.2e"),
-            "Timestep": st.column_config.NumberColumn(format="%d"),
-            "World": st.column_config.NumberColumn(format="%d"),
-        },
-        height=300,  # Fixed height for sidebar
+                for step in steps:
+                    iters = sorted([k for k in f[step].keys() if k.startswith("newton_iteration_")])
+                    if not iters:
+                        continue
+
+                    last_iter = iters[-1]
+                    last_iter_idx = int(last_iter.split("_")[-1])
+
+                    # Try to get residual summary
+                    try:
+                        ls_grp = f[f"{step}/{last_iter}/linesearch"]
+                        # batch_h_norm_sq: (Steps, Worlds)
+                        norms_sq = ls_grp["batch_h_norm_sq"][()]
+                        min_idxs = ls_grp["minimal_index"][()]
+
+                        num_worlds = norms_sq.shape[1]
+
+                        # Get the residual of the CHOSEN step for each world
+                        final_residuals = []
+                        for w in range(num_worlds):
+                            idx = min_idxs[w]
+                            res = np.sqrt(norms_sq[idx, w])
+                            final_residuals.append(res)
+
+                        max_res = np.max(final_residuals)
+                        max_res_world = np.argmax(final_residuals)
+
+                        rows.append(
+                            {
+                                "Timestep": int(step.split("_")[1]),
+                                "Iterations": last_iter_idx + 1,
+                                "Max Residual": max_res,
+                                "Worst World": max_res_world,
+                                "Key": step,
+                            }
+                        )
+                    except (KeyError, IndexError):
+                        rows.append(
+                            {
+                                "Timestep": int(step.split("_")[1]),
+                                "Iterations": last_iter_idx + 1,
+                                "Max Residual": 0.0,
+                                "Worst World": 0,
+                                "Key": step,
+                            }
+                        )
+
+        st.session_state.run_index = pd.DataFrame(rows)
+        st.session_state.loaded_file = selected_file
+        st.rerun()
+
+# CHECK IF DATA IS LOADED
+if st.session_state.run_index.empty:
+    st.info("Select a file and click **Load Data** to begin.")
+    st.stop()
+
+df = st.session_state.run_index
+
+# Ensure we are working with the file we loaded
+if st.session_state.loaded_file != selected_file:
+    st.warning("Selected file matches loaded data? No. Please click 'Load Data' to refresh.")
+
+# --- GLOBAL SIMULATION GRAPH ---
+with st.expander("Simulation Overview (Timestep vs Residual)", expanded=True):
+    fig_global = px.line(
+        df,
+        x="Timestep",
+        y="Max Residual",
+        log_y=True,
+        markers=True,
+        title="Global Convergence Health (Max Residual per Step)",
+        height=300,
     )
+    st.plotly_chart(fig_global, use_container_width=True)
 
-# --- SELECTION HANDLING ---
-if selection.selection.rows:
-    # Get the row index from the *sorted* dataframe (since the user clicked on sorted view)
-    selected_idx = selection.selection.rows[0]
-    selected_row = df_sorted.iloc[selected_idx]
-else:
-    # Default to the worst offender if nothing selected
-    selected_row = df_sorted.iloc[0]
+# --- 2. TIMESTEP SELECTION ---
+st.sidebar.markdown("---")
+st.sidebar.header("2. Timestep")
 
-sel_step = int(selected_row["Timestep"])
-sel_world = int(selected_row["World"])
+df_sorted = df.sort_values("Max Residual", ascending=False)
 
-# Show what is currently selected in the main view
-st.success(
-    f"**Inspecting:** Timestep `{sel_step}` | World `{sel_world}` | Residual `{selected_row['Final Residual']:.2e}`"
+selection = st.sidebar.dataframe(
+    df_sorted,
+    width="stretch",
+    hide_index=True,
+    selection_mode="single-row",
+    on_select="rerun",
+    column_config={
+        "Max Residual": st.column_config.NumberColumn(format="%.2e"),
+        "Worst World": st.column_config.NumberColumn(format="%d"),
+    },
+    height=200,
 )
 
-
-# --- DETAIL LOADING ---
-@st.cache_data
-def load_history_data(file_path, step, world_idx, _mtime):
-    with h5py.File(file_path, "r") as f:
-        step_key = f"timestep_{step:04d}"
-        if step_key not in f:
-            return None, None
-            
-        g = f[step_key]
-        
-        if "history_data" in g:
-            sub = g["history_data"]
-            h_hist = sub["h_history"][:, world_idx, :]
-            dims = sub["simulation_dims"][()]
-            return h_hist, dims
-            
-        # Fallback
-        if "residual_norm_landscape_data" in g:
-            sub = g["residual_norm_landscape_data"]
-            h_hist = sub["trajectory_residuals"][:, world_idx, :]
-            dims = sub["simulation_dims"][()]
-            return h_hist, dims
-            
-    return None, None
-
-h_hist, dims = load_history_data(selected_file, sel_step, sel_world, current_mtime)
-
-@st.cache_data
-def load_linesearch_data(file_path, step, newton_iter, world_idx, _mtime):
-    with h5py.File(file_path, "r") as f:
-        # Path: timestep_XXXX/newton_iteration_YY/linesearch
-        key = f"timestep_{step:04d}/newton_iteration_{newton_iter:02d}/linesearch"
-        
-        if key not in f:
-            return None
-        
-        g = f[key]
-        # steps: (N_steps,)
-        steps = g["steps"][:]
-        # batch_h_norm_sq: (N_steps, N_worlds)
-        batch_norms_sq = g["batch_h_norm_sq"][:, world_idx]
-        # minimal_index: (N_worlds,)
-        min_idx = g["minimal_index"][world_idx]
-        
-        return steps, np.sqrt(batch_norms_sq), min_idx
-
-# --- NEWTON ITERATION SELECTOR ---
-# We need to know how many iterations happened.
-# h_hist has shape (iters + 1, dofs) because it includes initial state (iter 0) + results of N iterations.
-# Or does it? Let's check engine.py/engine_data.py
-# Engine loop runs 'max_newton_iters' times.
-# copy_state_to_history is called inside loop (i=0..N-1) and once at end (i=N).
-# So h_hist size is N+1.
-# Iteration 0 corresponds to "Initial Guess" state?
-# Usually, loop i corresponds to "Newton Iteration i".
-# logger.log_linesearch_step(self, i) is called inside loop.
-# So valid iterations for linesearch are 0 to max_iter-1.
-
-if h_hist is not None:
-    max_iter_idx = h_hist.shape[0] - 2 # (N+1 states means N steps, indices 0..N-1)
-    if max_iter_idx < 0: max_iter_idx = 0
+if selection.selection.rows:
+    sel_row = df_sorted.iloc[selection.selection.rows[0]]
 else:
-    max_iter_idx = 0
+    sel_row = df_sorted.iloc[0]
 
-with st.sidebar:
-    st.markdown("---")
-    st.header("4. Newton Iteration")
-    selected_newton_iter = st.slider(
-        "Select Iteration", 
-        0, 
-        max_iter_idx, 
-        0,
-        help="Select which Newton step to inspect (Linesearch & Linear Solve)."
-    )
+sel_step_key = sel_row["Key"]
+sel_step_int = sel_row["Timestep"]
+suggested_world = sel_row["Worst World"]
 
-# --- PLOTS ---
-col1, col2 = st.columns([1, 1])
+# --- 3. WORLD SELECTION ---
+st.sidebar.markdown("---")
+st.sidebar.header("3. World")
 
-# --- COL 1: LINESEARCH LANDSCAPE ---
+with LogReader(st.session_state.loaded_file) as log:
+    num_worlds = log.get_world_count(sel_step_key)
+
+default_world = int(suggested_world) if int(suggested_world) >= 0 else 0
+max_world_idx = max(0, num_worlds - 1)
+if default_world > max_world_idx:
+    default_world = max_world_idx
+
+sel_world = st.sidebar.number_input(
+    "World Index", min_value=0, max_value=max_world_idx, value=default_world
+)
+
+st.sidebar.info(f"Step: {sel_step_int} | World: {sel_world}")
+
+# --- MAIN: NEWTON HISTORY ---
+
+
+def load_newton_history_extended(filepath, step_key, world_idx):
+    """
+    Loads L2 Norm AND Max Norm (Infinity Norm) for the Newton History.
+    """
+    with h5py.File(filepath, "r") as f:
+        iters = sorted([k for k in f[step_key].keys() if k.startswith("newton_iteration_")])
+        if not iters:
+            return None
+
+        last_iter_key = iters[-1]
+        last_grp = f[f"{step_key}/{last_iter_key}"]
+
+        if "newton_history" in last_grp:
+            hist_grp = last_grp["newton_history"]
+
+            # 1. Dynamics
+            h_d = hist_grp["dynamics"]["h_d"][:, world_idx, :]  # (Iter, Dof)
+
+            # --- L2 Norm Calculation ---
+            total_sq = np.sum(h_d**2, axis=1)
+            dyn_l2 = np.sqrt(total_sq)
+
+            # --- Max Norm Calculation ---
+            # Start with max of dynamics
+            current_max = np.max(np.abs(h_d), axis=1)
+
+            # 2. Constraints
+            cons_sq = np.zeros_like(total_sq)
+
+            if "constraints" in hist_grp:
+                for c_key in hist_grp["constraints"]:
+                    c_data = hist_grp["constraints"][c_key]
+                    if "h" in c_data:
+                        h_c = c_data["h"][:, world_idx, :]  # (Iter, ConstrDof)
+
+                        # L2 Accumulation
+                        c_sq_i = np.sum(h_c**2, axis=1)
+                        cons_sq += c_sq_i
+                        total_sq += c_sq_i
+
+                        # Max Accumulation
+                        max_c = np.max(np.abs(h_c), axis=1)
+                        current_max = np.maximum(current_max, max_c)
+
+            total_l2 = np.sqrt(total_sq)
+            cons_l2 = np.sqrt(cons_sq)
+
+            return pd.DataFrame(
+                {
+                    "Iteration": np.arange(len(total_l2)),
+                    "Total L2": total_l2,
+                    "Dynamics L2": dyn_l2,
+                    "Constraint L2": cons_l2,
+                    "Max Norm (Inf)": current_max,
+                }
+            )
+    return None
+
+
+hist_df = load_newton_history_extended(st.session_state.loaded_file, sel_step_key, sel_world)
+
+st.subheader("Newton Convergence")
+col1, col2 = st.columns([3, 1])
+
 with col1:
-    st.subheader("Linesearch Landscape (Merit Function)")
-    
-    ls_data = load_linesearch_data(selected_file, sel_step, selected_newton_iter, sel_world, current_mtime)
-    
-    if ls_data is not None:
-        ls_steps, ls_norms, ls_min_idx = ls_data
-        
+    if hist_df is not None:
+        max_iter_display = sel_row["Iterations"]
+        hist_df_filtered = hist_df[hist_df["Iteration"] <= max_iter_display]
+
+        fig = px.line(
+            hist_df_filtered,
+            x="Iteration",
+            y=["Total L2", "Max Norm (Inf)", "Constraint L2", "Dynamics L2"],
+            log_y=True,
+            markers=True,
+            title=f"Residual Norms (Step {sel_step_int})",
+        )
+        st.plotly_chart(fig, use_container_width=True)
+    else:
+        st.warning("Newton history not found in log.")
+
+with col2:
+    # Use LogReader to fetch available iterations safely
+    with LogReader(st.session_state.loaded_file) as log:
+        avail_iters = log.get_newton_iterations(sel_step_key)
+
+    if avail_iters:
+        max_i = len(avail_iters) - 1
+        sel_iter_idx = st.number_input("Detailed Iteration", 0, max_i, max_i)
+        sel_iter_key = f"newton_iteration_{sel_iter_idx:02d}"
+    else:
+        st.warning("No iteration data found.")
+        st.stop()
+
+# --- TABS ---
+tab_ls, tab_lin, tab_con = st.tabs(["Linesearch", "Linear Solver", "Constraints"])
+
+# --- TAB: LINESEARCH ---
+with tab_ls:
+
+    def load_ls(filepath, step, iter_k, world):
+        with h5py.File(filepath, "r") as f:
+            path = f"{step}/{iter_k}/linesearch"
+            if path in f:
+                g = f[path]
+                return (
+                    g["steps"][()],
+                    np.sqrt(g["batch_h_norm_sq"][:, world]),
+                    g["minimal_index"][world],
+                )
+        return None
+
+    ls_d = load_ls(st.session_state.loaded_file, sel_step_key, sel_iter_key, sel_world)
+    if ls_d:
+        xs, ys, idx = ls_d
         fig_ls = go.Figure()
-        
-        # Plot the curve
+        fig_ls.add_trace(go.Scatter(x=xs, y=ys, mode="lines+markers", name="Merit"))
         fig_ls.add_trace(
             go.Scatter(
-                x=ls_steps,
-                y=ls_norms,
-                mode="lines+markers",
-                name="Merit Function",
-                line=dict(color="blue"),
-                marker=dict(size=6)
-            )
-        )
-        
-        # Highlight the selected step
-        chosen_step = ls_steps[ls_min_idx]
-        chosen_norm = ls_norms[ls_min_idx]
-        
-        fig_ls.add_trace(
-            go.Scatter(
-                x=[chosen_step],
-                y=[chosen_norm],
+                x=[xs[idx]],
+                y=[ys[idx]],
                 mode="markers",
-                name="Chosen Step",
                 marker=dict(color="red", size=12, symbol="star"),
-                text=[f"Step: {chosen_step:.2e}<br>Norm: {chosen_norm:.2e}"],
-                hoverinfo="text"
+                name="Selected",
             )
         )
-        
-        fig_ls.update_layout(
-            xaxis_title="Step Size (alpha)",
-            yaxis_title="Residual Norm ||h(alpha)||",
-            xaxis_type="log",
-            yaxis_type="log",
-            height=500,
-            margin=dict(t=0, b=0, l=0, r=0),
-        )
+        fig_ls.update_layout(xaxis_type="log", yaxis_type="log", title="Linesearch Merit Function")
         st.plotly_chart(fig_ls, use_container_width=True)
     else:
-        st.info("No linesearch data found for this iteration. Ensure `log_linesearch_data` is True.")
+        st.info("No linesearch data.")
 
+# --- TAB: LINEAR SOLVER ---
+with tab_lin:
 
-# --- COL 2: MAX RESIDUAL PER ITERATION ---
-with col2:
-    st.subheader("Convergence History (Max Residual)")
+    def load_linear_robust(filepath, step, iter_k, world):
+        with h5py.File(filepath, "r") as f:
+            path = f"{step}/{iter_k}/linear_solver_stats"
+            if path not in f:
+                return None, "Group not found"
 
-    if h_hist is not None and dims is not None:
-        # Handle backward compatibility for files without N_ctrl in dims
-        if len(dims) == 5:
-            N_u, N_j, N_ctrl, N_n, N_f = dims
-        else:
-            N_u, N_j, N_n, N_f = dims
-            N_ctrl = 0
+            g = f[path]
 
-        s_d = slice(0, N_u)
-        s_j = slice(N_u, N_u + N_j)
-        s_ctrl = slice(N_u + N_j, N_u + N_j + N_ctrl)
-        s_n = slice(N_u + N_j + N_ctrl, N_u + N_j + N_ctrl + N_n)
-        s_f = slice(
-            N_u + N_j + N_ctrl + N_n, N_u + N_j + N_ctrl + N_n + N_f
-        )
+            # 1. Try "residual_sq_history" (Squared Norms)
+            if "residual_squared_history" in g:
+                data = g["residual_squared_history"]
+                # It is squared, so take sqrt
+                if data.ndim > 1:
+                    return np.sqrt(data[:, world]), "residual_squared_history"
+                return np.sqrt(data), "residual_squared_history"
 
-        # Calculate Max(|h|) for each component
-        iters = np.arange(h_hist.shape[0])
+            # 2. Fallback: look for ANY dataset
+            keys = [k for k in g.keys() if isinstance(g[k], h5py.Dataset)]
+            if keys:
+                data = g[keys[0]]
+                if data.ndim > 1:
+                    return np.sqrt(data[:, world]), f"{keys[0]} (fallback)"
+                return np.sqrt(data), f"{keys[0]} (fallback)"
 
-        def compute_stats(slice_obj, offset):
-            if slice_obj.start == slice_obj.stop:
-                return np.zeros(len(iters)), np.zeros(len(iters)), np.zeros(len(iters))
-            
-            data = h_hist[:, slice_obj]
-            # L2 Norm
-            norms = np.linalg.norm(data, axis=1)
-            # Max Absolute Value
-            abs_data = np.abs(data)
-            max_vals = np.max(abs_data, axis=1)
-            # Global Index of Max Value
-            max_idxs = np.argmax(abs_data, axis=1) + offset
-            return norms, max_vals, max_idxs
+            return None, f"Empty group. Keys found: {list(g.keys())}"
 
-        norm_d, max_d, idx_d = compute_stats(s_d, s_d.start)
-        norm_j, max_j, idx_j = compute_stats(s_j, s_j.start)
-        norm_ctrl, max_ctrl, idx_ctrl = compute_stats(s_ctrl, s_ctrl.start)
-        norm_n, max_n, idx_n = compute_stats(s_n, s_n.start)
-        norm_f, max_f, idx_f = compute_stats(s_f, s_f.start)
+    lin_data, source_key = load_linear_robust(
+        st.session_state.loaded_file, sel_step_key, sel_iter_key, sel_world
+    )
 
-        # Total Norm
-        total_norm = np.linalg.norm(h_hist, axis=1)
-
-        fig_max = go.Figure()
-
-        def add_trace(name, x, y, max_vals, max_idxs, line_style=None, width=None):
-            hover_text = [
-                f"Iter: {i}<br>Norm: {y[i]:.2e}<br>Max: {max_vals[i]:.2e}<br>Idx: {int(max_idxs[i])}"
-                for i in range(len(x))
-            ]
-            fig_max.add_trace(
-                go.Scatter(
-                    x=x, 
-                    y=y, 
-                    name=name, 
-                    line=dict(dash=line_style, width=width),
-                    text=hover_text,
-                    hoverinfo="text+name"
-                )
-            )
-
-        add_trace("Dynamics", iters, norm_d, max_d, idx_d, line_style="solid")
-        add_trace("Joints", iters, norm_j, max_j, idx_j, line_style="dash")
-        add_trace("Control", iters, norm_ctrl, max_ctrl, idx_ctrl, line_style="longdash")
-        add_trace("Contacts", iters, norm_n, max_n, idx_n, width=3)
-        add_trace("Friction", iters, norm_f, max_f, idx_f, line_style="dot")
-        
-        # Add Total Norm Trace
-        fig_max.add_trace(
-            go.Scatter(
-                x=iters,
-                y=total_norm,
-                name="Total Norm",
-                line=dict(color="black", width=2),
-                text=[f"Iter: {i}<br>Total Norm: {total_norm[i]:.2e}" for i in range(len(iters))],
-                hoverinfo="text+name"
-            )
-        )
-        
-        # Add marker for current selected iteration
-        if selected_newton_iter < len(iters):
-             fig_max.add_vline(x=selected_newton_iter, line_width=1, line_dash="dash", line_color="grey")
-
-        fig_max.update_layout(
-            yaxis_type="log",
-            yaxis_title="L2 Norm ||h||",
-            xaxis_title="Newton Iteration",
-            height=500,
-            margin=dict(t=0, b=0, l=0, r=0),
-            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-        )
-        st.plotly_chart(fig_max, width="stretch")
+    if lin_data is not None:
+        st.caption(f"Loaded from: `{source_key}`")
+        fig_lin = px.line(y=lin_data, log_y=True, markers=True, title="Linear Solver Convergence")
+        fig_lin.update_layout(xaxis_title="Linear Iteration", yaxis_title="Residual Norm")
+        st.plotly_chart(fig_lin, use_container_width=True)
     else:
-        st.warning("No history data available.")
+        st.warning(f"Could not load linear solver data. Reason: {source_key}")
 
+# --- TAB: CONSTRAINTS ---
+with tab_con:
 
-# --- LINEAR SOLVER CONVERGENCE ---
-st.markdown("---")
-st.subheader("Linear Solver Convergence")
+    @st.cache_data
+    def load_constraints(filepath, step, iter_k, world):
+        out = {}
+        with h5py.File(filepath, "r") as f:
+            path = f"{step}/{iter_k}/constraints"
+            if path in f:
+                for k in f[path]:
+                    g = f[path][k]
+                    item = {}
+                    if "h" in g:
+                        val = g["h"][world]
+                        item["Residual"] = np.linalg.norm(val, axis=1) if val.ndim > 1 else val
+                    if "body_lambda" in g:
+                        val = g["body_lambda"][world]
+                        item["Lambda"] = np.linalg.norm(val, axis=1) if val.ndim > 1 else val
+                    if item:
+                        out[k] = pd.DataFrame(item)
+        return out
 
-@st.cache_data
-def load_linear_history(file_path, step, newton_iter, _mtime):
-    """Loads linear solver history for a specific Newton iteration."""
-    with h5py.File(file_path, "r") as f:
-        # Check if linear solver history exists for this newton iter
-        key = f"timestep_{step:04d}/newton_iteration_{newton_iter:02d}/linear_solver_history"
-        if key not in f:
-            return None
-        
-        g = f[key]
-        return g["residual_sq_history"][:]
+    c_dfs = load_constraints(st.session_state.loaded_file, sel_step_key, sel_iter_key, sel_world)
+    if c_dfs:
+        c_names = list(c_dfs.keys())
+        subtabs = st.tabs(c_names)
+        for i, name in enumerate(c_names):
+            with subtabs[i]:
+                d = c_dfs[name]
+                st.dataframe(d, width="stretch", height=300)
+                if "Residual" in d and "Lambda" in d:
+                    st.plotly_chart(
+                        px.scatter(d, x="Residual", y="Lambda", title=f"{name} Scatter"),
+                        use_container_width=True,
+                    )
+    else:
+        st.info("No constraints active.")
 
-lin_hist = load_linear_history(selected_file, sel_step, selected_newton_iter, current_mtime)
-
-if lin_hist is not None:
-    # lin_hist shape: (Linear_Iters + 1, Num_Worlds)
-    
-    # Extract for selected world
-    r_sq_world = lin_hist[:, sel_world]
-    r_norm_world = np.sqrt(r_sq_world)
-    
-    lin_iters = np.arange(len(r_norm_world))
-    
-    fig_lin = go.Figure()
-    fig_lin.add_trace(
-        go.Scatter(
-            x=lin_iters,
-            y=r_norm_world,
-            mode="lines+markers",
-            name=f"World {sel_world}",
-        )
-    )
-    
-    fig_lin.update_layout(
-        title=f"Linear Solve (Newton Iter {selected_newton_iter})",
-        xaxis_title="Linear Iteration",
-        yaxis_title="Residual Norm ||r||",
-        yaxis_type="log",
-        height=400
-    )
-    st.plotly_chart(fig_lin, use_container_width=True)
-else:
-    st.info(f"No linear solver history found for Newton Iteration {selected_newton_iter}.")

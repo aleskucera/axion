@@ -2,7 +2,7 @@
 _target_: axion.AxionEngineConfig
 max_newton_iters: 8
 max_linear_iters: 16
-enable_linesearch: false
+enable_linesearch: true
 linesearch_step_count: 64
 linesearch_step_min: 1e-5
 linesearch_step_max: 1e1
