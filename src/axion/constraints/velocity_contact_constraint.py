@@ -70,8 +70,6 @@ def velocity_contact_constraint_kernel(
 
     # Early exit for inactive contacts.
     if interaction.penetration_depth <= 0:
-        # The constraint residual is simply the impulse (h = λ),
-        # which drives it to zero if unconstrained.
         constraint_active_mask[world_idx, contact_idx] = 0.0
         body_lambda_n[world_idx, contact_idx] = 0.0
         h_n[world_idx, contact_idx] = 0.0
@@ -243,7 +241,7 @@ def fused_batch_velocity_contact_residual_kernel(
     h_n: wp.array(dtype=wp.float32, ndim=3),
 ):
     world_idx, contact_idx = wp.tid()
-    
+
     if contact_idx >= interactions.shape[1]:
         return
 

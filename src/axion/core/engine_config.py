@@ -3,7 +3,14 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class EngineConfig:
-    pass
+    # --- Logging & Profiling ---
+    enable_timing: bool = False
+    enable_hdf5_logging: bool = False
+    hdf5_log_file: str = "simulation.h5"
+
+    log_dynamics_state: bool = True
+    log_linear_system_data: bool = True
+    log_constraint_data: bool = True
 
 
 @dataclass(frozen=True)
@@ -37,7 +44,7 @@ class AxionEngineConfig(EngineConfig):
     contact_compliance: float = 1e-6
     friction_compliance: float = 1e-6
 
-    regularization: float = 1e-5
+    regularization: float = 1e-6
 
     contact_fb_alpha: float = 1.0
     contact_fb_beta: float = 1.0
@@ -45,23 +52,22 @@ class AxionEngineConfig(EngineConfig):
     friction_fb_beta: float = 1.0
 
     enable_linesearch: bool = False
-    linesearch_step_count: int = 64
-    linesearch_step_min: float = 1e-5
-    linesearch_step_max: float = 1e1
+
+    # --- 1. Conservative Cluster (Safety first) ---
+    # Small steps to handle instability.
+    linesearch_conservative_step_count: int = 32
+    linesearch_conservative_upper_bound: float = 0.05
+    linesearch_min_step: float = 1e-6  # Floor to prevent log(0) errors
+
+    # --- 2. Optimistic Cluster (The "Attitude") ---
+    # Steps around 1.0, assuming the Newton direction is good.
+    linesearch_optimistic_step_count: int = 32
+    linesearch_optimistic_window: float = 0.2
 
     max_contacts_per_world: int = 128
 
     joint_constraint_level: str = "pos"  # pos / vel
     contact_constraint_level: str = "pos"  # pos / vel
-
-    # --- Logging & Profiling ---
-    enable_timing: bool = False
-    enable_hdf5_logging: bool = False
-    hdf5_log_file: str = "simulation.h5"
-
-    log_dynamics_state: bool = True
-    log_linear_system_data: bool = True
-    log_constraint_data: bool = True
 
     def __post_init__(self):
         """Validate all configuration parameters."""
@@ -124,15 +130,28 @@ class AxionEngineConfig(EngineConfig):
         _validate_unit_interval(self.friction_fb_alpha, "friction_fb_alpha")
         _validate_unit_interval(self.friction_fb_beta, "friction_fb_beta")
 
-        # Validate linesearch steps
-        _validate_positive_int(self.linesearch_step_count, "linesearch_step_count")
-        _validate_non_negative_float(self.linesearch_step_min, "linesearch_step_min")
-        _validate_non_negative_float(self.linesearch_step_max, "linesearch_step_max")
+        if self.enable_linesearch:
+            _validate_positive_int(
+                self.linesearch_conservative_step_count, "linesearch_conservative_step_count"
+            )
+            _validate_positive_int(
+                self.linesearch_optimistic_step_count, "linesearch_optimistic_step_count"
+            )
+
+            _validate_non_negative_float(
+                self.linesearch_conservative_upper_bound, "linesearch_conservative_upper_bound"
+            )
+            _validate_non_negative_float(
+                self.linesearch_optimistic_window, "linesearch_optimistic_window"
+            )
+            _validate_non_negative_float(self.linesearch_min_step, "linesearch_min_step")
+
+            if self.linesearch_conservative_upper_bound <= self.linesearch_min_step:
+                raise ValueError(
+                    "linesearch_conservative_upper_bound must be > linesearch_min_step"
+                )
 
         _validate_positive_int(self.max_contacts_per_world, "max_contacts_per_world")
-
-        if self.linesearch_step_min >= self.linesearch_step_max:
-            raise ValueError("linesearch_step_min must be < linesearch_step_max")
 
 
 @dataclass(frozen=True)

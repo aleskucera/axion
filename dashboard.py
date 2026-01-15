@@ -92,22 +92,49 @@ if st.sidebar.button("Load Data", type="primary"):
 
                     # Try to get residual summary
                     try:
-                        ls_grp = f[f"{step}/{last_iter}/linesearch"]
-                        # batch_h_norm_sq: (Steps, Worlds)
-                        norms_sq = ls_grp["batch_h_norm_sq"][()]
-                        min_idxs = ls_grp["minimal_index"][()]
+                        if f"{step}/{last_iter}/linesearch" in f:
+                            ls_grp = f[f"{step}/{last_iter}/linesearch"]
+                            # batch_h_norm_sq: (Steps, Worlds)
+                            norms_sq = ls_grp["batch_h_norm_sq"][()]
+                            min_idxs = ls_grp["minimal_index"][()]
 
-                        num_worlds = norms_sq.shape[1]
+                            num_worlds = norms_sq.shape[1]
 
-                        # Get the residual of the CHOSEN step for each world
-                        final_residuals = []
-                        for w in range(num_worlds):
-                            idx = min_idxs[w]
-                            res = np.sqrt(norms_sq[idx, w])
-                            final_residuals.append(res)
+                            # Get the residual of the CHOSEN step for each world
+                            final_residuals = []
+                            for w in range(num_worlds):
+                                idx = min_idxs[w]
+                                res = np.sqrt(norms_sq[idx, w])
+                                final_residuals.append(res)
 
-                        max_res = np.max(final_residuals)
-                        max_res_world = np.argmax(final_residuals)
+                            max_res = np.max(final_residuals)
+                            max_res_world = np.argmax(final_residuals)
+                        
+                        elif f"{step}/{last_iter}/newton_history" in f:
+                            # Fallback to newton_history if linesearch is missing
+                            hist_grp = f[f"{step}/{last_iter}/newton_history"]
+                            
+                            # We need to compute the norm for the LAST iteration in history
+                            # h_d shape: (Iter, World, Dof)
+                            h_d = hist_grp["dynamics"]["h_d"][-1] # (World, Dof)
+                            
+                            # Start with dynamics squared norm per world
+                            world_sq_norms = np.sum(h_d**2, axis=1) # (World,)
+                            
+                            if "constraints" in hist_grp:
+                                for c_key in hist_grp["constraints"]:
+                                    c_data = hist_grp["constraints"][c_key]
+                                    if "h" in c_data:
+                                        h_c = c_data["h"][-1] # (World, ConstrDof)
+                                        world_sq_norms += np.sum(h_c**2, axis=1)
+                            
+                            final_residuals = np.sqrt(world_sq_norms)
+                            max_res = np.max(final_residuals)
+                            max_res_world = np.argmax(final_residuals)
+
+                        else:
+                            max_res = 0.0
+                            max_res_world = 0
 
                         rows.append(
                             {

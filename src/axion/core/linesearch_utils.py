@@ -145,6 +145,18 @@ def copy_batch_sample_body_lambda_kernel(
 
 
 @wp.kernel
+def copy_batch_sample_h_kernel(
+    batch_array: wp.array(dtype=wp.float32, ndim=3),
+    batch_idx_array: wp.array(dtype=wp.int32),
+    # Outputs
+    output_array: wp.array(dtype=wp.float32, ndim=2),
+):
+    world_idx, h_idx = wp.tid()
+    batch_idx = batch_idx_array[world_idx]
+    output_array[world_idx, h_idx] = batch_array[batch_idx, world_idx, h_idx]
+
+
+@wp.kernel
 def find_minimal_residual_index_kernel(
     batch_h_norm_sq: wp.array(dtype=wp.float32, ndim=2),
     # Outputs
@@ -543,6 +555,18 @@ def select_minimal_residual_variables(
         outputs=[data.body_lambda.full],
         device=device,
     )
+
+    if config.enable_hdf5_logging:
+        wp.launch(
+            kernel=copy_batch_sample_h_kernel,
+            dim=(dims.N_w, dims.N_u + dims.N_c),
+            inputs=[
+                data.linesearch.batch_h.full,
+                data.linesearch.minimal_index,
+            ],
+            outputs=[data._h],
+            device=device,
+        )
 
 
 def perform_linesearch(

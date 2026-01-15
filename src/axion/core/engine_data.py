@@ -409,13 +409,34 @@ class EngineData:
         # ---- Linesearch Arrays ----
         linesearch_data = None
         if config.enable_linesearch:
-            # ... (step setup remains same) ...
-            step_count = config.linesearch_step_count
-            log_step_min = np.log10(config.linesearch_step_min)
-            log_step_max = np.log10(config.linesearch_step_max)
-            ls_steps_np = np.logspace(log_step_min, log_step_max, step_count)
-            closest = np.argmin(np.abs(ls_steps_np - 1.0))
-            ls_steps_np[closest] = 1.0
+            # Calculate total budget
+            step_count = (
+                config.linesearch_conservative_step_count + config.linesearch_optimistic_step_count
+            )
+
+            # --- 1. Conservative Steps (Logarithmic) ---
+            # "I don't trust the solver, let's try tiny steps."
+            steps_conservative = np.logspace(
+                np.log10(config.linesearch_min_step),
+                np.log10(config.linesearch_conservative_upper_bound),
+                config.linesearch_conservative_step_count,
+            )
+
+            # --- 2. Optimistic Steps (Linear) ---
+            # "I trust the Newton direction, let's check around 1.0."
+            half_window = config.linesearch_optimistic_window / 2.0
+            steps_optimistic = np.linspace(
+                1.0 - half_window, 1.0 + half_window, config.linesearch_optimistic_step_count
+            )
+
+            # --- 3. Combine & Sort ---
+            ls_steps_np = np.concatenate([steps_conservative, steps_optimistic])
+            ls_steps_np.sort()
+
+            # Crucial: Force exact 1.0 to ensure the standard Newton step is tested
+            closest_idx = np.argmin(np.abs(ls_steps_np - 1.0))
+            ls_steps_np[closest_idx] = 1.0
+
             linesearch_steps = wp.from_numpy(ls_steps_np, dtype=wp.float32)
 
             linesearch_batch_body_u = _zeros((step_count, dims.N_w, dims.N_b), wp.spatial_vector)

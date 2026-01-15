@@ -109,13 +109,17 @@ class AxionEngine(SolverBase):
         )
 
         dof_count = self.axion_model.joint_dof_count
+        linesearch_step_count = (
+            self.config.linesearch_conservative_step_count
+            + self.config.linesearch_optimistic_step_count
+        )
 
         self.dims = EngineDimensions(
             num_worlds=self.axion_model.num_worlds,
             body_count=self.axion_model.body_count,
             contact_count=self.axion_contacts.max_contacts,
             joint_count=self.axion_model.joint_count,
-            linesearch_step_count=self.config.linesearch_step_count,
+            linesearch_step_count=linesearch_step_count,
             joint_constraint_count=num_constraints,
             control_constraint_count=num_control_constraints,
         )

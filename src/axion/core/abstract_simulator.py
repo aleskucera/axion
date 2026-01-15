@@ -123,16 +123,30 @@ class AbstractSimulator(ABC):
         self.control = self.model.control()
         self.contacts = self.model.collide(self.current_state)
 
+        # Prepare kwargs for third-party solvers (non-Axion)
+        # We filter out Axion-specific logging configuration
+        solver_kwargs = vars(self.engine_config).copy()
+        axion_logging_keys = [
+            "enable_timing",
+            "enable_hdf5_logging",
+            "hdf5_log_file",
+            "log_dynamics_state",
+            "log_linear_system_data",
+            "log_constraint_data",
+        ]
+        for k in axion_logging_keys:
+            solver_kwargs.pop(k, None)
+
         if isinstance(self.engine_config, AxionEngineConfig):
             self.solver = AxionEngine(
                 self.model, self.init_state_fn, self.engine_config
             )
         elif isinstance(self.engine_config, FeatherstoneEngineConfig):
-            self.solver = SolverFeatherstone(self.model, **vars(self.engine_config))
+            self.solver = SolverFeatherstone(self.model, **solver_kwargs)
         elif isinstance(self.engine_config, MuJoCoEngineConfig):
-            self.solver = SolverMuJoCo(self.model, **vars(self.engine_config))
+            self.solver = SolverMuJoCo(self.model, **solver_kwargs)
         elif isinstance(self.engine_config, XPBDEngineConfig):
-            self.solver = SolverXPBD(self.model, **vars(self.engine_config))
+            self.solver = SolverXPBD(self.model, **solver_kwargs)
         else:
             raise ValueError(f"Unsupported engine configuration type: {type(self.engine_config)}")
         newton.eval_fk(self.model, self.model.joint_q, self.model.joint_qd, self.current_state)
