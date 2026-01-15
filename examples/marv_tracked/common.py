@@ -158,7 +158,7 @@ class MarvConfig:
     # Control Gains
     FLIPPER_KP = 50.0
     FLIPPER_KD = 5.0
-    FLIPPER_KV = 150.0
+    FLIPPER_KV = 200.0
 
 
 def _add_chassis(builder: newton.ModelBuilder, xform: wp.transform, is_visible: bool) -> int:

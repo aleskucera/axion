@@ -4,6 +4,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from dataclasses import field
 from enum import Enum
+from typing import Any
 from typing import Callable
 from typing import Dict
 from typing import List
@@ -104,7 +105,7 @@ class EngineEvents:
     # Structure: _timing_pool[iteration][scope_name] = (StartEvent, EndEvent)
     _timing_pool: List[Dict[str, tuple[wp.Event, wp.Event]]] = field(default_factory=list)
     _step_timing_pool: Dict[str, tuple[wp.Event, wp.Event]] = field(default_factory=dict)
-    
+
     # 4. Aggregated Timing Data
     _timing_history: List[Dict[str, float]] = field(default_factory=list)
 
@@ -155,7 +156,7 @@ class EngineEvents:
             return
 
         record = {}
-        
+
         # Step-level timings
         for name, (start, end) in self._step_timing_pool.items():
             record[name] = wp.get_event_elapsed_time(start, end)
@@ -165,7 +166,7 @@ class EngineEvents:
             for name, (start, end) in iter_events.items():
                 key = f"iter_{i:02d}_{name}"
                 record[key] = wp.get_event_elapsed_time(start, end)
-        
+
         self._timing_history.append(record)
 
     def print_timings(self):
@@ -173,7 +174,7 @@ class EngineEvents:
         if self.current_mode != EngineMode.TIMING:
             print("Timings not available (Mode is not TIMING)")
             return
-        
+
         self.print_stats()
 
     def print_stats(self):
@@ -188,7 +189,7 @@ class EngineEvents:
             new_record = {}
             # Initialize accumulators for Newton steps
             newton_metrics = {"linearization": [], "linear_solve": [], "linesearch": []}
-            
+
             for k, v in record.items():
                 if k.startswith("iter_"):
                     # k format: iter_00_linearization
@@ -199,22 +200,32 @@ class EngineEvents:
                             newton_metrics[metric_name].append(v)
                 else:
                     new_record[k] = v
-            
+
             # Add averaged Newton metrics to the record
             # We treat "newton_linearization" as the average time of ONE linearization call
             for name, values in newton_metrics.items():
                 if values:
                     new_record[f"newton_{name}"] = sum(values) / len(values)
-            
+
             aggregated_history.append(new_record)
 
         try:
             import pandas as pd
+
             df = pd.DataFrame(aggregated_history)
-            
+
             # Reorder columns for readability if possible
-            preferred_order = ["step", "control", "initial_guess", "newton_linearization", "newton_linear_solve", "newton_linesearch"]
-            cols = [c for c in preferred_order if c in df.columns] + [c for c in df.columns if c not in preferred_order]
+            preferred_order = [
+                "step",
+                "control",
+                "initial_guess",
+                "newton_linearization",
+                "newton_linear_solve",
+                "newton_linesearch",
+            ]
+            cols = [c for c in preferred_order if c in df.columns] + [
+                c for c in df.columns if c not in preferred_order
+            ]
             df = df[cols]
 
             print("\n=== GPU TIMING STATISTICS (ms) ===")
@@ -225,14 +236,24 @@ class EngineEvents:
                 return
             keys = aggregated_history[0].keys()
             # Simple sorting
-            preferred_order = ["step", "control", "initial_guess", "newton_linearization", "newton_linear_solve", "newton_linesearch"]
-            sorted_keys = [k for k in preferred_order if k in keys] + [k for k in keys if k not in preferred_order]
+            preferred_order = [
+                "step",
+                "control",
+                "initial_guess",
+                "newton_linearization",
+                "newton_linear_solve",
+                "newton_linesearch",
+            ]
+            sorted_keys = [k for k in preferred_order if k in keys] + [
+                k for k in keys if k not in preferred_order
+            ]
 
             print(f"{'Metric':<30} | {'Mean':<10} | {'Min':<10} | {'Max':<10}")
             print("-" * 70)
             for k in sorted_keys:
                 values = [r[k] for r in aggregated_history if k in r]
-                if not values: continue
+                if not values:
+                    continue
                 avg = sum(values) / len(values)
                 print(f"{k:<30} | {avg:<10.3f} | {min(values):<10.3f} | {max(values):<10.3f}")
 
