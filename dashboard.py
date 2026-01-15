@@ -145,7 +145,7 @@ if st.session_state.loaded_file != selected_file:
     st.warning("Selected file matches loaded data? No. Please click 'Load Data' to refresh.")
 
 # --- GLOBAL SIMULATION GRAPH ---
-with st.expander("Simulation Overview (Timestep vs Residual)", expanded=True):
+with st.expander("Simulation Overview (Timestep vs Residual)", expanded=False):
     fig_global = px.line(
         df,
         x="Timestep",
@@ -164,7 +164,7 @@ st.sidebar.header("2. Timestep")
 df_sorted = df.sort_values("Max Residual", ascending=False)
 
 selection = st.sidebar.dataframe(
-    df_sorted,
+    df_sorted.drop(columns=["Key"]),
     width="stretch",
     hide_index=True,
     selection_mode="single-row",
@@ -234,6 +234,12 @@ def load_newton_history_extended(filepath, step_key, world_idx):
 
             # 2. Constraints
             cons_sq = np.zeros_like(total_sq)
+            
+            # Specific Constraint Accumulators (Squared)
+            contact_sq = np.zeros_like(total_sq)
+            friction_sq = np.zeros_like(total_sq)
+            control_sq = np.zeros_like(total_sq)
+            joint_sq = np.zeros_like(total_sq)
 
             if "constraints" in hist_grp:
                 for c_key in hist_grp["constraints"]:
@@ -245,6 +251,21 @@ def load_newton_history_extended(filepath, step_key, world_idx):
                         c_sq_i = np.sum(h_c**2, axis=1)
                         cons_sq += c_sq_i
                         total_sq += c_sq_i
+                        
+                        # Categorize based on key name (using "Contact", "Friction", "Control", "Joint")
+                        if "Contact" in c_key:
+                            contact_sq += c_sq_i
+                        elif "Friction" in c_key:
+                            friction_sq += c_sq_i
+                        elif "Control" in c_key:
+                            control_sq += c_sq_i
+                        elif "Joint" in c_key:
+                            joint_sq += c_sq_i
+                        else:
+                            # Fallback for legacy or unknown keys - previously this was defaulting to Joint,
+                            # causing "Phantom Joints" when "Contact constraint data" fell through.
+                            # Now we only map explicit "Joint" keys to Joint.
+                            pass
 
                         # Max Accumulation
                         max_c = np.max(np.abs(h_c), axis=1)
@@ -252,6 +273,12 @@ def load_newton_history_extended(filepath, step_key, world_idx):
 
             total_l2 = np.sqrt(total_sq)
             cons_l2 = np.sqrt(cons_sq)
+            
+            # Component L2s
+            contact_l2 = np.sqrt(contact_sq)
+            friction_l2 = np.sqrt(friction_sq)
+            control_l2 = np.sqrt(control_sq)
+            joint_l2 = np.sqrt(joint_sq)
 
             return pd.DataFrame(
                 {
@@ -259,6 +286,10 @@ def load_newton_history_extended(filepath, step_key, world_idx):
                     "Total L2": total_l2,
                     "Dynamics L2": dyn_l2,
                     "Constraint L2": cons_l2,
+                    "Contact L2": contact_l2,
+                    "Friction L2": friction_l2,
+                    "Control L2": control_l2,
+                    "Joint L2": joint_l2,
                     "Max Norm (Inf)": current_max,
                 }
             )
@@ -268,37 +299,47 @@ def load_newton_history_extended(filepath, step_key, world_idx):
 hist_df = load_newton_history_extended(st.session_state.loaded_file, sel_step_key, sel_world)
 
 st.subheader("Newton Convergence")
-col1, col2 = st.columns([3, 1])
 
-with col1:
-    if hist_df is not None:
-        max_iter_display = sel_row["Iterations"]
-        hist_df_filtered = hist_df[hist_df["Iteration"] <= max_iter_display]
+if hist_df is not None:
+    max_iter_display = sel_row["Iterations"]
+    hist_df_filtered = hist_df[hist_df["Iteration"] <= max_iter_display]
+    
+    # Plot components instead of just "Constraint L2"
+    y_cols = [
+        "Total L2", 
+        "Max Norm (Inf)", 
+        "Dynamics L2",
+        "Contact L2",
+        "Friction L2",
+        "Control L2",
+        "Joint L2"
+    ]
 
-        fig = px.line(
-            hist_df_filtered,
-            x="Iteration",
-            y=["Total L2", "Max Norm (Inf)", "Constraint L2", "Dynamics L2"],
-            log_y=True,
-            markers=True,
-            title=f"Residual Norms (Step {sel_step_int})",
-        )
-        st.plotly_chart(fig, use_container_width=True)
-    else:
-        st.warning("Newton history not found in log.")
+    fig = px.line(
+        hist_df_filtered,
+        x="Iteration",
+        y=y_cols,
+        log_y=True,
+        markers=True,
+        title=f"Residual Norms (Step {sel_step_int})",
+    )
+    st.plotly_chart(fig, use_container_width=True)
+else:
+    st.warning("Newton history not found in log.")
 
-with col2:
-    # Use LogReader to fetch available iterations safely
-    with LogReader(st.session_state.loaded_file) as log:
-        avail_iters = log.get_newton_iterations(sel_step_key)
+# Use LogReader to fetch available iterations safely
+with LogReader(st.session_state.loaded_file) as log:
+    avail_iters = log.get_newton_iterations(sel_step_key)
 
-    if avail_iters:
-        max_i = len(avail_iters) - 1
-        sel_iter_idx = st.number_input("Detailed Iteration", 0, max_i, max_i)
-        sel_iter_key = f"newton_iteration_{sel_iter_idx:02d}"
-    else:
-        st.warning("No iteration data found.")
-        st.stop()
+if avail_iters:
+    max_i = len(avail_iters) - 1
+    c_sel, _ = st.columns([1, 4])
+    with c_sel:
+        sel_iter_idx = st.number_input("Detailed Iteration Selection", 0, max_i, max_i)
+    sel_iter_key = f"newton_iteration_{sel_iter_idx:02d}"
+else:
+    st.warning("No iteration data found.")
+    st.stop()
 
 # --- TABS ---
 tab_ls, tab_lin, tab_con = st.tabs(["Linesearch", "Linear Solver", "Constraints"])
@@ -311,18 +352,53 @@ with tab_ls:
             path = f"{step}/{iter_k}/linesearch"
             if path in f:
                 g = f[path]
-                return (
-                    g["steps"][()],
-                    np.sqrt(g["batch_h_norm_sq"][:, world]),
-                    g["minimal_index"][world],
-                )
+                
+                # Base data
+                data = {
+                    "steps": g["steps"][()],
+                    "total": np.sqrt(g["batch_h_norm_sq"][:, world]),
+                    "idx": g["minimal_index"][world]
+                }
+                
+                # Optional components map: Label -> Dataset Key
+                component_map = {
+                    "Dynamics": "batch_h_d_norm_sq",
+                    "Joints": "batch_h_c_j_norm_sq",
+                    "Normal": "batch_h_c_n_norm_sq",
+                    "Friction": "batch_h_c_f_norm_sq",
+                    "Control": "batch_h_c_ctrl_norm_sq",
+                }
+                
+                extra_curves = {}
+                for label, key in component_map.items():
+                    if key in g:
+                        # Check shape, sometimes it might be (Steps, Worlds) or just (Steps,)
+                        val = g[key]
+                        if val.ndim > 1:
+                            extra_curves[label] = np.sqrt(val[:, world])
+                        else:
+                            extra_curves[label] = np.sqrt(val)
+                
+                data["components"] = extra_curves
+                return data
         return None
 
-    ls_d = load_ls(st.session_state.loaded_file, sel_step_key, sel_iter_key, sel_world)
-    if ls_d:
-        xs, ys, idx = ls_d
+    ls_data = load_ls(st.session_state.loaded_file, sel_step_key, sel_iter_key, sel_world)
+    if ls_data:
+        xs = ls_data["steps"]
+        ys = ls_data["total"]
+        idx = ls_data["idx"]
+        
         fig_ls = go.Figure()
-        fig_ls.add_trace(go.Scatter(x=xs, y=ys, mode="lines+markers", name="Merit"))
+        
+        # Plot Total Merit
+        fig_ls.add_trace(go.Scatter(x=xs, y=ys, mode="lines+markers", name="Total Merit", line=dict(width=3)))
+        
+        # Plot Components
+        for name, vals in ls_data["components"].items():
+             fig_ls.add_trace(go.Scatter(x=xs, y=vals, mode="lines+markers", name=name))
+
+        # Highlight Selected
         fig_ls.add_trace(
             go.Scatter(
                 x=[xs[idx]],

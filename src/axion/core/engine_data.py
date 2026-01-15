@@ -208,11 +208,20 @@ class EngineData:
 
             # If it is a structured array (from a Warp Struct), expand it to a dict
             if np_data.dtype.names:
-                return {name: self._serialize_to_numpy(np_data[name]) for name in np_data.dtype.names}
-            
+                return {
+                    name: self._serialize_to_numpy(np_data[name]) for name in np_data.dtype.names
+                }
+
             return np_data
-        
+
         return data
+
+    def _get_norm_sq(self, data: Any) -> Optional[np.ndarray]:
+        """Serializes data to numpy and computes the squared norm along the last axis."""
+        np_data = self._serialize_to_numpy(data)
+        if np_data is None:
+            return None
+        return np.sum(np.square(np_data), axis=-1)
 
     def get_snapshot(self) -> Dict[str, Any]:
         """
@@ -258,6 +267,10 @@ class EngineData:
                 "s": self._serialize_to_numpy(self.s_n),
                 "body_lambda": self._serialize_to_numpy(self.body_lambda.n),
             }
+            constraints["Friction constraint data"] = {
+                "h": self._serialize_to_numpy(self.h.c.f),
+                "body_lambda": self._serialize_to_numpy(self.body_lambda.f),
+            }
 
         snapshot["constraints"] = constraints
 
@@ -266,7 +279,11 @@ class EngineData:
             "b": self._serialize_to_numpy(self.b),
             "system_diag": self._serialize_to_numpy(self.system_diag),
             "dbody_u": self._serialize_to_numpy(self.dbody_u),
+            "dbody_u_norm_sq": self._get_norm_sq(
+                self.dbody_u.numpy().reshape(self.dbody_u.shape[0], -1)
+            ),
             "dbody_lambda": self._serialize_to_numpy(self.dbody_lambda.full),
+            "dbody_lambda_norm_sq": self._get_norm_sq(self.dbody_lambda.full),
         }
 
         # 4. Linesearch (if allocated)
@@ -275,12 +292,17 @@ class EngineData:
                 "steps": self._serialize_to_numpy(self.linesearch.steps),
                 "batch_h_norm_sq": self._serialize_to_numpy(self.linesearch.batch_h_norm_sq),
                 "minimal_index": self._serialize_to_numpy(self.linesearch.minimal_index),
+                "batch_h_d_norm_sq": self._get_norm_sq(self.linesearch.batch_h.d),
+                "batch_h_c_j_norm_sq": self._get_norm_sq(self.linesearch.batch_h.c.j),
+                "batch_h_c_n_norm_sq": self._get_norm_sq(self.linesearch.batch_h.c.n),
+                "batch_h_c_f_norm_sq": self._get_norm_sq(self.linesearch.batch_h.c.f),
+                "batch_h_c_ctrl_norm_sq": self._get_norm_sq(self.linesearch.batch_h.c.ctrl),
             }
 
         # 5. History (if allocated)
         if self.history:
             history_snap = {}
-            
+
             # Dynamics History
             history_snap["dynamics"] = {
                 "h_d": self._serialize_to_numpy(self.history.h_history.d),
@@ -295,7 +317,7 @@ class EngineData:
                     "h": self._serialize_to_numpy(self.history.h_history.c.j),
                     "body_lambda": self._serialize_to_numpy(self.history.body_lambda_history.j),
                 }
-            
+
             if self.dims.N_ctrl > 0:
                 constraints_hist["Control constraint data"] = {
                     "h": self._serialize_to_numpy(self.history.h_history.c.ctrl),
@@ -306,6 +328,10 @@ class EngineData:
                 constraints_hist["Contact constraint data"] = {
                     "h": self._serialize_to_numpy(self.history.h_history.c.n),
                     "body_lambda": self._serialize_to_numpy(self.history.body_lambda_history.n),
+                }
+                constraints_hist["Friction constraint data"] = {
+                    "h": self._serialize_to_numpy(self.history.h_history.c.f),
+                    "body_lambda": self._serialize_to_numpy(self.history.body_lambda_history.f),
                 }
 
             history_snap["constraints"] = constraints_hist

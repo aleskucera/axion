@@ -136,7 +136,7 @@ class AxionEngine(SolverBase):
             device=self.device,
         )
 
-        self.preconditioner = JacobiPreconditioner(self)
+        self.preconditioner = JacobiPreconditioner(self, self.config.regularization)
 
         self.cr_solver = PCRSolver(
             max_iters=self.config.max_linear_iters,
@@ -295,7 +295,9 @@ class AxionEngine(SolverBase):
                 device=self.device,
             )
 
-    def _execute_newton_step_math(self, dt: float, iter_idx: int = 0, log_linear_solver: bool = False):
+    def _execute_newton_step_math(
+        self, dt: float, iter_idx: int = 0, log_linear_solver: bool = False
+    ):
         """
         The pure physics logic.
         Uses PolymorphicScope to handle mode-specific instrumentation.
@@ -331,7 +333,7 @@ class AxionEngine(SolverBase):
             perform_linesearch(self.axion_model, self.data, self.config, self.dims)
             update_body_q(self.axion_model, self.data, self.config, self.dims)
             self._update_mass_matrix()
-        
+
         return solver_stats
 
     def _check_convergence_kernel_launch(self):
@@ -453,4 +455,3 @@ class AxionEngine(SolverBase):
             # Note: This requires synchronizing/reading back events
             # Usually you'd do this once per second or at end of sim
             pass
-

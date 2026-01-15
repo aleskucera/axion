@@ -273,6 +273,8 @@ class HDF5Observer:
     def _recursive_log(self, data: Dict[str, Any]):
         """Recursively logs a dictionary of data."""
         for k, v in data.items():
+            if v is None:
+                continue
             if isinstance(v, dict):
                 with self.logger.scope(k):
                     self._recursive_log(v)

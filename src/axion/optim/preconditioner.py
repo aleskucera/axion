@@ -14,6 +14,7 @@ def compute_inv_diag_kernel(
     C_values: wp.array(dtype=wp.float32, ndim=2),
     constraint_body_idx: wp.array(dtype=wp.int32, ndim=3),
     constraint_active_mask: wp.array(dtype=wp.float32, ndim=2),
+    regularization: wp.float32,
     # Output array
     P_inv_diag: wp.array(dtype=wp.float32, ndim=2),
     system_diag: wp.array(dtype=wp.float32, ndim=2),
@@ -42,7 +43,7 @@ def compute_inv_diag_kernel(
         result += wp.dot(J_2, to_spatial_momentum(M_inv_2, J_2))
 
     # Add diagonal compliance term C[i,i]
-    diag_A = result + C_values[world_idx, constraint_idx]
+    diag_A = result + C_values[world_idx, constraint_idx] + regularization
 
     # Store raw diagonal
     system_diag[world_idx, constraint_idx] = diag_A
@@ -89,7 +90,7 @@ class JacobiPreconditioner(LinearOperator):
     diagonal of A, for use with Warp's iterative solvers.
     """
 
-    def __init__(self, engine):
+    def __init__(self, engine, regularization):
         super().__init__(
             shape=(engine.dims.N_w, engine.dims.N_c, engine.dims.N_c),
             dtype=wp.float32,
@@ -97,6 +98,7 @@ class JacobiPreconditioner(LinearOperator):
             matvec=None,  # Will be set later
         )
         self.engine = engine
+        self.regularization = regularization
 
         # Storage for the inverse diagonal elements
         self._P_inv_diag = wp.zeros(
@@ -117,6 +119,7 @@ class JacobiPreconditioner(LinearOperator):
                 self.engine.data.C_values.full,
                 self.engine.data.constraint_body_idx.full,
                 self.engine.data.constraint_active_mask.full,
+                self.regularization,
             ],
             outputs=[
                 self._P_inv_diag,
