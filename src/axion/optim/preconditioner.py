@@ -16,6 +16,7 @@ def compute_inv_diag_kernel(
     constraint_active_mask: wp.array(dtype=wp.float32, ndim=2),
     # Output array
     P_inv_diag: wp.array(dtype=wp.float32, ndim=2),
+    system_diag: wp.array(dtype=wp.float32, ndim=2),
 ):
     """
     Computes the inverse of the diagonal of the system matrix A = J M⁻¹ Jᵀ + C.
@@ -42,6 +43,9 @@ def compute_inv_diag_kernel(
 
     # Add diagonal compliance term C[i,i]
     diag_A = result + C_values[world_idx, constraint_idx]
+
+    # Store raw diagonal
+    system_diag[world_idx, constraint_idx] = diag_A
 
     # Compute and store inverse, with stabilization
     P_inv_diag[world_idx, constraint_idx] = 1.0 / (diag_A + 1e-6)
@@ -114,7 +118,10 @@ class JacobiPreconditioner(LinearOperator):
                 self.engine.data.constraint_body_idx.full,
                 self.engine.data.constraint_active_mask.full,
             ],
-            outputs=[self._P_inv_diag],
+            outputs=[
+                self._P_inv_diag,
+                self.engine.data.system_diag,
+            ],
             device=self.device,
         )
 

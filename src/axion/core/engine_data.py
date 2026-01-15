@@ -264,11 +264,20 @@ class EngineData:
         # 3. Linear System
         snapshot["linear_system"] = {
             "b": self._serialize_to_numpy(self.b),
+            "system_diag": self._serialize_to_numpy(self.system_diag),
             "dbody_u": self._serialize_to_numpy(self.dbody_u),
             "dbody_lambda": self._serialize_to_numpy(self.dbody_lambda.full),
         }
 
-        # 4. History (if allocated)
+        # 4. Linesearch (if allocated)
+        if self.linesearch:
+            snapshot["linesearch"] = {
+                "steps": self._serialize_to_numpy(self.linesearch.steps),
+                "batch_h_norm_sq": self._serialize_to_numpy(self.linesearch.batch_h_norm_sq),
+                "minimal_index": self._serialize_to_numpy(self.linesearch.minimal_index),
+            }
+
+        # 5. History (if allocated)
         if self.history:
             history_snap = {}
             
@@ -358,7 +367,7 @@ class EngineData:
         constraint_active_mask = _zeros((dims.N_w, dims.N_c), wp.float32)
 
         JT_delta_lambda = _zeros((dims.N_w, dims.N_b), wp.spatial_vector)
-        system_diag = _zeros((dims.N_w, dims.N_b), wp.spatial_vector)
+        system_diag = _zeros((dims.N_w, dims.N_c), wp.float32)
         dbody_u = _zeros((dims.N_w, dims.N_b), wp.spatial_vector)
         dbody_lambda = _zeros((dims.N_w, dims.N_c))
 
