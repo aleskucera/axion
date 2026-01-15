@@ -8,7 +8,6 @@ import warp as wp
 from axion import AbstractSimulator
 from axion import EngineConfig
 from axion import ExecutionConfig
-from axion import LoggingConfig
 from axion import RenderingConfig
 from axion import SimulationConfig
 from omegaconf import DictConfig
@@ -25,14 +24,12 @@ class Simulator(AbstractSimulator):
         render_config: RenderingConfig,
         exec_config: ExecutionConfig,
         engine_config: EngineConfig,
-        logging_config: LoggingConfig,
     ):
         super().__init__(
             sim_config,
             render_config,
             exec_config,
             engine_config,
-            logging_config,
         )
 
     @override
@@ -83,7 +80,6 @@ def basic_pendulum_example(cfg: DictConfig):
     sim_config: SimulationConfig = hydra.utils.instantiate(cfg.simulation)
     render_config: RenderingConfig = hydra.utils.instantiate(cfg.rendering)
     exec_config: ExecutionConfig = hydra.utils.instantiate(cfg.execution)
-    logging_config: LoggingConfig = hydra.utils.instantiate(cfg.logging)
     engine_config: EngineConfig = hydra.utils.instantiate(cfg.engine)
 
     simulator = Simulator(
@@ -91,7 +87,6 @@ def basic_pendulum_example(cfg: DictConfig):
         render_config=render_config,
         exec_config=exec_config,
         engine_config=engine_config,
-        logging_config=logging_config,
     )
 
     simulator.run()

@@ -11,7 +11,6 @@ import warp as wp
 from axion import AbstractSimulator
 from axion import EngineConfig
 from axion import ExecutionConfig
-from axion import LoggingConfig
 from axion import RenderingConfig
 from axion import SimulationConfig
 from omegaconf import DictConfig
@@ -122,7 +121,6 @@ class MarvTrackedSimulator(AbstractSimulator):
         render_config: RenderingConfig,
         exec_config: ExecutionConfig,
         engine_config: EngineConfig,
-        logging_config: LoggingConfig,
     ):
         # We need to defer track initialization until AFTER build_model is called
         # but build_model is called inside super().__init__.
@@ -136,7 +134,6 @@ class MarvTrackedSimulator(AbstractSimulator):
             render_config,
             exec_config,
             engine_config,
-            logging_config,
         )
 
         # Initialize Track States
@@ -418,10 +415,9 @@ def marv_tracked_example(cfg: DictConfig):
     render_config = hydra.utils.instantiate(cfg.rendering)
     exec_config = hydra.utils.instantiate(cfg.execution)
     engine_config = hydra.utils.instantiate(cfg.engine)
-    logging_config = hydra.utils.instantiate(cfg.logging)
 
     simulator = MarvTrackedSimulator(
-        sim_config, render_config, exec_config, engine_config, logging_config
+        sim_config, render_config, exec_config, engine_config
     )
     simulator.run()
 

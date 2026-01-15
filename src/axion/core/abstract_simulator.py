@@ -20,8 +20,6 @@ from .engine_config import EngineConfig
 from .engine_config import FeatherstoneEngineConfig
 from .engine_config import MuJoCoEngineConfig
 from .engine_config import XPBDEngineConfig
-from .engine_logger import EngineLogger
-from .engine_logger import LoggingConfig
 from .model_builder import AxionModelBuilder
 
 
@@ -101,15 +99,11 @@ class AbstractSimulator(ABC):
         rendering_config: RenderingConfig,
         execution_config: ExecutionConfig,
         engine_config: EngineConfig,
-        logging_config: LoggingConfig,
     ):
         self.simulation_config = simulation_config
         self.rendering_config = rendering_config
         self.execution_config = execution_config
         self.engine_config = engine_config
-        self.logging_config = logging_config
-
-        self.logger = EngineLogger(self.logging_config)
 
         self._current_step = 0
         self._current_time = 0.0
@@ -131,7 +125,7 @@ class AbstractSimulator(ABC):
 
         if isinstance(self.engine_config, AxionEngineConfig):
             self.solver = AxionEngine(
-                self.model, self.init_state_fn, self.logger, self.engine_config
+                self.model, self.init_state_fn, self.engine_config
             )
         elif isinstance(self.engine_config, FeatherstoneEngineConfig):
             self.solver = SolverFeatherstone(self.model, **vars(self.engine_config))
@@ -162,11 +156,8 @@ class AbstractSimulator(ABC):
 
         self.cuda_graph: Optional[wp.Graph] = None
 
-        self.logger.initialize_events(self.steps_per_segment, self._get_newton_iters())
-
     def run(self):
         """Main entry point to start the simulation."""
-        self.logger.open()
         pbar = tqdm(
             total=self.num_segments,
             desc="Simulating",
@@ -186,7 +177,9 @@ class AbstractSimulator(ABC):
                 self._render(segment_num)
         finally:
             pbar.close()
-            self.logger.close()
+
+            if isinstance(self.solver, AxionEngine):
+                self.solver.events.print_timings()
 
             if self.rendering_config.vis_type == "usd":
                 self.viewer.close()
@@ -235,8 +228,9 @@ class AbstractSimulator(ABC):
             # Update attributes for logging
             self._current_step += 1
             self._current_time += self.effective_timestep
-
-        self.logger.log_segment_timings(self.steps_per_segment, self._get_newton_iters())
+        
+        if isinstance(self.solver, AxionEngine):
+            self.solver.events.record_timings()
 
     def _run_segment_with_graph(self, segment_num: int):
         """Runs a segment by launching a pre-captured CUDA graph."""
@@ -244,46 +238,9 @@ class AbstractSimulator(ABC):
             self._capture_cuda_graph()
 
         wp.capture_launch(self.cuda_graph)
-
-        self.logger.log_segment_timings(self.steps_per_segment, self._get_newton_iters())
-
-    def _log_segment_timings(self):
-        """Logs the detailed timing information for the most recent segment."""
-        for step in range(self.steps_per_segment):
-            collision_time = wp.get_event_elapsed_time(
-                self.events[step]["step_start"],
-                self.events[step]["collision_detection"],
-            )
-            integration_time = wp.get_event_elapsed_time(
-                self.events[step]["collision_detection"],
-                self.events[step]["step"],
-            )
-
-            print(
-                f"\t- SUBSTEP {step}: collision detection took {collision_time:.03f} ms "
-                f"and simulation step took {integration_time:0.3f} ms."
-            )
-
-            # Check if detailed integrator events were captured
-            if self.events[step]["integration_parts"] is None:
-                continue
-
-            for newton_iter in range(self.engine_config.max_newton_iters):
-                events = self.events[step]["integration_parts"][newton_iter]
-                linearize_time = wp.get_event_elapsed_time(
-                    events["iter_start"], events["system_linearization"]
-                )
-                lin_solve_time = wp.get_event_elapsed_time(
-                    events["system_linearization"], events["linear_system_solve"]
-                )
-                linesearch_time = wp.get_event_elapsed_time(
-                    events["linear_system_solve"], events["linesearch"]
-                )
-
-                print(
-                    f"\t\t- NEWTON ITERATION {newton_iter}: Linearization took {linearize_time:.03f} ms, "
-                    f"solving of linear system took {lin_solve_time:.03f} ms and linesearch took {linesearch_time:.03f} ms."
-                )
+        
+        if isinstance(self.solver, AxionEngine):
+            self.solver.events.record_timings()
 
     def _capture_cuda_graph(self):
         """Records the sequence of operations for one segment into a CUDA graph."""
@@ -297,33 +254,22 @@ class AbstractSimulator(ABC):
         """Performs one fundamental integration step of the simulation."""
         self.current_state.clear_forces()
 
-        self.logger.set_current_step_in_segment(step_num)
-        self.logger.timestep_start(self._current_step, self._current_time)
-        sim_events = self.logger.simulator_event_pairs[step_num]
-
         # Detect collisions
-        with self.logger.timed_block(*sim_events["collision_detection"]):
-            self.contacts = self.model.collide(self.current_state)
-
-        # Record that collision detection finished
-        self.logger.log_contact_count(self.contacts)
+        self.contacts = self.model.collide(self.current_state)
 
         self.control_policy(self.current_state)
         self.viewer.apply_forces(self.current_state)
 
         # Compute simulation step
-        with self.logger.timed_block(*sim_events["step"]):
-            self.solver.step(
-                state_in=self.current_state,
-                state_out=self.next_state,
-                control=self.control,
-                contacts=self.contacts,
-                dt=self.effective_timestep,
-            )
+        self.solver.step(
+            state_in=self.current_state,
+            state_out=self.next_state,
+            control=self.control,
+            contacts=self.contacts,
+            dt=self.effective_timestep,
+        )
 
         self.current_state, self.next_state = self.next_state, self.current_state
-
-        self.logger.timestep_end()
 
     def _resolve_timing_parameters(self):
         """
@@ -347,10 +293,13 @@ class AbstractSimulator(ABC):
     @property
     def use_cuda_graph(self) -> bool:
         """Determines if conditions are met to use CUDA graph optimization."""
+        # Disable graph if HDF5 logging is enabled (requires CPU execution)
+        if isinstance(self.engine_config, AxionEngineConfig) and self.engine_config.enable_hdf5_logging:
+            return False
+
         return (
             self.execution_config.use_cuda_graph
             and wp.get_device().is_cuda
-            and self.logger.can_cuda_graph_be_used
         )
 
     def _get_newton_iters(self) -> int:

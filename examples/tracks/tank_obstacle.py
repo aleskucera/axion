@@ -9,7 +9,6 @@ import warp as wp
 from axion import AbstractSimulator
 from axion import EngineConfig
 from axion import ExecutionConfig
-from axion import LoggingConfig
 from axion import RenderingConfig
 from axion import SimulationConfig
 from omegaconf import DictConfig
@@ -209,11 +208,22 @@ def generate_track_data(r1, r2, dist, tube_radius=0.1, segments=200, sides=12):
     return np.array(vertices, dtype=np.float32), np.array(indices, dtype=np.int32)
 
 
-class TankSimulator(AbstractSimulator):
-    def __init__(self, sim_config, render_config, exec_config, engine_config, logging_config):
+class TankObstacleSimulator(AbstractSimulator):
+    def __init__(
+        self,
+        sim_config: SimulationConfig,
+        render_config: RenderingConfig,
+        exec_config: ExecutionConfig,
+        engine_config: EngineConfig,
+    ):
         self.left_indices_cpu = []
         self.right_indices_cpu = []
-        super().__init__(sim_config, render_config, exec_config, engine_config, logging_config)
+        super().__init__(
+            sim_config,
+            render_config,
+            exec_config,
+            engine_config,
+        )
 
         self.track_left_u = wp.zeros(1, dtype=wp.float32, device=self.model.device)
         self.track_right_u = wp.zeros(1, dtype=wp.float32, device=self.model.device)
@@ -442,13 +452,12 @@ class TankSimulator(AbstractSimulator):
 
 @hydra.main(config_path=str(CONFIG_PATH), config_name="config", version_base=None)
 def tank_example(cfg: DictConfig):
-    engine_config: EngineConfig = hydra.utils.instantiate(cfg.engine)
     sim_config: SimulationConfig = hydra.utils.instantiate(cfg.simulation)
     render_config: RenderingConfig = hydra.utils.instantiate(cfg.rendering)
     exec_config: ExecutionConfig = hydra.utils.instantiate(cfg.execution)
-    logging_config: LoggingConfig = hydra.utils.instantiate(cfg.logging)
+    engine_config: EngineConfig = hydra.utils.instantiate(cfg.engine)
 
-    simulator = TankSimulator(sim_config, render_config, exec_config, engine_config, logging_config)
+    simulator = TankObstacleSimulator(sim_config, render_config, exec_config, engine_config)
     simulator.run()
 
 

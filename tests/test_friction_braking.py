@@ -2,8 +2,6 @@ import newton
 import warp as wp
 from axion.core.engine import AxionEngine
 from axion.core.engine_config import AxionEngineConfig
-from axion.core.engine_logger import EngineLogger
-from axion.core.engine_logger import LoggingConfig
 from axion.core.model_builder import AxionModelBuilder
 
 wp.init()
@@ -44,13 +42,9 @@ def test_friction_braking():
         friction_compliance=0.0,
     )
 
-    logger = EngineLogger(LoggingConfig())
-    logger.initialize_events(steps_per_segment=1, newton_iters=config.max_newton_iters)
-
     engine = AxionEngine(
         model=model,
         init_state_fn=lambda si, so, c, dt: engine.integrate_bodies(model, si, so, dt),
-        logger=logger,
         config=config,
     )
 

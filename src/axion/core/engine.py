@@ -8,6 +8,18 @@ from axion.constraints import fill_joint_constraint_body_idx_kernel
 from axion.constraints.control_constraint import compute_control_constraint_offsets_batched
 from axion.constraints.control_constraint import fill_control_constraint_body_idx_kernel
 from axion.constraints.utils import compute_joint_constraint_offsets_batched
+from axion.core.contacts import AxionContacts
+from axion.core.engine_config import AxionEngineConfig
+from axion.core.engine_data import EngineData
+from axion.core.engine_dims import EngineDimensions
+from axion.core.engine_logger import EngineEvents
+from axion.core.engine_logger import EngineMode
+from axion.core.engine_logger import HDF5Observer
+from axion.core.linear_utils import compute_dbody_qd_from_dbody_lambda
+from axion.core.linear_utils import compute_linear_system
+from axion.core.linesearch_utils import perform_linesearch
+from axion.core.linesearch_utils import update_body_q
+from axion.core.model import AxionModel
 from axion.optim import JacobiPreconditioner
 from axion.optim import PCRSolver
 from axion.optim import SystemLinearData
@@ -21,18 +33,6 @@ from newton import Model
 from newton import State
 from newton.solvers import SolverBase
 
-from .contacts import AxionContacts
-from .engine_config import AxionEngineConfig
-from .engine_data import EngineData
-from .engine_dims import EngineDimensions
-from .engine_logger import EngineLogger
-from .linear_utils import compute_dbody_qd_from_dbody_lambda
-from .linear_utils import compute_linear_system
-from .linesearch_utils import perform_linesearch
-from .linesearch_utils import update_body_q
-from .model import AxionModel
-from .pca_utils import copy_state_to_history
-
 
 @wp.kernel
 def _check_newton_convergence(
@@ -43,8 +43,6 @@ def _check_newton_convergence(
     keep_running: wp.array(dtype=int),
 ):
     tid = wp.tid()
-
-    # 1. Update Iteration Count (thread 0)
     if tid == 0:
         current_iter = iter_count[0] + 1
         iter_count[0] = current_iter
@@ -52,22 +50,13 @@ def _check_newton_convergence(
             keep_running[0] = 0
             return
 
-    # 2. Check Convergence (All threads)
     current_iter = iter_count[0]
     if current_iter >= max_iters:
         return
 
-    # Check bounds
-    if tid >= h_norm_sq.shape[0]:
-        return
-
-    if h_norm_sq[tid] > atol_sq:
-        keep_running[0] = 1
-
-
-@wp.kernel
-def _print_newton_stats(iter_count: wp.array(dtype=int)):
-    wp.printf("Newton iterations: %d\n", iter_count[0])
+    if tid < h_norm_sq.shape[0]:
+        if h_norm_sq[tid] > atol_sq:
+            keep_running[0] = 1
 
 
 class AxionEngine(SolverBase):
@@ -76,32 +65,30 @@ class AxionEngine(SolverBase):
     The engine implements a Non-Smooth Newton Method to solve
     the entire physics state—including dynamics, contacts,
     and joints—as a single, unified problem at each time step.
-    This monolithic approach provides exceptional stability,
-    especially for complex, highly-constrained systems like
-    articulated robots.
     """
 
     def __init__(
         self,
         model: Model,
         init_state_fn: Callable[[State, State, Contacts, float], None],
-        logger: EngineLogger,
         config: Optional[AxionEngineConfig] = AxionEngineConfig(),
     ):
-        """
-        Initialize the physics engine for the given model and configuration.
-
-        Args:
-            model: The warp.sim.Model physics model containing bodies, joints, and other physics properties.
-            config: Configuration parameters for the engine of type EngineConfig.
-            logger: Optional HDF5Logger or NullLogger for recording simulation data.
-        """
         super().__init__(model)
-
         self.init_state_fn = init_state_fn
-        self.logger = logger
         self.config = config
 
+        # --- 1. Event System Setup ---
+        self.events = EngineEvents()
+
+        # Pre-allocate timing events if timing might be used
+        if self.config.enable_timing:
+            self.events.allocate_timing_events(self.config.max_newton_iters)
+
+        # Attach Data Observer (Debug)
+        # Note: We pass config here so it only activates if enable_hdf5_logging is True
+        self.data_observer = HDF5Observer(self.events, self.config)
+
+        # --- 2. Model & Data Setup ---
         self.axion_model = AxionModel(model)
         self.axion_contacts = AxionContacts(
             model,
@@ -139,7 +126,7 @@ class AxionEngine(SolverBase):
             control_constraint_offsets,
             dof_count,
             self.device,
-            self.logger.uses_history_arrays,
+            allocate_history=self.config.enable_hdf5_logging,
         )
 
         self.A_op = SystemOperator(
@@ -159,7 +146,7 @@ class AxionEngine(SolverBase):
 
         self.data.set_g_accel(model)
 
-        # Loop control buffers
+        # Loop control
         self.keep_running = wp.zeros(shape=(1,), dtype=int, device=self.device)
         self.iter_count = wp.zeros(shape=(1,), dtype=int, device=self.device)
         self.h_norm_sq = wp.zeros(
@@ -307,131 +294,113 @@ class AxionEngine(SolverBase):
                 device=self.device,
             )
 
-    def _step_linearize(self, dt: float):
-        compute_linear_system(self.axion_model, self.data, self.config, self.dims, dt)
-        self.data.h.sync_to_float()
-        self.preconditioner.update()
+    def _execute_newton_step_math(self, dt: float, iter_idx: int = 0):
+        """
+        The pure physics logic.
+        Uses PolymorphicScope to handle mode-specific instrumentation.
+        """
+        # Maintain history for friction
+        wp.copy(dest=self.data._body_lambda_prev, src=self.data._body_lambda)
+        wp.copy(dest=self.data.s_n_prev, src=self.data.s_n)
 
-    def _step_solve(self, tol: float, atol: float, iteration: int = -1):
-        self.data._dbody_lambda.zero_()
-        solver_ret = self.cr_solver.solve(
-            A=self.A_op,
-            b=self.data.b,
-            x=self.data.dbody_lambda.full,
-            preconditioner=self.preconditioner,
-            iters=self.config.max_linear_iters,
-            tol=tol,
-            atol=atol,
-            log=self.logger.config.log_linear_solver_iterations,
+        # Linearize
+        with self.events.linearization.scope(iter_idx=iter_idx):
+            compute_linear_system(self.axion_model, self.data, self.config, self.dims, dt)
+            self.data.h.sync_to_float()
+            self.preconditioner.update()
+
+        # Solve
+        with self.events.linear_solve.scope(iter_idx=iter_idx):
+            self.data._dbody_lambda.zero_()
+            self.cr_solver.solve(
+                A=self.A_op,
+                b=self.data.b,
+                x=self.data.dbody_lambda.full,
+                preconditioner=self.preconditioner,
+                iters=self.config.max_linear_iters,
+                tol=self.config.linear_tol,
+                atol=self.config.linear_atol,
+                log=False,  # Internal solver logging usually disabled in production
+            )
+            compute_dbody_qd_from_dbody_lambda(self.data, self.config, self.dims)
+
+        # Linesearch
+        with self.events.linesearch.scope(iter_idx=iter_idx):
+            perform_linesearch(self.axion_model, self.data, self.config, self.dims)
+            update_body_q(self.axion_model, self.data, self.config, self.dims)
+            self._update_mass_matrix()
+
+    def _check_convergence_kernel_launch(self):
+        """Helper to launch the convergence check kernel."""
+        self.tiled_sq_norm.compute(self.data.h.full, self.h_norm_sq)
+        wp.launch(
+            kernel=_check_newton_convergence,
+            dim=(self.dims.num_worlds,),
+            device=self.device,
+            inputs=[
+                self.h_norm_sq,
+                self.config.newton_atol**2,
+                self.iter_count,
+                self.config.max_newton_iters,
+                self.keep_running,
+            ],
         )
-        if solver_ret is not None and iteration >= 0:
-            self.logger.log_linear_solver_history(solver_ret, iteration)
 
-        compute_dbody_qd_from_dbody_lambda(self.data, self.config, self.dims)
+    def _solve_production(self, dt: float):
+        def loop_body():
+            # The scope() calls inside here resolve to 'pass'
+            self._execute_newton_step_math(dt, iter_idx=0)
+            self._check_convergence_kernel_launch()
 
-    def _step_linesearch(self):
-        perform_linesearch(self.axion_model, self.data, self.config, self.dims)
-        update_body_q(self.axion_model, self.data, self.config, self.dims)
-        self._update_mass_matrix()
+        # If we are already capturing (e.g. AbstractSimulator), we insert the while loop node.
+        if self.device.is_capturing:
+            wp.capture_while(self.keep_running, loop_body)
+        else:
+            # Fallback for eager execution (no graph)
+            # This is slower but functional for debugging or legacy pipelines
+            while True:
+                loop_body()
+                # Must sync to CPU to check condition
+                if self.keep_running.numpy()[0] == 0:
+                    break
+
+    def _solve_timing(self, dt: float):
+        # Unroll the loop to bake discrete events
+        # Works in both graph (unrolled nodes) and eager (iterative execution) modes
+        for i in range(self.config.max_newton_iters):
+            self._execute_newton_step_math(dt, iter_idx=i)
+
+    def _solve_debug(self, dt: float):
+        for i in range(self.config.max_newton_iters):
+            # 1. Run Math (Signals fire automatically for start/end)
+            self._execute_newton_step_math(dt, iter_idx=i)
+
+            # 2. Log Data Snapshot
+            # (In debug mode, we assume HDF5 is enabled)
+            if self.config.enable_hdf5_logging:
+                snapshot = self.data.get_snapshot()
+                self.events.newton_iteration_end.emit(iter_idx=i, snapshot=snapshot)
+
+            # 3. Check Convergence (CPU Sync required)
+            self._check_convergence_kernel_launch()
+            if self.keep_running.numpy()[0] == 0:
+                break
 
     def _solve_nonlinear_system(self, dt: float):
-        """
-        Solves the nonlinear system using Newton's method.
-        Uses CUDA graph capture for performance if timing is disabled.
-        Uses explicit Python loop with timing blocks if timing is enabled.
-        """
+        """Orchestrator."""
         self.keep_running.fill_(1)
         self.iter_count.zero_()
 
-        # Check if 0 iters requested (edge case)
-        if self.config.max_newton_iters <= 0:
-            self.keep_running.zero_()
-            return
-
-        # Newton convergence parameters
-        newton_atol_sq = float(self.config.newton_atol**2)
-        if self.config.newton_mode == "fixed":
-            newton_atol_sq = -1.0
-
-        # Linear solver parameters
-        linear_tol = self.config.linear_tol
-        linear_atol = self.config.linear_atol
-        if self.config.linear_mode == "fixed":
-            linear_tol = -1.0
-            linear_atol = -1.0
-
-        if not self.logger.config.enable_timing and not self.logger.config.enable_hdf5_logging:
-            # --- FAST PATH: CUDA Graph Capture ---
-            def newton_step_graph():
-                self.keep_running.zero_()
-
-                wp.copy(dest=self.data._body_lambda_prev, src=self.data._body_lambda)
-                wp.copy(dest=self.data.s_n_prev, src=self.data.s_n)
-
-                self._step_linearize(dt)
-                self._step_solve(linear_tol, linear_atol)
-                self._step_linesearch()
-
-                # Increment and Check
-                self.tiled_sq_norm.compute(self.data.h.full, self.h_norm_sq)
-                wp.launch(
-                    kernel=_check_newton_convergence,
-                    dim=(self.dims.num_worlds,),
-                    device=self.device,
-                    inputs=[
-                        self.h_norm_sq,
-                        newton_atol_sq,
-                        self.iter_count,
-                        self.config.max_newton_iters,
-                        self.keep_running,
-                    ],
-                )
-
-            wp.capture_while(self.keep_running, newton_step_graph)
-
+        # Decide Mode
+        if self.config.enable_hdf5_logging:
+            self.events.current_mode = EngineMode.DEBUG
+            self._solve_debug(dt)
+        elif self.config.enable_timing:
+            self.events.current_mode = EngineMode.TIMING
+            self._solve_timing(dt)
         else:
-            # --- PROFILING PATH: Python Loop with Timing ---
-            step_idx = self.logger.current_step_in_segment
-
-            for current_iter in range(self.config.max_newton_iters):
-                events = self.logger.engine_event_pairs[step_idx][current_iter]
-
-                wp.copy(dest=self.data._body_lambda_prev, src=self.data._body_lambda)
-                wp.copy(dest=self.data.s_n_prev, src=self.data.s_n)
-
-                with self.logger.timed_block(*events["system_linearization"]):
-                    self._step_linearize(dt)
-
-                self.logger.log_newton_iteration_data(self, current_iter)
-                if self.logger.uses_history_arrays:
-                    copy_state_to_history(current_iter, self.data, self.config, self.dims)
-
-                with self.logger.timed_block(*events["linear_system_solve"]):
-                    self._step_solve(linear_tol, linear_atol, current_iter)
-
-                with self.logger.timed_block(*events["linesearch"]):
-                    self._step_linesearch()
-
-                # Check convergence (Optional: update GPU count for consistency)
-                self.tiled_sq_norm.compute(self.data.h.full, self.h_norm_sq)
-                self.keep_running.zero_()
-                wp.launch(
-                    kernel=_check_newton_convergence,
-                    dim=(self.dims.num_worlds,),
-                    device=self.device,
-                    inputs=[
-                        self.h_norm_sq,
-                        newton_atol_sq,
-                        self.iter_count,
-                        self.config.max_newton_iters,
-                        self.keep_running,
-                    ],
-                )
-
-        if self.logger.uses_history_arrays:
-            # Log the final state
-            compute_linear_system(self.axion_model, self.data, self.config, self.dims, dt)
-            copy_state_to_history(self.config.max_newton_iters, self.data, self.config, self.dims)
+            self.events.current_mode = EngineMode.PRODUCTION
+            self._solve_production(dt)
 
     def _finalize_step(self, state_out: State):
         """
@@ -450,22 +419,26 @@ class AxionEngine(SolverBase):
         contacts: Contacts,
         dt: float,
     ):
-        step_events = self.logger.step_event_pairs[self.logger.current_step_in_segment]
+        # We can use scope() here too. In PRODUCTION, it's a pass.
+        # In TIMING, it records the whole step time.
+        with self.events.step.scope(iter_idx=self._timestep):
 
-        self.data.set_dt(dt)
+            self.data.set_dt(dt)
 
-        # 1. Load Inputs
-        with self.logger.timed_block(*step_events["control"]):
-            self._load_control_inputs(state_in, control)
+            with self.events.control.scope():
+                self._load_control_inputs(state_in, control)
 
-        # 2. Initialize Guess
-        with self.logger.timed_block(*step_events["initial_guess"]):
-            self._initialize_variables(state_in, state_out, contacts)
-            self._update_mass_matrix()
-            self._initialize_constraints(contacts)
+            with self.events.initial_guess.scope():
+                self._initialize_variables(state_in, state_out, contacts)
+                self._update_mass_matrix()
+                self._initialize_constraints(contacts)
 
-        # 3. Solve
-        self._solve_nonlinear_system(dt)
+            self._solve_nonlinear_system(dt)
+            self._finalize_step(state_out)
 
-        # 4. Finalize
-        self._finalize_step(state_out)
+        # After step, if timing, we might want to print
+        if self.events.current_mode == EngineMode.TIMING:
+            # Note: This requires synchronizing/reading back events
+            # Usually you'd do this once per second or at end of sim
+            pass
+

@@ -2,659 +2,287 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from dataclasses import dataclass
+from dataclasses import field
+from enum import Enum
+from typing import Callable
 from typing import Dict
 from typing import List
-from typing import TYPE_CHECKING
+from typing import Optional
 
-import numpy as np
-import pandas as pd
 import warp as wp
+from axion.core.engine_config import AxionEngineConfig
 from axion.logging import HDF5Logger
 from axion.logging import NullLogger
 
 
-if TYPE_CHECKING:
-    from .engine import AxionEngine
+class EngineMode(Enum):
+    PRODUCTION = 0  # capture_while, zero python overhead
+    TIMING = 1  # capture unrolled graph, baked-in warp events
+    DEBUG = 2  # python loop, full signals and hdf5 logging
 
 
-@dataclass(frozen=True)
-class LoggingConfig:
-    enable_timing: bool = False
-    enable_hdf5_logging: bool = False
+class Signal:
+    """A lightweight event dispatcher for the DEBUG path."""
 
-    # Timing options
-    time_whole_step: bool = True
-    time_collision_detection: bool = True
-    time_engine_step: bool = True
-    time_control: bool = True
-    time_initial_guess: bool = True
-    time_newton_iteration: bool = True
-    time_linearization: bool = True
-    time_linear_solve: bool = True
-    time_linesearch: bool = True
+    def __init__(self):
+        self._observers: List[Callable] = []
 
-    # HDF5 logging options
-    log_dynamics_state: bool = True
-    log_linear_system_data: bool = True
-    log_linear_solver_iterations: bool = True
-    log_linesearch_data: bool = True
+    def connect(self, callback: Callable):
+        self._observers.append(callback)
 
-    log_joint_constraint_data: bool = True
-    log_control_constraint_data: bool = True
-    log_contact_constraint_data: bool = True
-    log_friction_constraint_data: bool = True
-
-    log_history_data: bool = True  # To support constraint heatmap and future debugging
-
-    hdf5_log_file: str = "simulation_log.h5"
+    def emit(self, **kwargs):
+        for callback in self._observers:
+            callback(**kwargs)
 
 
-class PerformanceLogger:
+class PolymorphicScope:
     """
-    Handles performance timing and profiling events for the engine.
+    A scope that adapts its behavior based on the active EngineMode.
+
+    - PRODUCTION: Effectively a 'pass'. Zero runtime cost during graph capture.
+    - TIMING: Records start/end Warp events into the graph (GPU timestamps).
+    - DEBUG: Emits Python signals with data payloads (CPU timestamps + Data).
     """
 
-    def __init__(self, config: LoggingConfig) -> None:
-        self.config = config
-        self.simulator_event_pairs = []
-        self.engine_event_pairs = []
-        self.step_event_pairs = []
-
-    def initialize_events(self, steps_per_segment: int, newton_iters: int):
-        """Creates pairs of (start, end) events for each timed block."""
-
-        # Events for the main simulator loop (collision detection and step)
-        self.simulator_event_pairs = [
-            {
-                "collision_detection": (wp.Event(enable_timing=True), wp.Event(enable_timing=True)),
-                "step": (wp.Event(enable_timing=True), wp.Event(enable_timing=True)),
-            }
-            for _ in range(steps_per_segment)
-        ]
-
-        # Events for step-level timing blocks (control and initial guess)
-        self.step_event_pairs = [
-            {
-                "control": (wp.Event(enable_timing=True), wp.Event(enable_timing=True)),
-                "initial_guess": (wp.Event(enable_timing=True), wp.Event(enable_timing=True)),
-            }
-            for _ in range(steps_per_segment)
-        ]
-
-        # Events for the engine's internal Newton solver
-        self.engine_event_pairs = [
-            [
-                {
-                    "system_linearization": (
-                        wp.Event(enable_timing=True),
-                        wp.Event(enable_timing=True),
-                    ),
-                    "linear_system_solve": (
-                        wp.Event(enable_timing=True),
-                        wp.Event(enable_timing=True),
-                    ),
-                    "linesearch": (wp.Event(enable_timing=True), wp.Event(enable_timing=True)),
-                }
-                for _ in range(newton_iters)
-            ]
-            for _ in range(steps_per_segment)
-        ]
+    def __init__(self, name: str, events: "EngineEvents"):
+        self.name = name
+        self.events = events
+        self.on_enter_signal = Signal()
+        self.on_exit_signal = Signal()
 
     @contextmanager
-    def timed_block(self, start_event: wp.Event, end_event: wp.Event):
-        """A context manager to record start/end events for a code block."""
-        if self.config.enable_timing:
-            wp.record_event(start_event)
-            yield
-            wp.record_event(end_event)
-        else:
-            yield
+    def scope(self, iter_idx: int = 0, **kwargs):
+        mode = self.events.current_mode
 
-    def log_segment_timings(self, steps_per_segment: int, newton_iters: int):
-        """
-        Calculates, aggregates, and prints a statistical summary of timing info
-        from the recorded events for the last segment.
-        """
-        if not self.config.enable_timing:
-            return
+        # --- ENTER ---
+        if mode == EngineMode.DEBUG:
+            # CPU timestamp (optional) + Signal
+            self.on_enter_signal.emit(iter_idx=iter_idx, **kwargs)
 
-        # 1. Aggregate all raw timing values
-        timings: Dict[str, List[float]] = {
-            "collision_detection": [],
-            "step": [],
-            "control": [],
-            "initial_guess": [],
-            "system_linearization": [],
-            "linear_system_solve": [],
-            "linesearch": [],
+        elif mode == EngineMode.TIMING:
+            # GPU Timestamp baked into graph
+            evt = self.events.get_timing_event(self.name, iter_idx, start=True)
+            if evt:
+                wp.record_event(evt)
+
+        # --- YIELD (Run Physics) ---
+        yield
+
+        # --- EXIT ---
+        if mode == EngineMode.DEBUG:
+            self.on_exit_signal.emit(iter_idx=iter_idx, **kwargs)
+
+        elif mode == EngineMode.TIMING:
+            evt = self.events.get_timing_event(self.name, iter_idx, start=False)
+            if evt:
+                wp.record_event(evt)
+
+
+@dataclass
+class EngineEvents:
+    """
+    The central nervous system of the engine.
+    """
+
+    current_mode: EngineMode = EngineMode.PRODUCTION
+
+    # 1. Signals (Used in Debug Mode)
+    step_start: Signal = field(default_factory=Signal)
+    step_end: Signal = field(default_factory=Signal)
+    newton_iteration_end: Signal = field(default_factory=Signal)
+
+    # 2. Scopes (Polymorphic)
+    step: PolymorphicScope = field(init=False)
+    control: PolymorphicScope = field(init=False)
+    initial_guess: PolymorphicScope = field(init=False)
+    linearization: PolymorphicScope = field(init=False)
+    linear_solve: PolymorphicScope = field(init=False)
+    linesearch: PolymorphicScope = field(init=False)
+
+    # 3. Timing Pool (Used in Timing Mode)
+    # Structure: _timing_pool[iteration][scope_name] = (StartEvent, EndEvent)
+    _timing_pool: List[Dict[str, tuple[wp.Event, wp.Event]]] = field(default_factory=list)
+    _step_timing_pool: Dict[str, tuple[wp.Event, wp.Event]] = field(default_factory=dict)
+    
+    # 4. Aggregated Timing Data
+    _timing_history: List[Dict[str, float]] = field(default_factory=list)
+
+    def __post_init__(self):
+        # Initialize scopes
+        self.step = PolymorphicScope("step", self)
+        self.control = PolymorphicScope("control", self)
+        self.initial_guess = PolymorphicScope("initial_guess", self)
+        self.linearization = PolymorphicScope("linearization", self)
+        self.linear_solve = PolymorphicScope("linear_solve", self)
+        self.linesearch = PolymorphicScope("linesearch", self)
+
+    def allocate_timing_events(self, max_iters: int):
+        """Pre-allocates events for the 'Unrolled Graph' timing mode."""
+        self._step_timing_pool = {
+            "step": (wp.Event(enable_timing=True), wp.Event(enable_timing=True)),
+            "control": (wp.Event(enable_timing=True), wp.Event(enable_timing=True)),
+            "initial_guess": (wp.Event(enable_timing=True), wp.Event(enable_timing=True)),
         }
 
-        for step in range(steps_per_segment):
-            sim_events = self.simulator_event_pairs[step]
-            timings["collision_detection"].append(
-                wp.get_event_elapsed_time(*sim_events["collision_detection"])
-            )
-            timings["step"].append(wp.get_event_elapsed_time(*sim_events["step"]))
-
-            step_events = self.step_event_pairs[step]
-            timings["control"].append(wp.get_event_elapsed_time(*step_events["control"]))
-            timings["initial_guess"].append(
-                wp.get_event_elapsed_time(*step_events["initial_guess"])
-            )
-
-            for newton_iter in range(newton_iters):
-                engine_events = self.engine_event_pairs[step][newton_iter]
-                for key in ["system_linearization", "linear_system_solve", "linesearch"]:
-                    timings[key].append(wp.get_event_elapsed_time(*engine_events[key]))
-
-        # 2. Compute statistics for each timed operation
-        stats: Dict[str, dict] = {}
-        for name, data in timings.items():
-            if not data:
-                continue
-            data_np = np.array(data)
-            stats[name] = {
-                "mean": np.mean(data_np),
-                "std": np.std(data_np),
-                "v_min": np.min(data_np),
-                "v_max": np.max(data_np),
-                "count": len(data_np),
-            }
-
-        if not stats:
-            return
-
-        # 3. Calculate Derived Totals
-        total_physics_step_time = stats.get("collision_detection", {}).get("mean", 0.0) + stats.get(
-            "step", {}
-        ).get("mean", 0.0)
-        physics_update_total = stats.get("step", {}).get("mean", 0.0)
-        avg_newton_iters = newton_iters
-        per_newton_iter_total = sum(
-            stats.get(op, {}).get("mean", 0.0)
-            for op in ["system_linearization", "linear_system_solve", "linesearch"]
-        )
-        total_newton_time = per_newton_iter_total * avg_newton_iters
-
-        def format_stat(stat_data, parent_total, is_summary=False):
-            if not stat_data:
-                return {
-                    "mean_s": "N/A",
-                    "std_s": "N/A",
-                    "range_s": "N/A",
-                    "perc_s": "N/A",
-                    "count_s": "N/A",
+        self._timing_pool = []
+        for _ in range(max_iters):
+            self._timing_pool.append(
+                {
+                    "linearization": (wp.Event(enable_timing=True), wp.Event(enable_timing=True)),
+                    "linear_solve": (wp.Event(enable_timing=True), wp.Event(enable_timing=True)),
+                    "linesearch": (wp.Event(enable_timing=True), wp.Event(enable_timing=True)),
                 }
+            )
 
-            mean = stat_data.get("mean", 0)
-            std = stat_data.get("std", 0)
-            v_min = stat_data.get("v_min", 0)
-            v_max = stat_data.get("v_max", 0)
-            count = stat_data.get("count", 0)
+    def get_timing_event(self, name: str, iter_idx: int, start: bool) -> Optional[wp.Event]:
+        # Check Step-level events first
+        if name in self._step_timing_pool:
+            pair = self._step_timing_pool[name]
+            return pair[0] if start else pair[1]
 
-            mean_s = f"{mean:.3f} ms"
-            std_s = f"± {std:.3f}" if not is_summary else "N/A"
-            range_s = f"{v_min:.3f} - {v_max:.3f}" if not is_summary else "N/A"
-            perc_s = f"{(mean / parent_total * 100):.1f}%" if parent_total > 0 else "0.0%"
-            count_s = str(count)
-            return {
-                "mean_s": mean_s,
-                "std_s": std_s,
-                "range_s": range_s,
-                "perc_s": perc_s,
-                "count_s": count_s,
-            }
+        # Check Iteration-level events
+        if 0 <= iter_idx < len(self._timing_pool):
+            if name in self._timing_pool[iter_idx]:
+                pair = self._timing_pool[iter_idx][name]
+                return pair[0] if start else pair[1]
 
-        # Collect data for DataFrame
-        data = []
+        return None
 
-        # Total
-        s = format_stat(
-            {"mean": total_physics_step_time, "count": stats["step"]["count"]},
-            total_physics_step_time,
-            is_summary=True,
-        )
-        data.append(
-            {
-                "Operation": "TOTAL PHYSICS STEP",
-                "Mean": s["mean_s"],
-                "Std Dev": s["std_s"],
-                "Min - Max": s["range_s"],
-                "% Total": s["perc_s"],
-                "Samples": s["count_s"],
-            }
-        )
-
-        # Collision
-        s = format_stat(stats.get("collision_detection"), total_physics_step_time)
-        data.append(
-            {
-                "Operation": "├─ collision_detection",
-                "Mean": s["mean_s"],
-                "Std Dev": s["std_s"],
-                "Min - Max": s["range_s"],
-                "% Total": s["perc_s"],
-                "Samples": s["count_s"],
-            }
-        )
-
-        # Physics update
-        s = format_stat(stats.get("step"), total_physics_step_time)
-        data.append(
-            {
-                "Operation": "└─ physics_update",
-                "Mean": s["mean_s"],
-                "Std Dev": s["std_s"],
-                "Min - Max": s["range_s"],
-                "% Total": s["perc_s"],
-                "Samples": s["count_s"],
-            }
-        )
-
-        # Control
-        s = format_stat(stats.get("control"), physics_update_total)
-        data.append(
-            {
-                "Operation": "   ├─ control",
-                "Mean": s["mean_s"],
-                "Std Dev": s["std_s"],
-                "Min - Max": s["range_s"],
-                "% Total": s["perc_s"],
-                "Samples": s["count_s"],
-            }
-        )
-
-        # Initial guess
-        s = format_stat(stats.get("initial_guess"), physics_update_total)
-        data.append(
-            {
-                "Operation": "   ├─ initial_guess",
-                "Mean": s["mean_s"],
-                "Std Dev": s["std_s"],
-                "Min - Max": s["range_s"],
-                "% Total": s["perc_s"],
-                "Samples": s["count_s"],
-            }
-        )
-
-        # Newton iterations
-        s = format_stat(
-            {
-                "mean": total_newton_time,
-                "count": stats.get("system_linearization", {}).get("count", 0),
-            },
-            physics_update_total,
-            is_summary=True,
-        )
-        data.append(
-            {
-                "Operation": f"   └─ newton_iterations ({avg_newton_iters})",
-                "Mean": s["mean_s"],
-                "Std Dev": s["std_s"],
-                "Min - Max": s["range_s"],
-                "% Total": s["perc_s"],
-                "Samples": s["count_s"],
-            }
-        )
-
-        # Linearization
-        s = format_stat(stats.get("system_linearization"), per_newton_iter_total)
-        data.append(
-            {
-                "Operation": "      ├─ system_linearization",
-                "Mean": s["mean_s"],
-                "Std Dev": s["std_s"],
-                "Min - Max": s["range_s"],
-                "% Total": s["perc_s"],
-                "Samples": s["count_s"],
-            }
-        )
-
-        # Solve
-        s = format_stat(stats.get("linear_system_solve"), per_newton_iter_total)
-        data.append(
-            {
-                "Operation": "      ├─ linear_system_solve",
-                "Mean": s["mean_s"],
-                "Std Dev": s["std_s"],
-                "Min - Max": s["range_s"],
-                "% Total": s["perc_s"],
-                "Samples": s["count_s"],
-            }
-        )
-
-        # Linesearch
-        s = format_stat(stats.get("linesearch"), per_newton_iter_total)
-        data.append(
-            {
-                "Operation": "      └─ linesearch",
-                "Mean": s["mean_s"],
-                "Std Dev": s["std_s"],
-                "Min - Max": s["range_s"],
-                "% Total": s["perc_s"],
-                "Samples": s["count_s"],
-            }
-        )
-
-        df = pd.DataFrame(data)
-
-        # Format the table with better spacing and alignment
-        print("\nTIMING PERFORMANCE REPORT\n")
-
-        # Custom formatting for better readability
-        col_widths = {
-            "Operation": 35,
-            "Mean": 10,
-            "Std Dev": 12,
-            "Min - Max": 15,
-            "% Total": 8,
-            "Samples": 8,
-        }
-
-        # Print header
-        header = ""
-        for col, width in col_widths.items():
-            header += f"{col:<{width}}"
-        print(header)
-        print("-" * sum(col_widths.values()))
-
-        # Print data rows
-        for _, row in df.iterrows():
-            line = ""
-            for col, width in col_widths.items():
-                line += f"{str(row[col]):<{width}}"
-            print(line)
-
-        print()
-
-
-class StateLogger:
-    """
-    Handles logging of simulation state and data to HDF5.
-    """
-
-    def __init__(self, config: LoggingConfig) -> None:
-        self.config = config
-        self.hdf5_logger = NullLogger()
-        if self.config.enable_hdf5_logging:
-            self.hdf5_logger = HDF5Logger(filepath=config.hdf5_log_file)
-
-    @property
-    def uses_history_arrays(self):
-        """Returns True if history arrays should be allocated and populated."""
-        return self.config.enable_hdf5_logging and self.config.log_history_data
-
-    def open(self):
-        if not self.config.enable_hdf5_logging:
+    def record_timings(self):
+        """Captures current event values and appends to history."""
+        if self.current_mode != EngineMode.TIMING:
             return
 
-        self.hdf5_logger.open()
+        record = {}
+        
+        # Step-level timings
+        for name, (start, end) in self._step_timing_pool.items():
+            record[name] = wp.get_event_elapsed_time(start, end)
+
+        # Iteration-level timings
+        for i, iter_events in enumerate(self._timing_pool):
+            for name, (start, end) in iter_events.items():
+                key = f"iter_{i:02d}_{name}"
+                record[key] = wp.get_event_elapsed_time(start, end)
+        
+        self._timing_history.append(record)
+
+    def print_timings(self):
+        """Rudimentary report printer for TIMING mode."""
+        if self.current_mode != EngineMode.TIMING:
+            print("Timings not available (Mode is not TIMING)")
+            return
+        
+        self.print_stats()
+
+    def print_stats(self):
+        """Prints aggregated statistics using Pandas if available."""
+        if not self._timing_history:
+            print("No timing data collected.")
+            return
+
+        # Flatten/Aggregate the per-iteration keys
+        aggregated_history = []
+        for record in self._timing_history:
+            new_record = {}
+            # Initialize accumulators for Newton steps
+            newton_metrics = {"linearization": [], "linear_solve": [], "linesearch": []}
+            
+            for k, v in record.items():
+                if k.startswith("iter_"):
+                    # k format: iter_00_linearization
+                    parts = k.split("_", 2)
+                    if len(parts) == 3:
+                        metric_name = parts[2]
+                        if metric_name in newton_metrics:
+                            newton_metrics[metric_name].append(v)
+                else:
+                    new_record[k] = v
+            
+            # Add averaged Newton metrics to the record
+            # We treat "newton_linearization" as the average time of ONE linearization call
+            for name, values in newton_metrics.items():
+                if values:
+                    new_record[f"newton_{name}"] = sum(values) / len(values)
+            
+            aggregated_history.append(new_record)
+
+        try:
+            import pandas as pd
+            df = pd.DataFrame(aggregated_history)
+            
+            # Reorder columns for readability if possible
+            preferred_order = ["step", "control", "initial_guess", "newton_linearization", "newton_linear_solve", "newton_linesearch"]
+            cols = [c for c in preferred_order if c in df.columns] + [c for c in df.columns if c not in preferred_order]
+            df = df[cols]
+
+            print("\n=== GPU TIMING STATISTICS (ms) ===")
+            print(df.describe().T[["mean", "std", "min", "max"]])
+        except ImportError:
+            print("\n=== GPU TIMING STATISTICS (ms) (Install pandas for better formatting) ===")
+            if not aggregated_history:
+                return
+            keys = aggregated_history[0].keys()
+            # Simple sorting
+            preferred_order = ["step", "control", "initial_guess", "newton_linearization", "newton_linear_solve", "newton_linesearch"]
+            sorted_keys = [k for k in preferred_order if k in keys] + [k for k in keys if k not in preferred_order]
+
+            print(f"{'Metric':<30} | {'Mean':<10} | {'Min':<10} | {'Max':<10}")
+            print("-" * 70)
+            for k in sorted_keys:
+                values = [r[k] for r in aggregated_history if k in r]
+                if not values: continue
+                avg = sum(values) / len(values)
+                print(f"{k:<30} | {avg:<10.3f} | {min(values):<10.3f} | {max(values):<10.3f}")
+
+
+class HDF5Observer:
+    """Listens to Data Signals and writes to HDF5 (Debug Mode only)."""
+
+    def __init__(self, events: EngineEvents, config: AxionEngineConfig):
+        self.config = config
+        self.logger = NullLogger()
+        if config.enable_hdf5_logging:
+            self.logger = HDF5Logger(filepath=config.hdf5_log_file)
+            self.logger.open()
+
+            # Connect
+            events.step.on_enter_signal.connect(self._on_step_start)
+            events.step.on_exit_signal.connect(self._on_step_end)
+            events.newton_iteration_end.connect(self._log_iteration)
 
     def close(self):
-        if not self.config.enable_hdf5_logging:
-            return
-
-        self.hdf5_logger.close()
-
-    def log_newton_iteration_data(self, engine: AxionEngine, iteration: int):
-        if not self.config.enable_hdf5_logging:
-            return
-
-        with self.hdf5_logger.scope(f"newton_iteration_{iteration:02d}"):
-            # Log dynamics state
-            if self.config.log_dynamics_state:
-                with self.hdf5_logger.scope("Dynamics state"):
-                    self.hdf5_logger.log_wp_dataset("h_d", engine.data.h.d)
-                    self.hdf5_logger.log_wp_dataset("body_q", engine.data.body_q)
-                    self.hdf5_logger.log_wp_dataset("body_u", engine.data.body_u)
-                    self.hdf5_logger.log_wp_dataset("body_u_prev", engine.data.body_u_prev)
-                    self.hdf5_logger.log_wp_dataset("body_f", engine.data.body_f)
-                    self.hdf5_logger.log_struct_array("world_M", engine.data.world_M)
-                    self.hdf5_logger.log_struct_array("world_M_inv", engine.data.world_M_inv)
-
-            # Log joint constraints data
-            if self.config.log_joint_constraint_data:
-                with self.hdf5_logger.scope("Joint constraint data"):
-                    self.hdf5_logger.log_wp_dataset("h", engine.data.h.c.j)
-                    self.hdf5_logger.log_wp_dataset("J_values", engine.data.J_values.j)
-                    self.hdf5_logger.log_wp_dataset("C_values", engine.data.C_values.j)
-                    self.hdf5_logger.log_wp_dataset("body_lambda", engine.data.body_lambda.j)
-                    self.hdf5_logger.log_wp_dataset(
-                        "body_lambda_prev", engine.data.body_lambda_prev.j
-                    )
-                    self.hdf5_logger.log_wp_dataset(
-                        "constraint_body_idx", engine.data.constraint_body_idx.j
-                    )
-
-            # Log control constraints data
-            if self.config.log_control_constraint_data:
-                with self.hdf5_logger.scope("Control constraint data"):
-                    self.hdf5_logger.log_wp_dataset("h", engine.data.h.c.ctrl)
-                    self.hdf5_logger.log_wp_dataset("J_values", engine.data.J_values.ctrl)
-                    self.hdf5_logger.log_wp_dataset("C_values", engine.data.C_values.ctrl)
-                    self.hdf5_logger.log_wp_dataset("body_lambda", engine.data.body_lambda.ctrl)
-                    # self.hdf5_logger.log_wp_dataset(
-                    #     "body_lambda_prev", engine.data.body_lambda_prev.ctrl
-                    # )
-                    self.hdf5_logger.log_wp_dataset(
-                        "constraint_body_idx", engine.data.constraint_body_idx.ctrl
-                    )
-
-            # Log contact constraints data
-            if self.config.log_contact_constraint_data:
-                with self.hdf5_logger.scope("Contact constraint data"):
-                    self.hdf5_logger.log_wp_dataset("h", engine.data.h.c.n)
-                    self.hdf5_logger.log_wp_dataset("s", engine.data.s_n)
-                    self.hdf5_logger.log_wp_dataset("J_values", engine.data.J_values.n)
-                    self.hdf5_logger.log_wp_dataset("C_values", engine.data.C_values.n)
-                    self.hdf5_logger.log_wp_dataset("body_lambda", engine.data.body_lambda.n)
-                    self.hdf5_logger.log_wp_dataset(
-                        "body_lambda_prev", engine.data.body_lambda_prev.n
-                    )
-                    self.hdf5_logger.log_wp_dataset(
-                        "constraint_body_idx", engine.data.constraint_body_idx.n
-                    )
-                    self.hdf5_logger.log_struct_array(
-                        "contact_interaction", engine.data.contact_interaction
-                    )
-
-            # Log friction constraints data
-            if self.config.log_friction_constraint_data:
-                with self.hdf5_logger.scope("Friction constraint data"):
-                    self.hdf5_logger.log_wp_dataset("h", engine.data.h.c.f)
-                    self.hdf5_logger.log_wp_dataset("J_values", engine.data.J_values.f)
-                    self.hdf5_logger.log_wp_dataset("C_values", engine.data.C_values.f)
-                    self.hdf5_logger.log_wp_dataset("body_lambda", engine.data.body_lambda.f)
-                    self.hdf5_logger.log_wp_dataset(
-                        "body_lambda_prev", engine.data.body_lambda_prev.f
-                    )
-                    self.hdf5_logger.log_wp_dataset(
-                        "constraint_body_idx", engine.data.constraint_body_idx.f
-                    )
-                    self.hdf5_logger.log_struct_array(
-                        "contact_interaction", engine.data.contact_interaction
-                    )
-
-            # Log linear system data
-            if self.config.log_linear_system_data:
-                with self.hdf5_logger.scope("Linear system data"):
-                    self.hdf5_logger.log_wp_dataset("b", engine.data.b)
-                    self.hdf5_logger.log_wp_dataset("dbody_qd", engine.data.dbody_u)
-                    self.hdf5_logger.log_wp_dataset("dbody_lambda", engine.data.dbody_lambda.full)
-
-    def log_linear_solver_history(self, history: dict, iteration: int):
-        if not self.config.enable_hdf5_logging or not self.config.log_linear_solver_iterations:
-            return
-
-        with self.hdf5_logger.scope(f"newton_iteration_{iteration:02d}"):
-            with self.hdf5_logger.scope("linear_solver_history"):
-                iters = int(history["iterations"].numpy().item())
-                # Slice history to include only valid iterations (0 to iters)
-                valid_history = history["residual_squared_history"].numpy()[: iters + 1]
-
-                self.hdf5_logger.log_np_dataset("residual_squared_history", valid_history)
-                self.hdf5_logger.log_scalar("iterations", iters)
-                self.hdf5_logger.log_wp_dataset(
-                    "final_residual_squared", history["final_residual_squared"]
-                )
-
-    def log_linesearch_step(self, engine: AxionEngine, iteration: int):
-        if (
-            not self.config.enable_hdf5_logging
-            or not self.config.log_linesearch_data
-            or not engine.data.has_linesearch
-        ):
-            return
-
-        with self.hdf5_logger.scope(f"newton_iteration_{iteration:02d}"):
-            with self.hdf5_logger.scope("linesearch"):
-                self.hdf5_logger.log_wp_dataset("steps", engine.data.linesearch.steps)
-                self.hdf5_logger.log_wp_dataset(
-                    "batch_h_norm_sq", engine.data.linesearch.batch_h_norm_sq
-                )
-                self.hdf5_logger.log_wp_dataset(
-                    "minimal_index", engine.data.linesearch.minimal_index
-                )
-
-    def log_history_arrays(self, engine: AxionEngine):
-        """Logs the accumulated history arrays if enabled."""
-        if not self.config.enable_hdf5_logging or not self.config.log_history_data:
-            return
-
-        with self.hdf5_logger.scope("history_data"):
-            # Reconstruct trajectory for consistency (though raw arrays are logged below)
-            # This logic mimics old 'trajectory_all' construction but keeps it simple or just logs arrays
-
-            # Log history arrays
-            # These have shape (NewtonIters+1, Worlds, ...)
-            self.hdf5_logger.log_np_dataset(
-                "body_q_history", engine.data.history.body_q_history.numpy()
-            )
-            self.hdf5_logger.log_np_dataset(
-                "body_u_history", engine.data.history.body_u_history.numpy()
-            )
-            self.hdf5_logger.log_np_dataset(
-                "body_lambda_history", engine.data.history._body_lambda_history.numpy()
-            )
-            self.hdf5_logger.log_np_dataset("h_history", engine.data.history._h_history.numpy())
-
-            # Metadata
-            dims = engine.dims
-            dims_metadata = np.array(
-                [dims.N_u, dims.N_j, dims.N_ctrl, dims.N_n, dims.N_f], dtype=np.int32
-            )
-            self.hdf5_logger.log_np_dataset("simulation_dims", dims_metadata)
-
-    def timestep_start(self, timestep: int, current_time: float):
-        """Start logging for a timestep and log the current time."""
-        if not self.config.enable_hdf5_logging:
-            return
-
-        self._timestep_scope = self.hdf5_logger.scope(f"timestep_{timestep:04d}")
-        self._timestep_scope.__enter__()
-        self.hdf5_logger.log_scalar("time", current_time)
-
-    def timestep_end(self):
-        """End logging for the current timestep."""
-        if not self.config.enable_hdf5_logging or not hasattr(self, "_timestep_scope"):
-            return
-
-        self._timestep_scope.__exit__(None, None, None)
-        del self._timestep_scope
-
-    def log_contact_count(self, contacts):
-        """Log rigid contact count."""
-        if not self.config.enable_hdf5_logging:
-            return
-
-        self.hdf5_logger.log_wp_dataset("rigid_contact_count", contacts.rigid_contact_count)
-
-
-class EngineLogger:
-    """
-    Facade for PerformanceLogger and StateLogger.
-    Maintains backward compatibility while separating concerns.
-    """
-
-    def __init__(self, config: LoggingConfig) -> None:
-        self.config = config
-
-        self.perf = PerformanceLogger(config)
-        self.state = StateLogger(config)
-
-        self._current_step_in_segment = 0
-
-    @property
-    def can_cuda_graph_be_used(self):
         if self.config.enable_hdf5_logging:
-            return False
-        return True
+            self.logger.close()
 
-    @property
-    def current_step_in_segment(self) -> int:
-        """The current physics substep index within the segment."""
-        return self._current_step_in_segment
+    def _on_step_start(self, iter_idx: int, time: float = None, **kwargs):
+        self._step_scope = self.logger.scope(f"timestep_{iter_idx:04d}")
+        self._step_scope.__enter__()
+        if time is not None:
+            self.logger.log_scalar("time", time)
 
-    @property
-    def uses_history_arrays(self):
-        """Returns True if history arrays should be allocated and populated."""
-        return self.state.uses_history_arrays
+    def _on_step_end(self, **kwargs):
+        if hasattr(self, "_step_scope"):
+            self._step_scope.__exit__(None, None, None)
 
-    @property
-    def hdf5_logger(self):
-        """Expose hdf5_logger for backward compatibility if accessed directly."""
-        return self.state.hdf5_logger
+    def _log_iteration(self, iter_idx: int, snapshot: Dict, **kwargs):
+        with self.logger.scope(f"newton_iteration_{iter_idx:02d}"):
+            # Unpack snapshot
+            if "dynamics" in snapshot and self.config.log_dynamics_state:
+                with self.logger.scope("Dynamics state"):
+                    for k, v in snapshot["dynamics"].items():
+                        self.logger.log_wp_dataset(k, v)
 
-    @property
-    def simulator_event_pairs(self):
-        return self.perf.simulator_event_pairs
+            if "linear_system" in snapshot and self.config.log_linear_system_data:
+                with self.logger.scope("Linear system data"):
+                    for k, v in snapshot["linear_system"].items():
+                        self.logger.log_wp_dataset(k, v)
 
-    @property
-    def engine_event_pairs(self):
-        return self.perf.engine_event_pairs
-
-    @property
-    def step_event_pairs(self):
-        return self.perf.step_event_pairs
-
-    def set_current_step_in_segment(self, step_num: int):
-        """
-        Sets the current step index. Called by the simulator before each physics step.
-        """
-        self._current_step_in_segment = step_num
-
-    def initialize_events(self, steps_per_segment: int, newton_iters: int):
-        self.perf.initialize_events(steps_per_segment, newton_iters)
-
-    def timed_block(self, start_event: wp.Event, end_event: wp.Event):
-        return self.perf.timed_block(start_event, end_event)
-
-    def open(self):
-        self.state.open()
-
-    def close(self):
-        self.state.close()
-
-    def log_newton_iteration_data(self, engine: AxionEngine, iteration: int):
-        self.state.log_newton_iteration_data(engine, iteration)
-
-    def log_linear_solver_history(self, history: dict, iteration: int):
-        self.state.log_linear_solver_history(history, iteration)
-
-    def log_linesearch_step(self, engine: AxionEngine, iteration: int):
-        self.state.log_linesearch_step(engine, iteration)
-
-    def log_history_arrays(self, engine: AxionEngine):
-        self.state.log_history_arrays(engine)
-
-    def timestep_start(self, timestep: int, current_time: float):
-        self.state.timestep_start(timestep, current_time)
-
-    def timestep_end(self):
-        self.state.timestep_end()
-
-    def log_contact_count(self, contacts):
-        self.state.log_contact_count(contacts)
-
-    def log_segment_timings(self, steps_per_segment: int, newton_iters: int):
-        self.perf.log_segment_timings(steps_per_segment, newton_iters)
+            # Constraints
+            if "constraints" in snapshot:
+                for grp_name, data in snapshot["constraints"].items():
+                    # e.g. grp_name="Joint constraint data"
+                    # logic to match config flags can be added here
+                    with self.logger.scope(grp_name):
+                        for k, v in data.items():
+                            self.logger.log_wp_dataset(k, v)

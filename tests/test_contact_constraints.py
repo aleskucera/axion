@@ -4,8 +4,6 @@ import pytest
 import warp as wp
 from axion.core.engine import AxionEngine
 from axion.core.engine_config import AxionEngineConfig
-from axion.core.engine_logger import EngineLogger
-from axion.core.engine_logger import LoggingConfig
 from axion.core.model_builder import AxionModelBuilder
 
 wp.init()
@@ -66,17 +64,18 @@ def run_contact_test(shape_type):
     model = builder.finalize_replicated(num_worlds=1, gravity=-9.81)
 
     config = AxionEngineConfig(
-        max_newton_iters=20,
-        max_linear_iters=20,
+        joint_constraint_level="pos",
+        contact_constraint_level="pos",
+        max_newton_iters=10,
+        max_linear_iters=10,
+        contact_compliance=1e-8,
+        contact_stabilization_factor=0.0,
     )
-
-    logger = EngineLogger(LoggingConfig())
-    logger.initialize_events(steps_per_segment=1, newton_iters=config.max_newton_iters)
 
     def init_state_fn(state_in, state_out, contacts, dt):
         engine.integrate_bodies(model, state_in, state_out, dt)
 
-    engine = AxionEngine(model=model, init_state_fn=init_state_fn, logger=logger, config=config)
+    engine = AxionEngine(model=model, init_state_fn=init_state_fn, config=config)
 
     state_in = model.state()
     state_out = model.state()
@@ -101,7 +100,6 @@ def run_contact_test(shape_type):
         )
 
         contacts = model.collide(state_in)
-        logger.set_current_step_in_segment(0)
         engine.step(state_in, state_out, control, contacts, dt)
 
         wp.copy(state_in.body_q, state_out.body_q)

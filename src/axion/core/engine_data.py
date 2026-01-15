@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from functools import cached_property
+from typing import Any
+from typing import Dict
 from typing import Optional
 
 import numpy as np
@@ -189,6 +191,61 @@ class EngineData:
 
     def set_dt(self, dt: float):
         object.__setattr__(self, "dt", dt)
+
+    def get_snapshot(self) -> Dict[str, Any]:
+        """
+        Returns a dictionary view of the current physics state.
+        Decouples logging from internal data structure.
+        """
+        snapshot = {}
+
+        # 1. Dynamics
+        snapshot["dynamics"] = {
+            "h_d": self.h.d,
+            "body_q": self.body_q,
+            "body_u": self.body_u,
+            "body_u_prev": self.body_u_prev,
+            "body_f": self.body_f,
+            "world_M": self.world_M,
+            "world_M_inv": self.world_M_inv,
+        }
+
+        # 2. Constraints
+        constraints = {}
+
+        if self.dims.N_j > 0:
+            constraints["Joint constraint data"] = {
+                "h": self.h.c.j,
+                "J_values": self.J_values.j,
+                "C_values": self.C_values.j,
+                "body_lambda": self.body_lambda.j,
+            }
+
+        if self.dims.N_ctrl > 0:
+            constraints["Control constraint data"] = {
+                "h": self.h.c.ctrl,
+                "J_values": self.J_values.ctrl,
+                "C_values": self.C_values.ctrl,
+                "body_lambda": self.body_lambda.ctrl,
+            }
+
+        if self.dims.N_n > 0:
+            constraints["Contact constraint data"] = {
+                "h": self.h.c.n,
+                "s": self.s_n,
+                "body_lambda": self.body_lambda.n,
+            }
+
+        snapshot["constraints"] = constraints
+
+        # 3. Linear System
+        snapshot["linear_system"] = {
+            "b": self.b,
+            "dbody_u": self.dbody_u,
+            "dbody_lambda": self.dbody_lambda.full,
+        }
+
+        return snapshot
 
     @staticmethod
     def create(

@@ -54,6 +54,15 @@ class AxionEngineConfig(EngineConfig):
     joint_constraint_level: str = "pos"  # pos / vel
     contact_constraint_level: str = "pos"  # pos / vel
 
+    # --- Logging & Profiling ---
+    enable_timing: bool = False
+    enable_hdf5_logging: bool = False
+    hdf5_log_file: str = "simulation.h5"
+
+    log_dynamics_state: bool = True
+    log_linear_system_data: bool = True
+    log_constraint_data: bool = True
+
     def __post_init__(self):
         """Validate all configuration parameters."""
 

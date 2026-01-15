@@ -4,8 +4,6 @@ import pytest
 import warp as wp
 from axion.core.engine import AxionEngine
 from axion.core.engine_config import AxionEngineConfig
-from axion.core.engine_logger import EngineLogger
-from axion.core.engine_logger import LoggingConfig
 from axion.core.model_builder import AxionModelBuilder
 
 wp.init()
@@ -165,13 +163,10 @@ def run_joint_test(joint_type, joint_axis=wp.vec3(0.0, 1.0, 0.0)):
         max_linear_iters=10,
     )
 
-    logger = EngineLogger(LoggingConfig())
-    logger.initialize_events(steps_per_segment=1, newton_iters=config.max_newton_iters)
-
     def init_state_fn(state_in, state_out, contacts, dt):
         engine.integrate_bodies(model, state_in, state_out, dt)
 
-    engine = AxionEngine(model=model, init_state_fn=init_state_fn, logger=logger, config=config)
+    engine = AxionEngine(model=model, init_state_fn=init_state_fn, config=config)
 
     state_in = model.state()
     state_out = model.state()
@@ -197,7 +192,6 @@ def run_joint_test(joint_type, joint_axis=wp.vec3(0.0, 1.0, 0.0)):
             device=engine.device,
         )
 
-        logger.set_current_step_in_segment(0)
         engine.step(state_in, state_out, control, contacts, dt)
 
         wp.copy(state_in.body_q, state_out.body_q)

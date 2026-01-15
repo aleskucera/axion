@@ -9,7 +9,6 @@ import warp as wp
 from axion import AbstractSimulator
 from axion import EngineConfig
 from axion import ExecutionConfig
-from axion import LoggingConfig
 from axion import RenderingConfig
 from axion import SimulationConfig
 from omegaconf import DictConfig
@@ -24,22 +23,11 @@ os.environ["PYOPENGL_PLATFORM"] = "glx"
 CONFIG_PATH = pathlib.Path(__file__).parent.parent.joinpath("conf")
 
 
-class Simulator(AbstractSimulator):
-    def __init__(
-        self,
-        sim_config: SimulationConfig,
-        render_config: RenderingConfig,
-        exec_config: ExecutionConfig,
-        engine_config: EngineConfig,
-        logging_config: LoggingConfig,
-    ):
-        super().__init__(
-            sim_config,
-            render_config,
-            exec_config,
-            engine_config,
-            logging_config,
-        )
+class TarosRotationSimulator(AbstractSimulator):
+    def __init__(self, sim_config, render_config, exec_config, engine_config):
+        self.left_indices_cpu = []
+        self.right_indices_cpu = []
+        super().__init__(sim_config, render_config, exec_config, engine_config)
 
         # Taros-4 DOFs: 6 (Base) + 4 (Wheels) = 10
         # Rotation: Left wheels -12.0, Right wheels 12.0
@@ -101,19 +89,9 @@ def taros4_rotation_example(cfg: DictConfig):
     exec_config: ExecutionConfig = hydra.utils.instantiate(cfg.execution)
     engine_config: EngineConfig = hydra.utils.instantiate(cfg.engine)
 
-    logging_config: LoggingConfig = hydra.utils.instantiate(cfg.logging)
-
-    simulator = Simulator(
-        sim_config=sim_config,
-        render_config=render_config,
-        exec_config=exec_config,
-        engine_config=engine_config,
-        logging_config=logging_config,
-    )
-
+    simulator = TarosRotationSimulator(sim_config, render_config, exec_config, engine_config)
     simulator.run()
 
 
 if __name__ == "__main__":
     taros4_rotation_example()
-

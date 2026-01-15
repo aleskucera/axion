@@ -4,8 +4,6 @@ import warp as wp
 from axion.core.control_utils import JointMode
 from axion.core.engine import AxionEngine
 from axion.core.engine_config import AxionEngineConfig
-from axion.core.engine_logger import EngineLogger
-from axion.core.engine_logger import LoggingConfig
 from axion.core.model_builder import AxionModelBuilder
 
 wp.init()
@@ -20,10 +18,8 @@ def setup_test_engine():
         max_newton_iters=20,
         max_linear_iters=50,
     )
-    logger = EngineLogger(LoggingConfig(enable_timing=False))
-    logger.initialize_events(steps_per_segment=1, newton_iters=config.max_newton_iters)
 
-    return config, logger
+    return config
 
 
 def create_revolute_model():
@@ -60,7 +56,7 @@ def create_revolute_model():
 def test_revolute_velocity_control():
     print("\n=== Testing Revolute Velocity Control ===")
     model, joint_id = create_revolute_model()
-    config, logger = setup_test_engine()
+    config = setup_test_engine()
 
     state_in = model.state()
     state_out = model.state()
@@ -88,7 +84,7 @@ def test_revolute_velocity_control():
         wp.copy(state_out.body_q, state_in.body_q)
         wp.copy(state_out.body_qd, state_in.body_qd)
 
-    engine = AxionEngine(model=model, init_state_fn=init_state_fn, logger=logger, config=config)
+    engine = AxionEngine(model=model, init_state_fn=init_state_fn, config=config)
 
     # Initialize FK
     newton.eval_fk(model, model.joint_q, model.joint_qd, state_in)

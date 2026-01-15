@@ -9,7 +9,6 @@ import warp as wp
 from axion import AbstractSimulator
 from axion import EngineConfig
 from axion import ExecutionConfig
-from axion import LoggingConfig
 from axion import RenderingConfig
 from axion import SimulationConfig
 from omegaconf import DictConfig
@@ -24,21 +23,19 @@ os.environ["PYOPENGL_PLATFORM"] = "glx"
 CONFIG_PATH = pathlib.Path(__file__).parent.parent.joinpath("conf")
 
 
-class Simulator(AbstractSimulator):
+class HelhestRotationSimulator(AbstractSimulator):
     def __init__(
         self,
         sim_config: SimulationConfig,
         render_config: RenderingConfig,
         exec_config: ExecutionConfig,
         engine_config: EngineConfig,
-        logging_config: LoggingConfig,
     ):
         super().__init__(
             sim_config,
             render_config,
             exec_config,
             engine_config,
-            logging_config,
         )
 
         # Helhest DOFs: 6 (Base) + 1 (Left) + 1 (Right) + 1 (Rear) = 9
@@ -100,19 +97,9 @@ def helhest_rotation_example(cfg: DictConfig):
     exec_config: ExecutionConfig = hydra.utils.instantiate(cfg.execution)
     engine_config: EngineConfig = hydra.utils.instantiate(cfg.engine)
 
-    logging_config: LoggingConfig = hydra.utils.instantiate(cfg.logging)
-
-    simulator = Simulator(
-        sim_config=sim_config,
-        render_config=render_config,
-        exec_config=exec_config,
-        engine_config=engine_config,
-        logging_config=logging_config,
-    )
-
+    simulator = HelhestRotationSimulator(sim_config, render_config, exec_config, engine_config)
     simulator.run()
 
 
 if __name__ == "__main__":
     helhest_rotation_example()
-

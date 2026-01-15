@@ -10,7 +10,6 @@ import warp as wp
 from axion import AbstractSimulator
 from axion import EngineConfig
 from axion import ExecutionConfig
-from axion import LoggingConfig
 from axion import RenderingConfig
 from axion import SimulationConfig
 from omegaconf import DictConfig
@@ -26,22 +25,11 @@ CONFIG_PATH = pathlib.Path(__file__).parent.parent.joinpath("conf")
 ASSETS_DIR = pathlib.Path(__file__).parent.parent.joinpath("assets")
 
 
-class Simulator(AbstractSimulator):
-    def __init__(
-        self,
-        sim_config: SimulationConfig,
-        render_config: RenderingConfig,
-        exec_config: ExecutionConfig,
-        engine_config: EngineConfig,
-        logging_config: LoggingConfig,
-    ):
-        super().__init__(
-            sim_config,
-            render_config,
-            exec_config,
-            engine_config,
-            logging_config,
-        )
+class TarosSurfaceSimulator(AbstractSimulator):
+    def __init__(self, sim_config, render_config, exec_config, engine_config):
+        self.left_indices_cpu = []
+        self.right_indices_cpu = []
+        super().__init__(sim_config, render_config, exec_config, engine_config)
 
         # Taros-4 DOFs: 6 (Base) + 4 Wheels
         self.joint_target = wp.zeros(10, dtype=wp.float32, device=self.model.device)
@@ -142,16 +130,7 @@ def taros4_surface_drive_example(cfg: DictConfig):
     exec_config: ExecutionConfig = hydra.utils.instantiate(cfg.execution)
     engine_config: EngineConfig = hydra.utils.instantiate(cfg.engine)
 
-    logging_config: LoggingConfig = hydra.utils.instantiate(cfg.logging)
-
-    simulator = Simulator(
-        sim_config=sim_config,
-        render_config=render_config,
-        exec_config=exec_config,
-        engine_config=engine_config,
-        logging_config=logging_config,
-    )
-
+    simulator = TarosSurfaceSimulator(sim_config, render_config, exec_config, engine_config)
     simulator.run()
 
 

@@ -9,7 +9,6 @@ from .engine_config import EngineConfig
 from .engine_config import FeatherstoneEngineConfig
 from .engine_config import MuJoCoEngineConfig
 from .engine_config import XPBDEngineConfig
-from .engine_logger import LoggingConfig
 
 __all__ = [
     "AxionEngine",
@@ -22,6 +21,5 @@ __all__ = [
     "ExecutionConfig",
     "RenderingConfig",
     "SimulationConfig",
-    "LoggingConfig",
     "JointMode",
 ]
