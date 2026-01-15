@@ -45,6 +45,10 @@ class NullLogger:
         """Does nothing."""
         pass
 
+    def log_struct_array(self, name: str, data: wp.array, attributes: Dict[str, Any] = None):
+        """Does nothing."""
+        pass
+
     def log_scalar(self, name: str, data: Union[int, float, str]):
         """Does nothing."""
         pass

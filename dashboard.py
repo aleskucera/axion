@@ -1,4 +1,6 @@
 import glob
+import os
+import time
 from pathlib import Path
 
 import h5py
@@ -13,17 +15,26 @@ st.title("Axion Physics Debugger 🔍")
 
 # --- SIDEBAR: DATA LOADING ---
 st.sidebar.header("1. Select Simulation")
-# Search in data/ folder for h5 files
-data_files = glob.glob("data/logs/*.h5")
-if not data_files:
-    # Fallback to current dir if data/ is empty
-    data_files = glob.glob("*.h5")
+# Search in data/logs/ folder first, then data/, then current
+search_paths = ["data/logs/*.h5", "data/*.h5", "*.h5"]
+data_files = []
+for p in search_paths:
+    data_files.extend(glob.glob(p))
+    if data_files:
+        break
 
 if not data_files:
-    st.error("No .h5 files found in `data/logs` or current directory.")
+    st.error("No .h5 files found in `data/logs`, `data/`, or current directory.")
     st.stop()
 
-selected_file = st.sidebar.selectbox("File", data_files, index=0)
+selected_file = st.sidebar.selectbox("File", sorted(data_files, reverse=True), index=0)
+
+# Manual Refresh Button
+if st.sidebar.button("Refresh Data"):
+    st.rerun()
+
+# Check modification time for auto-refresh
+current_mtime = os.path.getmtime(selected_file)
 
 # --- SIDEBAR: WORLD FILTERING ---
 st.sidebar.markdown("---")
@@ -32,21 +43,33 @@ st.sidebar.header("2. World Selection")
 
 # Function to get max world count efficiently
 @st.cache_data
-def get_world_count(file_path):
+def get_world_count(file_path, _mtime):
     with h5py.File(file_path, "r") as f:
         # Check first available timestep
         steps = sorted([k for k in f.keys() if k.startswith("timestep_")])
         if not steps:
             return 0
         g = f[steps[0]]
+        
+        # Try new history data location
+        if "history_data" in g:
+            # h_history shape: (Iter, World, Dof)
+            if "h_history" in g["history_data"]:
+                return g["history_data"]["h_history"].shape[1]
+
+        # Try legacy residual_norm_landscape_data
         if "residual_norm_landscape_data" in g:
-            # Metadata is [grid_res, plot_scale, steps, num_worlds]
-            meta = g["residual_norm_landscape_data/pca_metadata"][()]
-            return int(meta[3])
+            if "pca_metadata" in g["residual_norm_landscape_data"]:
+                # Metadata is [grid_res, plot_scale, steps, num_worlds]
+                meta = g["residual_norm_landscape_data"]["pca_metadata"][()]
+                return int(meta[3])
+            if "trajectory_residuals" in g["residual_norm_landscape_data"]:
+                return g["residual_norm_landscape_data"]["trajectory_residuals"].shape[1]
+                
     return 0
 
 
-total_worlds = get_world_count(selected_file)
+total_worlds = get_world_count(selected_file, current_mtime)
 
 if total_worlds > 0:
     st.sidebar.caption(f"Total Worlds in File: {total_worlds}")
@@ -58,13 +81,13 @@ if total_worlds > 0:
     if w_min > w_max:
         st.sidebar.error("Min World cannot be greater than Max World")
 else:
-    st.sidebar.warning("Could not determine world count.")
+    st.sidebar.warning("Could not determine world count. File might be empty or format unknown.")
     w_min, w_max = 0, 0
 
 
 # --- DATA LOADING ---
 @st.cache_data
-def load_timestep_table(file_path, w_start, w_end):
+def load_timestep_table(file_path, w_start, w_end, _mtime):
     """Loads and filters data, returning only rows within the requested world range."""
     if not Path(file_path).exists():
         return None
@@ -76,26 +99,21 @@ def load_timestep_table(file_path, w_start, w_end):
 
         for step in steps:
             g = f[step]
-            if "residual_norm_landscape_data" not in g:
+            
+            # 1. Try Loading from History Data (New Standard)
+            if "history_data" in g and "h_history" in g["history_data"]:
+                # h_history: (Iter, World, Dof)
+                # We want the norm of the last iteration for the selected worlds
+                # Slice: Last Iter (-1), Worlds (w_start:w_end+1), All Dofs (:)
+                last_h = g["history_data"]["h_history"][-1, w_start : w_end + 1, :]
+                norms = np.linalg.norm(last_h, axis=1)
+                
+            # 2. Fallback to Legacy Data
+            elif "residual_norm_landscape_data" in g and "trajectory_residuals" in g["residual_norm_landscape_data"]:
+                last_h = g["residual_norm_landscape_data"]["trajectory_residuals"][-1, w_start : w_end + 1, :]
+                norms = np.linalg.norm(last_h, axis=1)
+            else:
                 continue
-
-            sub = g["residual_norm_landscape_data"]
-            if "simulation_dims" not in sub:
-                continue
-
-            # trajectory_residuals shape: (Iterations, Worlds, Dofs)
-            # We need the norms of the LAST iteration for the worlds in range
-
-            # Optimization: Only load the slice we need
-            # This requires 'trajectory_residuals' to be chunked reasonably well
-            # But h5py slicing is generally faster than loading everything
-
-            # Slice: Last Iteration (-1), World Range (w_start:w_end+1), All Dofs (:)
-            # Note: trajectory_residuals is (Iter, World, Dof)
-            last_h_slice = sub["trajectory_residuals"][-1, w_start : w_end + 1, :]
-
-            # Compute norms
-            norms = np.linalg.norm(last_h_slice, axis=1)
 
             for i, val in enumerate(norms):
                 data_rows.append(
@@ -109,7 +127,7 @@ def load_timestep_table(file_path, w_start, w_end):
     return pd.DataFrame(data_rows)
 
 
-df = load_timestep_table(selected_file, w_min, w_max)
+df = load_timestep_table(selected_file, w_min, w_max, current_mtime)
 
 if df is None or df.empty:
     st.warning(f"No valid data found in range [{w_min}-{w_max}].")
@@ -158,161 +176,277 @@ st.success(
 
 # --- DETAIL LOADING ---
 @st.cache_data
-def load_detailed_data(file_path, step, world_idx):
+def load_history_data(file_path, step, world_idx, _mtime):
     with h5py.File(file_path, "r") as f:
-        g = f[f"timestep_{step:04d}/residual_norm_landscape_data"]
+        step_key = f"timestep_{step:04d}"
+        if step_key not in f:
+            return None, None
+            
+        g = f[step_key]
+        
+        if "history_data" in g:
+            sub = g["history_data"]
+            h_hist = sub["h_history"][:, world_idx, :]
+            dims = sub["simulation_dims"][()]
+            return h_hist, dims
+            
+        # Fallback
+        if "residual_norm_landscape_data" in g:
+            sub = g["residual_norm_landscape_data"]
+            h_hist = sub["trajectory_residuals"][:, world_idx, :]
+            dims = sub["simulation_dims"][()]
+            return h_hist, dims
+            
+    return None, None
 
-        grid = g["residual_norm_grid"][:, :, world_idx]
-        alphas = g["pca_alphas"][:]
-        betas = g["pca_betas"][:]
-        traj_2d = g["trajectory_2d_projected"][:, world_idx, :]
+h_hist, dims = load_history_data(selected_file, sel_step, sel_world, current_mtime)
 
-        residuals = g["trajectory_residuals"][:, world_idx, :]
-        lambdas = g["body_lambda_history"][:, world_idx, :]
-        dims = g["simulation_dims"][()]
+@st.cache_data
+def load_linesearch_data(file_path, step, newton_iter, world_idx, _mtime):
+    with h5py.File(file_path, "r") as f:
+        # Path: timestep_XXXX/newton_iteration_YY/linesearch
+        key = f"timestep_{step:04d}/newton_iteration_{newton_iter:02d}/linesearch"
+        
+        if key not in f:
+            return None
+        
+        g = f[key]
+        # steps: (N_steps,)
+        steps = g["steps"][:]
+        # batch_h_norm_sq: (N_steps, N_worlds)
+        batch_norms_sq = g["batch_h_norm_sq"][:, world_idx]
+        # minimal_index: (N_worlds,)
+        min_idx = g["minimal_index"][world_idx]
+        
+        return steps, np.sqrt(batch_norms_sq), min_idx
 
-    return grid, alphas, betas, traj_2d, residuals, lambdas, dims
+# --- NEWTON ITERATION SELECTOR ---
+# We need to know how many iterations happened.
+# h_hist has shape (iters + 1, dofs) because it includes initial state (iter 0) + results of N iterations.
+# Or does it? Let's check engine.py/engine_data.py
+# Engine loop runs 'max_newton_iters' times.
+# copy_state_to_history is called inside loop (i=0..N-1) and once at end (i=N).
+# So h_hist size is N+1.
+# Iteration 0 corresponds to "Initial Guess" state?
+# Usually, loop i corresponds to "Newton Iteration i".
+# logger.log_linesearch_step(self, i) is called inside loop.
+# So valid iterations for linesearch are 0 to max_iter-1.
 
+if h_hist is not None:
+    max_iter_idx = h_hist.shape[0] - 2 # (N+1 states means N steps, indices 0..N-1)
+    if max_iter_idx < 0: max_iter_idx = 0
+else:
+    max_iter_idx = 0
 
-grid, alphas, betas, traj_2d, h_hist, lambda_hist, dims = load_detailed_data(
-    selected_file, sel_step, sel_world
-)
+with st.sidebar:
+    st.markdown("---")
+    st.header("4. Newton Iteration")
+    selected_newton_iter = st.slider(
+        "Select Iteration", 
+        0, 
+        max_iter_idx, 
+        0,
+        help="Select which Newton step to inspect (Linesearch & Linear Solve)."
+    )
 
 # --- PLOTS ---
 col1, col2 = st.columns([1, 1])
 
+# --- COL 1: LINESEARCH LANDSCAPE ---
 with col1:
-    st.subheader("Residual Norm Landscape")
-
-    if st.checkbox("Show Residual Landscape", value=False):
-        # Auto-Range Logic for Colors (in actual values, not log)
-        grid_valid = grid[grid > 1e-12]
-        if len(grid_valid) > 0:
-            p05 = np.percentile(grid_valid, 5)
-            p95 = np.percentile(grid_valid, 95)
-            log_min_def = float(np.log10(p05))
-            log_max_def = float(np.log10(p95))
-        else:
-            log_min_def, log_max_def = -6.0, 0.0
-
-        # Slider with finer step (0.5 allows hitting values like 3e-5 ≈ 10^-4.5)
-        c_min_log, c_max_log = st.slider(
-            "Color Scale Range",
-            min_value=-12.0,
-            max_value=5.0,
-            value=(log_min_def, log_max_def),
-            step=0.5,
-            format="%.1f",
-        )
-
-        # Show the actual range in scientific notation
-        st.caption(f"Range: `{10**c_min_log:.1e}` to `{10**c_max_log:.1e}`")
-
-        # Log-transform for visualization (keeps logarithmic color scaling)
-        grid_log = np.log10(np.clip(grid.T, 1e-12, None))
-
-        # Create custom tick values in scientific notation
-        tick_vals = []
-        tick_text = []
-        for exp in range(int(np.floor(c_min_log)), int(np.ceil(c_max_log)) + 1):
-            tick_vals.append(exp)
-            tick_text.append(f"1e{exp}")
-
-        # Pre-compute hover text with scientific notation
-        hover_text = [
-            [
-                f"α: {alphas[i]:.3f}<br>β: {betas[j]:.3f}<br>Residual: {grid.T[j, i]:.2e}"
-                for i in range(len(alphas))
-            ]
-            for j in range(len(betas))
-        ]
-
-        fig_land = go.Figure()
-
-        # Use Contour with heatmap coloring (original style)
-        fig_land.add_trace(
-            go.Contour(
-                z=grid_log,
-                x=alphas,
-                y=betas,
-                colorscale="Plasma",
-                zmin=c_min_log,
-                zmax=c_max_log,
-                contours=dict(coloring="heatmap"),
-                colorbar=dict(
-                    title="Residual",
-                    len=0.5,
-                    tickvals=tick_vals,
-                    ticktext=tick_text,
-                ),
-                hoverinfo="text",
-                text=hover_text,
-            )
-        )
-
-        fig_land.add_trace(
+    st.subheader("Linesearch Landscape (Merit Function)")
+    
+    ls_data = load_linesearch_data(selected_file, sel_step, selected_newton_iter, sel_world, current_mtime)
+    
+    if ls_data is not None:
+        ls_steps, ls_norms, ls_min_idx = ls_data
+        
+        fig_ls = go.Figure()
+        
+        # Plot the curve
+        fig_ls.add_trace(
             go.Scatter(
-                x=traj_2d[:, 0],
-                y=traj_2d[:, 1],
+                x=ls_steps,
+                y=ls_norms,
                 mode="lines+markers",
-                line=dict(color="white"),
-                name="Path",
+                name="Merit Function",
+                line=dict(color="blue"),
+                marker=dict(size=6)
             )
         )
-
-        # Markers
-        fig_land.add_trace(
+        
+        # Highlight the selected step
+        chosen_step = ls_steps[ls_min_idx]
+        chosen_norm = ls_norms[ls_min_idx]
+        
+        fig_ls.add_trace(
             go.Scatter(
-                x=[traj_2d[0, 0]],
-                y=[traj_2d[0, 1]],
+                x=[chosen_step],
+                y=[chosen_norm],
                 mode="markers",
-                marker=dict(color="green", size=10),
-                name="Start",
+                name="Chosen Step",
+                marker=dict(color="red", size=12, symbol="star"),
+                text=[f"Step: {chosen_step:.2e}<br>Norm: {chosen_norm:.2e}"],
+                hoverinfo="text"
             )
         )
-        fig_land.add_trace(
-            go.Scatter(
-                x=[traj_2d[-1, 0]],
-                y=[traj_2d[-1, 1]],
-                mode="markers",
-                marker=dict(color="red", size=10, symbol="x"),
-                name="End",
-            )
+        
+        fig_ls.update_layout(
+            xaxis_title="Step Size (alpha)",
+            yaxis_title="Residual Norm ||h(alpha)||",
+            xaxis_type="log",
+            yaxis_type="log",
+            height=500,
+            margin=dict(t=0, b=0, l=0, r=0),
         )
+        st.plotly_chart(fig_ls, use_container_width=True)
+    else:
+        st.info("No linesearch data found for this iteration. Ensure `log_linesearch_data` is True.")
 
-        fig_land.update_layout(height=500, margin=dict(t=0, b=0, l=0, r=0))
-        st.plotly_chart(fig_land, width="stretch")
 
+# --- COL 2: MAX RESIDUAL PER ITERATION ---
 with col2:
-    st.subheader("Max Residual per Iteration")
+    st.subheader("Convergence History (Max Residual)")
 
-    N_u, N_j, N_n, N_f = dims
-    s_d = slice(0, N_u)
-    s_j = slice(N_u, N_u + N_j)
-    s_n = slice(N_u + N_j, N_u + N_j + N_n)
-    s_f = slice(N_u + N_j + N_n, N_u + N_j + N_n + N_f)
+    if h_hist is not None and dims is not None:
+        # Handle backward compatibility for files without N_ctrl in dims
+        if len(dims) == 5:
+            N_u, N_j, N_ctrl, N_n, N_f = dims
+        else:
+            N_u, N_j, N_n, N_f = dims
+            N_ctrl = 0
 
-    # Calculate Max(|h|) for each component
-    iters = np.arange(h_hist.shape[0])
+        s_d = slice(0, N_u)
+        s_j = slice(N_u, N_u + N_j)
+        s_ctrl = slice(N_u + N_j, N_u + N_j + N_ctrl)
+        s_n = slice(N_u + N_j + N_ctrl, N_u + N_j + N_ctrl + N_n)
+        s_f = slice(
+            N_u + N_j + N_ctrl + N_n, N_u + N_j + N_ctrl + N_n + N_f
+        )
 
-    # Compute max absolute error per iteration
-    max_d = np.max(np.abs(h_hist[:, s_d]), axis=1) if N_u > 0 else np.zeros(len(iters))
-    max_j = np.max(np.abs(h_hist[:, s_j]), axis=1) if N_j > 0 else np.zeros(len(iters))
-    max_n = np.max(np.abs(h_hist[:, s_n]), axis=1) if N_n > 0 else np.zeros(len(iters))
-    max_f = np.max(np.abs(h_hist[:, s_f]), axis=1) if N_f > 0 else np.zeros(len(iters))
+        # Calculate Max(|h|) for each component
+        iters = np.arange(h_hist.shape[0])
 
-    fig_max = go.Figure()
-    fig_max.add_trace(go.Scatter(x=iters, y=max_d, name="Dynamics", line=dict(dash="solid")))
-    fig_max.add_trace(go.Scatter(x=iters, y=max_j, name="Joints", line=dict(dash="dash")))
-    fig_max.add_trace(go.Scatter(x=iters, y=max_n, name="Contacts", line=dict(width=3)))
-    fig_max.add_trace(go.Scatter(x=iters, y=max_f, name="Friction", line=dict(dash="dot")))
+        def compute_stats(slice_obj, offset):
+            if slice_obj.start == slice_obj.stop:
+                return np.zeros(len(iters)), np.zeros(len(iters)), np.zeros(len(iters))
+            
+            data = h_hist[:, slice_obj]
+            # L2 Norm
+            norms = np.linalg.norm(data, axis=1)
+            # Max Absolute Value
+            abs_data = np.abs(data)
+            max_vals = np.max(abs_data, axis=1)
+            # Global Index of Max Value
+            max_idxs = np.argmax(abs_data, axis=1) + offset
+            return norms, max_vals, max_idxs
 
-    fig_max.update_layout(
-        yaxis_type="log",
-        yaxis_title="Max(|h|)",
-        xaxis_title="Newton Iteration",
-        height=500,
-        margin=dict(t=20, b=0, l=0, r=0),
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        norm_d, max_d, idx_d = compute_stats(s_d, s_d.start)
+        norm_j, max_j, idx_j = compute_stats(s_j, s_j.start)
+        norm_ctrl, max_ctrl, idx_ctrl = compute_stats(s_ctrl, s_ctrl.start)
+        norm_n, max_n, idx_n = compute_stats(s_n, s_n.start)
+        norm_f, max_f, idx_f = compute_stats(s_f, s_f.start)
+
+        # Total Norm
+        total_norm = np.linalg.norm(h_hist, axis=1)
+
+        fig_max = go.Figure()
+
+        def add_trace(name, x, y, max_vals, max_idxs, line_style=None, width=None):
+            hover_text = [
+                f"Iter: {i}<br>Norm: {y[i]:.2e}<br>Max: {max_vals[i]:.2e}<br>Idx: {int(max_idxs[i])}"
+                for i in range(len(x))
+            ]
+            fig_max.add_trace(
+                go.Scatter(
+                    x=x, 
+                    y=y, 
+                    name=name, 
+                    line=dict(dash=line_style, width=width),
+                    text=hover_text,
+                    hoverinfo="text+name"
+                )
+            )
+
+        add_trace("Dynamics", iters, norm_d, max_d, idx_d, line_style="solid")
+        add_trace("Joints", iters, norm_j, max_j, idx_j, line_style="dash")
+        add_trace("Control", iters, norm_ctrl, max_ctrl, idx_ctrl, line_style="longdash")
+        add_trace("Contacts", iters, norm_n, max_n, idx_n, width=3)
+        add_trace("Friction", iters, norm_f, max_f, idx_f, line_style="dot")
+        
+        # Add Total Norm Trace
+        fig_max.add_trace(
+            go.Scatter(
+                x=iters,
+                y=total_norm,
+                name="Total Norm",
+                line=dict(color="black", width=2),
+                text=[f"Iter: {i}<br>Total Norm: {total_norm[i]:.2e}" for i in range(len(iters))],
+                hoverinfo="text+name"
+            )
+        )
+        
+        # Add marker for current selected iteration
+        if selected_newton_iter < len(iters):
+             fig_max.add_vline(x=selected_newton_iter, line_width=1, line_dash="dash", line_color="grey")
+
+        fig_max.update_layout(
+            yaxis_type="log",
+            yaxis_title="L2 Norm ||h||",
+            xaxis_title="Newton Iteration",
+            height=500,
+            margin=dict(t=0, b=0, l=0, r=0),
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        )
+        st.plotly_chart(fig_max, width="stretch")
+    else:
+        st.warning("No history data available.")
+
+
+# --- LINEAR SOLVER CONVERGENCE ---
+st.markdown("---")
+st.subheader("Linear Solver Convergence")
+
+@st.cache_data
+def load_linear_history(file_path, step, newton_iter, _mtime):
+    """Loads linear solver history for a specific Newton iteration."""
+    with h5py.File(file_path, "r") as f:
+        # Check if linear solver history exists for this newton iter
+        key = f"timestep_{step:04d}/newton_iteration_{newton_iter:02d}/linear_solver_history"
+        if key not in f:
+            return None
+        
+        g = f[key]
+        return g["residual_sq_history"][:]
+
+lin_hist = load_linear_history(selected_file, sel_step, selected_newton_iter, current_mtime)
+
+if lin_hist is not None:
+    # lin_hist shape: (Linear_Iters + 1, Num_Worlds)
+    
+    # Extract for selected world
+    r_sq_world = lin_hist[:, sel_world]
+    r_norm_world = np.sqrt(r_sq_world)
+    
+    lin_iters = np.arange(len(r_norm_world))
+    
+    fig_lin = go.Figure()
+    fig_lin.add_trace(
+        go.Scatter(
+            x=lin_iters,
+            y=r_norm_world,
+            mode="lines+markers",
+            name=f"World {sel_world}",
+        )
     )
-    st.plotly_chart(fig_max, width="stretch")
+    
+    fig_lin.update_layout(
+        title=f"Linear Solve (Newton Iter {selected_newton_iter})",
+        xaxis_title="Linear Iteration",
+        yaxis_title="Residual Norm ||r||",
+        yaxis_type="log",
+        height=400
+    )
+    st.plotly_chart(fig_lin, use_container_width=True)
+else:
+    st.info(f"No linear solver history found for Newton Iteration {selected_newton_iter}.")

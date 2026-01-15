@@ -98,10 +98,10 @@ class HDF5Logger:
             return
 
         if isinstance(data.dtype, WpStruct):
-            print(
-                f"WARNING: 'log_wp_dataset' called on struct array '{name}'. "
-                f"Use 'log_struct_array' for better organization."
-            )
+            # Automatically delegate to struct logger for better organization
+            self.log_struct_array(name, data, attributes)
+            return
+
         self.log_np_dataset(name, data.numpy(), attributes)
 
     def _log_struct_recursive(self, struct_np: np.ndarray):
@@ -134,10 +134,7 @@ class HDF5Logger:
             return
 
         if not isinstance(data.dtype, WpStruct):
-            print(
-                f"Warning: 'log_struct_array' called on a non-struct array '{name}'."
-                f"Redirecting to 'log_wp_dataset'."
-            )
+            # If not a struct, fallback to standard WP dataset logging
             self.log_wp_dataset(name, data, attributes)
             return
 
