@@ -294,7 +294,7 @@ class AxionEngine(SolverBase):
                 device=self.device,
             )
 
-    def _execute_newton_step_math(self, dt: float, iter_idx: int = 0):
+    def _execute_newton_step_math(self, dt: float, iter_idx: int = 0, log_linear_solver: bool = False):
         """
         The pure physics logic.
         Uses PolymorphicScope to handle mode-specific instrumentation.
@@ -310,9 +310,10 @@ class AxionEngine(SolverBase):
             self.preconditioner.update()
 
         # Solve
+        solver_stats = None
         with self.events.linear_solve.scope(iter_idx=iter_idx):
             self.data._dbody_lambda.zero_()
-            self.cr_solver.solve(
+            solver_stats = self.cr_solver.solve(
                 A=self.A_op,
                 b=self.data.b,
                 x=self.data.dbody_lambda.full,
@@ -320,7 +321,7 @@ class AxionEngine(SolverBase):
                 iters=self.config.max_linear_iters,
                 tol=self.config.linear_tol,
                 atol=self.config.linear_atol,
-                log=False,  # Internal solver logging usually disabled in production
+                log=log_linear_solver,
             )
             compute_dbody_qd_from_dbody_lambda(self.data, self.config, self.dims)
 
@@ -329,6 +330,8 @@ class AxionEngine(SolverBase):
             perform_linesearch(self.axion_model, self.data, self.config, self.dims)
             update_body_q(self.axion_model, self.data, self.config, self.dims)
             self._update_mass_matrix()
+        
+        return solver_stats
 
     def _check_convergence_kernel_launch(self):
         """Helper to launch the convergence check kernel."""
@@ -373,12 +376,14 @@ class AxionEngine(SolverBase):
     def _solve_debug(self, dt: float):
         for i in range(self.config.max_newton_iters):
             # 1. Run Math (Signals fire automatically for start/end)
-            self._execute_newton_step_math(dt, iter_idx=i)
+            solver_stats = self._execute_newton_step_math(dt, iter_idx=i, log_linear_solver=True)
 
             # 2. Log Data Snapshot
             # (In debug mode, we assume HDF5 is enabled)
             if self.config.enable_hdf5_logging:
                 snapshot = self.data.get_snapshot()
+                if solver_stats:
+                    snapshot["linear_solver_stats"] = solver_stats
                 self.events.newton_iteration_end.emit(iter_idx=i, snapshot=snapshot)
 
             # 3. Check Convergence (CPU Sync required)

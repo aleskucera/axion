@@ -9,6 +9,7 @@ from typing import Dict
 from typing import List
 from typing import Optional
 
+import numpy as np
 import warp as wp
 from axion.core.engine_config import AxionEngineConfig
 from axion.logging import HDF5Logger
@@ -267,22 +268,15 @@ class HDF5Observer:
 
     def _log_iteration(self, iter_idx: int, snapshot: Dict, **kwargs):
         with self.logger.scope(f"newton_iteration_{iter_idx:02d}"):
-            # Unpack snapshot
-            if "dynamics" in snapshot and self.config.log_dynamics_state:
-                with self.logger.scope("Dynamics state"):
-                    for k, v in snapshot["dynamics"].items():
-                        self.logger.log_wp_dataset(k, v)
+            self._recursive_log(snapshot)
 
-            if "linear_system" in snapshot and self.config.log_linear_system_data:
-                with self.logger.scope("Linear system data"):
-                    for k, v in snapshot["linear_system"].items():
-                        self.logger.log_wp_dataset(k, v)
-
-            # Constraints
-            if "constraints" in snapshot:
-                for grp_name, data in snapshot["constraints"].items():
-                    # e.g. grp_name="Joint constraint data"
-                    # logic to match config flags can be added here
-                    with self.logger.scope(grp_name):
-                        for k, v in data.items():
-                            self.logger.log_wp_dataset(k, v)
+    def _recursive_log(self, data: Dict[str, Any]):
+        """Recursively logs a dictionary of data."""
+        for k, v in data.items():
+            if isinstance(v, dict):
+                with self.logger.scope(k):
+                    self._recursive_log(v)
+            elif isinstance(v, np.ndarray):
+                self.logger.log_np_dataset(k, v)
+            else:
+                self.logger.log_scalar(k, v)

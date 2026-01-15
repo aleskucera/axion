@@ -1,7 +1,7 @@
 # @package engine
 enable_timing: false
 enable_hdf5_logging: true
-hdf5_log_file: "simulation.h5"
+hdf5_log_file: "data/logs/${project_name}.h5"
 
 log_dynamics_state: true
 log_linear_system_data: true

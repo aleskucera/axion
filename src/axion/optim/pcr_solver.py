@@ -1,3 +1,4 @@
+import numpy as np
 import warp as wp
 from axion.tiled import TiledDot
 from warp.optim.linear import LinearOperator
@@ -303,8 +304,16 @@ class PCRSolver:
         # --- Capture and Run ---
         wp.capture_while(self.keep_running, solver_step)
 
-        return {
-            "final_residual_squared": self.r_sq,
-            "iterations": self.iter_count,
-            "residual_squared_history": self.history_r_sq,
-        }
+        if log:
+            iters_cpu = int(self.iter_count.numpy()[0])
+            # History buffer includes iter 0 + iters steps
+            hist_np = self.history_r_sq.numpy()[: iters_cpu + 1]
+            r_sq_np = self.r_sq.numpy()
+
+            return {
+                "final_residual_squared": r_sq_np,
+                "iterations": iters_cpu,
+                "residual_squared_history": hist_np,
+            }
+
+        return {}

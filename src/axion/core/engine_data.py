@@ -192,22 +192,45 @@ class EngineData:
     def set_dt(self, dt: float):
         object.__setattr__(self, "dt", dt)
 
+    def _serialize_to_numpy(self, data: Any) -> Any:
+        """
+        Recursively converts Warp arrays (and Views) into pure NumPy objects.
+        - wp.array -> np.ndarray
+        - Struct array -> dict of np.ndarrays (expanded fields)
+        - Scalar -> scalar
+        """
+        if data is None:
+            return None
+
+        # Handle Views or Arrays
+        if hasattr(data, "numpy"):
+            np_data = data.numpy()
+
+            # If it is a structured array (from a Warp Struct), expand it to a dict
+            if np_data.dtype.names:
+                return {name: self._serialize_to_numpy(np_data[name]) for name in np_data.dtype.names}
+            
+            return np_data
+        
+        return data
+
     def get_snapshot(self) -> Dict[str, Any]:
         """
         Returns a dictionary view of the current physics state.
         Decouples logging from internal data structure.
+        All data is converted to NumPy arrays or standard Python types.
         """
         snapshot = {}
 
         # 1. Dynamics
         snapshot["dynamics"] = {
-            "h_d": self.h.d,
-            "body_q": self.body_q,
-            "body_u": self.body_u,
-            "body_u_prev": self.body_u_prev,
-            "body_f": self.body_f,
-            "world_M": self.world_M,
-            "world_M_inv": self.world_M_inv,
+            "h_d": self._serialize_to_numpy(self.h.d),
+            "body_q": self._serialize_to_numpy(self.body_q),
+            "body_u": self._serialize_to_numpy(self.body_u),
+            "body_u_prev": self._serialize_to_numpy(self.body_u_prev),
+            "body_f": self._serialize_to_numpy(self.body_f),
+            "world_M": self._serialize_to_numpy(self.world_M),
+            "world_M_inv": self._serialize_to_numpy(self.world_M_inv),
         }
 
         # 2. Constraints
@@ -215,34 +238,34 @@ class EngineData:
 
         if self.dims.N_j > 0:
             constraints["Joint constraint data"] = {
-                "h": self.h.c.j,
-                "J_values": self.J_values.j,
-                "C_values": self.C_values.j,
-                "body_lambda": self.body_lambda.j,
+                "h": self._serialize_to_numpy(self.h.c.j),
+                "J_values": self._serialize_to_numpy(self.J_values.j),
+                "C_values": self._serialize_to_numpy(self.C_values.j),
+                "body_lambda": self._serialize_to_numpy(self.body_lambda.j),
             }
 
         if self.dims.N_ctrl > 0:
             constraints["Control constraint data"] = {
-                "h": self.h.c.ctrl,
-                "J_values": self.J_values.ctrl,
-                "C_values": self.C_values.ctrl,
-                "body_lambda": self.body_lambda.ctrl,
+                "h": self._serialize_to_numpy(self.h.c.ctrl),
+                "J_values": self._serialize_to_numpy(self.J_values.ctrl),
+                "C_values": self._serialize_to_numpy(self.C_values.ctrl),
+                "body_lambda": self._serialize_to_numpy(self.body_lambda.ctrl),
             }
 
         if self.dims.N_n > 0:
             constraints["Contact constraint data"] = {
-                "h": self.h.c.n,
-                "s": self.s_n,
-                "body_lambda": self.body_lambda.n,
+                "h": self._serialize_to_numpy(self.h.c.n),
+                "s": self._serialize_to_numpy(self.s_n),
+                "body_lambda": self._serialize_to_numpy(self.body_lambda.n),
             }
 
         snapshot["constraints"] = constraints
 
         # 3. Linear System
         snapshot["linear_system"] = {
-            "b": self.b,
-            "dbody_u": self.dbody_u,
-            "dbody_lambda": self.dbody_lambda.full,
+            "b": self._serialize_to_numpy(self.b),
+            "dbody_u": self._serialize_to_numpy(self.dbody_u),
+            "dbody_lambda": self._serialize_to_numpy(self.dbody_lambda.full),
         }
 
         return snapshot
