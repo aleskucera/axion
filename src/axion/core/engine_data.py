@@ -268,6 +268,40 @@ class EngineData:
             "dbody_lambda": self._serialize_to_numpy(self.dbody_lambda.full),
         }
 
+        # 4. History (if allocated)
+        if self.history:
+            history_snap = {}
+            
+            # Dynamics History
+            history_snap["dynamics"] = {
+                "h_d": self._serialize_to_numpy(self.history.h_history.d),
+                "body_q": self._serialize_to_numpy(self.history.body_q_history),
+                "body_u": self._serialize_to_numpy(self.history.body_u_history),
+            }
+
+            # Constraints History
+            constraints_hist = {}
+            if self.dims.N_j > 0:
+                constraints_hist["Joint constraint data"] = {
+                    "h": self._serialize_to_numpy(self.history.h_history.c.j),
+                    "body_lambda": self._serialize_to_numpy(self.history.body_lambda_history.j),
+                }
+            
+            if self.dims.N_ctrl > 0:
+                constraints_hist["Control constraint data"] = {
+                    "h": self._serialize_to_numpy(self.history.h_history.c.ctrl),
+                    "body_lambda": self._serialize_to_numpy(self.history.body_lambda_history.ctrl),
+                }
+
+            if self.dims.N_n > 0:
+                constraints_hist["Contact constraint data"] = {
+                    "h": self._serialize_to_numpy(self.history.h_history.c.n),
+                    "body_lambda": self._serialize_to_numpy(self.history.body_lambda_history.n),
+                }
+
+            history_snap["constraints"] = constraints_hist
+            snapshot["newton_history"] = history_snap
+
         return snapshot
 
     @staticmethod

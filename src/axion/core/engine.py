@@ -20,6 +20,7 @@ from axion.core.linear_utils import compute_linear_system
 from axion.core.linesearch_utils import perform_linesearch
 from axion.core.linesearch_utils import update_body_q
 from axion.core.model import AxionModel
+from axion.core.pca_utils import copy_state_to_history
 from axion.optim import JacobiPreconditioner
 from axion.optim import PCRSolver
 from axion.optim import SystemLinearData
@@ -374,11 +375,17 @@ class AxionEngine(SolverBase):
             self._execute_newton_step_math(dt, iter_idx=i)
 
     def _solve_debug(self, dt: float):
+        # 0. Capture Initial State (Iter 0)
+        copy_state_to_history(0, self.data, self.config, self.dims)
+
         for i in range(self.config.max_newton_iters):
             # 1. Run Math (Signals fire automatically for start/end)
             solver_stats = self._execute_newton_step_math(dt, iter_idx=i, log_linear_solver=True)
 
-            # 2. Log Data Snapshot
+            # 2. Capture Updated State (Iter i+1)
+            copy_state_to_history(i + 1, self.data, self.config, self.dims)
+
+            # 3. Log Data Snapshot
             # (In debug mode, we assume HDF5 is enabled)
             if self.config.enable_hdf5_logging:
                 snapshot = self.data.get_snapshot()
@@ -386,7 +393,7 @@ class AxionEngine(SolverBase):
                     snapshot["linear_solver_stats"] = solver_stats
                 self.events.newton_iteration_end.emit(iter_idx=i, snapshot=snapshot)
 
-            # 3. Check Convergence (CPU Sync required)
+            # 4. Check Convergence (CPU Sync required)
             self._check_convergence_kernel_launch()
             if self.keep_running.numpy()[0] == 0:
                 break
