@@ -1,5 +1,6 @@
 import os
 import pathlib
+import random
 from typing import Any
 from typing import Dict
 from typing import override
@@ -221,7 +222,7 @@ class MarvTrackedSimulator(AbstractSimulator):
 
     def _update_input(self):
         # Constants
-        MAX_SPEED = 1.0
+        MAX_SPEED = 0.75
         TURN_SPEED = 0.5
         FLIPPER_SPEED = 1.0
 
@@ -386,6 +387,55 @@ class MarvTrackedSimulator(AbstractSimulator):
                 cfg=ground_cfg,
             )
 
+        # Obstacle 2: Ramp
+        ramp_length = 5.0
+        ramp_width = 4.0
+        ramp_height = 1.0
+        ramp_angle = float(np.arctan2(ramp_height, ramp_length))
+
+        ramp_x = 7.0
+        ramp_y = 4.0
+        ramp_z = ramp_height / 2.0 - 0.05
+
+        q_ramp = wp.quat_from_axis_angle(wp.vec3(0.0, 1.0, 0.0), -ramp_angle)
+
+        self.builder.add_shape_box(
+            -1,
+            wp.transform(wp.vec3(ramp_x, ramp_y, ramp_z), q_ramp),
+            hx=ramp_length / 2.0,
+            hy=ramp_width / 2.0,
+            hz=0.05,
+            cfg=ground_cfg,
+        )
+
+        # Obstacle 3: Uneven terrain (Small boulders)
+        random.seed(42)
+        for _ in range(30):
+            rx = random.uniform(3.0, 12.0)
+            ry = random.uniform(-2.0, 2.0)
+            rz = 0.05
+            self.builder.add_shape_box(
+                -1,
+                wp.transform(
+                    wp.vec3(rx, ry, rz),
+                    wp.quat_from_axis_angle(wp.vec3(0.0, 0.0, 1.0), random.uniform(0, 3.14)),
+                ),
+                hx=random.uniform(0.15, 0.5),
+                hy=random.uniform(0.15, 0.5),
+                hz=random.uniform(0.05, 0.15),
+                cfg=ground_cfg,
+            )
+
+        # Obstacle 4: Large box in the middle
+        self.builder.add_shape_box(
+            -1,
+            wp.transform(wp.vec3(3.0, 0.0, 0.10), wp.quat_identity()),
+            hx=0.5,
+            hy=0.5,
+            hz=0.20,
+            cfg=ground_cfg,
+        )
+
         return self.builder.finalize_replicated(
             num_worlds=self.simulation_config.num_worlds, gravity=-9.81
         )
@@ -416,9 +466,7 @@ def marv_tracked_example(cfg: DictConfig):
     exec_config = hydra.utils.instantiate(cfg.execution)
     engine_config = hydra.utils.instantiate(cfg.engine)
 
-    simulator = MarvTrackedSimulator(
-        sim_config, render_config, exec_config, engine_config
-    )
+    simulator = MarvTrackedSimulator(sim_config, render_config, exec_config, engine_config)
     simulator.run()
 
 

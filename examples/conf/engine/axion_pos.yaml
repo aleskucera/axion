@@ -1,7 +1,7 @@
 # @package engine
 _target_: axion.AxionEngineConfig
-max_newton_iters: 16
-max_linear_iters: 32
+max_newton_iters: 8
+max_linear_iters: 8
 enable_linesearch: true
 linesearch_conservative_step_count: 16
 linesearch_conservative_upper_bound: 5e-2

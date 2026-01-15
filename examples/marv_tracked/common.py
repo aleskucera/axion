@@ -156,9 +156,9 @@ class MarvConfig:
     TRACK_ELEM_WIDTH = 0.1  # Width of the track pad
 
     # Control Gains
-    FLIPPER_KP = 50.0
-    FLIPPER_KD = 5.0
-    FLIPPER_KV = 200.0
+    FLIPPER_KP = 300.0
+    FLIPPER_KD = 50.0
+    FLIPPER_KV = 4000.0
 
 
 def _add_chassis(builder: newton.ModelBuilder, xform: wp.transform, is_visible: bool) -> int:

@@ -100,7 +100,7 @@ class HelhestObstacleSimulator(AbstractSimulator):
             xform=wp.transform((5.0, 0.0, 0.0), wp.quat_identity()),
             hx=0.5,
             hy=1.0,
-            hz=0.16,
+            hz=0.25,
             cfg=newton.ModelBuilder.ShapeConfig(
                 contact_margin=0.1,
                 mu=FRICTION,
@@ -113,13 +113,39 @@ class HelhestObstacleSimulator(AbstractSimulator):
             xform=wp.transform((8.0, 0.0, 0.0), wp.quat_identity()),
             hx=0.5,
             hy=1.0,
-            hz=0.22,
+            hz=0.40,
             cfg=newton.ModelBuilder.ShapeConfig(
                 contact_margin=0.1,
                 mu=FRICTION,
                 restitution=RESTITUTION,
             ),
         )
+
+        self.builder.add_shape_box(
+            body=-1,
+            xform=wp.transform((11.0, 0.0, 0.0), wp.quat_identity()),
+            hx=0.5,
+            hy=1.0,
+            hz=0.65,
+            cfg=newton.ModelBuilder.ShapeConfig(
+                contact_margin=0.1,
+                mu=FRICTION,
+                restitution=RESTITUTION,
+            ),
+        )
+
+        # self.builder.add_shape_box(
+        #     body=-1,
+        #     xform=wp.transform((14.0, 0.0, 0.0), wp.quat_identity()),
+        #     hx=0.5,
+        #     hy=1.0,
+        #     hz=0.80,
+        #     cfg=newton.ModelBuilder.ShapeConfig(
+        #         contact_margin=0.1,
+        #         mu=FRICTION,
+        #         restitution=RESTITUTION,
+        #     ),
+        # )
 
         # Ground plane
         self.builder.add_ground_plane(

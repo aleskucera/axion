@@ -63,7 +63,7 @@ class MarvControlSimulator(AbstractSimulator):
         # Constants
         MAX_SPEED = 10.0
         TURN_SPEED = 5.0
-        FLIPPER_SPEED = 0.05
+        FLIPPER_SPEED = 1.0
 
         # Reset drive speeds
         target_fwd = 0.0
@@ -162,7 +162,7 @@ class MarvControlSimulator(AbstractSimulator):
 
         # Add Ground
         ground_cfg = newton.ModelBuilder.ShapeConfig(
-            contact_margin=0.05, ke=1.0e4, kd=1.0e3, kf=1.0e3, mu=0.8, restitution=0.0
+            contact_margin=0.1, ke=1.0e4, kd=1.0e3, kf=1.0e3, mu=1.0, restitution=0.0
         )
         self.builder.add_ground_plane(cfg=ground_cfg)
 

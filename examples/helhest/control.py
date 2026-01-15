@@ -111,6 +111,7 @@ class HelhestControlSimulator(AbstractSimulator):
     @override
     def control_policy(self, current_state: newton.State):
         wp.copy(self.control.joint_target, self.joint_target)
+        wp.copy(self.control.joint_target_pos, self.joint_target)
 
     def build_model(self) -> newton.Model:
         # --- 1. Ground ---
