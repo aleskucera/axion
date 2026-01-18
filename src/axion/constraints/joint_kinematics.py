@@ -237,6 +237,83 @@ def get_revolute_angular_component(
 
 
 @wp.func
+def get_prismatic_linear_component(
+    pos_p: wp.vec3,
+    pos_c: wp.vec3,
+    com_p: wp.vec3,
+    r_c: wp.vec3,
+    X_wp: wp.transform,
+    axis_local: wp.vec3,
+    ortho_idx: wp.int32, # 0 or 1
+):
+    """
+    Constrains linear motion to be along the specified axis (allows sliding).
+    Constraints are generated for the two orthogonal axes.
+    """
+    q_p = wp.transform_get_rotation(X_wp)
+
+    # 1. Get the Orthogonal Basis in Parent Frame (World aligned)
+    # We rotate the local axis to world, then compute basis there?
+    # Or compute basis locally then rotate? result is same.
+    b1_local, b2_local = orthogonal_basis(axis_local)
+    
+    normal_vec = wp.vec3(0.0)
+    if ortho_idx == 0:
+        normal_vec = wp.quat_rotate(q_p, b1_local)
+    else:
+        normal_vec = wp.quat_rotate(q_p, b2_local)
+        
+    # 2. Compute Error
+    # Projection of separation vector onto the normal
+    # delta = pos_c - pos_p
+    # error = dot(delta, normal_vec)
+    delta = pos_c - pos_p
+    error = wp.dot(delta, normal_vec)
+    
+    # 3. Compute Jacobian
+    # J_c_lin = normal_vec
+    # J_c_ang = cross(r_c, normal_vec)
+    
+    # J_p_lin = -normal_vec
+    # J_p_ang = cross(normal_vec, r_p + delta) = cross(normal_vec, pos_c - com_p)
+    # Wait, let's stick to standard form: - ( v_p + w_p x r_p ) ...
+    # My previous derivation: J_p_ang = b1 x (r_p + delta)
+    # This is equivalent to cross(normal_vec, pos_c - com_p)
+    
+    r_p_plus_delta = pos_c - com_p
+    
+    ang_p = wp.cross(r_p_plus_delta, normal_vec) # This is -J_p_ang direction?
+    # J_p term in velocity constraint is J_p . u_p
+    # u_p = [w_p, v_p] (angular, linear) usually in warp spatial?
+    # Warp spatial vector: (w, v) or (v, w)?
+    # standard: (w, v) -> 0-2 angular, 3-5 linear.
+    # wp.spatial_vector(w, v)
+    
+    # J_p dot u_p = J_p_ang . w_p + J_p_lin . v_p
+    # My derivation:
+    # dC/dt = ... + w_p . (normal_vec x (pos_c - com_p)) - v_p . normal_vec
+    #       = w_p . (normal_vec x r_p_plus_delta) + v_p . (-normal_vec)
+    
+    # So J_p_ang = cross(normal_vec, r_p_plus_delta)
+    # J_p_lin = -normal_vec
+    
+    # Let's verify J_c:
+    # dC/dt = ... + v_c . normal_vec + w_c . (r_c x normal_vec)
+    # J_c_lin = normal_vec
+    # J_c_ang = cross(r_c, normal_vec)
+    
+    ang_c = wp.cross(r_c, normal_vec)
+    
+    # In Warp spatial_vector(v, w):
+    J_c = wp.spatial_vector(normal_vec, ang_c)
+    
+    ang_p = wp.cross(normal_vec, r_p_plus_delta)
+    J_p = wp.spatial_vector(-normal_vec, ang_p)
+    
+    return J_p, J_c, error
+
+
+@wp.func
 def vector_dot_axis(v: wp.vec3, axis_idx: wp.int32):
     if axis_idx == 0:
         return v[0]

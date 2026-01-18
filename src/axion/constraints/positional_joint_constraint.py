@@ -3,6 +3,7 @@ import warp as wp
 from .joint_kinematics import compute_joint_transforms
 from .joint_kinematics import get_angular_component
 from .joint_kinematics import get_linear_component
+from .joint_kinematics import get_prismatic_linear_component
 from .joint_kinematics import get_revolute_angular_component
 
 
@@ -90,6 +91,8 @@ def positional_joint_constraint_kernel(
         count = 3
     elif j_type == 3:  # FIXED
         count = 6
+    elif j_type == 0:  # PRISMATIC
+        count = 5
 
     start_offset = constraint_offsets[world_idx, joint_idx]
 
@@ -128,6 +131,7 @@ def positional_joint_constraint_kernel(
 
     # === LINEAR PART (XYZ) ===
     # REVOLUTE(1), BALL(2), FIXED(3)
+    # PRISMATIC(0) handles its linear part separately to allow sliding.
     if j_type == 1 or j_type == 2 or j_type == 3:
         for i in range(wp.static(3)):
             J_p, J_c, err = get_linear_component(r_p, r_c, pos_p, pos_c, i)
@@ -147,6 +151,52 @@ def positional_joint_constraint_kernel(
                 dt,
                 comp,
             )
+
+    # === PRISMATIC LINEAR (0) ===
+    if j_type == 0:
+        axis_idx_start = joint_qd_start[world_idx, joint_idx]
+        axis_local = joint_axis[world_idx, axis_idx_start]
+
+        # Ortho 1
+        J_p, J_c, err = get_prismatic_linear_component(
+            pos_p, pos_c, com_p, r_c, X_w_p, axis_local, 0
+        )
+        submit_position_component(
+            J_p,
+            J_c,
+            err,
+            world_idx,
+            start_offset + 0,
+            p_idx,
+            c_idx,
+            h_d,
+            h_j,
+            J_hat_j_values,
+            C_j_values,
+            body_lambda_j,
+            dt,
+            comp,
+        )
+        # Ortho 2
+        J_p, J_c, err = get_prismatic_linear_component(
+            pos_p, pos_c, com_p, r_c, X_w_p, axis_local, 1
+        )
+        submit_position_component(
+            J_p,
+            J_c,
+            err,
+            world_idx,
+            start_offset + 1,
+            p_idx,
+            c_idx,
+            h_d,
+            h_j,
+            J_hat_j_values,
+            C_j_values,
+            body_lambda_j,
+            dt,
+            comp,
+        )
 
     # === REVOLUTE ANGULAR (1) ===
     if j_type == 1:
@@ -190,8 +240,12 @@ def positional_joint_constraint_kernel(
             comp,
         )
 
-    # === FIXED ANGULAR (3) ===
-    if j_type == 3:
+    # === FIXED ANGULAR (3) or PRISMATIC (0) ===
+    if j_type == 3 or j_type == 0:
+        ang_offset = start_offset + 3
+        if j_type == 0:
+            ang_offset = start_offset + 2
+
         for i in range(wp.static(3)):
             J_p, J_c, err = get_angular_component(X_w_p, X_w_c, i)
             submit_position_component(
@@ -199,7 +253,7 @@ def positional_joint_constraint_kernel(
                 J_c,
                 err,
                 world_idx,
-                start_offset + 3 + i,
+                ang_offset + i,
                 p_idx,
                 c_idx,
                 h_d,
@@ -306,6 +360,7 @@ def batch_positional_joint_residual_kernel(
     # 3. Apply Constraints
 
     # === LINEAR (XYZ) ===
+    # PRISMATIC(0) handles its linear part separately to allow sliding.
     if j_type == 1 or j_type == 2 or j_type == 3:
         for i in range(wp.static(3)):
             J_p, J_c, err = get_linear_component(r_p, r_c, pos_p, pos_c, i)
@@ -324,6 +379,50 @@ def batch_positional_joint_residual_kernel(
                 dt,
                 compliance,
             )
+
+    # === PRISMATIC LINEAR (0) ===
+    if j_type == 0:
+        axis_idx_start = joint_qd_start[world_idx, joint_idx]
+        axis_local = joint_axis[world_idx, axis_idx_start]
+
+        # Ortho 1
+        J_p, J_c, err = get_prismatic_linear_component(
+            pos_p, pos_c, com_p, r_c, X_w_p, axis_local, 0
+        )
+        submit_batch_position_component(
+            J_p,
+            J_c,
+            err,
+            batch_idx,
+            world_idx,
+            start_offset + 0,
+            p_idx,
+            c_idx,
+            h_d,
+            h_j,
+            body_lambda_j,
+            dt,
+            compliance,
+        )
+        # Ortho 2
+        J_p, J_c, err = get_prismatic_linear_component(
+            pos_p, pos_c, com_p, r_c, X_w_p, axis_local, 1
+        )
+        submit_batch_position_component(
+            J_p,
+            J_c,
+            err,
+            batch_idx,
+            world_idx,
+            start_offset + 1,
+            p_idx,
+            c_idx,
+            h_d,
+            h_j,
+            body_lambda_j,
+            dt,
+            compliance,
+        )
 
     # === REVOLUTE (Angular) ===
     if j_type == 1:
@@ -365,8 +464,12 @@ def batch_positional_joint_residual_kernel(
             compliance,
         )
 
-    # === FIXED (Angular) ===
-    if j_type == 3:
+    # === FIXED (Angular) or PRISMATIC (0) ===
+    if j_type == 3 or j_type == 0:
+        ang_offset = start_offset + 3
+        if j_type == 0:
+            ang_offset = start_offset + 2
+
         for i in range(wp.static(3)):
             J_p, J_c, err = get_angular_component(X_w_p, X_w_c, i)
             submit_batch_position_component(
@@ -375,7 +478,7 @@ def batch_positional_joint_residual_kernel(
                 err,
                 batch_idx,
                 world_idx,
-                start_offset + 3 + i,
+                ang_offset + i,
                 p_idx,
                 c_idx,
                 h_d,
@@ -441,7 +544,7 @@ def fused_batch_positional_joint_residual_kernel(
         
     axis_idx = 0
     axis_local = wp.vec3(0.0)
-    if j_type == 1:
+    if j_type == 0 or j_type == 1:
         axis_idx = joint_qd_start[world_idx, joint_idx]
         axis_local = joint_axis[world_idx, axis_idx]
 
@@ -463,6 +566,7 @@ def fused_batch_positional_joint_residual_kernel(
         # 3. Apply Constraints
 
         # === LINEAR (XYZ) ===
+        # PRISMATIC(0) handles its linear part separately to allow sliding.
         if j_type == 1 or j_type == 2 or j_type == 3:
             for i in range(wp.static(3)):
                 J_p, J_c, err = get_linear_component(r_p, r_c, pos_p, pos_c, i)
@@ -474,6 +578,32 @@ def fused_batch_positional_joint_residual_kernel(
                     wp.atomic_add(h_d, b, world_idx, p_idx, -J_p * lam * dt)
                 wp.atomic_add(h_d, b, world_idx, c_idx, -J_c * lam * dt)
                 h_j[b, world_idx, c_idx_local] = (err + compliance * lam) / dt
+
+        # === PRISMATIC LINEAR (0) ===
+        if j_type == 0:
+            # Ortho 1
+            J_p, J_c, err = get_prismatic_linear_component(
+                pos_p, pos_c, com_p, r_c, X_w_p, axis_local, 0
+            )
+            
+            c_idx_local = start_offset + 0
+            lam = body_lambda_j[b, world_idx, c_idx_local]
+            if p_idx >= 0:
+                wp.atomic_add(h_d, b, world_idx, p_idx, -J_p * lam * dt)
+            wp.atomic_add(h_d, b, world_idx, c_idx, -J_c * lam * dt)
+            h_j[b, world_idx, c_idx_local] = (err + compliance * lam) / dt
+            
+            # Ortho 2
+            J_p, J_c, err = get_prismatic_linear_component(
+                pos_p, pos_c, com_p, r_c, X_w_p, axis_local, 1
+            )
+            
+            c_idx_local = start_offset + 1
+            lam = body_lambda_j[b, world_idx, c_idx_local]
+            if p_idx >= 0:
+                wp.atomic_add(h_d, b, world_idx, p_idx, -J_p * lam * dt)
+            wp.atomic_add(h_d, b, world_idx, c_idx, -J_c * lam * dt)
+            h_j[b, world_idx, c_idx_local] = (err + compliance * lam) / dt
 
         # === REVOLUTE (Angular) ===
         if j_type == 1:
@@ -497,12 +627,16 @@ def fused_batch_positional_joint_residual_kernel(
             wp.atomic_add(h_d, b, world_idx, c_idx, -J_c * lam * dt)
             h_j[b, world_idx, c_idx_local] = (err + compliance * lam) / dt
 
-        # === FIXED (Angular) ===
-        if j_type == 3:
+        # === FIXED (Angular) or PRISMATIC (0) ===
+        if j_type == 3 or j_type == 0:
+            ang_offset = start_offset + 3
+            if j_type == 0:
+                ang_offset = start_offset + 2
+
             for i in range(wp.static(3)):
                 J_p, J_c, err = get_angular_component(X_w_p, X_w_c, i)
                 
-                c_idx_local = start_offset + 3 + i
+                c_idx_local = ang_offset + i
                 lam = body_lambda_j[b, world_idx, c_idx_local]
                 if p_idx >= 0:
                     wp.atomic_add(h_d, b, world_idx, p_idx, -J_p * lam * dt)

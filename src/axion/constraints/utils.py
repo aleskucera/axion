@@ -202,7 +202,9 @@ def fill_joint_constraint_body_idx_kernel(
 
     # Determine constraint count
     count = 0
-    if j_type == 1:  # REVOLUTE
+    if j_type == 0:  # PRISMATIC
+        count = 5
+    elif j_type == 1:  # REVOLUTE
         count = 5
     elif j_type == 2:  # BALL
         count = 3
@@ -275,7 +277,9 @@ def fill_joint_constraint_active_mask_kernel(
     start_offset = constraint_offsets[world_idx, joint_idx]
 
     count = 0
-    if j_type == 1:  # REVOLUTE
+    if j_type == 0:  # PRISMATIC
+        count = 5
+    elif j_type == 1:  # REVOLUTE
         count = 5
     elif j_type == 2:  # BALL
         count = 3

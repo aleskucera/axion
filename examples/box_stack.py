@@ -35,9 +35,9 @@ class Simulator(AbstractSimulator):
         FRICTION = 0.5
         RESTITUTION = 0.0
         DENSITY = 1500.0
-        KE = 640000.0
-        KD = 30000.0
-        KF = 20000.0
+        KE = 10000000.0
+        KD = 200000.0
+        KF = 50000.0
 
         box1_hx = 0.2
         box2_hx = 0.8
