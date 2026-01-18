@@ -312,8 +312,8 @@ class NerdEngine(SolverBase):
         # Predict using self.nn_predictor
         state_predicted = self.nn_predictor.predict(self.step_cnt)
 
-        print(f"Step {self.step_cnt}: in: {state_robot_centric} ")
-        print(f"Step {self.step_cnt}: out: {state_predicted}")
+        # print(f"Step {self.step_cnt}: in: {state_robot_centric} ")
+        # print(f"Step {self.step_cnt}: out: {state_predicted}")
         
         if self.step_cnt < 500:
             write_state_to_csv(self.csv_filename, self.step_cnt, state_predicted)
@@ -326,7 +326,7 @@ class NerdEngine(SolverBase):
         # that's why I added minus here: 
         newton.eval_fk(self.model, -state_out.joint_q, -state_out.joint_qd, state_out)
 
-        print(state_out.joint_q, state_out.joint_qd)
+        # print(state_out.joint_q, state_out.joint_qd)
 
         # increase step counter
         self.step_cnt += 1

@@ -174,11 +174,10 @@ class Simulator(AbstractSimulator):
 
         self.builder.add_ground_plane()
 
-        model = self.builder.finalize()
-        return model
+        return self.builder.finalize_replicated(num_worlds=self.simulation_config.num_worlds)
 
 
-@hydra.main(config_path=str(CONFIG_PATH), config_name="nerdPendulum", version_base=None)
+@hydra.main(config_path=str(CONFIG_PATH), config_name="config", version_base=None)
 def basic_pendulum_example(cfg: DictConfig):
     sim_config: SimulationConfig = hydra.utils.instantiate(cfg.simulation)
     render_config: RenderingConfig = hydra.utils.instantiate(cfg.rendering)
