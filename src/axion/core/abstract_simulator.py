@@ -138,9 +138,7 @@ class AbstractSimulator(ABC):
             solver_kwargs.pop(k, None)
 
         if isinstance(self.engine_config, AxionEngineConfig):
-            self.solver = AxionEngine(
-                self.model, self.init_state_fn, self.engine_config
-            )
+            self.solver = AxionEngine(self.model, self.init_state_fn, self.engine_config)
         elif isinstance(self.engine_config, FeatherstoneEngineConfig):
             self.solver = SolverFeatherstone(self.model, **solver_kwargs)
         elif isinstance(self.engine_config, MuJoCoEngineConfig):
@@ -242,7 +240,7 @@ class AbstractSimulator(ABC):
             # Update attributes for logging
             self._current_step += 1
             self._current_time += self.effective_timestep
-        
+
         if isinstance(self.solver, AxionEngine):
             self.solver.events.record_timings()
 
@@ -252,7 +250,7 @@ class AbstractSimulator(ABC):
             self._capture_cuda_graph()
 
         wp.capture_launch(self.cuda_graph)
-        
+
         if isinstance(self.solver, AxionEngine):
             self.solver.events.record_timings()
 
@@ -308,13 +306,13 @@ class AbstractSimulator(ABC):
     def use_cuda_graph(self) -> bool:
         """Determines if conditions are met to use CUDA graph optimization."""
         # Disable graph if HDF5 logging is enabled (requires CPU execution)
-        if isinstance(self.engine_config, AxionEngineConfig) and self.engine_config.enable_hdf5_logging:
+        if (
+            isinstance(self.engine_config, AxionEngineConfig)
+            and self.engine_config.enable_hdf5_logging
+        ):
             return False
 
-        return (
-            self.execution_config.use_cuda_graph
-            and wp.get_device().is_cuda
-        )
+        return self.execution_config.use_cuda_graph and wp.get_device().is_cuda
 
     def _get_newton_iters(self) -> int:
         """Get the number of Newton iterations, or 0 if not using AxionEngine."""
