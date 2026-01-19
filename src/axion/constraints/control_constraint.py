@@ -40,6 +40,46 @@ def compute_revolute_q_qd(
 
 
 @wp.func
+def compute_prismatic_q_qd(
+    pos_p: wp.vec3,
+    pos_c: wp.vec3,
+    X_w_p: wp.transform,
+    axis_local: wp.vec3,
+    body_u_p: wp.spatial_vector,
+    body_u_c: wp.spatial_vector,
+    r_p: wp.vec3,
+    r_c: wp.vec3,
+):
+    # 1. q (Position along axis)
+    q_p = wp.transform_get_rotation(X_w_p)
+    axis_w = wp.quat_rotate(q_p, axis_local)
+
+    delta = pos_c - pos_p
+    q = wp.dot(delta, axis_w)
+
+    # 2. qd (Velocity along axis)
+    # u = (v, w)
+    w_p = wp.spatial_bottom(body_u_p)
+    v_p = wp.spatial_top(body_u_p)
+    w_c = wp.spatial_bottom(body_u_c)
+    v_c = wp.spatial_top(body_u_c)
+
+    # Velocity of attachment points
+    vel_c = v_c + wp.cross(w_c, r_c)
+    vel_p = v_p + wp.cross(w_p, r_p)
+
+    delta_dot = vel_c - vel_p
+
+    # Rate of change of axis (attached to parent)
+    axis_dot = wp.cross(w_p, axis_w)
+
+    # qd = d/dt(delta . axis) = delta_dot . axis + delta . axis_dot
+    qd = wp.dot(delta_dot, axis_w) + wp.dot(delta, axis_dot)
+
+    return q, qd
+
+
+@wp.func
 def get_control_component(
     X_w_p: wp.transform,
     axis_local: wp.vec3,
@@ -50,7 +90,7 @@ def get_control_component(
     dt: wp.float32,
 ):
     """
-    Computes Jacobian and Error for control constraint.
+    Computes Jacobian and Error for control constraint (Revolute).
     """
     J_p = wp.spatial_vector()
     J_c = wp.spatial_vector()
@@ -76,6 +116,49 @@ def get_control_component(
     elif mode == JointMode.TARGET_VELOCITY:
         # C(u) = qd - target = 0
         # h_c = qd - target
+        error = qd - target
+
+    return J_p, J_c, error
+
+
+@wp.func
+def get_prismatic_control_component(
+    r_c: wp.vec3,
+    pos_c: wp.vec3,
+    com_p: wp.vec3,
+    X_w_p: wp.transform,
+    axis_local: wp.vec3,
+    q: wp.float32,
+    qd: wp.float32,
+    target: wp.float32,
+    mode: wp.int32,
+    dt: wp.float32,
+):
+    """
+    Computes Jacobian and Error for prismatic control constraint.
+    """
+    q_p = wp.transform_get_rotation(X_w_p)
+    axis_w = wp.quat_rotate(q_p, axis_local)
+
+    # Child Jacobian
+    # Force: axis_w
+    # Torque: r_c x axis_w
+    ang_c = wp.cross(r_c, axis_w)
+    J_c = wp.spatial_vector(axis_w, ang_c)
+
+    # Parent Jacobian
+    # Force: -axis_w
+    # Torque: axis_w x (pos_c - com_p)
+    # Note: pos_c - com_p = r_p + delta
+    r_p_plus_delta = pos_c - com_p
+    ang_p = wp.cross(r_p_plus_delta, axis_w)
+    J_p = wp.spatial_vector(-axis_w, -ang_p)
+
+    # Error
+    error = 0.0
+    if mode == JointMode.TARGET_POSITION:
+        error = (q - target) / dt
+    elif mode == JointMode.TARGET_VELOCITY:
         error = qd - target
 
     return J_p, J_c, error
@@ -120,8 +203,8 @@ def control_constraint_kernel(
 
     j_type = joint_type[world_idx, joint_idx]
 
-    # Only support Revolute(1)
-    if j_type != 1:
+    # Support Revolute(1) and Prismatic(0)
+    if j_type != 1 and j_type != 0:
         return
 
     qd_start_idx = joint_qd_start[world_idx, joint_idx]
@@ -164,9 +247,29 @@ def control_constraint_kernel(
     if p_idx >= 0:
         body_u_p = body_u[world_idx, p_idx]
 
-    current_q, current_qd = compute_revolute_q_qd(X_w_p, X_w_c, axis_local, body_u_p, body_u_c)
+    current_q = 0.0
+    current_qd = 0.0
+    J_p = wp.spatial_vector()
+    J_c = wp.spatial_vector()
+    error_vel = 0.0
 
     target = joint_target[world_idx, qd_start_idx]
+
+    if j_type == 1:
+        # REVOLUTE
+        current_q, current_qd = compute_revolute_q_qd(X_w_p, X_w_c, axis_local, body_u_p, body_u_c)
+        J_p, J_c, error_vel = get_control_component(
+            X_w_p, axis_local, current_q, current_qd, target, mode, dt
+        )
+    elif j_type == 0:
+        # PRISMATIC
+        current_q, current_qd = compute_prismatic_q_qd(
+            pos_p, pos_c, X_w_p, axis_local, body_u_p, body_u_c, r_p, r_c
+        )
+        J_p, J_c, error_vel = get_prismatic_control_component(
+            r_c, pos_c, com_p, X_w_p, axis_local, current_q, current_qd, target, mode, dt
+        )
+
     ke = joint_target_ke[world_idx, qd_start_idx]
     kd = joint_target_kd[world_idx, qd_start_idx]
 
@@ -186,10 +289,6 @@ def control_constraint_kernel(
         denom = dt * ke
         if denom > 1e-6:
             alpha = 1.0 / denom
-
-    J_p, J_c, error_vel = get_control_component(
-        X_w_p, axis_local, current_q, current_qd, target, mode, dt
-    )
 
     # Submit constraint
     current_lambda = body_lambda_ctrl[world_idx, ctrl_offset]
@@ -247,8 +346,8 @@ def batch_control_constraint_residual_kernel(
 
     j_type = joint_type[world_idx, joint_idx]
 
-    # Only support Revolute(1)
-    if j_type != 1:
+    # Support Revolute(1) and Prismatic(0)
+    if j_type != 1 and j_type != 0:
         return
 
     qd_start_idx = joint_qd_start[world_idx, joint_idx]
@@ -290,9 +389,25 @@ def batch_control_constraint_residual_kernel(
     if p_idx >= 0:
         body_u_p = body_u[batch_idx, world_idx, p_idx]
 
-    current_q, current_qd = compute_revolute_q_qd(X_w_p, X_w_c, axis_local, body_u_p, body_u_c)
-
     target = joint_target[world_idx, qd_start_idx]
+
+    J_p = wp.spatial_vector()
+    J_c = wp.spatial_vector()
+    error_vel = 0.0
+
+    if j_type == 1:
+        current_q, current_qd = compute_revolute_q_qd(X_w_p, X_w_c, axis_local, body_u_p, body_u_c)
+        J_p, J_c, error_vel = get_control_component(
+            X_w_p, axis_local, current_q, current_qd, target, mode, dt
+        )
+    elif j_type == 0:
+        current_q, current_qd = compute_prismatic_q_qd(
+            pos_p, pos_c, X_w_p, axis_local, body_u_p, body_u_c, r_p, r_c
+        )
+        J_p, J_c, error_vel = get_prismatic_control_component(
+            r_c, pos_c, com_p, X_w_p, axis_local, current_q, current_qd, target, mode, dt
+        )
+
     ke = joint_target_ke[world_idx, qd_start_idx]
     kd = joint_target_kd[world_idx, qd_start_idx]
 
@@ -306,10 +421,6 @@ def batch_control_constraint_residual_kernel(
         denom = dt * ke
         if denom > 1e-6:
             alpha = 1.0 / denom
-
-    J_p, J_c, error_vel = get_control_component(
-        X_w_p, axis_local, current_q, current_qd, target, mode, dt
-    )
 
     # Submit constraint
     current_lambda = body_lambda_ctrl[batch_idx, world_idx, ctrl_offset]
@@ -362,8 +473,8 @@ def fused_batch_control_constraint_residual_kernel(
 
     j_type = joint_type[world_idx, joint_idx]
 
-    # Only support Revolute(1)
-    if j_type != 1:
+    # Support Revolute(1) and Prismatic(0)
+    if j_type != 1 and j_type != 0:
         return
 
     qd_start_idx = joint_qd_start[world_idx, joint_idx]
@@ -431,11 +542,22 @@ def fused_batch_control_constraint_residual_kernel(
         if p_idx >= 0:
             body_u_p = body_u[b, world_idx, p_idx]
 
-        current_q, current_qd = compute_revolute_q_qd(X_w_p, X_w_c, axis_local, body_u_p, body_u_c)
+        J_p = wp.spatial_vector()
+        J_c = wp.spatial_vector()
+        error_vel = 0.0
 
-        J_p, J_c, error_vel = get_control_component(
-            X_w_p, axis_local, current_q, current_qd, target, mode, dt
-        )
+        if j_type == 1:
+            current_q, current_qd = compute_revolute_q_qd(X_w_p, X_w_c, axis_local, body_u_p, body_u_c)
+            J_p, J_c, error_vel = get_control_component(
+                X_w_p, axis_local, current_q, current_qd, target, mode, dt
+            )
+        elif j_type == 0:
+            current_q, current_qd = compute_prismatic_q_qd(
+                pos_p, pos_c, X_w_p, axis_local, body_u_p, body_u_c, r_p, r_c
+            )
+            J_p, J_c, error_vel = get_prismatic_control_component(
+                r_c, pos_c, com_p, X_w_p, axis_local, current_q, current_qd, target, mode, dt
+            )
 
         # Submit constraint
         current_lambda = body_lambda_ctrl[b, world_idx, ctrl_offset]
@@ -461,8 +583,8 @@ def count_control_constraints_kernel(
     j_type = joint_type[world_idx, joint_idx]
 
     count = 0
-    # Only Revolute(1) supported for now
-    if j_type == 1:
+    # Support Revolute(1) and Prismatic(0)
+    if j_type == 1 or j_type == 0:
         qd_start = joint_qd_start[world_idx, joint_idx]
         mode = joint_dof_mode[world_idx, qd_start]
         if mode != 0:
@@ -521,8 +643,8 @@ def fill_control_constraint_body_idx_kernel(
     j_type = joint_type[world_idx, joint_idx]
 
     count = 0
-    # Only Revolute(1) supported for now
-    if j_type == 1:
+    # Support Revolute(1) and Prismatic(0)
+    if j_type == 1 or j_type == 0:
         qd_start = joint_qd_start[world_idx, joint_idx]
         mode = joint_dof_mode[world_idx, qd_start]
         if mode != 0:
@@ -538,4 +660,3 @@ def fill_control_constraint_body_idx_kernel(
 
     constraint_body_idx_ctrl[world_idx, offset, 0] = p_idx
     constraint_body_idx_ctrl[world_idx, offset, 1] = c_idx
-

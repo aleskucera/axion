@@ -32,7 +32,7 @@ class Simulator(AbstractSimulator):
         )
 
     def build_model(self) -> newton.Model:
-        FRICTION = 0.2
+        FRICTION = 0.4
         RESTITUTION = 0.0
         DENSITY = 1000.0
         KE = 200.0
@@ -53,6 +53,7 @@ class Simulator(AbstractSimulator):
                 mu=FRICTION,
                 restitution=RESTITUTION,
                 thickness=0.0,
+                contact_margin=0.3,
             ),
         )
 
@@ -89,6 +90,7 @@ class Simulator(AbstractSimulator):
                 mu=FRICTION,
                 restitution=RESTITUTION,
                 thickness=0.0,
+                contact_margin=0.3,
             ),
         )
 
@@ -107,6 +109,7 @@ class Simulator(AbstractSimulator):
                 mu=FRICTION,
                 restitution=RESTITUTION,
                 thickness=0.0,
+                contact_margin=0.3,
             ),
         )
 
@@ -127,6 +130,7 @@ class Simulator(AbstractSimulator):
                 mu=FRICTION,
                 restitution=RESTITUTION,
                 thickness=0.0,
+                contact_margin=0.3,
             ),
         )
 
@@ -137,6 +141,7 @@ class Simulator(AbstractSimulator):
                 kf=0.0,
                 mu=FRICTION,
                 restitution=RESTITUTION,
+                contact_margin=0.3,
             )
         )
 

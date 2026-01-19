@@ -10,11 +10,27 @@ from axion import EngineConfig
 from axion import ExecutionConfig
 from axion import RenderingConfig
 from axion import SimulationConfig
+from axion.core.control_utils import JointMode
 from omegaconf import DictConfig
 
 os.environ["PYOPENGL_PLATFORM"] = "glx"
 
 CONFIG_PATH = pathlib.Path(__file__).parent.joinpath("conf")
+
+
+@wp.kernel
+def compute_control(
+    dt: wp.float32,
+    time_seconds: wp.array(dtype=wp.float32),
+    joint_target: wp.array(dtype=wp.float32),
+):
+    wp.atomic_add(time_seconds, 0, dt)
+    t = time_seconds[0]
+    # if t < 0.1:
+    #     return
+
+    joint_target[0] = 1.0 * wp.sin(0.5 * wp.pi * t)
+    # wp.printf("Joint target: %f \n", joint_target[0])
 
 
 class Simulator(AbstractSimulator):
@@ -31,18 +47,19 @@ class Simulator(AbstractSimulator):
             exec_config,
             engine_config,
         )
+        self.time = wp.zeros(1, dtype=wp.float32)
 
     @override
     def control_policy(self, state: newton.State):
-        # Apply sinusoidal force to the prismatic joint
-        t = self._current_time
-        # Force amplitude 500.0, frequency 0.5 Hz (pi rad/s)
-        force = 500.0 * wp.sin(wp.pi * t)
-
-        # Apply to the single DOF of the prismatic joint
-        wp.copy(
-            self.control.joint_f,
-            wp.array([force], dtype=wp.float32, device=self.control.joint_f.device),
+        # wp.copy(
+        #     self.control.joint_target,
+        #     wp.array([target_pos], dtype=wp.float32, device=self.control.joint_target.device),
+        # )
+        wp.launch(
+            compute_control,
+            dim=1,
+            inputs=[self.effective_timestep, self.time],
+            outputs=[self.control.joint_target],
         )
 
     def build_model(self) -> newton.Model:
@@ -64,6 +81,7 @@ class Simulator(AbstractSimulator):
         hy = 0.5
         hz = 0.5
         link_0 = self.builder.add_link()
+        # self.slider_body is no longer needed for control, but keeping the link reference is fine
         self.builder.add_shape_box(link_0, hx=hx, hy=hy, hz=hz)
 
         # 3. Add Prismatic Joint along Y-axis
@@ -83,7 +101,25 @@ class Simulator(AbstractSimulator):
 
         self.builder.add_ground_plane()
 
-        return self.builder.finalize_replicated(num_worlds=self.simulation_config.num_worlds)
+        model = self.builder.finalize_replicated(num_worlds=self.simulation_config.num_worlds)
+
+        # Configure Control Mode: Position Control
+        wp.copy(
+            model.joint_dof_mode,
+            wp.array([int(JointMode.TARGET_POSITION)], dtype=wp.int32, device=model.device),
+        )
+        # Stiffness (Kp)
+        wp.copy(
+            model.joint_target_ke,
+            wp.array([1500.0], dtype=wp.float32, device=model.device),
+        )
+        # Damping (Kd)
+        wp.copy(
+            model.joint_target_kd,
+            wp.array([300.0], dtype=wp.float32, device=model.device),
+        )
+
+        return model
 
 
 @hydra.main(config_path=str(CONFIG_PATH), config_name="config", version_base=None)
@@ -105,4 +141,3 @@ def horizontal_slider_example(cfg: DictConfig):
 
 if __name__ == "__main__":
     horizontal_slider_example()
-
