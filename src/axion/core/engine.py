@@ -437,8 +437,6 @@ class AxionEngine(SolverBase):
         contacts: Contacts,
         dt: float,
     ):
-        # We can use scope() here too. In PRODUCTION, it's a pass.
-        # In TIMING, it records the whole step time.
         with self.events.step.scope(iter_idx=self._timestep):
 
             self.data.set_dt(dt)
@@ -454,8 +452,8 @@ class AxionEngine(SolverBase):
             self._solve_nonlinear_system(dt)
             self._finalize_step(state_out)
 
-        # After step, if timing, we might want to print
-        if self.events.current_mode == EngineMode.TIMING:
-            # Note: This requires synchronizing/reading back events
-            # Usually you'd do this once per second or at end of sim
-            pass
+        # # After step, if timing, we might want to print
+        # if self.events.current_mode == EngineMode.TIMING:
+        #     # Note: This requires synchronizing/reading back events
+        #     # Usually you'd do this once per second or at end of sim
+        #     pass

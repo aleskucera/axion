@@ -2,6 +2,7 @@ import math
 from abc import ABC
 from abc import abstractmethod
 from dataclasses import dataclass
+from enum import Enum
 from typing import Literal
 from typing import Optional
 
@@ -23,6 +24,24 @@ from .engine_config import XPBDEngineConfig
 from .model_builder import AxionModelBuilder
 
 
+class SyncMode(Enum):
+    """Defines how the simulator synchronizes physics time with render time."""
+
+    ALIGN_DT_TO_FPS = 0
+    """
+    Priority: Rendering FPS.
+    The physics timestep is adjusted (shortened) so that an integer number of 
+    steps fit exactly into one render frame.
+    """
+
+    ALIGN_FPS_TO_DT = 1
+    """
+    Priority: Physics Timestep.
+    The rendering FPS is adjusted so that one frame equals exactly one physics 
+    timestep (or the configured number of steps per segment).
+    """
+
+
 @dataclass
 class SimulationConfig:
     """Parameters defining the simulation's timeline."""
@@ -30,6 +49,7 @@ class SimulationConfig:
     duration_seconds: float = 3.0
     target_timestep_seconds: float = 1e-3
     num_worlds: int = 1
+    sync_mode: SyncMode = SyncMode.ALIGN_FPS_TO_DT
 
 
 @dataclass
@@ -54,11 +74,17 @@ class ExecutionConfig:
 # --- Timing Calculation Helpers ---
 
 
-def calculate_render_aligned_timestep(target_timestep_seconds: float, fps: int):
+def calculate_render_aligned_timestep(
+    target_timestep_seconds: float, fps: int, force_even: bool = True
+):
     """Calculates an effective timestep that aligns perfectly with render frame duration."""
     frame_duration = 1.0 / fps
     ideal_steps_per_frame = frame_duration / target_timestep_seconds
     steps_per_frame = round(ideal_steps_per_frame) or 1
+
+    if force_even and steps_per_frame % 2 != 0:
+        steps_per_frame += 1
+
     effective_timestep = frame_duration / steps_per_frame
 
     adj_ratio = abs(effective_timestep - target_timestep_seconds) / target_timestep_seconds
@@ -124,7 +150,6 @@ class AbstractSimulator(ABC):
         self.contacts = self.model.collide(self.current_state)
 
         # Prepare kwargs for third-party solvers (non-Axion)
-        # We filter out Axion-specific logging configuration
         solver_kwargs = vars(self.engine_config).copy()
         axion_logging_keys = [
             "enable_timing",
@@ -166,7 +191,11 @@ class AbstractSimulator(ABC):
         self.viewer.set_model(self.model)
         self.viewer.set_world_offsets((20.0, 20.0, 0.0))
 
-        self.cuda_graph: Optional[wp.Graph] = None
+        # CUDA Graph Storage (Double Buffered for Odd steps)
+        # Graph A -> B
+        self.cuda_graph_primary: Optional[wp.Graph] = None
+        # Graph B -> A (Only used if steps_per_segment is ODD)
+        self.cuda_graph_secondary: Optional[wp.Graph] = None
 
     def run(self):
         """Main entry point to start the simulation."""
@@ -187,6 +216,9 @@ class AbstractSimulator(ABC):
                     segment_num += 1
                     pbar.update(1)
                 self._render(segment_num)
+
+                if self.rendering_config.vis_type == "gl":
+                    wp.synchronize()
         finally:
             pbar.close()
 
@@ -246,21 +278,54 @@ class AbstractSimulator(ABC):
 
     def _run_segment_with_graph(self, segment_num: int):
         """Runs a segment by launching a pre-captured CUDA graph."""
-        if self.cuda_graph is None:
-            self._capture_cuda_graph()
 
-        wp.capture_launch(self.cuda_graph)
+        # If we haven't captured graphs yet, do so now.
+        if self.cuda_graph_primary is None:
+            self._capture_cuda_graphs()
+
+        # If steps are even: Pointers always start at A and end at A.
+        # We always use the primary graph.
+        if self.steps_per_segment % 2 == 0:
+            wp.capture_launch(self.cuda_graph_primary)
+
+        # If steps are odd: Pointers toggle A->B, then B->A.
+        # Segment 0, 2, 4... (Even Segments): Start at A, use Primary (A->B).
+        # Segment 1, 3, 5... (Odd Segments): Start at B, use Secondary (B->A).
+        else:
+            if segment_num % 2 == 0:
+                wp.capture_launch(self.cuda_graph_primary)
+            else:
+                wp.capture_launch(self.cuda_graph_secondary)
 
         if isinstance(self.solver, AxionEngine):
             self.solver.events.record_timings()
 
-    def _capture_cuda_graph(self):
-        """Records the sequence of operations for one segment into a CUDA graph."""
+    def _capture_cuda_graphs(self):
+        """
+        Records the sequence of operations into CUDA graphs.
+        If steps_per_segment is ODD, we record two graphs (ping-pong) to handle pointer swapping.
+        """
         n_steps = self.steps_per_segment
+
+        # Capture Graph 1 (Primary): Starts with current state pointers (A -> ...)
+        print(f"INFO: Capturing CUDA Graph (Primary, steps={n_steps})...")
         with wp.ScopedCapture() as capture:
             for i in range(n_steps):
                 self._single_physics_step(i)
-        self.cuda_graph = capture.graph
+        self.cuda_graph_primary = capture.graph
+
+        # If steps are even, we are done. The python pointer swap in _single_physics_step
+        # happened an even number of times, so self.current_state is back to "A".
+
+        # If steps are odd, self.current_state is now "B". We must capture the return trip.
+        if n_steps % 2 != 0:
+            print(f"INFO: Capturing CUDA Graph (Secondary/Return, steps={n_steps})...")
+            with wp.ScopedCapture() as capture:
+                for i in range(n_steps):
+                    self._single_physics_step(i)
+            self.cuda_graph_secondary = capture.graph
+
+            # Now self.current_state is back to "A".
 
     def _single_physics_step(self, step_num: int):
         """Performs one fundamental integration step of the simulation."""
@@ -285,15 +350,52 @@ class AbstractSimulator(ABC):
 
     def _resolve_timing_parameters(self):
         """
-        Calculates all operational timing parameters based on user configuration,
-        ensuring alignment between simulation, rendering, and segmentation.
+        Calculates timing parameters based on configuration and SyncMode.
         """
-        if self.rendering_config.vis_type == "usd":
-            self.effective_timestep, self.steps_per_segment = calculate_render_aligned_timestep(
-                self.simulation_config.target_timestep_seconds, self.rendering_config.target_fps
-            )
+        mode = self.simulation_config.sync_mode
+        target_dt = self.simulation_config.target_timestep_seconds
+
+        if self.rendering_config.vis_type in ["usd", "gl"]:
+            target_fps = self.rendering_config.target_fps
+
+            # --- STRATEGY 0: MODIFY DT (Fit Physics into Frame) ---
+            if mode == SyncMode.ALIGN_DT_TO_FPS:
+                # We adjust the timestep so it fits perfectly into the target FPS.
+                # We allow odd steps because our CUDA graph logic now handles it.
+                self.effective_timestep, self.steps_per_segment = calculate_render_aligned_timestep(
+                    target_dt, target_fps, force_even=False
+                )
+
+            # --- STRATEGY 1: MODIFY FPS (Fit Frame around Physics) ---
+            elif mode == SyncMode.ALIGN_FPS_TO_DT:
+                # We keep the requested timestep EXACT.
+                self.effective_timestep = target_dt
+
+                # Calculate how many of these exact steps fit into the requested frame duration
+                target_frame_duration = 1.0 / target_fps
+                ideal_steps = round(target_frame_duration / target_dt)
+
+                # Ensure at least 1 step (if physics step > frame duration)
+                self.steps_per_segment = max(1, ideal_steps)
+
+                # The resulting frame duration is purely a multiple of the physics step.
+                # This might result in an FPS that is slightly different from target_fps,
+                # but it guarantees the physics dt is preserved.
+                actual_frame_duration = self.steps_per_segment * self.effective_timestep
+                new_fps = 1.0 / actual_frame_duration
+
+                # Only log if there is a significant change in FPS
+                if abs(new_fps - target_fps) > 0.1:
+                    print(
+                        f"\nINFO: Rendering FPS adjusted from {target_fps} to {new_fps:.2f} "
+                        f"to maintain fixed timestep {target_dt*1000:.1f}ms "
+                        f"({self.steps_per_segment} steps/frame)."
+                    )
+                self.rendering_config.target_fps = new_fps
+
         else:
-            self.effective_timestep = self.simulation_config.target_timestep_seconds
+            # Headless / Null mode
+            self.effective_timestep = target_dt
             self.steps_per_segment = self.execution_config.headless_steps_per_segment
 
         self.effective_duration, self.num_segments = align_duration_to_segment(

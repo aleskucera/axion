@@ -116,11 +116,24 @@ def positional_joint_constraint_kernel(
     # Axis (for Revolute/Prismatic)
     axis_local = wp.vec3(0.0)
     if j_type == 0 or j_type == 1:
-        # FIXED: Access by joint_idx directly
-        axis_local = joint_axis[world_idx, joint_idx]
+        # Revert to using qd_start to find the correct packed axis
+        axis_idx = joint_qd_start[world_idx, joint_idx]
+        axis_local = joint_axis[world_idx, axis_idx]
+
+    row_count = 0
+    if j_type == 0:  # Prismatic
+        row_count = 5
+    elif j_type == 1:  # Revolute
+        row_count = 5
+    elif j_type == 2:  # Ball
+        row_count = 3
+    elif j_type == 3:  # Fixed
+        row_count = 6
 
     # Process all possible 6 rows
     for i in range(wp.static(6)):
+        if i >= row_count:
+            continue  # [FIX] Stop processing to prevent overwriting next joint's memory
         J_p, J_c, err, active = compute_joint_row(
             j_type, i, X_w_p, X_w_c, r_p, r_c, pos_p, pos_c, com_p, axis_local
         )
@@ -203,11 +216,25 @@ def positional_joint_residual_kernel(
     # Axis (for Revolute/Prismatic)
     axis_local = wp.vec3(0.0)
     if j_type == 0 or j_type == 1:
-        # FIXED: Access by joint_idx directly
-        axis_local = joint_axis[world_idx, joint_idx]
+        # Revert to using qd_start to find the correct packed axis
+        axis_idx = joint_qd_start[world_idx, joint_idx]
+        axis_local = joint_axis[world_idx, axis_idx]
+
+    row_count = 0
+    if j_type == 0:  # Prismatic
+        row_count = 5
+    elif j_type == 1:  # Revolute
+        row_count = 5
+    elif j_type == 2:  # Ball
+        row_count = 3
+    elif j_type == 3:  # Fixed
+        row_count = 6
 
     # Process all possible 6 rows
     for i in range(wp.static(6)):
+        if i >= row_count:
+            continue  # [FIX] Stop processing to prevent overwriting next joint's memory
+
         J_p, J_c, err, active = compute_joint_row(
             j_type, i, X_w_p, X_w_c, r_p, r_c, pos_p, pos_c, com_p, axis_local
         )
@@ -275,12 +302,27 @@ def batch_positional_joint_residual_kernel(
         com_p = body_com[world_idx, p_idx]
     X_w_p, r_p, pos_p = compute_joint_transforms(X_body_p, com_p, joint_X_p[world_idx, joint_idx])
 
-    # FIXED: Access by joint_idx directly
+    # Axis (for Revolute/Prismatic)
     axis_local = wp.vec3(0.0)
     if j_type == 0 or j_type == 1:
-        axis_local = joint_axis[world_idx, joint_idx]
+        # Revert to using qd_start to find the correct packed axis
+        axis_idx = joint_qd_start[world_idx, joint_idx]
+        axis_local = joint_axis[world_idx, axis_idx]
+
+    row_count = 0
+    if j_type == 0:  # Prismatic
+        row_count = 5
+    elif j_type == 1:  # Revolute
+        row_count = 5
+    elif j_type == 2:  # Ball
+        row_count = 3
+    elif j_type == 3:  # Fixed
+        row_count = 6
 
     for i in range(wp.static(6)):
+        if i >= row_count:
+            continue  # [FIX] Stop processing to prevent overwriting next joint's memory
+
         J_p, J_c, err, active = compute_joint_row(
             j_type, i, X_w_p, X_w_c, r_p, r_c, pos_p, pos_c, com_p, axis_local
         )
@@ -338,10 +380,12 @@ def fused_batch_positional_joint_residual_kernel(
     if p_idx >= 0:
         com_p = body_com[world_idx, p_idx]
 
-    # FIXED: Access by joint_idx directly
+    # Axis (for Revolute/Prismatic)
     axis_local = wp.vec3(0.0)
     if j_type == 0 or j_type == 1:
-        axis_local = joint_axis[world_idx, joint_idx]
+        # Revert to using qd_start to find the correct packed axis
+        axis_idx = joint_qd_start[world_idx, joint_idx]
+        axis_local = joint_axis[world_idx, axis_idx]
 
     # Loop batches
     for b in range(num_batches):
@@ -354,7 +398,20 @@ def fused_batch_positional_joint_residual_kernel(
             X_body_p = body_q[b, world_idx, p_idx]
         X_w_p, r_p, pos_p = compute_joint_transforms(X_body_p, com_p, joint_X_p_val)
 
+        row_count = 0
+        if j_type == 0:  # Prismatic
+            row_count = 5
+        elif j_type == 1:  # Revolute
+            row_count = 5
+        elif j_type == 2:  # Ball
+            row_count = 3
+        elif j_type == 3:  # Fixed
+            row_count = 6
+
         for i in range(wp.static(6)):
+            if i >= row_count:
+                continue  # [FIX] Stop processing to prevent overwriting next joint's memory
+
             J_p, J_c, err, active = compute_joint_row(
                 j_type, i, X_w_p, X_w_c, r_p, r_c, pos_p, pos_c, com_p, axis_local
             )

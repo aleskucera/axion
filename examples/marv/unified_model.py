@@ -39,7 +39,7 @@ class Simulator(AbstractSimulator):
         # Marv has:
         # 1 Free Joint (7 DOFs: 3 pos + 4 quat) OR (6 DOFs if handled as spatial vec) -> Axion usually 6 for free
         # 4 Flippers (Position Control)
-        # 16 Wheels (Velocity Control)
+        # 16 Wheels (Position Control)
 
         # Axion Joint Layout usually: [Base, Joints...]
         # We need to target indices.
@@ -50,30 +50,22 @@ class Simulator(AbstractSimulator):
 
         # Let's define default targets
         # Flippers: 0.0 rad (flat)
-        # Wheels: 5.0 rad/s (drive forward)
+        # Wheels: driving forward
 
         # We construct a full target vector.
         # Total DOFs = 6 (Base) + 4 * 5 = 26.
 
         self.num_dofs = 26
+        
+        self.drive_speed = 10.0
+        self.wheel_pos = 0.0
+        
+        # Initial targets (zeros)
         target_np = np.zeros(self.num_dofs, dtype=np.float32)
-
-        # Set Wheel Velocity Targets (Indices relative to start of articulation DOFs)
-        # Each leg has 5 joints.
-        # Leg 1 (FL): Joint 6 is flipper, 7-10 are wheels.
-        # Leg 2 (FR): Joint 11 is flipper, 12-15 are wheels.
-        # ...
-
-        drive_speed = 10.0
-
-        for leg in range(4):
-            base_idx = 6 + leg * 5
-            # target_np[base_idx] = 0.0 # Flipper Position
-            target_np[base_idx + 1 : base_idx + 5] = drive_speed  # Wheel Velocities
 
         # Replicate for num_worlds
         full_target = np.tile(target_np, self.simulation_config.num_worlds)
-        self.joint_targets = wp.from_numpy(full_target, dtype=wp.float32)
+        self.joint_targets = wp.from_numpy(full_target, dtype=wp.float32, device=self.model.device)
 
     @override
     def init_state_fn(self, current_state, next_state, contacts, dt):
@@ -81,8 +73,24 @@ class Simulator(AbstractSimulator):
 
     @override
     def control_policy(self, current_state):
+        # Update wheel position
+        dt = self.effective_timestep
+        self.wheel_pos += self.drive_speed * dt
+        
+        # Build target array on CPU
+        target_np = np.zeros(self.num_dofs, dtype=np.float32)
+        
+        for leg in range(4):
+            base_idx = 6 + leg * 5
+            # target_np[base_idx] = 0.0 # Flipper Position
+            target_np[base_idx + 1 : base_idx + 5] = self.wheel_pos
+
+        # Replicate and upload
+        full_target = np.tile(target_np, self.simulation_config.num_worlds)
+        wp.copy(self.joint_targets, wp.array(full_target, dtype=wp.float32, device=self.model.device))
+
         # Apply targets to the control buffer
-        wp.copy(self.control.joint_target, self.joint_targets)
+        wp.copy(self.control.joint_target_pos, self.joint_targets)
 
     def build_model(self) -> newton.Model:
         # Create Marv at a slight height

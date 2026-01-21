@@ -45,15 +45,16 @@ class MarvConfig:
         {"pos": 0.29, "radius": 0.095},  # wheel_4
     ]
 
-    WHEEL_MASS = 0.1
+    WHEEL_MASS = 1.0
     # Simple Sphere Inertia: 2/5 * m * r^2
-    _Iw = 0.4 * 0.1 * (0.1**2)
+    _Iw = 0.4 * 1.0 * (0.1**2)
     WHEEL_I = wp.mat33(_Iw, 0.0, 0.0, 0.0, _Iw, 0.0, 0.0, 0.0, _Iw)
 
     # Control Gains
-    FLIPPER_KP = 50.0
-    FLIPPER_KD = 5.0  # Estimated damping
-    WHEEL_KV = 5.0  # Velocity gain
+    FLIPPER_KP = 500.0
+    FLIPPER_KD = 50.0  # Estimated damping
+    WHEEL_KV = 50.0  # Velocity gain
+    WHEEL_KP = 500.0  # Position gain
 
 
 def _add_chassis(builder: newton.ModelBuilder, xform: wp.transform, is_visible: bool) -> int:
@@ -149,10 +150,12 @@ def _create_flipper_leg(
             parent_xform=wp.transform(w_pos_local, wp.quat_identity()),
             child_xform=wp.transform_identity(),
             axis=(0.0, 0.0, 1.0),
+            target_ke=MarvConfig.WHEEL_KP,
             target_kd=MarvConfig.WHEEL_KV,
             key=f"{name_prefix}_wheel_joint_{i+1}",
             custom_attributes={
-                "joint_dof_mode": [JointMode.TARGET_VELOCITY],
+                "joint_dof_mode": [JointMode.TARGET_POSITION],
+                "joint_target": [0.0],
             },
         )
         created_joints.append(j_wheel)

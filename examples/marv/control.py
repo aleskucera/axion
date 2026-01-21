@@ -53,6 +53,8 @@ class MarvControlSimulator(AbstractSimulator):
         # State tracking for smooth control
         self.flipper_pos_front = 0.0
         self.flipper_pos_rear = 0.0
+        self.wheel_pos_left = 0.0
+        self.wheel_pos_right = 0.0
 
     @override
     def _run_simulation_segment(self, segment_num: int):
@@ -61,9 +63,9 @@ class MarvControlSimulator(AbstractSimulator):
 
     def _update_input(self):
         # Constants
-        MAX_SPEED = 10.0
-        TURN_SPEED = 5.0
-        FLIPPER_SPEED = 1.0
+        MAX_SPEED = 30.0
+        TURN_SPEED = 50.0
+        FLIPPER_SPEED = 0.1
 
         # Reset drive speeds
         target_fwd = 0.0
@@ -96,8 +98,8 @@ class MarvControlSimulator(AbstractSimulator):
                 self.flipper_pos_rear -= FLIPPER_SPEED
 
             # Normalize angles to [-pi, pi]
-            self.flipper_pos_front = (self.flipper_pos_front + np.pi) % (2 * np.pi) - np.pi
-            self.flipper_pos_rear = (self.flipper_pos_rear + np.pi) % (2 * np.pi) - np.pi
+            self.flipper_pos_front = (self.flipper_pos_front + np.pi) - np.pi
+            self.flipper_pos_rear = (self.flipper_pos_rear + np.pi) - np.pi
 
         # Apply logic
         # Differential drive:
@@ -106,25 +108,30 @@ class MarvControlSimulator(AbstractSimulator):
         left_vel = target_fwd - target_turn
         right_vel = target_fwd + target_turn
 
+        # Integrate wheel positions
+        dt = self.effective_timestep
+        self.wheel_pos_left += left_vel * dt
+        self.wheel_pos_right += right_vel * dt
+
         # Build target array on CPU
         targets = np.zeros(self.num_dofs, dtype=np.float32)
 
         # Indices mapping
         # FL (Left): 6-10
         targets[6] = self.flipper_pos_front
-        targets[7:11] = left_vel
+        targets[7:11] = self.wheel_pos_left
 
         # FR (Right): 11-15
         targets[11] = self.flipper_pos_front
-        targets[12:16] = right_vel
+        targets[12:16] = self.wheel_pos_right
 
         # RL (Left): 16-20
         targets[16] = self.flipper_pos_rear
-        targets[17:21] = left_vel
+        targets[17:21] = self.wheel_pos_left
 
         # RR (Right): 21-25
         targets[21] = self.flipper_pos_rear
-        targets[22:26] = right_vel
+        targets[22:26] = self.wheel_pos_right
 
         # Copy to GPU
         # Note: We tile this for num_worlds if we support parallel envs,
@@ -154,7 +161,8 @@ class MarvControlSimulator(AbstractSimulator):
 
     @override
     def control_policy(self, current_state: newton.State):
-        wp.copy(self.control.joint_target, self.joint_target)
+        print(self.joint_target)
+        wp.copy(self.control.joint_target_pos, self.joint_target)
 
     def build_model(self) -> newton.Model:
         # Create Marv
