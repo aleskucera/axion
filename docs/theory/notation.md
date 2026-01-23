@@ -15,7 +15,8 @@ This table defines the symbols used to represent the size of various vectors and
 | \(n_b\) | **Number of Bilateral Constraints** | The number of active bilateral (joint) constraint equations. |
 | \(n_n\) | **Number of Unilateral Constraints** | The number of active unilateral (contact) constraint equations. |
 | \(n_f\) | **Number of Frictional Constraints** | The number of active frictional constraint equations (typically 2 per contact). |
-| \(n_c\) | **Total Number of Constraints** | The sum of all active constraints: \(n_c = n_b + n_n + n_f\). |
+| \(n_{\text{ctrl}}\) | **Number of Control Constraints** | The number of active control constraint equations. |
+| \(n_c\) | **Total Number of Constraints** | The sum of all active constraints: \(n_c = n_b + n_n + n_f + n_{\text{ctrl}}\). |
 
 **Note on \(n_q\) vs \(n_u\):** The relationship between configuration and velocity dimensions depends on the object representation:
 
@@ -46,6 +47,7 @@ These are the primary variables that the solver calculates at each time step. Th
 | \(\boldsymbol{\lambda}_b\) | Impulses for bilateral constraints (joints) | \(\mathbb{R}^{n_b}\) |
 | \(\boldsymbol{\lambda}_n\) | Impulses for unilateral constraints (contacts) | \(\mathbb{R}^{n_n}\) |
 | \(\boldsymbol{\lambda}_f\) | Impulses for frictional constraints | \(\mathbb{R}^{n_f}\) |
+| \(\boldsymbol{\lambda}_{\text{ctrl}}\) | Impulses for control constraints | \(\mathbb{R}^{n_{\text{ctrl}}}\) |
 
 ---
 
@@ -94,6 +96,7 @@ These functions define the physical laws and constraints that must be satisfied.
 | \(\mathbf{h}_b\) | Residual for bilateral constraints | \(\mathbb{R}^{n_b}\) |
 | \(\mathbf{h}_n\) | Residual for contact constraints | \(\mathbb{R}^{n_n}\) |
 | \(\mathbf{h}_f\) | Residual for friction constraints | \(\mathbb{R}^{n_f}\) |
+| \(\mathbf{h}_{\text{ctrl}}\) | Residual for control constraints | \(\mathbb{R}^{n_{\text{ctrl}}}\) |
 
 **Note:** The total system dimension is \(n_{sys} = n_u + n_q + n_c\), representing the vector
 
@@ -104,6 +107,7 @@ These functions define the physical laws and constraints that must be satisfied.
         \mathbf{h}_{\text{b}} \\
         \mathbf{h}_{\text{n}} \\
         \mathbf{h}_{\text{f}} \\
+        \mathbf{h}_{\text{ctrl}} \\
     \end{bmatrix}.
 \]
 
@@ -119,14 +123,17 @@ Jacobians are matrices of partial derivatives that are essential for linearizing
 | \(\mathbf{J}_b\) | Velocity Jacobian for bilateral constraints | \(\mathbf{J}_b = \frac{\partial \mathbf{c}_b}{\partial \mathbf{q}} \cdot \mathbf{G}(\mathbf{q})\) | \(n_b \times n_u\) |
 | \(\mathbf{J}_n\) | Velocity Jacobian for contact constraints | \(\mathbf{J}_n = \frac{\partial \mathbf{c}_n}{\partial \mathbf{q}} \cdot \mathbf{G}(\mathbf{q})\) | \(n_n \times n_u\) |
 | \(\mathbf{J}_f\) | Velocity Jacobian for friction constraints | \(\mathbf{J}_f = \frac{\partial \mathbf{c}_f}{\partial \mathbf{q}} \cdot \mathbf{G}(\mathbf{q})\) | \(n_f \times n_u\) |
+| \(\mathbf{J}_{\text{ctrl}}\) | Velocity Jacobian for control constraints | \(\mathbf{J}_{\text{ctrl}}\) (See [Control Constraints](./constraints.md#5-control-constraints)) | \(n_{\text{ctrl}} \times n_u\) |
 | \(\hat{\mathbf{J}}\) | **System Jacobian Block** | \(\hat{\mathbf{J}} = \frac{\partial \mathbf{h}}{\partial \mathbf{u}}\) | \(n_c \times n_u\) |
 | \(\hat{\mathbf{J}}_b\) | System Jacobian block for bilateral constraints | \(\hat{\mathbf{J}}_b = \frac{\partial \mathbf{h}_b}{\partial \mathbf{u}}\) | \(n_b \times n_u\) |
 | \(\hat{\mathbf{J}}_n\) | System Jacobian block for contact constraints | \(\hat{\mathbf{J}}_n = \frac{\partial \mathbf{h}_n}{\partial \mathbf{u}}\) | \(n_n \times n_u\) |
 | \(\hat{\mathbf{J}}_f\) | System Jacobian block for friction constraints | \(\hat{\mathbf{J}}_f = \frac{\partial \mathbf{h}_f}{\partial \mathbf{u}}\) | \(n_f \times n_u\) |
+| \(\hat{\mathbf{J}}_{\text{ctrl}}\) | System Jacobian block for control constraints | \(\hat{\mathbf{J}}_{\text{ctrl}} = \frac{\partial \mathbf{h}_{\text{ctrl}}}{\partial \mathbf{u}}\) | \(n_{\text{ctrl}} \times n_u\) |
 | \(\mathbf{C}\) | **Compliance Block** | \(\mathbf{C} = \frac{\partial \mathbf{h}_c}{\partial \boldsymbol{\lambda}}\) | \(n_c \times n_c\) |
 | \(\mathbf{C}_b\) | Compliance block for bilateral constraints | \(\mathbf{C}_b = \frac{\partial \mathbf{h}_b}{\partial \boldsymbol{\lambda}_b}\) | \(n_b \times n_b\) |
 | \(\mathbf{C}_n\) | Compliance block for contact constraints | \(\mathbf{C}_n = \frac{\partial \mathbf{h}_n}{\partial \boldsymbol{\lambda}_n}\) | \(n_n \times n_n\) |
 | \(\mathbf{C}_f\) | Compliance block for friction constraints | \(\mathbf{C}_f = \frac{\partial \mathbf{h}_f}{\partial \boldsymbol{\lambda}_f}\) | \(n_f \times n_f\) |
+| \(\mathbf{C}_{\text{ctrl}}\) | Compliance block for control constraints | \(\mathbf{C}_{\text{ctrl}} = \frac{\partial \mathbf{h}_{\text{ctrl}}}{\partial \boldsymbol{\lambda}_{\text{ctrl}}}\) | \(n_{\text{ctrl}} \times n_{\text{ctrl}}\) |
 
 ### Velocity Jacobians (\(\mathbf{J}\))
 
