@@ -21,6 +21,12 @@ def compute_friction_model(
     v_t_1 = wp.dot(J_t1_1, u_1) + wp.dot(J_t1_2, u_2)
     v_t_2 = wp.dot(J_t2_1, u_1) + wp.dot(J_t2_2, u_2)
     v_t = wp.vec2(v_t_1, v_t_2)
+
+    # eps = 1e-8
+    # v_t_norm = wp.sqrt(wp.dot(v_t, v_t) + eps)
+    #
+    # force_f_norm = wp.sqrt(wp.dot(force_f_prev, force_f_prev) + eps)
+
     v_t_norm = wp.length(v_t)
 
     force_f_norm = wp.length(force_f_prev)

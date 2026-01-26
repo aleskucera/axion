@@ -270,7 +270,9 @@ class EngineData:
                 "contact_body_b": self._serialize_to_numpy(self.contact_body_b),
                 "contact_dist": self._serialize_to_numpy(self.contact_dist),
                 "contact_friction_coeff": self._serialize_to_numpy(self.contact_friction_coeff),
-                "contact_restitution_coeff": self._serialize_to_numpy(self.contact_restitution_coeff),
+                "contact_restitution_coeff": self._serialize_to_numpy(
+                    self.contact_restitution_coeff
+                ),
             }
             constraints["Friction constraint data"] = {
                 "h": self._serialize_to_numpy(self.h.c.f),
