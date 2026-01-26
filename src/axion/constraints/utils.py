@@ -1,17 +1,44 @@
 import numpy as np
 import warp as wp
 from axion.types import ContactInteraction
-from axion.types import SpatialInertia
-from axion.types import to_spatial_momentum
-from axion.types.spatial_inertia import compute_world_inertia
+
+
+@wp.func
+def compute_spatial_momentum(
+    mass: wp.float32,
+    inertia: wp.mat33,
+    velocity: wp.spatial_vector,
+) -> wp.spatial_vector:
+    top = mass * wp.spatial_top(velocity)
+    bot = inertia @ wp.spatial_bottom(velocity)
+    return wp.spatial_vector(top, bot)
+
+
+@wp.func
+def compute_world_inertia(
+    body_q: wp.transform,
+    body_inertia: wp.mat33,
+) -> wp.mat33:
+    # Get orientation quaternion from transform
+    orientation = wp.transform_get_rotation(body_q)
+    R = wp.quat_to_matrix(orientation)
+
+    # Transform inertia tensor: I_w = R * I_body * R^T
+    I_w = R @ body_inertia @ wp.transpose(R)
+
+    return I_w
 
 
 @wp.func
 def compute_effective_mass(
+    body_q_1: wp.transform,
+    body_q_2: wp.transform,
     J_1: wp.spatial_vector,
     J_2: wp.spatial_vector,
-    M_inv_1: SpatialInertia,
-    M_inv_2: SpatialInertia,
+    m_inv_1: wp.float32,
+    I_inv_b_1: wp.mat33,
+    m_inv_2: wp.float32,
+    I_inv_b_2: wp.mat33,
     body_1_idx: int,
     body_2_idx: int,
 ) -> float:
@@ -22,120 +49,14 @@ def compute_effective_mass(
     val = 0.0
     if body_1_idx >= 0:
         # compute J M^-1 J^T
-        val += wp.dot(J_1, to_spatial_momentum(M_inv_1, J_1))
+        I_inv_w_1 = compute_world_inertia(body_q_1, I_inv_b_1)
+        val += wp.dot(J_1, compute_spatial_momentum(m_inv_1, I_inv_w_1, J_1))
 
     if body_2_idx >= 0:
-        val += wp.dot(J_2, to_spatial_momentum(M_inv_2, J_2))
+        I_inv_w_2 = compute_world_inertia(body_q_2, I_inv_b_2)
+        val += wp.dot(J_2, compute_spatial_momentum(m_inv_2, I_inv_w_2, J_2))
 
     return val
-
-
-@wp.func
-def compute_effective_mass2(
-    J: wp.spatial_vector,
-    body_idx: int,
-    body_q: wp.array(dtype=wp.transform, ndim=2),
-    body_inv_mass: wp.array(dtype=wp.float32, ndim=2),
-    body_inv_inertia: wp.array(dtype=wp.mat33, ndim=2),
-    world_idx: int,
-) -> wp.float32:
-    """
-    Computes w = J * M^-1 * J^T for a single body along a specific Jacobian row J.
-    """
-    if body_idx < 0:
-        return 0.0
-
-    # Load body properties
-    q = body_q[world_idx, body_idx]
-    m_inv = body_inv_mass[world_idx, body_idx]
-    I_inv = body_inv_inertia[world_idx, body_idx]
-
-    # Compute World Space Inverse Inertia
-    M_inv_spatial = compute_world_inertia(q, m_inv, I_inv)
-
-    # Compute projected inverse mass: J^T * M_inv * J
-    # Note: to_spatial_momentum computes (M_inv * J)
-    term = wp.dot(J, to_spatial_momentum(M_inv_spatial, J))
-
-    return term
-
-
-@wp.func
-def compute_constraint_compliance(
-    J_1: wp.spatial_vector,
-    J_2: wp.spatial_vector,
-    body_1_idx: int,
-    body_2_idx: int,
-    body_q: wp.array(dtype=wp.transform, ndim=2),
-    body_inv_mass: wp.array(dtype=wp.float32, ndim=2),
-    body_inv_inertia: wp.array(dtype=wp.mat33, ndim=2),
-    world_idx: int,
-) -> wp.float32:
-    """
-    Computes total w = J_1 M_1^-1 J_1^T + J_2 M_2^-1 J_2^T
-    """
-    w_1 = compute_effective_mass2(
-        J_1, body_1_idx, body_q, body_inv_mass, body_inv_inertia, world_idx
-    )
-    w_2 = compute_effective_mass2(
-        J_2, body_2_idx, body_q, body_inv_mass, body_inv_inertia, world_idx
-    )
-    return w_1 + w_2
-
-
-@wp.func
-def compute_effective_mass_batched(
-    J: wp.spatial_vector,
-    body_idx: int,
-    body_q: wp.array(dtype=wp.transform, ndim=3),
-    body_inv_mass: wp.array(dtype=wp.float32, ndim=2),
-    body_inv_inertia: wp.array(dtype=wp.mat33, ndim=2),
-    batch_idx: int,
-    world_idx: int,
-) -> wp.float32:
-    """
-    Computes w = J * M^-1 * J^T for a single body along a specific Jacobian row J.
-    """
-    if body_idx < 0:
-        return 0.0
-
-    # Load body properties
-    # Note: mass/inertia are static (ndim=2), but state q is batched (ndim=3)
-    q = body_q[batch_idx, world_idx, body_idx]
-    m_inv = body_inv_mass[world_idx, body_idx]
-    I_inv = body_inv_inertia[world_idx, body_idx]
-
-    # Compute World Space Inverse Inertia
-    M_inv_spatial = compute_world_inertia(q, m_inv, I_inv)
-
-    # Compute projected inverse mass: J^T * M_inv * J
-    term = wp.dot(J, to_spatial_momentum(M_inv_spatial, J))
-
-    return term
-
-
-@wp.func
-def compute_constraint_compliance_batched(
-    J_1: wp.spatial_vector,
-    J_2: wp.spatial_vector,
-    body_1_idx: int,
-    body_2_idx: int,
-    body_q: wp.array(dtype=wp.transform, ndim=3),
-    body_inv_mass: wp.array(dtype=wp.float32, ndim=2),
-    body_inv_inertia: wp.array(dtype=wp.mat33, ndim=2),
-    batch_idx: int,
-    world_idx: int,
-) -> wp.float32:
-    """
-    Computes total w = J_1 M_1^-1 J_1^T + J_2 M_2^-1 J_2^T for batched inputs.
-    """
-    w_1 = compute_effective_mass_batched(
-        J_1, body_1_idx, body_q, body_inv_mass, body_inv_inertia, batch_idx, world_idx
-    )
-    w_2 = compute_effective_mass_batched(
-        J_2, body_2_idx, body_q, body_inv_mass, body_inv_inertia, batch_idx, world_idx
-    )
-    return w_1 + w_2
 
 
 def compute_joint_constraint_offsets_batched(joint_types: wp.array):
