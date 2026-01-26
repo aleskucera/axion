@@ -127,17 +127,6 @@ def get_prismatic_control_component(
     return J_p, J_c, error
 
 
-@wp.struct
-class ControlLocalData:
-    delta_h_d_p: wp.spatial_vector
-    delta_h_d_c: wp.spatial_vector
-    h_ctrl_val: float
-    # Solver terms
-    J_p: wp.spatial_vector
-    J_c: wp.spatial_vector
-    alpha: float
-
-
 @wp.func
 def compute_control_local(
     j_type: int,
@@ -157,11 +146,13 @@ def compute_control_local(
     kd: float,
     current_lambda: float,
     dt: float,
-) -> ControlLocalData:
-
+):
     J_p = wp.spatial_vector()
     J_c = wp.spatial_vector()
     error_vel = 0.0
+
+    current_q = 0.0
+    current_qd = 0.0
 
     if j_type == 1:
         # REVOLUTE
@@ -189,25 +180,22 @@ def compute_control_local(
         if denom > 1e-6:
             alpha = 1.0 / denom
 
-    res = ControlLocalData()
-    res.delta_h_d_p = -J_p * current_lambda * dt
-    res.delta_h_d_c = -J_c * current_lambda * dt
-    res.h_ctrl_val = error_vel + alpha * current_lambda * dt
-    res.J_p = J_p
-    res.J_c = J_c
-    res.alpha = alpha
-    return res
+    return (
+        -J_p * current_lambda * dt,  # delta_h_d_p
+        -J_c * current_lambda * dt,  # delta_h_d_c
+        error_vel + alpha * current_lambda * dt,  # h_ctrl_val
+        J_p,  # J_p
+        J_c,  # J_c
+        alpha,  # alpha
+    )
 
 
 @wp.kernel
 def control_constraint_kernel(
-    # --- State ---
     body_q: wp.array(dtype=wp.transform, ndim=2),
     body_u: wp.array(dtype=wp.spatial_vector, ndim=2),
     body_lambda_ctrl: wp.array(dtype=wp.float32, ndim=2),
-    # --- Body Definition ---
     body_com: wp.array(dtype=wp.vec3, ndim=2),
-    # --- Joint Definition Inputs ---
     joint_type: wp.array(dtype=wp.int32, ndim=2),
     joint_parent: wp.array(dtype=wp.int32, ndim=2),
     joint_child: wp.array(dtype=wp.int32, ndim=2),
@@ -218,13 +206,10 @@ def control_constraint_kernel(
     joint_enabled: wp.array(dtype=wp.int32, ndim=2),
     joint_dof_mode: wp.array(dtype=wp.int32, ndim=2),
     control_constraint_offsets: wp.array(dtype=wp.int32, ndim=2),
-    # --- Control Inputs ---
     joint_target: wp.array(dtype=wp.float32, ndim=2),
     joint_target_ke: wp.array(dtype=wp.float32, ndim=2),
     joint_target_kd: wp.array(dtype=wp.float32, ndim=2),
-    # --- Params ---
     dt: wp.float32,
-    # --- Solver State Output ---
     constraint_active_mask: wp.array(dtype=wp.float32, ndim=2),
     h_d: wp.array(dtype=wp.spatial_vector, ndim=2),
     h_ctrl: wp.array(dtype=wp.float32, ndim=2),
@@ -253,7 +238,6 @@ def control_constraint_kernel(
     ctrl_offset = control_constraint_offsets[world_idx, joint_idx]
     constraint_active_mask[world_idx, ctrl_offset] = 1.0
 
-    # Kinematics
     X_w_c, r_c, pos_c = compute_joint_transforms(
         body_q[world_idx, c_idx], body_com[world_idx, c_idx], joint_X_c[world_idx, joint_idx]
     )
@@ -274,11 +258,9 @@ def control_constraint_kernel(
     target = joint_target[world_idx, qd_start_idx]
     ke = joint_target_ke[world_idx, qd_start_idx]
     kd = joint_target_kd[world_idx, qd_start_idx]
-
     current_lambda = body_lambda_ctrl[world_idx, ctrl_offset]
 
-    # Shared Logic
-    data = compute_control_local(
+    (res_hdp, res_hdc, res_hctrl, res_jp, res_jc, res_alpha) = compute_control_local(
         j_type,
         X_w_p,
         X_w_c,
@@ -298,26 +280,22 @@ def control_constraint_kernel(
         dt,
     )
 
-    # Outputs
     if p_idx >= 0:
-        wp.atomic_add(h_d, world_idx, p_idx, data.delta_h_d_p)
-    wp.atomic_add(h_d, world_idx, c_idx, data.delta_h_d_c)
+        wp.atomic_add(h_d, world_idx, p_idx, res_hdp)
+    wp.atomic_add(h_d, world_idx, c_idx, res_hdc)
 
-    h_ctrl[world_idx, ctrl_offset] = data.h_ctrl_val
-    J_hat_values[world_idx, ctrl_offset, 0] = data.J_p
-    J_hat_values[world_idx, ctrl_offset, 1] = data.J_c
-    C_values[world_idx, ctrl_offset] = data.alpha
+    h_ctrl[world_idx, ctrl_offset] = res_hctrl
+    J_hat_values[world_idx, ctrl_offset, 0] = res_jp
+    J_hat_values[world_idx, ctrl_offset, 1] = res_jc
+    C_values[world_idx, ctrl_offset] = res_alpha
 
 
 @wp.kernel
 def control_constraint_residual_kernel(
-    # --- State ---
     body_q: wp.array(dtype=wp.transform, ndim=2),
     body_u: wp.array(dtype=wp.spatial_vector, ndim=2),
     body_lambda_ctrl: wp.array(dtype=wp.float32, ndim=2),
-    # --- Body Definition ---
     body_com: wp.array(dtype=wp.vec3, ndim=2),
-    # --- Joint Definition Inputs ---
     joint_type: wp.array(dtype=wp.int32, ndim=2),
     joint_parent: wp.array(dtype=wp.int32, ndim=2),
     joint_child: wp.array(dtype=wp.int32, ndim=2),
@@ -328,13 +306,10 @@ def control_constraint_residual_kernel(
     joint_enabled: wp.array(dtype=wp.int32, ndim=2),
     joint_dof_mode: wp.array(dtype=wp.int32, ndim=2),
     control_constraint_offsets: wp.array(dtype=wp.int32, ndim=2),
-    # --- Control Inputs ---
     joint_target: wp.array(dtype=wp.float32, ndim=2),
     joint_target_ke: wp.array(dtype=wp.float32, ndim=2),
     joint_target_kd: wp.array(dtype=wp.float32, ndim=2),
-    # --- Params ---
     dt: wp.float32,
-    # --- Solver State Output ---
     h_d: wp.array(dtype=wp.spatial_vector, ndim=2),
     h_ctrl: wp.array(dtype=wp.float32, ndim=2),
 ):
@@ -359,7 +334,6 @@ def control_constraint_residual_kernel(
 
     ctrl_offset = control_constraint_offsets[world_idx, joint_idx]
 
-    # Kinematics
     X_w_c, r_c, pos_c = compute_joint_transforms(
         body_q[world_idx, c_idx], body_com[world_idx, c_idx], joint_X_c[world_idx, joint_idx]
     )
@@ -380,11 +354,9 @@ def control_constraint_residual_kernel(
     target = joint_target[world_idx, qd_start_idx]
     ke = joint_target_ke[world_idx, qd_start_idx]
     kd = joint_target_kd[world_idx, qd_start_idx]
-
     current_lambda = body_lambda_ctrl[world_idx, ctrl_offset]
 
-    # Shared Logic
-    data = compute_control_local(
+    (res_hdp, res_hdc, res_hctrl, skip_jp, skip_jc, skip_alpha) = compute_control_local(
         j_type,
         X_w_p,
         X_w_c,
@@ -405,19 +377,17 @@ def control_constraint_residual_kernel(
     )
 
     if p_idx >= 0:
-        wp.atomic_add(h_d, world_idx, p_idx, data.delta_h_d_p)
-    wp.atomic_add(h_d, world_idx, c_idx, data.delta_h_d_c)
+        wp.atomic_add(h_d, world_idx, p_idx, res_hdp)
+    wp.atomic_add(h_d, world_idx, c_idx, res_hdc)
 
-    h_ctrl[world_idx, ctrl_offset] = data.h_ctrl_val
+    h_ctrl[world_idx, ctrl_offset] = res_hctrl
 
 
 @wp.kernel
 def batch_control_constraint_residual_kernel(
-    # --- State (Batched) ---
     body_q: wp.array(dtype=wp.transform, ndim=3),
     body_u: wp.array(dtype=wp.spatial_vector, ndim=3),
     body_lambda_ctrl: wp.array(dtype=wp.float32, ndim=3),
-    # --- Model Data (Shared) ---
     body_com: wp.array(dtype=wp.vec3, ndim=2),
     joint_type: wp.array(dtype=wp.int32, ndim=2),
     joint_parent: wp.array(dtype=wp.int32, ndim=2),
@@ -429,13 +399,10 @@ def batch_control_constraint_residual_kernel(
     joint_enabled: wp.array(dtype=wp.int32, ndim=2),
     joint_dof_mode: wp.array(dtype=wp.int32, ndim=2),
     control_constraint_offsets: wp.array(dtype=wp.int32, ndim=2),
-    # --- Control Inputs (Shared) ---
     joint_target: wp.array(dtype=wp.float32, ndim=2),
     joint_target_ke: wp.array(dtype=wp.float32, ndim=2),
     joint_target_kd: wp.array(dtype=wp.float32, ndim=2),
-    # --- Params ---
     dt: wp.float32,
-    # --- Output (Batched) ---
     h_d: wp.array(dtype=wp.spatial_vector, ndim=3),
     h_ctrl: wp.array(dtype=wp.float32, ndim=3),
 ):
@@ -460,7 +427,6 @@ def batch_control_constraint_residual_kernel(
 
     ctrl_offset = control_constraint_offsets[world_idx, joint_idx]
 
-    # Kinematics
     X_w_c, r_c, pos_c = compute_joint_transforms(
         body_q[batch_idx, world_idx, c_idx],
         body_com[world_idx, c_idx],
@@ -483,11 +449,9 @@ def batch_control_constraint_residual_kernel(
     target = joint_target[world_idx, qd_start_idx]
     ke = joint_target_ke[world_idx, qd_start_idx]
     kd = joint_target_kd[world_idx, qd_start_idx]
-
     current_lambda = body_lambda_ctrl[batch_idx, world_idx, ctrl_offset]
 
-    # Shared Logic
-    data = compute_control_local(
+    (b_hdp, b_hdc, b_hctrl, skip_jp, skip_jc, skip_alpha) = compute_control_local(
         j_type,
         X_w_p,
         X_w_c,
@@ -508,19 +472,17 @@ def batch_control_constraint_residual_kernel(
     )
 
     if p_idx >= 0:
-        wp.atomic_add(h_d, batch_idx, world_idx, p_idx, data.delta_h_d_p)
-    wp.atomic_add(h_d, batch_idx, world_idx, c_idx, data.delta_h_d_c)
+        wp.atomic_add(h_d, batch_idx, world_idx, p_idx, b_hdp)
+    wp.atomic_add(h_d, batch_idx, world_idx, c_idx, b_hdc)
 
-    h_ctrl[batch_idx, world_idx, ctrl_offset] = data.h_ctrl_val
+    h_ctrl[batch_idx, world_idx, ctrl_offset] = b_hctrl
 
 
 @wp.kernel
 def fused_batch_control_constraint_residual_kernel(
-    # --- State (Batched) ---
     body_q: wp.array(dtype=wp.transform, ndim=3),
     body_u: wp.array(dtype=wp.spatial_vector, ndim=3),
     body_lambda_ctrl: wp.array(dtype=wp.float32, ndim=3),
-    # --- Model Data (Shared) ---
     body_com: wp.array(dtype=wp.vec3, ndim=2),
     joint_type: wp.array(dtype=wp.int32, ndim=2),
     joint_parent: wp.array(dtype=wp.int32, ndim=2),
@@ -532,14 +494,11 @@ def fused_batch_control_constraint_residual_kernel(
     joint_enabled: wp.array(dtype=wp.int32, ndim=2),
     joint_dof_mode: wp.array(dtype=wp.int32, ndim=2),
     control_constraint_offsets: wp.array(dtype=wp.int32, ndim=2),
-    # --- Control Inputs (Shared) ---
     joint_target: wp.array(dtype=wp.float32, ndim=2),
     joint_target_ke: wp.array(dtype=wp.float32, ndim=2),
     joint_target_kd: wp.array(dtype=wp.float32, ndim=2),
-    # --- Params ---
     dt: wp.float32,
     num_batches: int,
-    # --- Output (Batched) ---
     h_d: wp.array(dtype=wp.spatial_vector, ndim=3),
     h_ctrl: wp.array(dtype=wp.float32, ndim=3),
 ):
@@ -566,7 +525,6 @@ def fused_batch_control_constraint_residual_kernel(
 
     ctrl_offset = control_constraint_offsets[world_idx, joint_idx]
 
-    # Pre-load Static
     joint_X_c_val = joint_X_c[world_idx, joint_idx]
     joint_X_p_val = joint_X_p[world_idx, joint_idx]
     com_c = body_com[world_idx, c_idx]
@@ -595,7 +553,7 @@ def fused_batch_control_constraint_residual_kernel(
 
         current_lambda = body_lambda_ctrl[b, world_idx, ctrl_offset]
 
-        data = compute_control_local(
+        (f_hdp, f_hdc, f_hctrl, skip_jp, skip_jc, skip_alpha) = compute_control_local(
             j_type,
             X_w_p,
             X_w_c,
@@ -616,10 +574,10 @@ def fused_batch_control_constraint_residual_kernel(
         )
 
         if p_idx >= 0:
-            wp.atomic_add(h_d, b, world_idx, p_idx, data.delta_h_d_p)
-        wp.atomic_add(h_d, b, world_idx, c_idx, data.delta_h_d_c)
+            wp.atomic_add(h_d, b, world_idx, p_idx, f_hdp)
+        wp.atomic_add(h_d, b, world_idx, c_idx, f_hdc)
 
-        h_ctrl[b, world_idx, ctrl_offset] = data.h_ctrl_val
+        h_ctrl[b, world_idx, ctrl_offset] = f_hctrl
 
 
 @wp.kernel
@@ -630,17 +588,13 @@ def count_control_constraints_kernel(
     counts: wp.array(dtype=wp.int32, ndim=2),
 ):
     world_idx, joint_idx = wp.tid()
-
     j_type = joint_type[world_idx, joint_idx]
-
     count = 0
-    # Support Revolute(1) and Prismatic(0)
     if j_type == 1 or j_type == 0:
         qd_start = joint_qd_start[world_idx, joint_idx]
         mode = joint_dof_mode[world_idx, qd_start]
         if mode != 0:
             count = 1
-
     counts[world_idx, joint_idx] = count
 
 
@@ -651,7 +605,6 @@ def compute_control_constraint_offsets_batched(
 ):
     num_worlds = joint_type.shape[0]
     num_joints = joint_type.shape[1]
-
     counts = wp.zeros((num_worlds, num_joints), dtype=wp.int32, device=joint_type.device)
 
     wp.launch(
@@ -666,13 +619,10 @@ def compute_control_constraint_offsets_batched(
     import numpy as np
 
     offsets_np = np.zeros_like(counts_np)
-
     row_counts = counts_np[0]
     row_offsets = np.cumsum(np.concatenate(([0], row_counts[:-1])))
     total = np.sum(row_counts)
-
     offsets_np[:] = row_offsets
-
     offsets = wp.from_numpy(offsets_np, dtype=wp.int32, device=joint_type.device)
 
     return offsets, int(total)
@@ -686,29 +636,21 @@ def fill_control_constraint_body_idx_kernel(
     joint_dof_mode: wp.array(dtype=wp.int32, ndim=2),
     joint_qd_start: wp.array(dtype=wp.int32, ndim=2),
     control_offsets: wp.array(dtype=wp.int32, ndim=2),
-    # Output
     constraint_body_idx_ctrl: wp.array(dtype=wp.int32, ndim=3),
 ):
     world_idx, joint_idx = wp.tid()
-
     j_type = joint_type[world_idx, joint_idx]
-
     count = 0
-    # Support Revolute(1) and Prismatic(0)
     if j_type == 1 or j_type == 0:
         qd_start = joint_qd_start[world_idx, joint_idx]
         mode = joint_dof_mode[world_idx, qd_start]
         if mode != 0:
             count = 1
-
     if count == 0:
         return
 
     offset = control_offsets[world_idx, joint_idx]
-
     p_idx = joint_parent[world_idx, joint_idx]
     c_idx = joint_child[world_idx, joint_idx]
-
     constraint_body_idx_ctrl[world_idx, offset, 0] = p_idx
     constraint_body_idx_ctrl[world_idx, offset, 1] = c_idx
-

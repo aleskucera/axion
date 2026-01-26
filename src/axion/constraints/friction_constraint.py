@@ -21,7 +21,7 @@ def compute_friction_model(
     force_n_prev: wp.float32,
     dt: wp.float32,
     precond: wp.float32,
-) -> FrictionModelResult:
+):  # Returns (slip_velocity, slip_coupling_factor)
     mu = interaction.friction_coeff
     J_t1_1, J_t2_1 = interaction.basis_a.tangent1, interaction.basis_a.tangent2
     J_t1_2, J_t2_2 = interaction.basis_b.tangent1, interaction.basis_b.tangent2
@@ -33,28 +33,19 @@ def compute_friction_model(
 
     force_f_norm = wp.length(force_f_prev)
 
-    # 1. Define the scaling factor r
     r = precond
-
-    # 2. Compute Scaled Residual (phi)
     gap = mu * force_n_prev - force_f_norm
     phi_f = scaled_fisher_burmeister(v_t_norm, gap, 1.0, r)
 
-    # 3. Compute Compliance (w)
     denom_eps = 1e-6
     denominator = r * force_f_norm + phi_f + denom_eps
-
     numerator = v_t_norm - phi_f
-    w = r * (numerator / denominator)
 
-    # 4. Safety Clamping
+    w = r * (numerator / denominator)
     w = wp.max(w, 0.0)
     w = wp.min(w, 1e5)
 
-    result = FrictionModelResult()
-    result.slip_velocity = v_t
-    result.slip_coupling_factor = w
-    return result
+    return v_t, w
 
 
 @wp.struct
@@ -85,8 +76,8 @@ def compute_friction_local(
     lambda_t2_prev: float,
     force_n_prev: float,
     dt: float,
-) -> FrictionLocalData:
-    # Compute effective mass (J M^-1 J^T) using pre-computed world inertia
+):
+    # Effective mass logic remains same
     w_t1 = compute_effective_mass(
         interaction.basis_a.tangent1,
         interaction.basis_b.tangent1,
@@ -95,7 +86,6 @@ def compute_friction_local(
         interaction.body_a_idx,
         interaction.body_b_idx,
     )
-
     w_t2 = compute_effective_mass(
         interaction.basis_a.tangent2,
         interaction.basis_b.tangent2,
@@ -105,49 +95,28 @@ def compute_friction_local(
         interaction.body_b_idx,
     )
 
-    # Average for Isotropic Friction Model
     effective_mass = (w_t1 + w_t2) * 0.5
     precond = dt * effective_mass
-
-    # Previous State
     force_f_prev = wp.vec2(lambda_t1_prev, lambda_t2_prev)
 
-    # --- Compute Friction Terms ---
-    model_result = compute_friction_model(
-        interaction,
-        u_1,
-        u_2,
-        force_f_prev,
-        force_n_prev,
-        dt,
-        precond,
-    )
-    v_t1, v_t2 = model_result.slip_velocity.x, model_result.slip_velocity.y
-    w = model_result.slip_coupling_factor
+    # Unpack tuple from model
+    v_t, w = compute_friction_model(interaction, u_1, u_2, force_f_prev, force_n_prev, dt, precond)
 
-    # --- Assemble System Matrix Components ---
-    J_hat_t1_1, J_hat_t2_1 = interaction.basis_a.tangent1, interaction.basis_a.tangent2
-    J_hat_t1_2, J_hat_t2_2 = interaction.basis_b.tangent1, interaction.basis_b.tangent2
+    v_t1, v_t2 = v_t.x, v_t.y
 
-    # Pack Data
-    res = FrictionLocalData()
+    # Jacobian terms
+    J_t1_1, J_t2_1 = interaction.basis_a.tangent1, interaction.basis_a.tangent2
+    J_t1_2, J_t2_2 = interaction.basis_b.tangent1, interaction.basis_b.tangent2
 
-    # Dynamics Residuals
-    res.delta_h_d_1 = -dt * (J_hat_t1_1 * lambda_t1 + J_hat_t2_1 * lambda_t2)
-    res.delta_h_d_2 = -dt * (J_hat_t1_2 * lambda_t1 + J_hat_t2_2 * lambda_t2)
+    # Residuals
+    delta_h_d_1 = -dt * (J_t1_1 * lambda_t1 + J_t2_1 * lambda_t2)
+    delta_h_d_2 = -dt * (J_t1_2 * lambda_t1 + J_t2_2 * lambda_t2)
+    h_f_val_1 = v_t1 + w * lambda_t1
+    h_f_val_2 = v_t2 + w * lambda_t2
+    C_f_val = w / dt
 
-    # Constraint Residuals
-    res.h_f_val_1 = v_t1 + w * lambda_t1
-    res.h_f_val_2 = v_t2 + w * lambda_t2
-
-    # Solver Terms
-    res.J_hat_t1_1 = J_hat_t1_1
-    res.J_hat_t2_1 = J_hat_t2_1
-    res.J_hat_t1_2 = J_hat_t1_2
-    res.J_hat_t2_2 = J_hat_t2_2
-    res.C_f_val = w / dt
-
-    return res
+    # Return order: delta_h1, delta_h2, hf1, hf2, Jt1_1, Jt2_1, Jt1_2, Jt2_2, Cf
+    return (delta_h_d_1, delta_h_d_2, h_f_val_1, h_f_val_2, J_t1_1, J_t2_1, J_t1_2, J_t2_2, C_f_val)
 
 
 @wp.kernel
@@ -220,7 +189,7 @@ def friction_constraint_kernel(
     lambda_t2_prev = body_lambda_f_prev[world_idx, constr_idx2]
 
     # --- 3. Compute Local Logic ---
-    data = compute_friction_local(
+    (d_h1, d_h2, hf1, hf2, J11, J21, J12, J22, cf) = compute_friction_local(
         interaction,
         u_1,
         u_2,
@@ -234,22 +203,21 @@ def friction_constraint_kernel(
         dt,
     )
 
-    # --- 4. Write Outputs ---
     if body_1 >= 0:
-        wp.atomic_add(h_d, world_idx, body_1, data.delta_h_d_1)
+        wp.atomic_add(h_d, world_idx, body_1, d_h1)
     if body_2 >= 0:
-        wp.atomic_add(h_d, world_idx, body_2, data.delta_h_d_2)
+        wp.atomic_add(h_d, world_idx, body_2, d_h2)
 
-    h_f[world_idx, constr_idx1] = data.h_f_val_1
-    h_f[world_idx, constr_idx2] = data.h_f_val_2
+    h_f[world_idx, constr_idx1] = hf1
+    h_f[world_idx, constr_idx2] = hf2
 
-    J_hat_f_values[world_idx, constr_idx1, 0] = data.J_hat_t1_1
-    J_hat_f_values[world_idx, constr_idx2, 0] = data.J_hat_t2_1
-    J_hat_f_values[world_idx, constr_idx1, 1] = data.J_hat_t1_2
-    J_hat_f_values[world_idx, constr_idx2, 1] = data.J_hat_t2_2
+    J_hat_f_values[world_idx, constr_idx1, 0] = J11
+    J_hat_f_values[world_idx, constr_idx2, 0] = J21
+    J_hat_f_values[world_idx, constr_idx1, 1] = J12
+    J_hat_f_values[world_idx, constr_idx2, 1] = J22
 
-    C_f_values[world_idx, constr_idx1] = data.C_f_val
-    C_f_values[world_idx, constr_idx2] = data.C_f_val
+    C_f_values[world_idx, constr_idx1] = cf
+    C_f_values[world_idx, constr_idx2] = cf
 
 
 @wp.kernel
@@ -304,7 +272,7 @@ def friction_residual_kernel(
     lambda_t2_prev = body_lambda_f_prev[world_idx, constr_idx2]
 
     # --- Call Shared Logic ---
-    data = compute_friction_local(
+    (d_h1, d_h2, hf1, hf2, J11, J21, J12, J22, cf) = compute_friction_local(
         interaction,
         u_1,
         u_2,
@@ -319,12 +287,12 @@ def friction_residual_kernel(
     )
 
     if body_1 >= 0:
-        wp.atomic_add(h_d, world_idx, body_1, data.delta_h_d_1)
+        wp.atomic_add(h_d, world_idx, body_1, d_h1)
     if body_2 >= 0:
-        wp.atomic_add(h_d, world_idx, body_2, data.delta_h_d_2)
+        wp.atomic_add(h_d, world_idx, body_2, d_h2)
 
-    h_f[world_idx, constr_idx1] = data.h_f_val_1
-    h_f[world_idx, constr_idx2] = data.h_f_val_2
+    h_f[world_idx, constr_idx1] = hf1
+    h_f[world_idx, constr_idx2] = hf2
 
 
 @wp.kernel
@@ -378,7 +346,7 @@ def batch_friction_residual_kernel(
     lambda_t2_prev = body_lambda_f_prev[world_idx, constr_idx2]
 
     # --- Call Shared Logic ---
-    data = compute_friction_local(
+    (d_h1, d_h2, hf1, hf2, J11, J21, J12, J22, cf) = compute_friction_local(
         interaction,
         u_1,
         u_2,
@@ -393,12 +361,12 @@ def batch_friction_residual_kernel(
     )
 
     if body_1 >= 0:
-        wp.atomic_add(h_d, batch_idx, world_idx, body_1, data.delta_h_d_1)
+        wp.atomic_add(h_d, batch_idx, world_idx, body_1, d_h1)
     if body_2 >= 0:
-        wp.atomic_add(h_d, batch_idx, world_idx, body_2, data.delta_h_d_2)
+        wp.atomic_add(h_d, batch_idx, world_idx, body_2, d_h2)
 
-    h_f[batch_idx, world_idx, constr_idx1] = data.h_f_val_1
-    h_f[batch_idx, world_idx, constr_idx2] = data.h_f_val_2
+    h_f[batch_idx, world_idx, constr_idx1] = hf1
+    h_f[batch_idx, world_idx, constr_idx2] = hf2
 
 
 @wp.kernel
@@ -464,8 +432,8 @@ def fused_batch_friction_residual_kernel(
         lambda_t1 = body_lambda_f[b, world_idx, constr_idx1]
         lambda_t2 = body_lambda_f[b, world_idx, constr_idx2]
 
-        # Call Shared Logic
-        data = compute_friction_local(
+        # --- Call Shared Logic ---
+        (d_h1, d_h2, hf1, hf2, J11, J21, J12, J22, cf) = compute_friction_local(
             interaction,
             u_1,
             u_2,
@@ -479,12 +447,10 @@ def fused_batch_friction_residual_kernel(
             dt,
         )
 
-        # Update h_d
         if body_1 >= 0:
-            wp.atomic_add(h_d, b, world_idx, body_1, data.delta_h_d_1)
+            wp.atomic_add(h_d, b, world_idx, body_1, d_h1)
         if body_2 >= 0:
-            wp.atomic_add(h_d, b, world_idx, body_2, data.delta_h_d_2)
+            wp.atomic_add(h_d, b, world_idx, body_2, d_h2)
 
-        # Update h_f
-        h_f[b, world_idx, constr_idx1] = data.h_f_val_1
-        h_f[b, world_idx, constr_idx2] = data.h_f_val_2
+        h_f[b, world_idx, constr_idx1] = hf1
+        h_f[b, world_idx, constr_idx2] = hf2

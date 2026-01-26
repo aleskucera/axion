@@ -23,19 +23,6 @@ def compute_signed_distance(
     return wp.dot(n, p_a - p_b)
 
 
-@wp.struct
-class PositionalLocalData:
-    delta_h_d_1: wp.spatial_vector
-    delta_h_d_2: wp.spatial_vector
-    h_n_val: float
-    # These are only strictly needed for the full solver,
-    # but computing them together is cheaper/safer
-    J_hat_n_1: wp.spatial_vector
-    J_hat_n_2: wp.spatial_vector
-    C_n_val: float
-    s_n_val: float
-
-
 @wp.func
 def compute_positional_local(
     interaction: ContactInteraction,
@@ -45,7 +32,7 @@ def compute_positional_local(
     M_inv_1: SpatialInertia,
     M_inv_2: SpatialInertia,
     dt: float,
-) -> PositionalLocalData:
+):
     # Unpack Jacobian basis vectors
     J_n_1 = interaction.basis_a.normal
     J_n_2 = interaction.basis_b.normal
@@ -69,25 +56,24 @@ def compute_positional_local(
     J_hat_n_1 = dphi_dc_n * J_n_1
     J_hat_n_2 = dphi_dc_n * J_n_2
 
-    # Pack result
-    res = PositionalLocalData()
-    res.delta_h_d_1 = -J_hat_n_1 * lambda_n * dt
-    res.delta_h_d_2 = -J_hat_n_2 * lambda_n * dt
-    res.h_n_val = phi_n / dt
-
-    res.J_hat_n_1 = J_hat_n_1
-    res.J_hat_n_2 = J_hat_n_2
-    res.C_n_val = dphi_dlambda_n / wp.pow(dt, 2.0)
-    res.s_n_val = dphi_dc_n
-
-    return res
+    # Return as tuple:
+    # (delta_h_d_1, delta_h_d_2, h_n_val, J_hat_n_1, J_hat_n_2, C_n_val, s_n_val)
+    return (
+        -J_hat_n_1 * lambda_n * dt,
+        -J_hat_n_2 * lambda_n * dt,
+        phi_n / dt,
+        J_hat_n_1,
+        J_hat_n_2,
+        dphi_dlambda_n / wp.pow(dt, 2.0),
+        dphi_dc_n,
+    )
 
 
 @wp.kernel
 def positional_contact_residual_kernel(
     body_q: wp.array(dtype=wp.transform, ndim=2),
-    body_u: wp.array(dtype=wp.spatial_vector, ndim=2),  # Unused, but kept for signature consistency
-    body_u_prev: wp.array(dtype=wp.spatial_vector, ndim=2),  # Unused
+    body_u: wp.array(dtype=wp.spatial_vector, ndim=2),
+    body_u_prev: wp.array(dtype=wp.spatial_vector, ndim=2),
     body_lambda_n: wp.array(dtype=wp.float32, ndim=2),
     interactions: wp.array(dtype=ContactInteraction, ndim=2),
     world_M_inv: wp.array(dtype=SpatialInertia, ndim=2),
@@ -104,14 +90,12 @@ def positional_contact_residual_kernel(
         return
 
     lambda_n = body_lambda_n[world_idx, contact_idx]
-
     body_1 = interaction.body_a_idx
     body_2 = interaction.body_b_idx
 
     body_q_1 = wp.transform_identity()
     if body_1 >= 0:
         body_q_1 = body_q[world_idx, body_1]
-
     body_q_2 = wp.transform_identity()
     if body_2 >= 0:
         body_q_2 = body_q[world_idx, body_2]
@@ -123,15 +107,16 @@ def positional_contact_residual_kernel(
     if body_2 >= 0:
         M_inv_2 = world_M_inv[world_idx, body_2]
 
-    # Call Shared Logic
-    data = compute_positional_local(interaction, body_q_1, body_q_2, lambda_n, M_inv_1, M_inv_2, dt)
+    # Unpack only what's needed for residual
+    d_h_d1, d_h_d2, h_n_val, unused_j1, unused_j2, unused_c, unused_s = compute_positional_local(
+        interaction, body_q_1, body_q_2, lambda_n, M_inv_1, M_inv_2, dt
+    )
 
     if body_1 >= 0:
-        wp.atomic_add(h_d, world_idx, body_1, data.delta_h_d_1)
+        wp.atomic_add(h_d, world_idx, body_1, d_h_d1)
     if body_2 >= 0:
-        wp.atomic_add(h_d, world_idx, body_2, data.delta_h_d_2)
-
-    h_n[world_idx, contact_idx] = data.h_n_val
+        wp.atomic_add(h_d, world_idx, body_2, d_h_d2)
+    h_n[world_idx, contact_idx] = h_n_val
 
 
 @wp.kernel
@@ -159,7 +144,6 @@ def positional_contact_constraint_kernel(
         constraint_active_mask[world_idx, contact_idx] = 0.0
         body_lambda_n[world_idx, contact_idx] = 0.0
         h_n[world_idx, contact_idx] = 0.0
-        # Zero out J, C, s_n...
         J_hat_n_values[world_idx, contact_idx, 0] = wp.spatial_vector()
         J_hat_n_values[world_idx, contact_idx, 1] = wp.spatial_vector()
         C_n_values[world_idx, contact_idx] = 0.0
@@ -168,14 +152,12 @@ def positional_contact_constraint_kernel(
 
     constraint_active_mask[world_idx, contact_idx] = 1.0
     lambda_n = body_lambda_n[world_idx, contact_idx]
-
     body_1 = interaction.body_a_idx
     body_2 = interaction.body_b_idx
 
     body_q_1 = wp.transform_identity()
     if body_1 >= 0:
         body_q_1 = body_q[world_idx, body_1]
-
     body_q_2 = wp.transform_identity()
     if body_2 >= 0:
         body_q_2 = body_q[world_idx, body_2]
@@ -187,21 +169,21 @@ def positional_contact_constraint_kernel(
     if body_2 >= 0:
         M_inv_2 = world_M_inv[world_idx, body_2]
 
-    # Call Shared Logic
-    data = compute_positional_local(interaction, body_q_1, body_q_2, lambda_n, M_inv_1, M_inv_2, dt)
+    # Full unpack for solver
+    d_h_d1, d_h_d2, h_n_val, J1, J2, c_val, s_val = compute_positional_local(
+        interaction, body_q_1, body_q_2, lambda_n, M_inv_1, M_inv_2, dt
+    )
 
     if body_1 >= 0:
-        wp.atomic_add(h_d, world_idx, body_1, data.delta_h_d_1)
+        wp.atomic_add(h_d, world_idx, body_1, d_h_d1)
     if body_2 >= 0:
-        wp.atomic_add(h_d, world_idx, body_2, data.delta_h_d_2)
+        wp.atomic_add(h_d, world_idx, body_2, d_h_d2)
 
-    h_n[world_idx, contact_idx] = data.h_n_val
-
-    # Store Extra Solver Terms
-    C_n_values[world_idx, contact_idx] = data.C_n_val
-    s_n[world_idx, contact_idx] = data.s_n_val
-    J_hat_n_values[world_idx, contact_idx, 0] = data.J_hat_n_1
-    J_hat_n_values[world_idx, contact_idx, 1] = data.J_hat_n_2
+    h_n[world_idx, contact_idx] = h_n_val
+    C_n_values[world_idx, contact_idx] = c_val
+    s_n[world_idx, contact_idx] = s_val
+    J_hat_n_values[world_idx, contact_idx, 0] = J1
+    J_hat_n_values[world_idx, contact_idx, 1] = J2
 
 
 @wp.kernel
@@ -225,14 +207,12 @@ def batch_positional_contact_residual_kernel(
         return
 
     lambda_n = body_lambda_n[batch_idx, world_idx, contact_idx]
-
     body_1 = interaction.body_a_idx
     body_2 = interaction.body_b_idx
 
     body_q_1 = wp.transform_identity()
     if body_1 >= 0:
         body_q_1 = body_q[batch_idx, world_idx, body_1]
-
     body_q_2 = wp.transform_identity()
     if body_2 >= 0:
         body_q_2 = body_q[batch_idx, world_idx, body_2]
@@ -244,15 +224,15 @@ def batch_positional_contact_residual_kernel(
     if body_2 >= 0:
         M_inv_2 = world_M_inv[world_idx, body_2]
 
-    # Call Shared Logic
-    data = compute_positional_local(interaction, body_q_1, body_q_2, lambda_n, M_inv_1, M_inv_2, dt)
+    d_h_d1, d_h_d2, h_n_val, unused_j1, unused_j2, unused_c, unused_s = compute_positional_local(
+        interaction, body_q_1, body_q_2, lambda_n, M_inv_1, M_inv_2, dt
+    )
 
     if body_1 >= 0:
-        wp.atomic_add(h_d, batch_idx, world_idx, body_1, data.delta_h_d_1)
+        wp.atomic_add(h_d, batch_idx, world_idx, body_1, d_h_d1)
     if body_2 >= 0:
-        wp.atomic_add(h_d, batch_idx, world_idx, body_2, data.delta_h_d_2)
-
-    h_n[batch_idx, world_idx, contact_idx] = data.h_n_val
+        wp.atomic_add(h_d, batch_idx, world_idx, body_2, d_h_d2)
+    h_n[batch_idx, world_idx, contact_idx] = h_n_val
 
 
 @wp.kernel
@@ -270,12 +250,10 @@ def fused_batch_positional_contact_residual_kernel(
     h_n: wp.array(dtype=wp.float32, ndim=3),
 ):
     world_idx, contact_idx = wp.tid()
-
     if contact_idx >= interactions.shape[1]:
         return
 
     interaction = interactions[world_idx, contact_idx]
-
     if not interaction.is_active:
         for b in range(num_batches):
             h_n[b, world_idx, contact_idx] = 0.0
@@ -293,24 +271,21 @@ def fused_batch_positional_contact_residual_kernel(
 
     for b in range(num_batches):
         lambda_n = body_lambda_n[b, world_idx, contact_idx]
-
         body_q_1 = wp.transform_identity()
         if body_1 >= 0:
             body_q_1 = body_q[b, world_idx, body_1]
-
         body_q_2 = wp.transform_identity()
         if body_2 >= 0:
             body_q_2 = body_q[b, world_idx, body_2]
 
-        # Call Shared Logic
-        data = compute_positional_local(
-            interaction, body_q_1, body_q_2, lambda_n, M_inv_1, M_inv_2, dt
+        d_h_d1, d_h_d2, h_n_val, unused_j1, unused_j2, unused_c, unused_s = (
+            compute_positional_local(
+                interaction, body_q_1, body_q_2, lambda_n, M_inv_1, M_inv_2, dt
+            )
         )
 
         if body_1 >= 0:
-            wp.atomic_add(h_d, b, world_idx, body_1, data.delta_h_d_1)
+            wp.atomic_add(h_d, b, world_idx, body_1, d_h_d1)
         if body_2 >= 0:
-            wp.atomic_add(h_d, b, world_idx, body_2, data.delta_h_d_2)
-
-        h_n[b, world_idx, contact_idx] = data.h_n_val
-
+            wp.atomic_add(h_d, b, world_idx, body_2, d_h_d2)
+        h_n[b, world_idx, contact_idx] = h_n_val
