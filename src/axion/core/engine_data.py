@@ -50,14 +50,7 @@ class HistoryData:
     body_u_history: wp.array
     _body_lambda_history: wp.array
 
-    pca_batch_body_q: wp.array
-    pca_batch_body_u: wp.array
-    _pca_batch_body_lambda: wp.array
-    _pca_batch_h: wp.array
-    pca_batch_h_norm: wp.array
-
     _h_history_spatial: Optional[wp.array] = None
-    _pca_batch_h_spatial: Optional[wp.array] = None
 
     @cached_property
     def h_history(self) -> SystemView:
@@ -66,14 +59,6 @@ class HistoryData:
     @cached_property
     def body_lambda_history(self) -> ConstraintView:
         return ConstraintView(self._body_lambda_history, self.dims)
-
-    @cached_property
-    def pca_batch_h(self) -> SystemView:
-        return SystemView(self._pca_batch_h, self.dims, _d_spatial=self._pca_batch_h_spatial)
-
-    @cached_property
-    def pca_batch_body_lambda(self) -> ConstraintView:
-        return ConstraintView(self._pca_batch_body_lambda, self.dims)
 
 
 @dataclass(frozen=True)
@@ -347,14 +332,8 @@ class EngineData:
         control_constraint_offsets: wp.array,
         dof_count: int,
         device: wpc.Device,
-        allocate_pca: bool = False,
         allocate_history: bool = False,
-        pca_grid_res: int = 100,
     ) -> EngineData:
-
-        # Backwards compatibility if allocate_pca is used as positional arg or kwarg
-        if allocate_pca and not allocate_history:
-            allocate_history = True
 
         def _zeros(shape, dtype=wp.float32, ndim=None):
             return wp.zeros(shape, dtype=dtype, device=device, ndim=ndim).contiguous()
@@ -472,8 +451,6 @@ class EngineData:
         # ---- PCA Storage Buffers ----
         history_data = None
         if allocate_history:
-            pca_batch_size = pca_grid_res * pca_grid_res
-
             # Separate Allocations
             h_history = _zeros((config.max_newton_iters + 1, dims.N_w, dims.N_u + dims.N_c))
             h_history_spatial = _zeros(
@@ -488,31 +465,13 @@ class EngineData:
             )
             body_lambda_history = _zeros((config.max_newton_iters + 1, dims.N_w, dims.N_c))
 
-            pca_batch_body_q = _zeros((pca_batch_size, dims.N_w, dims.N_b), wp.transform)
-            pca_batch_body_u = _zeros((pca_batch_size, dims.N_w, dims.N_b), wp.spatial_vector)
-            pca_batch_body_lambda = _zeros((pca_batch_size, dims.N_w, dims.N_c))
-
-            # Separate Allocations
-            pca_batch_h = _zeros((pca_batch_size, dims.N_w, dims.N_u + dims.N_c))
-            pca_batch_h_spatial = _zeros(
-                (pca_batch_size, dims.N_w, dims.N_b), dtype=wp.spatial_vector
-            )
-
-            pca_batch_h_norm = _zeros((pca_batch_size, dims.N_w))
-
             history_data = HistoryData(
                 dims=dims,
                 _h_history=h_history,
                 body_q_history=body_q_history,
                 body_u_history=body_u_history,
                 _body_lambda_history=body_lambda_history,
-                pca_batch_body_q=pca_batch_body_q,
-                pca_batch_body_u=pca_batch_body_u,
-                _pca_batch_body_lambda=pca_batch_body_lambda,
-                _pca_batch_h=pca_batch_h,
-                pca_batch_h_norm=pca_batch_h_norm,
                 _h_history_spatial=h_history_spatial,
-                _pca_batch_h_spatial=pca_batch_h_spatial,
             )
 
         return EngineData(

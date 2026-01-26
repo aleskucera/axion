@@ -20,7 +20,7 @@ from axion.core.linear_utils import compute_linear_system
 from axion.core.linesearch_utils import perform_linesearch
 from axion.core.linesearch_utils import update_body_q
 from axion.core.model import AxionModel
-from axion.core.pca_utils import copy_state_to_history
+from axion.core.history_utils import copy_state_to_history
 from axion.optim import JacobiPreconditioner
 from axion.optim import PCRSolver
 from axion.optim import SystemLinearData
