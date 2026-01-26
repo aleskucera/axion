@@ -1,13 +1,16 @@
 import warp as wp
 from axion.math import scaled_fisher_burmeister
-from axion.types import ContactInteraction
 
 from .utils import compute_effective_mass
 
 
 @wp.func
 def compute_friction_model(
-    interaction: ContactInteraction,
+    mu: wp.float32,
+    J_t1_1: wp.spatial_vector,
+    J_t2_1: wp.spatial_vector,
+    J_t1_2: wp.spatial_vector,
+    J_t2_2: wp.spatial_vector,
     u_1: wp.spatial_vector,
     u_2: wp.spatial_vector,
     force_f_prev: wp.vec2,
@@ -15,10 +18,6 @@ def compute_friction_model(
     dt: wp.float32,
     precond: wp.float32,
 ):  # Returns (slip_velocity, slip_coupling_factor)
-    mu = interaction.friction_coeff
-    J_t1_1, J_t2_1 = interaction.basis_a.tangent1, interaction.basis_a.tangent2
-    J_t1_2, J_t2_2 = interaction.basis_b.tangent1, interaction.basis_b.tangent2
-
     v_t_1 = wp.dot(J_t1_1, u_1) + wp.dot(J_t1_2, u_2)
     v_t_2 = wp.dot(J_t2_1, u_1) + wp.dot(J_t2_2, u_2)
     v_t = wp.vec2(v_t_1, v_t_2)
@@ -43,7 +42,13 @@ def compute_friction_model(
 
 @wp.func
 def compute_friction_local(
-    interaction: ContactInteraction,
+    body_a_idx: wp.int32,
+    body_b_idx: wp.int32,
+    contact_friction_coeff: wp.float32,
+    J_t1_1: wp.spatial_vector,
+    J_t2_1: wp.spatial_vector,
+    J_t1_2: wp.spatial_vector,
+    J_t2_2: wp.spatial_vector,
     q_1: wp.transform,
     q_2: wp.transform,
     u_1: wp.spatial_vector,
@@ -65,26 +70,26 @@ def compute_friction_local(
     w_t1 = compute_effective_mass(
         q_1,
         q_2,
-        interaction.basis_a.tangent1,
-        interaction.basis_b.tangent1,
+        J_t1_1,
+        J_t1_2,
         m_inv_1,
         I_inv_b_1,
         m_inv_2,
         I_inv_b_2,
-        interaction.body_a_idx,
-        interaction.body_b_idx,
+        body_a_idx,
+        body_b_idx,
     )
     w_t2 = compute_effective_mass(
         q_1,
         q_2,
-        interaction.basis_a.tangent2,
-        interaction.basis_b.tangent2,
+        J_t2_1,
+        J_t2_2,
         m_inv_1,
         I_inv_b_1,
         m_inv_2,
         I_inv_b_2,
-        interaction.body_a_idx,
-        interaction.body_b_idx,
+        body_a_idx,
+        body_b_idx,
     )
 
     effective_mass = (w_t1 + w_t2) * 0.5
@@ -92,13 +97,21 @@ def compute_friction_local(
     force_f_prev = wp.vec2(lambda_t1_prev, lambda_t2_prev)
 
     # Unpack tuple from model
-    v_t, w = compute_friction_model(interaction, u_1, u_2, force_f_prev, force_n_prev, dt, precond)
+    v_t, w = compute_friction_model(
+        contact_friction_coeff,
+        J_t1_1,
+        J_t2_1,
+        J_t1_2,
+        J_t2_2,
+        u_1,
+        u_2,
+        force_f_prev,
+        force_n_prev,
+        dt,
+        precond,
+    )
 
     v_t1, v_t2 = v_t.x, v_t.y
-
-    # Jacobian terms
-    J_t1_1, J_t2_1 = interaction.basis_a.tangent1, interaction.basis_a.tangent2
-    J_t1_2, J_t2_2 = interaction.basis_b.tangent1, interaction.basis_b.tangent2
 
     # Residuals
     delta_h_d_1 = -dt * (J_t1_1 * lambda_t1 + J_t2_1 * lambda_t2)
@@ -120,7 +133,13 @@ def friction_constraint_kernel(
     body_lambda_f_prev: wp.array(dtype=wp.float32, ndim=2),
     body_lambda_n_prev: wp.array(dtype=wp.float32, ndim=2),
     s_n_prev: wp.array(dtype=wp.float32, ndim=2),
-    interactions: wp.array(dtype=ContactInteraction, ndim=2),
+    contact_body_a: wp.array(dtype=wp.int32, ndim=2),
+    contact_body_b: wp.array(dtype=wp.int32, ndim=2),
+    contact_friction_coeff: wp.array(dtype=wp.float32, ndim=2),
+    contact_basis_t1_a: wp.array(dtype=wp.spatial_vector, ndim=2),
+    contact_basis_t2_a: wp.array(dtype=wp.spatial_vector, ndim=2),
+    contact_basis_t1_b: wp.array(dtype=wp.spatial_vector, ndim=2),
+    contact_basis_t2_b: wp.array(dtype=wp.spatial_vector, ndim=2),
     body_m_inv: wp.array(dtype=wp.float32, ndim=2),
     body_I_inv: wp.array(dtype=wp.mat33, ndim=2),
     # world_M_inv: wp.array(dtype=SpatialInertia, ndim=2),
@@ -138,8 +157,7 @@ def friction_constraint_kernel(
     constr_idx1 = 2 * contact_idx
     constr_idx2 = 2 * contact_idx + 1
 
-    interaction = interactions[world_idx, contact_idx]
-    mu = interaction.friction_coeff
+    mu = contact_friction_coeff[world_idx, contact_idx]
     force_n_prev = body_lambda_n_prev[world_idx, contact_idx]
 
     # --- 1. Handle Early Exit ---
@@ -162,8 +180,14 @@ def friction_constraint_kernel(
     constraint_active_mask[world_idx, constr_idx2] = 1.0
 
     # --- 2. Gather Inputs ---
-    body_1 = interaction.body_a_idx
-    body_2 = interaction.body_b_idx
+    body_1 = contact_body_a[world_idx, contact_idx]
+    body_2 = contact_body_b[world_idx, contact_idx]
+
+    # Basis
+    J_t1_1 = contact_basis_t1_a[world_idx, contact_idx]
+    J_t2_1 = contact_basis_t2_a[world_idx, contact_idx]
+    J_t1_2 = contact_basis_t1_b[world_idx, contact_idx]
+    J_t2_2 = contact_basis_t2_b[world_idx, contact_idx]
 
     q_1 = wp.transform()
     u_1 = wp.spatial_vector()
@@ -192,7 +216,13 @@ def friction_constraint_kernel(
 
     # --- 3. Compute Local Logic ---
     (d_h1, d_h2, hf1, hf2, J11, J21, J12, J22, cf) = compute_friction_local(
-        interaction,
+        body_1,
+        body_2,
+        mu,
+        J_t1_1,
+        J_t2_1,
+        J_t1_2,
+        J_t2_2,
         q_1,
         q_2,
         u_1,
@@ -235,7 +265,13 @@ def friction_residual_kernel(
     body_lambda_f_prev: wp.array(dtype=wp.float32, ndim=2),
     body_lambda_n_prev: wp.array(dtype=wp.float32, ndim=2),
     s_n_prev: wp.array(dtype=wp.float32, ndim=2),
-    interactions: wp.array(dtype=ContactInteraction, ndim=2),
+    contact_body_a: wp.array(dtype=wp.int32, ndim=2),
+    contact_body_b: wp.array(dtype=wp.int32, ndim=2),
+    contact_friction_coeff: wp.array(dtype=wp.float32, ndim=2),
+    contact_basis_t1_a: wp.array(dtype=wp.spatial_vector, ndim=2),
+    contact_basis_t2_a: wp.array(dtype=wp.spatial_vector, ndim=2),
+    contact_basis_t1_b: wp.array(dtype=wp.spatial_vector, ndim=2),
+    contact_basis_t2_b: wp.array(dtype=wp.spatial_vector, ndim=2),
     body_m_inv: wp.array(dtype=wp.float32, ndim=2),
     body_I_inv: wp.array(dtype=wp.mat33, ndim=2),
     # --- Simulation & Solver Parameters ---
@@ -249,8 +285,7 @@ def friction_residual_kernel(
     constr_idx1 = 2 * contact_idx
     constr_idx2 = 2 * contact_idx + 1
 
-    interaction = interactions[world_idx, contact_idx]
-    mu = interaction.friction_coeff
+    mu = contact_friction_coeff[world_idx, contact_idx]
     force_n_prev = body_lambda_n_prev[world_idx, contact_idx]
 
     if mu * force_n_prev <= 1e-6:
@@ -258,8 +293,14 @@ def friction_residual_kernel(
         h_f[world_idx, constr_idx2] = 0.0
         return
 
-    body_1 = interaction.body_a_idx
-    body_2 = interaction.body_b_idx
+    body_1 = contact_body_a[world_idx, contact_idx]
+    body_2 = contact_body_b[world_idx, contact_idx]
+
+    # Basis
+    J_t1_1 = contact_basis_t1_a[world_idx, contact_idx]
+    J_t2_1 = contact_basis_t2_a[world_idx, contact_idx]
+    J_t1_2 = contact_basis_t1_b[world_idx, contact_idx]
+    J_t2_2 = contact_basis_t2_b[world_idx, contact_idx]
 
     q_1 = wp.transform()
     u_1 = wp.spatial_vector()
@@ -288,7 +329,13 @@ def friction_residual_kernel(
 
     # --- Call Shared Logic ---
     (d_h1, d_h2, hf1, hf2, J11, J21, J12, J22, cf) = compute_friction_local(
-        interaction,
+        body_1,
+        body_2,
+        mu,
+        J_t1_1,
+        J_t2_1,
+        J_t1_2,
+        J_t2_2,
         q_1,
         q_2,
         u_1,
@@ -323,7 +370,13 @@ def batch_friction_residual_kernel(
     body_lambda_f_prev: wp.array(dtype=wp.float32, ndim=2),
     body_lambda_n_prev: wp.array(dtype=wp.float32, ndim=2),
     s_n_prev: wp.array(dtype=wp.float32, ndim=2),
-    interactions: wp.array(dtype=ContactInteraction, ndim=2),
+    contact_body_a: wp.array(dtype=wp.int32, ndim=2),
+    contact_body_b: wp.array(dtype=wp.int32, ndim=2),
+    contact_friction_coeff: wp.array(dtype=wp.float32, ndim=2),
+    contact_basis_t1_a: wp.array(dtype=wp.spatial_vector, ndim=2),
+    contact_basis_t2_a: wp.array(dtype=wp.spatial_vector, ndim=2),
+    contact_basis_t1_b: wp.array(dtype=wp.spatial_vector, ndim=2),
+    contact_basis_t2_b: wp.array(dtype=wp.spatial_vector, ndim=2),
     body_m_inv: wp.array(dtype=wp.float32, ndim=2),
     body_I_inv: wp.array(dtype=wp.mat33, ndim=2),
     # --- Simulation & Solver Parameters ---
@@ -337,8 +390,7 @@ def batch_friction_residual_kernel(
     constr_idx1 = 2 * contact_idx
     constr_idx2 = 2 * contact_idx + 1
 
-    interaction = interactions[world_idx, contact_idx]
-    mu = interaction.friction_coeff
+    mu = contact_friction_coeff[world_idx, contact_idx]
     force_n_prev = body_lambda_n_prev[world_idx, contact_idx]
 
     if mu * force_n_prev <= 1e-6:
@@ -346,8 +398,14 @@ def batch_friction_residual_kernel(
         h_f[batch_idx, world_idx, constr_idx2] = 0.0
         return
 
-    body_1 = interaction.body_a_idx
-    body_2 = interaction.body_b_idx
+    body_1 = contact_body_a[world_idx, contact_idx]
+    body_2 = contact_body_b[world_idx, contact_idx]
+
+    # Basis
+    J_t1_1 = contact_basis_t1_a[world_idx, contact_idx]
+    J_t2_1 = contact_basis_t2_a[world_idx, contact_idx]
+    J_t1_2 = contact_basis_t1_b[world_idx, contact_idx]
+    J_t2_2 = contact_basis_t2_b[world_idx, contact_idx]
 
     q_1 = wp.transform()
     u_1 = wp.spatial_vector()
@@ -376,7 +434,13 @@ def batch_friction_residual_kernel(
 
     # --- Call Shared Logic ---
     (d_h1, d_h2, hf1, hf2, J11, J21, J12, J22, cf) = compute_friction_local(
-        interaction,
+        body_1,
+        body_2,
+        mu,
+        J_t1_1,
+        J_t2_1,
+        J_t1_2,
+        J_t2_2,
         q_1,
         q_2,
         u_1,
@@ -411,7 +475,13 @@ def fused_batch_friction_residual_kernel(
     body_lambda_f_prev: wp.array(dtype=wp.float32, ndim=2),
     body_lambda_n_prev: wp.array(dtype=wp.float32, ndim=2),
     s_n_prev: wp.array(dtype=wp.float32, ndim=2),
-    interactions: wp.array(dtype=ContactInteraction, ndim=2),
+    contact_body_a: wp.array(dtype=wp.int32, ndim=2),
+    contact_body_b: wp.array(dtype=wp.int32, ndim=2),
+    contact_friction_coeff: wp.array(dtype=wp.float32, ndim=2),
+    contact_basis_t1_a: wp.array(dtype=wp.spatial_vector, ndim=2),
+    contact_basis_t2_a: wp.array(dtype=wp.spatial_vector, ndim=2),
+    contact_basis_t1_b: wp.array(dtype=wp.spatial_vector, ndim=2),
+    contact_basis_t2_b: wp.array(dtype=wp.spatial_vector, ndim=2),
     body_m_inv: wp.array(dtype=wp.float32, ndim=2),
     body_I_inv: wp.array(dtype=wp.mat33, ndim=2),
     # --- Simulation & Solver Parameters ---
@@ -424,14 +494,13 @@ def fused_batch_friction_residual_kernel(
 ):
     world_idx, contact_idx = wp.tid()
 
-    if contact_idx >= interactions.shape[1]:
+    if contact_idx >= contact_friction_coeff.shape[1]:
         return
 
     constr_idx1 = 2 * contact_idx
     constr_idx2 = 2 * contact_idx + 1
 
-    interaction = interactions[world_idx, contact_idx]
-    mu = interaction.friction_coeff
+    mu = contact_friction_coeff[world_idx, contact_idx]
     force_n_prev = body_lambda_n_prev[world_idx, contact_idx]
 
     if mu * force_n_prev <= 1e-6:
@@ -440,8 +509,14 @@ def fused_batch_friction_residual_kernel(
             h_f[b, world_idx, constr_idx2] = 0.0
         return
 
-    body_1 = interaction.body_a_idx
-    body_2 = interaction.body_b_idx
+    body_1 = contact_body_a[world_idx, contact_idx]
+    body_2 = contact_body_b[world_idx, contact_idx]
+
+    # Basis
+    J_t1_1 = contact_basis_t1_a[world_idx, contact_idx]
+    J_t2_1 = contact_basis_t2_a[world_idx, contact_idx]
+    J_t1_2 = contact_basis_t1_b[world_idx, contact_idx]
+    J_t2_2 = contact_basis_t2_b[world_idx, contact_idx]
 
     lambda_t1_prev = body_lambda_f_prev[world_idx, constr_idx1]
     lambda_t2_prev = body_lambda_f_prev[world_idx, constr_idx2]
@@ -478,7 +553,13 @@ def fused_batch_friction_residual_kernel(
 
         # --- Call Shared Logic ---
         (d_h1, d_h2, hf1, hf2, J11, J21, J12, J22, cf) = compute_friction_local(
-            interaction,
+            body_1,
+            body_2,
+            mu,
+            J_t1_1,
+            J_t2_1,
+            J_t1_2,
+            J_t2_2,
             q_1,
             q_2,
             u_1,

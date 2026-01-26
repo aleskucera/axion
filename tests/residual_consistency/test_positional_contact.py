@@ -9,7 +9,6 @@ from axion.core.engine import AxionEngine
 from axion.core.engine_config import AxionEngineConfig
 from axion.core.model_builder import AxionModelBuilder
 from axion.generation import SceneGenerator
-from axion.types import ContactInteraction
 # Adjust imports to match your folder structure
 
 wp.init()
@@ -17,31 +16,40 @@ wp.init()
 
 @wp.kernel
 def setup_dummy_positional_interactions(
-    interactions: wp.array(dtype=ContactInteraction, ndim=2), num_bodies: int
+    contact_body_a: wp.array(dtype=wp.int32, ndim=2),
+    contact_body_b: wp.array(dtype=wp.int32, ndim=2),
+    contact_point_a: wp.array(dtype=wp.vec3, ndim=2),
+    contact_point_b: wp.array(dtype=wp.vec3, ndim=2),
+    contact_thickness_a: wp.array(dtype=wp.float32, ndim=2),
+    contact_thickness_b: wp.array(dtype=wp.float32, ndim=2),
+    contact_dist: wp.array(dtype=wp.float32, ndim=2),
+    contact_basis_n_a: wp.array(dtype=wp.spatial_vector, ndim=2),
+    contact_basis_n_b: wp.array(dtype=wp.spatial_vector, ndim=2),
+    num_bodies: int
 ):
     w, c = wp.tid()
-    inter = interactions[w, c]
 
-    # 1. Activate
-    inter.is_active = True
+    # 1. Activate (by setting dist > 0)
+    contact_dist[w, c] = 0.1
 
     # 2. Assign Bodies
-    inter.body_a_idx = c % num_bodies
-    inter.body_b_idx = (c + 1) % num_bodies
+    body_a = c % num_bodies
+    body_b = (c + 1) % num_bodies
+    contact_body_a[w, c] = body_a
+    contact_body_b[w, c] = body_b
 
     # 3. Set Geometry for Signed Distance
     # Distance = dot(n, (p_a - th_a*n) - (p_b + th_b*n))
     # We set non-zero normal and points
     normal = wp.normalize(wp.vec3(0.0, 1.0, 0.0))
-    inter.basis_a.normal = wp.spatial_vector(normal, wp.vec3(0.0))  # Top 3 are linear normal
+    contact_basis_n_a[w, c] = wp.spatial_vector(normal, wp.vec3(0.0))  # Top 3 are linear normal
+    contact_basis_n_b[w, c] = wp.spatial_vector(-normal, wp.vec3(0.0))
 
     # Points in local space (will be transformed by random body_q)
-    inter.contact_point_a = wp.vec3(0.0, -0.5, 0.0)
-    inter.contact_point_b = wp.vec3(0.0, 0.5, 0.0)
-    inter.contact_thickness_a = 0.01
-    inter.contact_thickness_b = 0.01
-
-    interactions[w, c] = inter
+    contact_point_a[w, c] = wp.vec3(0.0, -0.5, 0.0)
+    contact_point_b[w, c] = wp.vec3(0.0, 0.5, 0.0)
+    contact_thickness_a[w, c] = 0.01
+    contact_thickness_b[w, c] = 0.01
 
 
 def print_stats(name, array):
@@ -96,7 +104,18 @@ def test_positional_residual_consistency():
     wp.launch(
         kernel=setup_dummy_positional_interactions,
         dim=(engine.dims.N_w, engine.dims.N_n),
-        inputs=[engine.data.contact_interaction, engine.dims.N_b],
+        inputs=[
+            engine.data.contact_body_a,
+            engine.data.contact_body_b,
+            engine.data.contact_point_a,
+            engine.data.contact_point_b,
+            engine.data.contact_thickness_a,
+            engine.data.contact_thickness_b,
+            engine.data.contact_dist,
+            engine.data.contact_basis_n_a,
+            engine.data.contact_basis_n_b,
+            engine.dims.N_b,
+        ],
     )
 
     print_stats("Lambda N", engine.data.body_lambda.n)
@@ -118,8 +137,17 @@ def test_positional_residual_consistency():
             engine.data.body_u,
             engine.data.body_u,  # prev (unused)
             engine.data.body_lambda.n,
-            engine.data.contact_interaction,
-            engine.data.world_M_inv,
+            engine.data.contact_body_a,
+            engine.data.contact_body_b,
+            engine.data.contact_point_a,
+            engine.data.contact_point_b,
+            engine.data.contact_thickness_a,
+            engine.data.contact_thickness_b,
+            engine.data.contact_dist,
+            engine.data.contact_basis_n_a,
+            engine.data.contact_basis_n_b,
+            engine.axion_model.body_inv_mass,
+            engine.axion_model.body_inv_inertia,
             engine.data.dt,
             0.0,  # stabilization
             engine.config.contact_compliance,
@@ -142,8 +170,17 @@ def test_positional_residual_consistency():
             engine.data.body_u,
             engine.data.body_u,
             engine.data.body_lambda.n,
-            engine.data.contact_interaction,
-            engine.data.world_M_inv,
+            engine.data.contact_body_a,
+            engine.data.contact_body_b,
+            engine.data.contact_point_a,
+            engine.data.contact_point_b,
+            engine.data.contact_thickness_a,
+            engine.data.contact_thickness_b,
+            engine.data.contact_dist,
+            engine.data.contact_basis_n_a,
+            engine.data.contact_basis_n_b,
+            engine.axion_model.body_inv_mass,
+            engine.axion_model.body_inv_inertia,
             engine.data.dt,
             engine.config.contact_compliance,
         ],
@@ -191,8 +228,17 @@ def test_positional_residual_consistency():
             u_zeros,  # body_u (3D)
             engine.data.body_u,  # body_u_prev (2D shared) <--- FIXED
             body_lam_n_batch,
-            engine.data.contact_interaction,
-            engine.data.world_M_inv,
+            engine.data.contact_body_a,
+            engine.data.contact_body_b,
+            engine.data.contact_point_a,
+            engine.data.contact_point_b,
+            engine.data.contact_thickness_a,
+            engine.data.contact_thickness_b,
+            engine.data.contact_dist,
+            engine.data.contact_basis_n_a,
+            engine.data.contact_basis_n_b,
+            engine.axion_model.body_inv_mass,
+            engine.axion_model.body_inv_inertia,
             engine.data.dt,
             engine.config.contact_compliance,
         ],
@@ -217,8 +263,17 @@ def test_positional_residual_consistency():
             u_zeros,  # body_u (3D)
             engine.data.body_u,  # body_u_prev (2D shared) <--- FIXED
             body_lam_n_batch,
-            engine.data.contact_interaction,
-            engine.data.world_M_inv,
+            engine.data.contact_body_a,
+            engine.data.contact_body_b,
+            engine.data.contact_point_a,
+            engine.data.contact_point_b,
+            engine.data.contact_thickness_a,
+            engine.data.contact_thickness_b,
+            engine.data.contact_dist,
+            engine.data.contact_basis_n_a,
+            engine.data.contact_basis_n_b,
+            engine.axion_model.body_inv_mass,
+            engine.axion_model.body_inv_inertia,
             engine.data.dt,
             engine.config.contact_compliance,
             B,

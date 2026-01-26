@@ -95,7 +95,7 @@ def test_friction_residual_consistency():
     print_stats("Input: Lambda N Prev", engine.data.body_lambda_prev.n)
 
     # Check Interaction Count
-    num_contacts = engine.data.contact_interaction.shape[1]
+    num_contacts = engine.data.contact_dist.shape[1]
     print(f"\n  > Active Contacts Found: {num_contacts}")
     if num_contacts == 0:
         print("  ❌ FATAL: No contacts generated. Test will produce trivial zeros.")
@@ -121,8 +121,15 @@ def test_friction_residual_consistency():
             engine.data.body_lambda_prev.f,
             engine.data.body_lambda_prev.n,
             engine.data.s_n_prev,
-            engine.data.contact_interaction,
-            engine.data.world_M_inv,
+            engine.data.contact_body_a,
+            engine.data.contact_body_b,
+            engine.data.contact_friction_coeff,
+            engine.data.contact_basis_t1_a,
+            engine.data.contact_basis_t2_a,
+            engine.data.contact_basis_t1_b,
+            engine.data.contact_basis_t2_b,
+            engine.axion_model.body_inv_mass,
+            engine.axion_model.body_inv_inertia,
             engine.data.dt,
             engine.config.contact_compliance,
         ],
@@ -147,8 +154,15 @@ def test_friction_residual_consistency():
             engine.data.body_lambda_prev.f,
             engine.data.body_lambda_prev.n,
             engine.data.s_n_prev,
-            engine.data.contact_interaction,
-            engine.data.world_M_inv,
+            engine.data.contact_body_a,
+            engine.data.contact_body_b,
+            engine.data.contact_friction_coeff,
+            engine.data.contact_basis_t1_a,
+            engine.data.contact_basis_t2_a,
+            engine.data.contact_basis_t1_b,
+            engine.data.contact_basis_t2_b,
+            engine.axion_model.body_inv_mass,
+            engine.axion_model.body_inv_inertia,
             engine.data.dt,
             engine.config.contact_compliance,
         ],
@@ -179,6 +193,10 @@ def test_friction_residual_consistency():
     u_tiled_np = np.tile(u_np[np.newaxis, ...], (B, 1, 1, 1))
     body_u_batch = wp.array(u_tiled_np, dtype=wp.spatial_vector, device=engine.device)
 
+    q_np = engine.data.body_q.numpy()
+    q_tiled_np = np.tile(q_np[np.newaxis, ...], (B, 1, 1, 1))
+    body_q_batch = wp.array(q_tiled_np, dtype=wp.transform, device=engine.device)
+
     lam_f_np = engine.data.body_lambda.f.numpy()
     lam_f_tiled_np = np.tile(lam_f_np[np.newaxis, ...], (B, 1, 1))
     body_lambda_f_batch = wp.array(lam_f_tiled_np, dtype=wp.float32, device=engine.device)
@@ -198,13 +216,21 @@ def test_friction_residual_consistency():
         kernel=batch_friction_residual_kernel,
         dim=(B, engine.dims.N_w, engine.dims.N_n),
         inputs=[
+            body_q_batch,
             body_u_batch,
             body_lambda_f_batch,
             engine.data.body_lambda_prev.f,  # Shared
             engine.data.body_lambda_prev.n,  # Shared
             engine.data.s_n_prev,  # Shared
-            engine.data.contact_interaction,  # Shared
-            engine.data.world_M_inv,  # Shared
+            engine.data.contact_body_a,
+            engine.data.contact_body_b,
+            engine.data.contact_friction_coeff,
+            engine.data.contact_basis_t1_a,
+            engine.data.contact_basis_t2_a,
+            engine.data.contact_basis_t1_b,
+            engine.data.contact_basis_t2_b,
+            engine.axion_model.body_inv_mass,
+            engine.axion_model.body_inv_inertia,
             engine.data.dt,
             engine.config.contact_compliance,
         ],
@@ -234,13 +260,21 @@ def test_friction_residual_consistency():
         kernel=fused_batch_friction_residual_kernel,
         dim=(engine.dims.N_w, engine.dims.N_n),  # Note: Dim is 2D!
         inputs=[
+            body_q_batch,
             body_u_batch,
             body_lambda_f_batch,
             engine.data.body_lambda_prev.f,
             engine.data.body_lambda_prev.n,
             engine.data.s_n_prev,
-            engine.data.contact_interaction,
-            engine.data.world_M_inv,
+            engine.data.contact_body_a,
+            engine.data.contact_body_b,
+            engine.data.contact_friction_coeff,
+            engine.data.contact_basis_t1_a,
+            engine.data.contact_basis_t2_a,
+            engine.data.contact_basis_t1_b,
+            engine.data.contact_basis_t2_b,
+            engine.axion_model.body_inv_mass,
+            engine.axion_model.body_inv_inertia,
             engine.data.dt,
             engine.config.contact_compliance,
             B,  # num_batches

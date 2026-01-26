@@ -10,7 +10,6 @@ import numpy as np
 import warp as wp
 import warp.context as wpc
 from axion.tiled.tiled_utils import TiledSqNorm
-from axion.types import ContactInteraction
 from axion.types import SpatialInertia
 from newton import Model
 
@@ -107,8 +106,24 @@ class EngineData:
     world_M_inv: wp.array
     joint_constraint_offsets: wp.array
     control_constraint_offsets: wp.array
-    contact_interaction: wp.array
     joint_target: wp.array
+
+    # --- Contact Interaction SOA ---
+    contact_body_a: wp.array
+    contact_body_b: wp.array
+    contact_point_a: wp.array
+    contact_point_b: wp.array
+    contact_thickness_a: wp.array
+    contact_thickness_b: wp.array
+    contact_dist: wp.array
+    contact_friction_coeff: wp.array
+    contact_restitution_coeff: wp.array
+    contact_basis_n_a: wp.array
+    contact_basis_t1_a: wp.array
+    contact_basis_t2_a: wp.array
+    contact_basis_n_b: wp.array
+    contact_basis_t1_b: wp.array
+    contact_basis_t2_b: wp.array
 
     linesearch: Optional[LinesearchData] = None
     history: Optional[HistoryData] = None
@@ -251,6 +266,11 @@ class EngineData:
                 "h": self._serialize_to_numpy(self.h.c.n),
                 "s": self._serialize_to_numpy(self.s_n),
                 "body_lambda": self._serialize_to_numpy(self.body_lambda.n),
+                "contact_body_a": self._serialize_to_numpy(self.contact_body_a),
+                "contact_body_b": self._serialize_to_numpy(self.contact_body_b),
+                "contact_dist": self._serialize_to_numpy(self.contact_dist),
+                "contact_friction_coeff": self._serialize_to_numpy(self.contact_friction_coeff),
+                "contact_restitution_coeff": self._serialize_to_numpy(self.contact_restitution_coeff),
             }
             constraints["Friction constraint data"] = {
                 "h": self._serialize_to_numpy(self.h.c.f),
@@ -381,7 +401,21 @@ class EngineData:
         world_M = _empty((dims.N_w, dims.N_b), SpatialInertia)
         world_M_inv = _empty((dims.N_w, dims.N_b), SpatialInertia)
 
-        contact_interaction = _empty((dims.N_w, dims.N_n), ContactInteraction)
+        contact_body_a = _zeros((dims.N_w, dims.N_n), wp.int32)
+        contact_body_b = _zeros((dims.N_w, dims.N_n), wp.int32)
+        contact_point_a = _zeros((dims.N_w, dims.N_n), wp.vec3)
+        contact_point_b = _zeros((dims.N_w, dims.N_n), wp.vec3)
+        contact_thickness_a = _zeros((dims.N_w, dims.N_n), wp.float32)
+        contact_thickness_b = _zeros((dims.N_w, dims.N_n), wp.float32)
+        contact_dist = _zeros((dims.N_w, dims.N_n), wp.float32)
+        contact_friction_coeff = _zeros((dims.N_w, dims.N_n), wp.float32)
+        contact_restitution_coeff = _zeros((dims.N_w, dims.N_n), wp.float32)
+        contact_basis_n_a = _zeros((dims.N_w, dims.N_n), wp.spatial_vector)
+        contact_basis_t1_a = _zeros((dims.N_w, dims.N_n), wp.spatial_vector)
+        contact_basis_t2_a = _zeros((dims.N_w, dims.N_n), wp.spatial_vector)
+        contact_basis_n_b = _zeros((dims.N_w, dims.N_n), wp.spatial_vector)
+        contact_basis_t1_b = _zeros((dims.N_w, dims.N_n), wp.spatial_vector)
+        contact_basis_t2_b = _zeros((dims.N_w, dims.N_n), wp.spatial_vector)
 
         joint_target = _zeros((dims.N_w, dof_count))
 
@@ -500,7 +534,21 @@ class EngineData:
             _constraint_active_mask=constraint_active_mask,
             s_n=s_n,
             s_n_prev=s_n_prev,
-            contact_interaction=contact_interaction,
+            contact_body_a=contact_body_a,
+            contact_body_b=contact_body_b,
+            contact_point_a=contact_point_a,
+            contact_point_b=contact_point_b,
+            contact_thickness_a=contact_thickness_a,
+            contact_thickness_b=contact_thickness_b,
+            contact_dist=contact_dist,
+            contact_friction_coeff=contact_friction_coeff,
+            contact_restitution_coeff=contact_restitution_coeff,
+            contact_basis_n_a=contact_basis_n_a,
+            contact_basis_t1_a=contact_basis_t1_a,
+            contact_basis_t2_a=contact_basis_t2_a,
+            contact_basis_n_b=contact_basis_n_b,
+            contact_basis_t1_b=contact_basis_t1_b,
+            contact_basis_t2_b=contact_basis_t2_b,
             joint_constraint_offsets=joint_constraint_offsets,
             control_constraint_offsets=control_constraint_offsets,
             joint_target=joint_target,

@@ -234,7 +234,21 @@ class AxionEngine(SolverBase):
                     self.axion_contacts.contact_thickness1,
                 ],
                 outputs=[
-                    self.data.contact_interaction,
+                    self.data.contact_body_a,
+                    self.data.contact_body_b,
+                    self.data.contact_point_a,
+                    self.data.contact_point_b,
+                    self.data.contact_thickness_a,
+                    self.data.contact_thickness_b,
+                    self.data.contact_dist,
+                    self.data.contact_friction_coeff,
+                    self.data.contact_restitution_coeff,
+                    self.data.contact_basis_n_a,
+                    self.data.contact_basis_t1_a,
+                    self.data.contact_basis_t2_a,
+                    self.data.contact_basis_n_b,
+                    self.data.contact_basis_t1_b,
+                    self.data.contact_basis_t2_b,
                 ],
                 device=self.device,
             )
@@ -278,7 +292,8 @@ class AxionEngine(SolverBase):
                 kernel=fill_contact_constraint_body_idx_kernel,
                 dim=(self.axion_model.num_worlds, self.dims.N_n),
                 inputs=[
-                    self.data.contact_interaction,
+                    self.data.contact_body_a,
+                    self.data.contact_body_b,
                 ],
                 outputs=[
                     self.data.constraint_body_idx.n,
@@ -291,7 +306,8 @@ class AxionEngine(SolverBase):
                 kernel=fill_friction_constraint_body_idx_kernel,
                 dim=(self.axion_model.num_worlds, self.dims.N_f),
                 inputs=[
-                    self.data.contact_interaction,
+                    self.data.contact_body_a,
+                    self.data.contact_body_b,
                 ],
                 outputs=[
                     self.data.constraint_body_idx.f,

@@ -1,12 +1,13 @@
 import warp as wp
 from axion.math import scaled_fisher_burmeister_diff
-from axion.types import ContactInteraction
-from axion.types import SpatialInertia
 
 
 @wp.func
 def compute_target_v_n(
-    interaction: ContactInteraction,
+    contact_dist: wp.float32,
+    contact_restitution_coeff: wp.float32,
+    basis_n_a: wp.spatial_vector,
+    basis_n_b: wp.spatial_vector,
     u_1: wp.spatial_vector,
     u_2: wp.spatial_vector,
     u_1_prev: wp.spatial_vector,
@@ -14,10 +15,10 @@ def compute_target_v_n(
     dt: wp.float32,
     stabilization_factor: wp.float32,
 ) -> wp.float32:
-    J_n_1 = interaction.basis_a.normal
-    J_n_2 = interaction.basis_b.normal
-    c = interaction.penetration_depth
-    e = interaction.restitution_coeff
+    J_n_1 = basis_n_a
+    J_n_2 = basis_n_b
+    c = contact_dist
+    e = contact_restitution_coeff
 
     # Relative normal velocity at the current time step positive if separating.
     v_n_curr = wp.dot(J_n_1, u_1) + wp.dot(J_n_2, u_2)
@@ -47,7 +48,12 @@ def velocity_contact_residual_kernel(
     body_u: wp.array(dtype=wp.spatial_vector, ndim=2),
     body_u_prev: wp.array(dtype=wp.spatial_vector, ndim=2),
     body_lambda_n: wp.array(dtype=wp.float32, ndim=2),
-    interactions: wp.array(dtype=ContactInteraction, ndim=2),
+    contact_body_a: wp.array(dtype=wp.int32, ndim=2),
+    contact_body_b: wp.array(dtype=wp.int32, ndim=2),
+    contact_dist: wp.array(dtype=wp.float32, ndim=2),
+    contact_restitution_coeff: wp.array(dtype=wp.float32, ndim=2),
+    contact_basis_n_a: wp.array(dtype=wp.spatial_vector, ndim=2),
+    contact_basis_n_b: wp.array(dtype=wp.spatial_vector, ndim=2),
     # --- Simulation & Solver Parameters ---
     dt: wp.float32,
     stabilization_factor: wp.float32,
@@ -59,22 +65,21 @@ def velocity_contact_residual_kernel(
     h_n: wp.array(dtype=wp.float32, ndim=2),
 ):
     world_idx, contact_idx = wp.tid()
-    interaction = interactions[world_idx, contact_idx]
 
     # Early exit for inactive contacts.
-    if interaction.penetration_depth <= 0:
+    if contact_dist[world_idx, contact_idx] <= 0.0:
         return
 
     # The normal impulse for this specific contact
     lambda_n = body_lambda_n[world_idx, contact_idx]
 
     # Unpack body indices for clarity
-    body_1 = interaction.body_a_idx
-    body_2 = interaction.body_b_idx
+    body_1 = contact_body_a[world_idx, contact_idx]
+    body_2 = contact_body_b[world_idx, contact_idx]
 
     # Unpack Jacobian basis vectors
-    J_n_1 = interaction.basis_a.normal
-    J_n_2 = interaction.basis_b.normal
+    J_n_1 = contact_basis_n_a[world_idx, contact_idx]
+    J_n_2 = contact_basis_n_b[world_idx, contact_idx]
 
     # Safely get body velocities (handles fixed bodies with index -1)
     u_1, u_1_prev = wp.spatial_vector(), wp.spatial_vector()
@@ -89,7 +94,10 @@ def velocity_contact_residual_kernel(
 
     # Compute the velocity-level term for the complementarity function
     target_v_n = compute_target_v_n(
-        interaction,
+        contact_dist[world_idx, contact_idx],
+        contact_restitution_coeff[world_idx, contact_idx],
+        J_n_1,
+        J_n_2,
         u_1,
         u_2,
         u_1_prev,
@@ -126,7 +134,12 @@ def velocity_contact_constraint_kernel(
     body_u: wp.array(dtype=wp.spatial_vector, ndim=2),
     body_u_prev: wp.array(dtype=wp.spatial_vector, ndim=2),
     body_lambda_n: wp.array(dtype=wp.float32, ndim=2),
-    interactions: wp.array(dtype=ContactInteraction, ndim=2),
+    contact_body_a: wp.array(dtype=wp.int32, ndim=2),
+    contact_body_b: wp.array(dtype=wp.int32, ndim=2),
+    contact_dist: wp.array(dtype=wp.float32, ndim=2),
+    contact_restitution_coeff: wp.array(dtype=wp.float32, ndim=2),
+    contact_basis_n_a: wp.array(dtype=wp.spatial_vector, ndim=2),
+    contact_basis_n_b: wp.array(dtype=wp.spatial_vector, ndim=2),
     # --- Simulation & Solver Parameters ---
     dt: wp.float32,
     stabilization_factor: wp.float32,
@@ -142,13 +155,12 @@ def velocity_contact_constraint_kernel(
     s_n: wp.array(dtype=wp.float32, ndim=2),
 ):
     world_idx, contact_idx = wp.tid()
-    interaction = interactions[world_idx, contact_idx]
 
     # The normal impulse for this specific contact
     lambda_n = body_lambda_n[world_idx, contact_idx]
 
     # Early exit for inactive contacts.
-    if interaction.penetration_depth <= 0:
+    if contact_dist[world_idx, contact_idx] <= 0.0:
         constraint_active_mask[world_idx, contact_idx] = 0.0
         body_lambda_n[world_idx, contact_idx] = 0.0
         h_n[world_idx, contact_idx] = 0.0
@@ -160,12 +172,12 @@ def velocity_contact_constraint_kernel(
     constraint_active_mask[world_idx, contact_idx] = 1.0
 
     # Unpack body indices for clarity
-    body_1 = interaction.body_a_idx
-    body_2 = interaction.body_b_idx
+    body_1 = contact_body_a[world_idx, contact_idx]
+    body_2 = contact_body_b[world_idx, contact_idx]
 
     # Unpack Jacobian basis vectors
-    J_n_1 = interaction.basis_a.normal
-    J_n_2 = interaction.basis_b.normal
+    J_n_1 = contact_basis_n_a[world_idx, contact_idx]
+    J_n_2 = contact_basis_n_b[world_idx, contact_idx]
 
     # Safely get body velocities (handles fixed bodies with index -1)
     u_1, u_1_prev = wp.spatial_vector(), wp.spatial_vector()
@@ -180,7 +192,10 @@ def velocity_contact_constraint_kernel(
 
     # Compute the velocity-level term for the complementarity function
     target_v_n = compute_target_v_n(
-        interaction,
+        contact_dist[world_idx, contact_idx],
+        contact_restitution_coeff[world_idx, contact_idx],
+        J_n_1,
+        J_n_2,
         u_1,
         u_2,
         u_1_prev,
@@ -227,7 +242,12 @@ def batch_velocity_contact_residual_kernel(
     body_u: wp.array(dtype=wp.spatial_vector, ndim=3),
     body_u_prev: wp.array(dtype=wp.spatial_vector, ndim=2),
     body_lambda_n: wp.array(dtype=wp.float32, ndim=3),
-    interactions: wp.array(dtype=ContactInteraction, ndim=2),
+    contact_body_a: wp.array(dtype=wp.int32, ndim=2),
+    contact_body_b: wp.array(dtype=wp.int32, ndim=2),
+    contact_dist: wp.array(dtype=wp.float32, ndim=2),
+    contact_restitution_coeff: wp.array(dtype=wp.float32, ndim=2),
+    contact_basis_n_a: wp.array(dtype=wp.spatial_vector, ndim=2),
+    contact_basis_n_b: wp.array(dtype=wp.spatial_vector, ndim=2),
     # --- Simulation & Solver Parameters ---
     dt: wp.float32,
     stabilization_factor: wp.float32,
@@ -239,23 +259,22 @@ def batch_velocity_contact_residual_kernel(
     h_n: wp.array(dtype=wp.float32, ndim=3),
 ):
     batch_idx, world_idx, contact_idx = wp.tid()
-    interaction = interactions[world_idx, contact_idx]
 
     # The normal impulse for this specific contact
     lambda_n = body_lambda_n[batch_idx, world_idx, contact_idx]
 
     # Early exit for inactive contacts.
-    if interaction.penetration_depth <= 0:
+    if contact_dist[world_idx, contact_idx] <= 0.0:
         h_n[batch_idx, world_idx, contact_idx] = 0.0
         return
 
     # Unpack body indices for clarity
-    body_1 = interaction.body_a_idx
-    body_2 = interaction.body_b_idx
+    body_1 = contact_body_a[world_idx, contact_idx]
+    body_2 = contact_body_b[world_idx, contact_idx]
 
     # Unpack Jacobian basis vectors
-    J_n_1 = interaction.basis_a.normal
-    J_n_2 = interaction.basis_b.normal
+    J_n_1 = contact_basis_n_a[world_idx, contact_idx]
+    J_n_2 = contact_basis_n_b[world_idx, contact_idx]
 
     # Safely get body velocities (handles fixed bodies with index -1)
     u_1, u_1_prev = wp.spatial_vector(), wp.spatial_vector()
@@ -270,7 +289,10 @@ def batch_velocity_contact_residual_kernel(
 
     # Compute the velocity-level term for the complementarity function
     target_v_n = compute_target_v_n(
-        interaction,
+        contact_dist[world_idx, contact_idx],
+        contact_restitution_coeff[world_idx, contact_idx],
+        J_n_1,
+        J_n_2,
         u_1,
         u_2,
         u_1_prev,
@@ -307,7 +329,12 @@ def fused_batch_velocity_contact_residual_kernel(
     body_u: wp.array(dtype=wp.spatial_vector, ndim=3),
     body_u_prev: wp.array(dtype=wp.spatial_vector, ndim=2),
     body_lambda_n: wp.array(dtype=wp.float32, ndim=3),
-    interactions: wp.array(dtype=ContactInteraction, ndim=2),
+    contact_body_a: wp.array(dtype=wp.int32, ndim=2),
+    contact_body_b: wp.array(dtype=wp.int32, ndim=2),
+    contact_dist: wp.array(dtype=wp.float32, ndim=2),
+    contact_restitution_coeff: wp.array(dtype=wp.float32, ndim=2),
+    contact_basis_n_a: wp.array(dtype=wp.spatial_vector, ndim=2),
+    contact_basis_n_b: wp.array(dtype=wp.spatial_vector, ndim=2),
     # --- Simulation & Solver Parameters ---
     dt: wp.float32,
     stabilization_factor: wp.float32,
@@ -321,24 +348,26 @@ def fused_batch_velocity_contact_residual_kernel(
 ):
     world_idx, contact_idx = wp.tid()
 
-    if contact_idx >= interactions.shape[1]:
+    if contact_idx >= contact_dist.shape[1]:
         return
 
-    interaction = interactions[world_idx, contact_idx]
-
     # Early exit for inactive contacts.
-    if interaction.penetration_depth <= 0:
+    if contact_dist[world_idx, contact_idx] <= 0.0:
         for b in range(num_batches):
             h_n[b, world_idx, contact_idx] = 0.0
         return
 
     # Unpack body indices for clarity
-    body_1 = interaction.body_a_idx
-    body_2 = interaction.body_b_idx
+    body_1 = contact_body_a[world_idx, contact_idx]
+    body_2 = contact_body_b[world_idx, contact_idx]
 
     # Unpack Jacobian basis vectors
-    J_n_1 = interaction.basis_a.normal
-    J_n_2 = interaction.basis_b.normal
+    J_n_1 = contact_basis_n_a[world_idx, contact_idx]
+    J_n_2 = contact_basis_n_b[world_idx, contact_idx]
+
+    # Pre-fetch contact params
+    restitution = contact_restitution_coeff[world_idx, contact_idx]
+    dist = contact_dist[world_idx, contact_idx]
 
     # Pre-load Static Previous Velocities
     u_1_prev = wp.spatial_vector()
@@ -364,7 +393,10 @@ def fused_batch_velocity_contact_residual_kernel(
 
         # Compute the velocity-level term for the complementarity function
         target_v_n = compute_target_v_n(
-            interaction,
+            dist,
+            restitution,
+            J_n_1,
+            J_n_2,
             u_1,
             u_2,
             u_1_prev,
@@ -393,3 +425,4 @@ def fused_batch_velocity_contact_residual_kernel(
 
         # 2. Update `h_n`
         h_n[b, world_idx, contact_idx] = phi_n
+
