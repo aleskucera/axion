@@ -104,10 +104,12 @@ def test_dynamics_residual_consistency():
         kernel=unconstrained_dynamics_kernel,
         dim=(N_w, N_b),
         inputs=[
+            engine.data.body_q,
             engine.data.body_u,
             engine.data.body_u_prev,
             engine.data.body_f,
-            engine.data.world_M,
+            engine.axion_model.body_mass,
+            engine.axion_model.body_inertia,
             engine.data.dt,
             engine.data.g_accel,
         ],

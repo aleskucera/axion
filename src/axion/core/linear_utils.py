@@ -6,18 +6,20 @@ from axion.constraints import unconstrained_dynamics_kernel
 from axion.constraints import velocity_contact_constraint_kernel
 from axion.constraints import velocity_joint_constraint_kernel
 from axion.constraints.control_constraint import control_constraint_kernel
-from axion.types import SpatialInertia
-from axion.types import to_spatial_momentum
 
 from .engine_config import EngineConfig
 from .engine_data import EngineData
 from .engine_dims import EngineDimensions
 from .model import AxionModel
+from axion.constraints.utils import compute_spatial_momentum
+from axion.constraints.utils import compute_world_inertia
 
 
 @wp.kernel
 def update_system_rhs_kernel(
-    body_M_inv: wp.array(dtype=SpatialInertia, ndim=2),
+    body_q: wp.array(dtype=wp.transform, ndim=2),
+    body_m_inv: wp.array(dtype=wp.float32, ndim=2),
+    body_I_inv: wp.array(dtype=wp.mat33, ndim=2),
     J_values: wp.array(dtype=wp.spatial_vector, ndim=3),
     h_d: wp.array(dtype=wp.spatial_vector, ndim=2),
     h_c: wp.array(dtype=wp.float32, ndim=2),
@@ -39,14 +41,22 @@ def update_system_rhs_kernel(
 
     JHinvg = 0.0
     if body_1 >= 0:
-        M_inv_1 = body_M_inv[world_idx, body_1]
+        q_1 = body_q[world_idx, body_1]
+        m_inv_1 = body_m_inv[world_idx, body_1]
+        I_inv_b_1 = body_I_inv[world_idx, body_1]
+        I_inv_w_1 = compute_world_inertia(q_1, I_inv_b_1)
+
         J_1 = J_values[world_idx, constraint_idx, 0]
-        JHinvg += wp.dot(J_1, to_spatial_momentum(M_inv_1, h_d[world_idx, body_1]))
+        JHinvg += wp.dot(J_1, compute_spatial_momentum(m_inv_1, I_inv_w_1, h_d[world_idx, body_1]))
 
     if body_2 >= 0:
-        M_inv_2 = body_M_inv[world_idx, body_2]
+        q_2 = body_q[world_idx, body_2]
+        m_inv_2 = body_m_inv[world_idx, body_2]
+        I_inv_b_2 = body_I_inv[world_idx, body_2]
+        I_inv_w_2 = compute_world_inertia(q_2, I_inv_b_2)
+
         J_2 = J_values[world_idx, constraint_idx, 1]
-        JHinvg += wp.dot(J_2, to_spatial_momentum(M_inv_2, h_d[world_idx, body_2]))
+        JHinvg += wp.dot(J_2, compute_spatial_momentum(m_inv_2, I_inv_w_2, h_d[world_idx, body_2]))
 
     # b = (J * M^-1 * h_d - h_c) / dt
     b[world_idx, constraint_idx] = (JHinvg - h_c[world_idx, constraint_idx]) / dt
@@ -78,7 +88,9 @@ def compute_JT_dbody_lambda_kernel(
 
 @wp.kernel
 def compute_dbody_u_kernel(
-    body_M_inv: wp.array(dtype=SpatialInertia, ndim=2),
+    body_q: wp.array(dtype=wp.transform, ndim=2),
+    body_m_inv: wp.array(dtype=wp.float32, ndim=2),
+    body_I_inv: wp.array(dtype=wp.mat33, ndim=2),
     JT_dbody_lambda: wp.array(dtype=wp.spatial_vector, ndim=2),
     h_d: wp.array(dtype=wp.spatial_vector, ndim=2),
     dt: wp.float32,
@@ -87,11 +99,17 @@ def compute_dbody_u_kernel(
 ):
     world_idx, body_idx = wp.tid()
 
-    if body_idx >= body_M_inv.shape[1]:
+    if body_idx >= body_q.shape[1]:
         return
 
-    dbody_u[world_idx, body_idx] = to_spatial_momentum(
-        body_M_inv[world_idx, body_idx],
+    q = body_q[world_idx, body_idx]
+    m_inv = body_m_inv[world_idx, body_idx]
+    I_inv_b = body_I_inv[world_idx, body_idx]
+    I_inv_w = compute_world_inertia(q, I_inv_b)
+
+    dbody_u[world_idx, body_idx] = compute_spatial_momentum(
+        m_inv,
+        I_inv_w,
         (JT_dbody_lambda[world_idx, body_idx] * dt - h_d[world_idx, body_idx]),
     )
 
@@ -115,10 +133,12 @@ def compute_linear_system(
         kernel=unconstrained_dynamics_kernel,
         dim=(dims.N_w, dims.N_b),
         inputs=[
+            data.body_q,
             data.body_u,
             data.body_u_prev,
             data.body_f,
-            data.world_M,
+            model.body_mass,
+            model.body_inertia,
             dt,
             data.g_accel,
         ],
@@ -331,7 +351,9 @@ def compute_linear_system(
         kernel=update_system_rhs_kernel,
         dim=(dims.N_w, dims.N_c),
         inputs=[
-            data.world_M_inv,
+            data.body_q,
+            model.body_inv_mass,
+            model.body_inv_inertia,
             data.J_values.full,
             data.h.d_spatial,
             data.h.c.full,
@@ -345,6 +367,7 @@ def compute_linear_system(
 
 
 def compute_dbody_qd_from_dbody_lambda(
+    model: AxionModel,
     data: EngineData,
     config: EngineConfig,
     dims: EngineDimensions,
@@ -367,7 +390,9 @@ def compute_dbody_qd_from_dbody_lambda(
         kernel=compute_dbody_u_kernel,
         dim=(dims.N_w, dims.N_b),
         inputs=[
-            data.world_M_inv,
+            data.body_q,
+            model.body_inv_mass,
+            model.body_inv_inertia,
             data.JT_delta_lambda,
             data.h.d_spatial,
             data.dt,

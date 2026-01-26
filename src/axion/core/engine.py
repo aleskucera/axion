@@ -346,7 +346,7 @@ class AxionEngine(SolverBase):
                 atol=self.config.linear_atol,
                 log=log_linear_solver,
             )
-            compute_dbody_qd_from_dbody_lambda(self.data, self.config, self.dims)
+            compute_dbody_qd_from_dbody_lambda(self.axion_model, self.data, self.config, self.dims)
 
         # Linesearch
         with self.events.linesearch.scope(iter_idx=iter_idx):

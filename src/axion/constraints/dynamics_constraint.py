@@ -1,17 +1,19 @@
 import warp as wp
-from axion.types import compute_world_inertia
-from axion.types import SpatialInertia
-from axion.types import to_spatial_momentum
+
+from .utils import compute_spatial_momentum
+from .utils import compute_world_inertia
 
 
 @wp.kernel
 def unconstrained_dynamics_kernel(
     # --- Body State Inputs ---
+    body_q: wp.array(dtype=wp.transform, ndim=2),
     body_u: wp.array(dtype=wp.spatial_vector, ndim=2),
     body_u_prev: wp.array(dtype=wp.spatial_vector, ndim=2),
     body_f: wp.array(dtype=wp.spatial_vector, ndim=2),
     # --- Body Property Inputs ---
-    body_M: wp.array(dtype=SpatialInertia, ndim=2),
+    body_mass: wp.array(dtype=wp.float32, ndim=2),
+    body_inertia: wp.array(dtype=wp.mat33, ndim=2),
     # --- Simulation Parameters ---
     dt: wp.float32,
     g_accel: wp.array(dtype=wp.vec3),
@@ -22,18 +24,29 @@ def unconstrained_dynamics_kernel(
     if body_idx >= body_u.shape[1]:
         return
 
-    M = body_M[world_idx, body_idx]
+    q = body_q[world_idx, body_idx]
+    m = body_mass[world_idx, body_idx]
+    I_body = body_inertia[world_idx, body_idx]
+
+    # Compute World Inertia
+    I_world = compute_world_inertia(q, I_body)
+
     u = body_u[world_idx, body_idx]
     u_prev = body_u_prev[world_idx, body_idx]
     f = body_f[world_idx, body_idx]
 
-    f_g = to_spatial_momentum(M, wp.spatial_vector(g_accel[0], wp.vec3()))
+    # Gravity force: f_g = [m * g, 0]
+    # to_spatial_momentum was used before, which for [g, 0] gives [m*g, I_w*0] = [m*g, 0]
+    f_g = wp.spatial_vector(m * g_accel[0], wp.vec3(0.0))
 
     # Gyroscopic term: w x (I @ w)
     w = wp.spatial_bottom(u)
-    f_gyro = wp.spatial_vector(wp.vec3(), wp.cross(w, M.inertia @ w))
+    f_gyro = wp.spatial_vector(wp.vec3(), wp.cross(w, I_world @ w))
 
-    h_d[world_idx, body_idx] = to_spatial_momentum(M, u - u_prev) - (f + f_g + f_gyro) * dt
+    # momentum_diff = M @ (u - u_prev)
+    momentum_diff = compute_spatial_momentum(m, I_world, u - u_prev)
+
+    h_d[world_idx, body_idx] = momentum_diff - (f + f_g + f_gyro) * dt
 
 
 @wp.kernel
@@ -61,18 +74,21 @@ def batch_unconstrained_dynamics_kernel(
     f = body_f[world_idx, body_idx]
 
     m = body_mass[world_idx, body_idx]
-    I = body_inertia[world_idx, body_idx]
-    M = compute_world_inertia(q, m, I)
+    I_body = body_inertia[world_idx, body_idx]
 
-    f_g = to_spatial_momentum(M, wp.spatial_vector(g_accel[0], wp.vec3()))
+    # Compute World Inertia
+    I_world = compute_world_inertia(q, I_body)
+
+    f_g = wp.spatial_vector(m * g_accel[0], wp.vec3(0.0))
 
     # Gyroscopic term: w x (I @ w)
     w = wp.spatial_bottom(u)
-    f_gyro = wp.spatial_vector(wp.vec3(), wp.cross(w, M.inertia @ w))
+    f_gyro = wp.spatial_vector(wp.vec3(), wp.cross(w, I_world @ w))
 
-    h_d[batch_idx, world_idx, body_idx] = (
-        to_spatial_momentum(M, u - u_prev) - (f + f_g + f_gyro) * dt
-    )
+    # momentum_diff = M @ (u - u_prev)
+    momentum_diff = compute_spatial_momentum(m, I_world, u - u_prev)
+
+    h_d[batch_idx, world_idx, body_idx] = momentum_diff - (f + f_g + f_gyro) * dt
 
 
 @wp.kernel
@@ -104,24 +120,22 @@ def fused_batch_unconstrained_dynamics_kernel(
     u_prev = body_u_prev[world_idx, body_idx]
     f = body_f[world_idx, body_idx]
 
-    # Precompute constant forces if possible (e.g. gravity depends on Mass, which is const)
-    # But M (world inertia) depends on q, so f_g depends on q. We must recompute inside loop.
-
     # 2. Inner Loop over Batch Steps
-    # We iterate through the 'Batch' dimension sequentially.
-    # This allows us to reuse 'm', 'I_body', 'u_prev', 'f' without re-reading from DRAM.
     for b in range(num_batches):
         q = batch_body_q[b, world_idx, body_idx]
         u = batch_body_u[b, world_idx, body_idx]
 
         # Recompute World Inertia (q dependent)
-        M = compute_world_inertia(q, m, I_body)
+        I_world = compute_world_inertia(q, I_body)
 
-        f_g = to_spatial_momentum(M, wp.spatial_vector(g_accel[0], wp.vec3()))
+        f_g = wp.spatial_vector(m * g_accel[0], wp.vec3(0.0))
 
         # Gyroscopic term
         w = wp.spatial_bottom(u)
-        f_gyro = wp.spatial_vector(wp.vec3(), wp.cross(w, M.inertia @ w))
+        f_gyro = wp.spatial_vector(wp.vec3(), wp.cross(w, I_world @ w))
+
+        # momentum_diff = M @ (u - u_prev)
+        momentum_diff = compute_spatial_momentum(m, I_world, u - u_prev)
 
         # Write Output
-        h_d[b, world_idx, body_idx] = to_spatial_momentum(M, u - u_prev) - (f + f_g + f_gyro) * dt
+        h_d[b, world_idx, body_idx] = momentum_diff - (f + f_g + f_gyro) * dt
