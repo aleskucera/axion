@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import math
 from abc import ABC
 from abc import abstractmethod
@@ -8,6 +10,12 @@ from typing import Literal
 
 import newton
 import warp as wp
+from newton import Model
+from newton.solvers import SolverFeatherstone
+from newton.solvers import SolverMuJoCo
+from newton.solvers import SolverXPBD
+from newton.solvers import SolverSemiImplicit
+
 from axion.core.control_utils import JointMode
 from axion.core.engine import AxionEngine
 from axion.core.engine_config import AxionEngineConfig
@@ -15,11 +23,8 @@ from axion.core.engine_config import EngineConfig
 from axion.core.engine_config import FeatherstoneEngineConfig
 from axion.core.engine_config import MuJoCoEngineConfig
 from axion.core.engine_config import XPBDEngineConfig
+from axion.core.engine_config import SemiImplicitEngineConfig
 from axion.core.model_builder import AxionModelBuilder
-from newton import Model
-from newton.solvers import SolverFeatherstone
-from newton.solvers import SolverMuJoCo
-from newton.solvers import SolverXPBD
 
 
 class SyncMode(Enum):
@@ -172,6 +177,8 @@ class BaseSimulator(ABC):
             self.solver = SolverMuJoCo(self.model, **solver_kwargs)
         elif isinstance(self.engine_config, XPBDEngineConfig):
             self.solver = SolverXPBD(self.model, **solver_kwargs)
+        elif isinstance(self.engine_config, SemiImplicitEngineConfig):
+            self.solver = SolverSemiImplicit(self.model, **solver_kwargs)
         else:
             raise ValueError(f"Unsupported engine configuration type: {type(self.engine_config)}")
 

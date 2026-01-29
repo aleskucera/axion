@@ -204,3 +204,9 @@ class XPBDEngineConfig(EngineConfig):
     rigid_contact_con_weighting: bool = True
     angular_damping: float = 0.0
     enable_restitution: bool = False
+
+
+@dataclass(frozen=True)
+class SemiImplicitEngineConfig(EngineConfig):
+    """Configuration for Newton's Semi-Implicit Euler solver."""
+    pass
