@@ -6,7 +6,7 @@ import hydra
 import newton
 import numpy as np
 import warp as wp
-from axion import AbstractSimulator
+from axion import InteractiveSimulator
 from axion import EngineConfig
 from axion import ExecutionConfig
 from axion import RenderingConfig
@@ -207,7 +207,7 @@ def generate_track_data(r1, r2, dist, tube_radius=0.1, segments=200, sides=12):
     return np.array(vertices, dtype=np.float32), np.array(indices, dtype=np.int32)
 
 
-class TrackControlSimulator(AbstractSimulator):
+class TrackControlSimulator(InteractiveSimulator):
     def __init__(self, sim_config, render_config, exec_config, engine_config):
         super().__init__(sim_config, render_config, exec_config, engine_config)
         self.track_global_u = wp.zeros(1, dtype=wp.float32, device=self.model.device)

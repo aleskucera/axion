@@ -6,7 +6,7 @@ import hydra
 import newton
 import numpy as np
 import warp as wp
-from axion import AbstractSimulator
+from axion import InteractiveSimulator
 from axion import EngineConfig
 from axion import ExecutionConfig
 from axion import RenderingConfig
@@ -40,7 +40,7 @@ def apply_force_ramp(
     wp.printf("Joint f: %f, %f\n", joint_f[6], joint_f[7])
 
 
-class HelhestRotationSimulator(AbstractSimulator):
+class HelhestRotationSimulator(InteractiveSimulator):
     def __init__(
         self,
         sim_config: SimulationConfig,

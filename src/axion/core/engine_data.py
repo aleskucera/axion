@@ -19,7 +19,7 @@ from .engine_config import EngineConfig
 from .engine_dims import EngineDimensions
 
 
-@dataclass(frozen=True)
+@dataclass
 class LinesearchData:
     dims: EngineDimensions
     steps: wp.array
@@ -41,8 +41,8 @@ class LinesearchData:
         return ConstraintView(self._batch_body_lambda, self.dims)
 
 
-@dataclass(frozen=True)
-class HistoryData:
+@dataclass
+class NewtonHistoryData:
     dims: EngineDimensions
     _h_history: wp.array
     body_q_history: wp.array
@@ -60,7 +60,7 @@ class HistoryData:
         return ConstraintView(self._body_lambda_history, self.dims)
 
 
-@dataclass(frozen=True)
+@dataclass
 class EngineData:
     """
     Manages all Warp arrays (vectors and matrices) used by the AxionEngine.
@@ -126,7 +126,7 @@ class EngineData:
     contact_basis_t2_b: wp.array
 
     linesearch: Optional[LinesearchData] = None
-    history: Optional[HistoryData] = None
+    newton_history: Optional[NewtonHistoryData] = None
 
     g_accel: wp.array = None
     _h_spatial: Optional[wp.array] = None
@@ -181,7 +181,7 @@ class EngineData:
 
     @property
     def allocated_history_arrays(self) -> bool:
-        return self.history is not None
+        return self.newton_history is not None
 
     def set_g_accel(self, model: Model):
         assert (
@@ -307,38 +307,38 @@ class EngineData:
             }
 
         # 5. History (if allocated)
-        if self.history:
+        if self.newton_history:
             history_snap = {}
 
             # Dynamics History
             history_snap["dynamics"] = {
-                "h_d": self._serialize_to_numpy(self.history.h_history.d),
-                "body_q": self._serialize_to_numpy(self.history.body_q_history),
-                "body_u": self._serialize_to_numpy(self.history.body_u_history),
+                "h_d": self._serialize_to_numpy(self.newton_history.h_history.d),
+                "body_q": self._serialize_to_numpy(self.newton_history.body_q_history),
+                "body_u": self._serialize_to_numpy(self.newton_history.body_u_history),
             }
 
             # Constraints History
             constraints_hist = {}
             if self.dims.N_j > 0:
                 constraints_hist["Joint constraint data"] = {
-                    "h": self._serialize_to_numpy(self.history.h_history.c.j),
-                    "body_lambda": self._serialize_to_numpy(self.history.body_lambda_history.j),
+                    "h": self._serialize_to_numpy(self.newton_history.h_history.c.j),
+                    "body_lambda": self._serialize_to_numpy(self.newton_history.body_lambda_history.j),
                 }
 
             if self.dims.N_ctrl > 0:
                 constraints_hist["Control constraint data"] = {
-                    "h": self._serialize_to_numpy(self.history.h_history.c.ctrl),
-                    "body_lambda": self._serialize_to_numpy(self.history.body_lambda_history.ctrl),
+                    "h": self._serialize_to_numpy(self.newton_history.h_history.c.ctrl),
+                    "body_lambda": self._serialize_to_numpy(self.newton_history.body_lambda_history.ctrl),
                 }
 
             if self.dims.N_n > 0:
                 constraints_hist["Contact constraint data"] = {
-                    "h": self._serialize_to_numpy(self.history.h_history.c.n),
-                    "body_lambda": self._serialize_to_numpy(self.history.body_lambda_history.n),
+                    "h": self._serialize_to_numpy(self.newton_history.h_history.c.n),
+                    "body_lambda": self._serialize_to_numpy(self.newton_history.body_lambda_history.n),
                 }
                 constraints_hist["Friction constraint data"] = {
-                    "h": self._serialize_to_numpy(self.history.h_history.c.f),
-                    "body_lambda": self._serialize_to_numpy(self.history.body_lambda_history.f),
+                    "h": self._serialize_to_numpy(self.newton_history.h_history.c.f),
+                    "body_lambda": self._serialize_to_numpy(self.newton_history.body_lambda_history.f),
                 }
 
             history_snap["constraints"] = constraints_hist
@@ -485,7 +485,7 @@ class EngineData:
             )
 
         # ---- PCA Storage Buffers ----
-        history_data = None
+        newton_history_data = None
         if allocate_history:
             # Separate Allocations
             h_history = _zeros((config.max_newton_iters + 1, dims.N_w, dims.N_u + dims.N_c))
@@ -501,7 +501,7 @@ class EngineData:
             )
             body_lambda_history = _zeros((config.max_newton_iters + 1, dims.N_w, dims.N_c))
 
-            history_data = HistoryData(
+            newton_history_data = NewtonHistoryData(
                 dims=dims,
                 _h_history=h_history,
                 body_q_history=body_q_history,
@@ -555,5 +555,5 @@ class EngineData:
             control_constraint_offsets=control_constraint_offsets,
             joint_target=joint_target,
             linesearch=linesearch_data,
-            history=history_data,
+            newton_history=newton_history_data,
         )

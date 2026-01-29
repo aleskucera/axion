@@ -8,17 +8,17 @@ Every Axion simulation follows the same pattern:
 
 !!! info "The Three Core Steps"
 
-    1.  **Inherit from `AbstractSimulator`** - This base class handles the simulation loop, USD export, and configuration.
+    1.  **Inherit from `InteractiveSimulator`** - This base class handles the simulation loop, USD export, and configuration.
     2.  **Override `build_model()`** - This is where you define your physics scene (bodies, joints, constraints).
     3.  **Configure and run** - You set physics parameters and execute the simulation from the main entry point.
 
 The simplest possible simulator looks like this:
 
 ```python
-from axion import AbstractSimulator
+from axion import InteractiveSimulator
 import warp as wp
 
-class MySimulator(AbstractSimulator):
+class MySimulator(InteractiveSimulator):
     def build_model(self) -> wp.sim.Model:
         # Build your physics model here
         pass
@@ -32,7 +32,7 @@ Let's begin by creating a simple simulation of a single rod falling under gravit
 
 ```python hl_lines="30-35 37-46 48-49"
 import warp as wp
-from axion import AbstractSimulator
+from axion import InteractiveSimulator
 from axion import EngineConfig
 from axion import ExecutionConfig
 from axion import ProfilingConfig
@@ -40,7 +40,7 @@ from axion import RenderingConfig
 from axion import SimulationConfig
 
 
-class Simulator(AbstractSimulator):
+class Simulator(InteractiveSimulator):
     def __init__(
         self,
         sim_config: SimulationConfig,

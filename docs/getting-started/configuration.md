@@ -93,7 +93,7 @@ from importlib.resources import files
 import hydra
 import warp as wp
 from axion import (
-    AbstractSimulator, EngineConfig, ExecutionConfig, 
+    InteractiveSimulator, EngineConfig, ExecutionConfig, 
     ProfilingConfig, RenderingConfig, SimulationConfig
 )
 from omegaconf import DictConfig
@@ -101,7 +101,7 @@ from omegaconf import DictConfig
 # (1) Define the path to the example configuration files
 CONFIG_PATH = files("axion").joinpath("examples").joinpath("conf")
 
-class Simulator(AbstractSimulator):
+class Simulator(InteractiveSimulator):
     # ... (build_model implementation)
     ...
 

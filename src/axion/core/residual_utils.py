@@ -39,11 +39,12 @@ def compute_residual(
         kernel=unconstrained_dynamics_kernel,
         dim=(dims.N_w, dims.N_b),
         inputs=[
+            data.body_q,
             data.body_u,
             data.body_u_prev,
             data.body_f,
             model.body_mass,
-            data.world_inertia,
+            model.body_inertia,
             dt,
             data.g_accel,
         ],
@@ -105,13 +106,10 @@ def compute_residual(
                 config.joint_compliance,
             ],
             outputs=[
-                data.constraint_active_mask.j,  # Note: Residual kernel might not need this but signature requires checks
+                # data.constraint_active_mask.j,  <-- REMOVED to match new kernel signature
                 data.h.d_spatial,
                 data.h.c.j,
-                # No J/C values needed for residual only
             ],
-            # Note: Verify signature match if velocity kernel expects J/C output arrays even if unused.
-            # Based on file content provided: velocity_joint_residual_kernel takes (..., h_d, h_j).
             device=device,
         )
 
@@ -157,21 +155,33 @@ def compute_residual(
             dim=(dims.N_w, dims.N_n),
             inputs=[
                 data.body_q,
-                data.body_u,  # Kept for signature consistency
-                data.body_u_prev,  # Kept for signature consistency
+                data.body_u,
+                data.body_u_prev,
                 data.body_lambda.n,
-                data.contact_interaction,
+                # Expanded contact_interaction struct:
+                data.contact_body_a,
+                data.contact_body_b,
+                data.contact_point_a,
+                data.contact_point_b,
+                data.contact_thickness_a,
+                data.contact_thickness_b,
+                data.contact_dist,
+                data.contact_basis_n_a,
+                data.contact_basis_n_b,
+                # End contact data
                 model.body_inv_mass,
                 model.body_inv_inertia,
                 dt,
                 config.contact_compliance,
+            ],
+            outputs=[
                 data.h.d_spatial,
                 data.h.c.n,
             ],
             device=device,
         )
     elif config.contact_constraint_level == "vel":
-        # Note: velocity_contact_residual_kernel has extra alpha/beta args in the provided file.
+        # Note: velocity_contact_residual_kernel has extra alpha/beta args.
         # We assume defaults (1.0) here if they are not present in EngineConfig.
         fb_alpha = getattr(config, "contact_fb_alpha", 1.0)
         fb_beta = getattr(config, "contact_fb_beta", 1.0)
@@ -183,12 +193,21 @@ def compute_residual(
                 data.body_u,
                 data.body_u_prev,
                 data.body_lambda.n,
-                data.contact_interaction,
+                # Expanded contact_interaction struct:
+                data.contact_body_a,
+                data.contact_body_b,
+                data.contact_dist,
+                data.contact_restitution_coeff,
+                data.contact_basis_n_a,
+                data.contact_basis_n_b,
+                # End contact data
                 dt,
                 config.contact_stabilization_factor,
                 fb_alpha,
                 fb_beta,
                 config.contact_compliance,
+            ],
+            outputs=[
                 data.h.d_spatial,
                 data.h.c.n,
             ],
@@ -208,11 +227,21 @@ def compute_residual(
             data.body_lambda_prev.f,
             data.body_lambda_prev.n,
             data.s_n_prev,
-            data.contact_interaction,
+            # Expanded contact_interaction struct:
+            data.contact_body_a,
+            data.contact_body_b,
+            data.contact_friction_coeff,
+            data.contact_basis_t1_a,
+            data.contact_basis_t2_a,
+            data.contact_basis_t1_b,
+            data.contact_basis_t2_b,
+            # End contact data
             model.body_inv_mass,
             model.body_inv_inertia,
             dt,
             config.friction_compliance,
+        ],
+        outputs=[
             data.h.d_spatial,
             data.h.c.f,
         ],

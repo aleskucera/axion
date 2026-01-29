@@ -6,7 +6,7 @@ import hydra
 import newton
 import numpy as np
 import warp as wp
-from axion import AbstractSimulator
+from axion import InteractiveSimulator
 from axion import EngineConfig
 from axion import ExecutionConfig
 from axion import RenderingConfig
@@ -26,7 +26,7 @@ os.environ["PYOPENGL_PLATFORM"] = "glx"
 CONFIG_PATH = pathlib.Path(__file__).parent.parent.joinpath("conf")
 
 
-class MarvControlSimulator(AbstractSimulator):
+class MarvControlSimulator(InteractiveSimulator):
     def __init__(
         self,
         sim_config: SimulationConfig,

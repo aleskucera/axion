@@ -53,29 +53,59 @@ def copy_state_to_history(
 
     wp.launch(
         kernel=copy_h_to_history,
-        dim=(dims.N_w, dims.N_u + dims.N_c),
-        inputs=[data._h],
-        outputs=[data.history._h_history[newton_iteration, :, :]],
-        device=device,
+        dim=(data.dims.N_w, data.dims.N_u + data.dims.N_c),
+        inputs=[data._h, newton_iteration],
+        outputs=[data.newton_history._h_history[newton_iteration, :, :]],
+        device=data.device,
     )
+
     wp.launch(
         kernel=copy_body_q_to_history,
-        dim=(dims.N_w, dims.N_b),
-        inputs=[data.body_q],
-        outputs=[data.history.body_q_history[newton_iteration, :, :]],
-        device=device,
+        dim=(data.dims.N_w, data.dims.N_b),
+        inputs=[data.body_q, newton_iteration],
+        outputs=[data.newton_history.body_q_history[newton_iteration, :, :]],
+        device=data.device,
     )
+
     wp.launch(
         kernel=copy_body_u_to_history,
-        dim=(dims.N_w, dims.N_b),
-        inputs=[data.body_u],
-        outputs=[data.history.body_u_history[newton_iteration, :, :]],
-        device=device,
+        dim=(data.dims.N_w, data.dims.N_b),
+        inputs=[data.body_u, newton_iteration],
+        outputs=[data.newton_history.body_u_history[newton_iteration, :, :]],
+        device=data.device,
     )
+
     wp.launch(
         kernel=copy_body_lambda_to_history,
-        dim=(dims.N_w, dims.N_c),
-        inputs=[data._body_lambda],
-        outputs=[data.history._body_lambda_history[newton_iteration, :, :]],
-        device=device,
+        dim=(data.dims.N_w, data.dims.N_c),
+        inputs=[data._body_lambda, newton_iteration],
+        outputs=[data.newton_history._body_lambda_history[newton_iteration, :, :]],
+        device=data.device,
+    )
+
+
+def copy_state_to_trajectory(
+    step_idx: int,
+    data: EngineData,
+):
+    if data.trajectory is None:
+        return
+
+    # Ensure step_idx is within bounds
+    # (Caller should handle logic, but safe to check or let it error)
+    
+    wp.launch(
+        kernel=copy_body_q_to_history,  # Reuse kernel (same signature)
+        dim=(data.dims.N_w, data.dims.N_b),
+        inputs=[data.body_q],
+        outputs=[data.trajectory.body_q_traj[step_idx]],
+        device=data.device,
+    )
+
+    wp.launch(
+        kernel=copy_body_u_to_history,  # Reuse kernel (same signature)
+        dim=(data.dims.N_w, data.dims.N_b),
+        inputs=[data.body_u],
+        outputs=[data.trajectory.body_u_traj[step_idx]],
+        device=data.device,
     )

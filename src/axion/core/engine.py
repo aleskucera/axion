@@ -378,7 +378,7 @@ class AxionEngine(SolverBase):
             self._execute_newton_step_math(dt, iter_idx=0)
             self._check_convergence_kernel_launch()
 
-        # If we are already capturing (e.g. AbstractSimulator), we insert the while loop node.
+        # If we are already capturing (e.g. InteractiveSimulator), we insert the while loop node.
         if self.device.is_capturing:
             wp.capture_while(self.keep_running, loop_body)
         else:

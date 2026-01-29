@@ -9,7 +9,7 @@ import hydra
 import newton
 import numpy as np
 import warp as wp
-from axion import AbstractSimulator
+from axion import InteractiveSimulator
 from axion import EngineConfig
 from axion import ExecutionConfig
 from axion import RenderingConfig
@@ -115,7 +115,7 @@ def update_track_joints_kernel(
     joint_X_p[joint_idx] = X_in_parent
 
 
-class MarvTrackedSimulator(AbstractSimulator):
+class MarvTrackedSimulator(InteractiveSimulator):
     def __init__(
         self,
         sim_config: SimulationConfig,
@@ -126,7 +126,7 @@ class MarvTrackedSimulator(AbstractSimulator):
         # We need to defer track initialization until AFTER build_model is called
         # but build_model is called inside super().__init__.
         # So we initialize containers here, but populate them later?
-        # No, AbstractSimulator.__init__ calls build_model, then creates the model, then we can init our stuff.
+        # No, InteractiveSimulator.__init__ calls build_model, then creates the model, then we can init our stuff.
         # But we need to capture the track info from build_model.
         self.track_info_cpu = {}
 

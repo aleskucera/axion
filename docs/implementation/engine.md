@@ -1,6 +1,6 @@
 # Engine API
 
-The `AxionEngine` is the low-level physics solver at the core of the simulation. Most users will interact with it indirectly through the `AbstractSimulator` class, but understanding its API and configuration is key to tuning performance and achieving specific physical behaviors.
+The `AxionEngine` is the low-level physics solver at the core of the simulation. Most users will interact with it indirectly through the `InteractiveSimulator` class, but understanding its API and configuration is key to tuning performance and achieving specific physical behaviors.
 
 The engine implements a **Non-Smooth Newton Method** to solve the entire physics state—including dynamics, contacts, and joints—as a single, unified problem at each time step. This monolithic approach provides exceptional stability, especially for complex, highly-constrained systems like articulated robots.
 

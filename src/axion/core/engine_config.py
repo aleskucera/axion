@@ -69,6 +69,10 @@ class AxionEngineConfig(EngineConfig):
     joint_constraint_level: str = "pos"  # pos / vel
     contact_constraint_level: str = "pos"  # pos / vel
 
+    # --- Differentiable Simulation ---
+    differentiable_simulation: bool = False
+    max_trajectory_steps: int = 0
+
     def __post_init__(self):
         """Validate all configuration parameters."""
 
@@ -152,6 +156,9 @@ class AxionEngineConfig(EngineConfig):
                 )
 
         _validate_positive_int(self.max_contacts_per_world, "max_contacts_per_world")
+
+        if self.differentiable_simulation:
+            _validate_positive_int(self.max_trajectory_steps, "max_trajectory_steps", min_value=1)
 
 
 @dataclass(frozen=True)

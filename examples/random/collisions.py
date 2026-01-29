@@ -4,7 +4,7 @@ import pathlib
 import hydra
 import newton
 import warp as wp
-from axion import AbstractSimulator
+from axion import InteractiveSimulator
 from axion import EngineConfig
 from axion import ExecutionConfig
 from axion import RenderingConfig
@@ -17,7 +17,7 @@ os.environ["PYOPENGL_PLATFORM"] = "glx"
 CONFIG_PATH = pathlib.Path(__file__).parent.parent.joinpath("conf")
 
 
-class RandomSimulator(AbstractSimulator):
+class RandomSimulator(InteractiveSimulator):
     def __init__(
         self,
         sim_config: SimulationConfig,
