@@ -10,21 +10,20 @@ from typing import Literal
 
 import newton
 import warp as wp
-from newton import Model
-from newton.solvers import SolverFeatherstone
-from newton.solvers import SolverMuJoCo
-from newton.solvers import SolverXPBD
-from newton.solvers import SolverSemiImplicit
-
 from axion.core.control_utils import JointMode
 from axion.core.engine import AxionEngine
 from axion.core.engine_config import AxionEngineConfig
 from axion.core.engine_config import EngineConfig
 from axion.core.engine_config import FeatherstoneEngineConfig
 from axion.core.engine_config import MuJoCoEngineConfig
-from axion.core.engine_config import XPBDEngineConfig
 from axion.core.engine_config import SemiImplicitEngineConfig
+from axion.core.engine_config import XPBDEngineConfig
 from axion.core.model_builder import AxionModelBuilder
+from newton import Model
+from newton.solvers import SolverFeatherstone
+from newton.solvers import SolverMuJoCo
+from newton.solvers import SolverSemiImplicit
+from newton.solvers import SolverXPBD
 
 
 class SyncMode(Enum):
@@ -124,27 +123,12 @@ class BaseSimulator(ABC):
         self._current_time = 0.0
 
         # Calculated by _resolve_timing_parameters
+        self.total_sim_steps: int = 0
         self.steps_per_segment: int = 0
         self.num_segments: int | None = 0
         self.effective_timestep: float = 0.0
         self.effective_duration: float = 0.0
         self._resolve_timing_parameters()
-
-        # --- Auto-configure Differentiable Simulation (Trajectory Sizing) ---
-        if (
-            isinstance(self.engine_config, AxionEngineConfig)
-            and self.engine_config.differentiable_simulation
-            and self.engine_config.max_trajectory_steps == 0
-        ):
-            if self.num_segments is not None:
-                total_steps = int(self.num_segments * self.steps_per_segment)
-                print(
-                    f"INFO: Automatically set max_trajectory_steps to {total_steps} for differentiable simulation."
-                )
-                self.engine_config = replace(self.engine_config, max_trajectory_steps=total_steps)
-            else:
-                # DifferentiableSimulator might handle this later, or user must set it.
-                pass
 
         self.builder = AxionModelBuilder()
         self.model = self.build_model()
@@ -284,5 +268,7 @@ class BaseSimulator(ABC):
         self.effective_duration, self.num_segments = align_duration_to_segment(
             self.simulation_config.duration_seconds, self.effective_timestep, self.steps_per_segment
         )
+
+        self.total_sim_steps = self.steps_per_segment * self.num_segments
         if self.rendering_config.vis_type == "gl":
             self.num_segments = None
