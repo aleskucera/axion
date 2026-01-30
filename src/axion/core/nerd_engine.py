@@ -33,7 +33,7 @@ import torch
 import sys
 from axion.nn_prediction.nerd_predictor import NeRDPredictor
 from axion.nn_prediction import models, utils
-from axion.nn_prediction.utils.analysis_utils import write_state_to_csv
+from axion.nn_prediction.utils.analysis_utils import write_state_to_csv, write_contacts_to_csv
 
 sys.modules['models'] = models
 sys.modules['utils'] = utils
@@ -163,6 +163,7 @@ class NerdEngine(SolverBase):
         self.gravity_vector[:, 1] = -1.0  # Gravity in negative Y direction
 
         self.csv_filename = Path(__file__).parent / 'pendulum_states_NerdEngine.csv'
+        self.contacts_csv_filename = Path(__file__).parent / 'pendulum_contacts_NerdEngine.csv'
 
     def step(
         self,
@@ -317,6 +318,7 @@ class NerdEngine(SolverBase):
         
         if self.step_cnt < 500:
             write_state_to_csv(self.csv_filename, self.step_cnt, state_predicted)
+            write_contacts_to_csv(self.contacts_csv_filename, self.step_cnt, contacts)
 
         # Write into state_out 
         state_out.joint_q = wp.from_torch(state_predicted[0,:2].reshape(2,))

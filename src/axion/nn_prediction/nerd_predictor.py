@@ -64,7 +64,10 @@ from .integrators.state_processor import (
     convert_prediction_to_next_states
 )
 
-from axion.nn_prediction.utils.analysis_utils import write_model_inputs_to_csv
+from axion.nn_prediction.utils.analysis_utils import (
+    write_model_inputs_to_csv,
+    write_model_inputs_contacts_to_csv,
+)
 
 class NeRDPredictor:
     """
@@ -212,12 +215,12 @@ class NeRDPredictor:
             "states": states.clone(),
             "joint_acts": joint_acts.clone(),
             "gravity_dir": gravity_dir.clone(),
-            "contact_normals": torch.zeros_like(contacts['contact_normals']), #contacts['contact_normals'].clone(),
-            "contact_depths": torch.zeros_like(contacts['contact_depths']), #contacts['contact_depths'].clone(),
-            "contact_thicknesses": torch.zeros_like(contacts['contact_thicknesses']), #contacts['contact_thicknesses'].clone(),
-            "contact_points_0": torch.zeros_like(contacts['contact_points_0']), #contacts['contact_points_0'].clone(),
-            "contact_points_1": torch.zeros_like(contacts['contact_points_1']), #contacts['contact_points_1'].clone(),
-            "contact_masks": torch.zeros_like(contact_masks) #contact_masks.clone(),
+            "contact_normals": contacts['contact_normals'].clone(), #torch.zeros_like(contacts['contact_normals']), ,
+            "contact_depths": contacts['contact_depths'].clone(), #torch.zeros_like(contacts['contact_depths']), #,
+            "contact_thicknesses": contacts['contact_thicknesses'].clone(), #torch.zeros_like(contacts['contact_thicknesses']), ,
+            "contact_points_0": contacts['contact_points_0'].clone(), #torch.zeros_like(contacts['contact_points_0']), ,
+            "contact_points_1": contacts['contact_points_1'].clone(), #torch.zeros_like(contacts['contact_points_1']), #,
+            "contact_masks": contact_masks.clone()#torch.zeros_like(contact_masks) #,
         }
         self.states_history.append(history_entry)
 
@@ -322,15 +325,17 @@ class NeRDPredictor:
         """
 
         # FIX: zeroing the output of _process_inputs once again,remove it ideally
-        self.model_inputs["contact_normals"] = torch.zeros_like(self.model_inputs["contact_normals"])
-        self.model_inputs["contact_depths"] = torch.zeros_like(self.model_inputs["contact_depths"])
-        self.model_inputs["contact_thicknesses"] = torch.zeros_like(self.model_inputs["contact_thicknesses"])
-        self.model_inputs["contact_points_0"] = torch.zeros_like(self.model_inputs["contact_points_0"])
-        self.model_inputs["contact_points_1"] = torch.zeros_like(self.model_inputs["contact_points_1"])
-        self.model_inputs["contact_masks"] = torch.zeros_like(self.model_inputs["contact_masks"])
+        # self.model_inputs["contact_normals"] = torch.zeros_like(self.model_inputs["contact_normals"])
+        # self.model_inputs["contact_depths"] = torch.zeros_like(self.model_inputs["contact_depths"])
+        # self.model_inputs["contact_thicknesses"] = torch.zeros_like(self.model_inputs["contact_thicknesses"])
+        # self.model_inputs["contact_points_0"] = torch.zeros_like(self.model_inputs["contact_points_0"])
+        # self.model_inputs["contact_points_1"] = torch.zeros_like(self.model_inputs["contact_points_1"])
+        # self.model_inputs["contact_masks"] = torch.zeros_like(self.model_inputs["contact_masks"])
 
         model_inputs_csv_filename = Path(__file__).parent / 'pendulum_model_inputs.csv'
         write_model_inputs_to_csv(model_inputs_csv_filename, step, self.model_inputs)
+        model_inputs_contacts_csv_filename = Path(__file__).parent / 'pendulum_model_inputs_contacts.csv'
+        write_model_inputs_contacts_to_csv(model_inputs_contacts_csv_filename, step, self.model_inputs)
 
         # Run model inference
         with torch.no_grad():

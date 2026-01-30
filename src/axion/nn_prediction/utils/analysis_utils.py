@@ -3,6 +3,53 @@ import numpy as np
 import matplotlib.pyplot as plt
 import os
 
+def write_contacts_to_csv(csv_filename, step, contacts):
+    """
+    Write contact data passed into the predictor to CSV file.
+
+    Args:
+        csv_filename: Path to the CSV file
+        step: Current simulation step
+        contacts: Dictionary with keys contact_normals, contact_depths, contact_thicknesses,
+                  contact_points_0, contact_points_1 (tensors of shape (num_envs, ...))
+    """
+    mode = 'w' if step == 0 else 'a'
+    with open(csv_filename, mode, newline='') as csvfile:
+        csv_writer = csv.writer(csvfile)
+        env_idx = 0
+        row_data = [step]
+        header = ['step']
+
+        if step == 0:
+            for key in ['contact_depths', 'contact_normals', 'contact_thicknesses',
+                        'contact_points_0', 'contact_points_1']:
+                if key in contacts:
+                    dim = contacts[key].shape[-1]
+                    if key == 'contact_depths':
+                        for i in range(dim):
+                            header.append(f'contact_depth_{i}')
+                    elif key == 'contact_normals':
+                        for i in range(dim):
+                            header.append(f'contact_normal_{i}')
+                    elif key == 'contact_thicknesses':
+                        for i in range(dim):
+                            header.append(f'contact_thickness_{i}')
+                    elif key == 'contact_points_0':
+                        for i in range(dim):
+                            header.append(f'contact_point_0_{i}')
+                    elif key == 'contact_points_1':
+                        for i in range(dim):
+                            header.append(f'contact_point_1_{i}')
+            csv_writer.writerow(header)
+
+        for key in ['contact_depths', 'contact_normals', 'contact_thicknesses',
+                    'contact_points_0', 'contact_points_1']:
+            if key in contacts:
+                data = contacts[key][env_idx, :].cpu().numpy()
+                row_data.extend(data.tolist())
+        csv_writer.writerow(row_data)
+
+
 def write_state_to_csv(csv_filename, step, states):
     """
     Write state vector to CSV file.
@@ -266,6 +313,67 @@ def write_model_inputs_to_csv(csv_filename, step, model_inputs):
         
         # Write data row
         csv_writer.writerow(row_data)
+
+
+def write_model_inputs_contacts_to_csv(csv_filename, step, model_inputs):
+    """
+    Write only contact-related model inputs to CSV file.
+
+    Args:
+        csv_filename: Path to the CSV file
+        step: Current simulation step
+        model_inputs: Dictionary containing model inputs with tensors of shape (num_envs, T, dim).
+                     Only contact_* keys are written: contact_masks, contact_normals, contact_depths,
+                     contact_thicknesses, contact_points_0, contact_points_1
+    """
+    env_idx = 0
+    contact_keys = [
+        'contact_masks', 'contact_normals', 'contact_depths',
+        'contact_thicknesses', 'contact_points_0', 'contact_points_1'
+    ]
+    mode = 'w' if step == 0 else 'a'
+    with open(csv_filename, mode, newline='') as csvfile:
+        csv_writer = csv.writer(csvfile)
+        row_data = [step]
+        header = ['step']
+
+        if step == 0:
+            for key in contact_keys:
+                if key not in model_inputs:
+                    continue
+                dim = model_inputs[key].shape[-1]
+                if key == 'contact_masks':
+                    for i in range(dim):
+                        header.append(f'contact_mask_{i}')
+                elif key == 'contact_normals':
+                    for i in range(dim):
+                        header.append(f'contact_normal_{i}')
+                elif key == 'contact_depths':
+                    for i in range(dim):
+                        header.append(f'contact_depth_{i}')
+                elif key == 'contact_thicknesses':
+                    for i in range(dim):
+                        header.append(f'contact_thickness_{i}')
+                elif key == 'contact_points_0':
+                    for i in range(dim):
+                        header.append(f'contact_point_0_{i}')
+                elif key == 'contact_points_1':
+                    for i in range(dim):
+                        header.append(f'contact_point_1_{i}')
+            csv_writer.writerow(header)
+
+        for key in contact_keys:
+            if key not in model_inputs:
+                continue
+            T = model_inputs[key].shape[1]
+            timestep_idx = T - 1 if T > 1 else 0
+            data = model_inputs[key][env_idx, timestep_idx, :].cpu().numpy()
+            if key == 'contact_masks':
+                row_data.extend(data.astype(float).tolist())
+            else:
+                row_data.extend(data.tolist())
+        csv_writer.writerow(row_data)
+
 
 def plot_model_input_from_csv(csv_filename, keyword, num_steps, output_filename=None, format='pdf'):
     """

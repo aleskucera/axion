@@ -174,23 +174,30 @@ def contact_penetration_depth_kernel(
     Assumes reordered contact data where:
     - position 0 is always the body (body >= 0)
     - position 1 is always the ground (body == -1)
+
+    Sign convention:
+    - Negative depth: penetrating (bodies overlap).
+    - Positive depth: not touching (separation or inactive slot).
+    - Inactive/invalid contact slots are set to NON_TOUCHING_DEPTH (e.g. 1000.0).
     """
+    NON_TOUCHING_DEPTH = 1000.0  # Large positive value for inactive or non-touching contacts
+
     world_idx, contact_idx = wp.tid()
 
     # contact_count is shape (1,) from Newton, use [0]
     if contact_idx >= contact_count[0]:
-        depths[world_idx, contact_idx] = -1.0  # Negative indicates inactive/invalid contact
+        depths[world_idx, contact_idx] = NON_TOUCHING_DEPTH  # Inactive contact slot
         return
 
     # Get body index from body shape
     body_shape_idx = body_shape[world_idx, contact_idx]
     if body_shape_idx < 0:
-        depths[world_idx, contact_idx] = -1.0  # Invalid body shape
+        depths[world_idx, contact_idx] = NON_TOUCHING_DEPTH  # Invalid body shape
         return
 
     body_idx = shape_body[world_idx, body_shape_idx]
     if body_idx < 0:
-        depths[world_idx, contact_idx] = -1.0  # Invalid body
+        depths[world_idx, contact_idx] = NON_TOUCHING_DEPTH  # Invalid body
         return
 
     # Contact normal (already reordered to point from body to ground)
@@ -214,9 +221,10 @@ def contact_penetration_depth_kernel(
     p_body_world_adj = p_body_world + offset_body
     p_ground_world_adj = p_ground_world + offset_ground
 
-    # Penetration depth (positive for penetration)
-    # Normal points from body to ground, so depth = dot(n, ground - body)
-    depths[world_idx, contact_idx] = wp.dot(n, p_ground_world_adj - p_body_world_adj)
+    # Signed depth: dot(n, ground - body) is positive when penetrating.
+    # Negate so that penetrating -> negative depth, separated -> positive depth.
+    raw = wp.dot(n, p_ground_world_adj - p_body_world_adj)
+    depths[world_idx, contact_idx] = -raw
 
 
 @wp.kernel
