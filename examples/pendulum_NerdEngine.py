@@ -18,7 +18,8 @@ os.environ['PYOPENGL_PLATFORM'] = 'glx'
 
 CONFIG_PATH = files("axion").joinpath("examples").joinpath("conf")
 
-PENDULUM_HEIGHT = 5.0
+PENDULUM_HEIGHT = 2.0  # 5.0 #---> no ground contact 
+
 
 class Simulator(AbstractSimulator):
     def __init__(
