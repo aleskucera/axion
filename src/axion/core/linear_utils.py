@@ -6,13 +6,13 @@ from axion.constraints import unconstrained_dynamics_kernel
 from axion.constraints import velocity_contact_constraint_kernel
 from axion.constraints import velocity_joint_constraint_kernel
 from axion.constraints.control_constraint import control_constraint_kernel
+from axion.constraints.utils import compute_spatial_momentum
+from axion.constraints.utils import compute_world_inertia
 
 from .engine_config import EngineConfig
 from .engine_data import EngineData
 from .engine_dims import EngineDimensions
 from .model import AxionModel
-from axion.constraints.utils import compute_spatial_momentum
-from axion.constraints.utils import compute_world_inertia
 
 
 @wp.kernel
@@ -231,7 +231,8 @@ def compute_linear_system(
             model.joint_enabled,
             model.joint_dof_mode,
             data.control_constraint_offsets,
-            data.joint_target,
+            data.joint_target_pos,
+            data.joint_target_vel,
             model.joint_target_ke,
             model.joint_target_kd,
             data.dt,

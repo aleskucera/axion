@@ -71,17 +71,8 @@ def simulate_scipy(
 The `AxionEngine.simulate` method orchestrates a multi-stage process for each time step, executed entirely either on the GPU (for `simulate`) or CPU (for `simulate_scipy`). Below is a high-level overview of the key stages in the simulation loop.
 
 ## 1. Apply Controls & Integrate
-```python
-def apply_control(
-    model: Model,
-    state_in: State,
-    state_out: State,
-    dt: float,
-    control: Control | None = None,
-)
-```
 
-External forces and torques from the `warp.sim.Control` object are applied to the bodies in the `state_in.body_f` argument via the [`apply_control`](https://github.com/aleskucera/axion/blob/main/src/axion/core/control_utils.py#L67-L100){:target="_blank"} method.
+External control inputs (target positions and velocities) are loaded from the `warp.sim.Control` object and used to formulate the control constraints.
 
 ```python
 def integrate_bodies(

@@ -87,7 +87,7 @@ class TarosSurfaceSimulator(InteractiveSimulator):
 
     @override
     def control_policy(self, current_state: newton.State):
-        wp.copy(self.control.joint_target, self.joint_target)
+        wp.copy(self.control.joint_target_vel, self.joint_target)
 
     def build_model(self) -> newton.Model:
         """

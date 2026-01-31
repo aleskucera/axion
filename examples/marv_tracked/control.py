@@ -9,9 +9,9 @@ import hydra
 import newton
 import numpy as np
 import warp as wp
-from axion import InteractiveSimulator
 from axion import EngineConfig
 from axion import ExecutionConfig
+from axion import InteractiveSimulator
 from axion import RenderingConfig
 from axion import SimulationConfig
 from omegaconf import DictConfig
@@ -213,7 +213,7 @@ class MarvTrackedSimulator(InteractiveSimulator):
             dof_idx = joint_start_dof[j_idx]
             self.flipper_dof_indices[code] = dof_idx
 
-        self.joint_targets = wp.zeros_like(self.model.joint_target)
+        self.joint_targets = wp.zeros_like(self.model.joint_target_vel)
 
     @override
     def _run_simulation_segment(self, segment_num: int):
@@ -348,7 +348,7 @@ class MarvTrackedSimulator(InteractiveSimulator):
             )
 
         # 2. Apply Flipper Targets
-        wp.copy(self.control.joint_target, self.joint_targets)
+        wp.copy(self.control.joint_target_vel, self.joint_targets)
 
     def build_model(self) -> newton.Model:
         # Create Marv Tracked

@@ -6,9 +6,9 @@ import hydra
 import newton
 import numpy as np
 import warp as wp
-from axion import InteractiveSimulator
 from axion import EngineConfig
 from axion import ExecutionConfig
+from axion import InteractiveSimulator
 from axion import RenderingConfig
 from axion import SimulationConfig
 from omegaconf import DictConfig
@@ -63,8 +63,8 @@ class MarvControlSimulator(InteractiveSimulator):
 
     def _update_input(self):
         # Constants
-        MAX_SPEED = 30.0
-        TURN_SPEED = 50.0
+        MAX_SPEED = 60.0  # Mujoco 600
+        TURN_SPEED = 50.0  # Mujoco 500
         FLIPPER_SPEED = 0.1
 
         # Reset drive speeds
@@ -161,7 +161,6 @@ class MarvControlSimulator(InteractiveSimulator):
 
     @override
     def control_policy(self, current_state: newton.State):
-        print(self.joint_target)
         wp.copy(self.control.joint_target_pos, self.joint_target)
 
     def build_model(self) -> newton.Model:
@@ -170,7 +169,7 @@ class MarvControlSimulator(InteractiveSimulator):
 
         # Add Ground
         ground_cfg = newton.ModelBuilder.ShapeConfig(
-            contact_margin=0.1, ke=1.0e4, kd=1.0e3, kf=1.0e3, mu=1.0, restitution=0.0
+            contact_margin=0.3, ke=1.0e4, kd=1.0e3, kf=1.0e3, mu=1.0, restitution=0.0
         )
         self.builder.add_ground_plane(cfg=ground_cfg)
 

@@ -10,7 +10,7 @@ from axion.core.engine import AxionEngine
 from axion.core.engine_config import AxionEngineConfig
 from axion.core.model_builder import AxionModelBuilder
 from axion.generation import SceneGenerator
-from axion.core.control_utils import JointMode
+from axion import JointMode
 
 wp.init()
 
@@ -97,8 +97,10 @@ def test_control_residual_consistency():
     wp.copy(engine.data.body_lambda.ctrl, wp.array(lam_ctrl_np, device=engine.device))
 
     # Random Targets
-    target_np = rng.uniform(-1.0, 1.0, size=(N_w, total_dofs_per_world)).astype(np.float32)
-    wp.copy(engine.data.joint_target, wp.array(target_np, device=engine.device))
+    target_pos_np = rng.uniform(-1.0, 1.0, size=(N_w, total_dofs_per_world)).astype(np.float32)
+    target_vel_np = rng.uniform(-1.0, 1.0, size=(N_w, total_dofs_per_world)).astype(np.float32)
+    wp.copy(engine.data.joint_target_pos, wp.array(target_pos_np, device=engine.device))
+    wp.copy(engine.data.joint_target_vel, wp.array(target_vel_np, device=engine.device))
 
     engine.data.set_dt(0.01)
 
@@ -120,7 +122,8 @@ def test_control_residual_consistency():
         engine.axion_model.joint_enabled,
         engine.axion_model.joint_dof_mode,
         engine.data.control_constraint_offsets,
-        engine.data.joint_target,
+        engine.data.joint_target_pos,
+        engine.data.joint_target_vel,
         engine.axion_model.joint_target_ke,
         engine.axion_model.joint_target_kd,
         engine.data.dt,
@@ -192,7 +195,8 @@ def test_control_residual_consistency():
             engine.axion_model.joint_enabled,
             engine.axion_model.joint_dof_mode,
             engine.data.control_constraint_offsets,
-            engine.data.joint_target,
+            engine.data.joint_target_pos,
+            engine.data.joint_target_vel,
             engine.axion_model.joint_target_ke,
             engine.axion_model.joint_target_kd,
             engine.data.dt,
@@ -229,7 +233,8 @@ def test_control_residual_consistency():
             engine.axion_model.joint_enabled,
             engine.axion_model.joint_dof_mode,
             engine.data.control_constraint_offsets,
-            engine.data.joint_target,
+            engine.data.joint_target_pos,
+            engine.data.joint_target_vel,
             engine.axion_model.joint_target_ke,
             engine.axion_model.joint_target_kd,
             engine.data.dt,

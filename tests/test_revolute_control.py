@@ -1,7 +1,7 @@
 import newton
 import numpy as np
 import warp as wp
-from axion.core.control_utils import JointMode
+from axion import JointMode
 from axion.core.engine import AxionEngine
 from axion.core.engine_config import AxionEngineConfig
 from axion.core.model_builder import AxionModelBuilder
@@ -103,7 +103,7 @@ def test_revolute_position_control():
 
         # Set target in control object
         wp.copy(
-            control.joint_target,
+            control.joint_target_pos,
             wp.array(
                 np.array([target_pos], dtype=np.float32), dtype=wp.float32, device=model.device
             ),

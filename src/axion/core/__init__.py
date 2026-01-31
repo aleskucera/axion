@@ -1,4 +1,4 @@
-from .control_utils import JointMode
+from .joint_types import JointMode
 from .engine import AxionEngine
 from .engine_config import AxionEngineConfig
 from .engine_config import EngineConfig

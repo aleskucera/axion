@@ -6,9 +6,9 @@ import hydra
 import newton
 import numpy as np
 import warp as wp
-from axion import InteractiveSimulator
 from axion import EngineConfig
 from axion import ExecutionConfig
+from axion import InteractiveSimulator
 from axion import RenderingConfig
 from axion import SimulationConfig
 from omegaconf import DictConfig
@@ -48,7 +48,7 @@ class HelhestFlipSimulator(InteractiveSimulator):
 
     @override
     def control_policy(self, current_state: newton.State):
-        wp.copy(self.control.joint_target, self.joint_target)
+        wp.copy(self.control.joint_target_vel, self.joint_target)
 
     def build_model(self) -> newton.Model:
         """

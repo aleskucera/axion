@@ -6,9 +6,10 @@ import hydra
 import newton
 import numpy as np
 import warp as wp
-from axion import InteractiveSimulator
+from axion import AxionEngine
 from axion import EngineConfig
 from axion import ExecutionConfig
+from axion import InteractiveSimulator
 from axion import RenderingConfig
 from axion import SimulationConfig
 from omegaconf import DictConfig
@@ -24,19 +25,59 @@ CONFIG_PATH = pathlib.Path(__file__).parent.parent.joinpath("conf")
 ASSETS_DIR = pathlib.Path(__file__).parent.parent.joinpath("assets")
 
 
+@wp.kernel
+def integrate_wheel_position_kernel(
+    current_wheel_angles: wp.array(dtype=wp.float32),
+    target_velocities: wp.array(dtype=wp.float32),
+    dt: float,
+    joint_target_pos: wp.array(dtype=wp.float32),
+    left_idx: int,
+    right_idx: int,
+    rear_idx: int,
+):
+    # Read command velocities
+    v_l = target_velocities[0]
+    v_r = target_velocities[1]
+    v_rear = target_velocities[2]
+
+    # Integrate: Angle = Angle + Velocity * dt
+    new_ang_l = current_wheel_angles[0] + v_l * dt
+    new_ang_r = current_wheel_angles[1] + v_r * dt
+    new_ang_rear = current_wheel_angles[2] + v_rear * dt
+
+    # Store state
+    current_wheel_angles[0] = new_ang_l
+    current_wheel_angles[1] = new_ang_r
+    current_wheel_angles[2] = new_ang_rear
+
+    # Wrap to [-PI, PI] to preserve precision
+    PI = 3.14159265
+    TWO_PI = 6.2831853
+
+    out_l = new_ang_l - TWO_PI * wp.floor((new_ang_l + PI) / TWO_PI)
+    out_r = new_ang_r - TWO_PI * wp.floor((new_ang_r + PI) / TWO_PI)
+    out_rear = new_ang_rear - TWO_PI * wp.floor((new_ang_rear + PI) / TWO_PI)
+
+    # Write to global array
+    joint_target_pos[left_idx] = out_l
+    joint_target_pos[right_idx] = out_r
+    joint_target_pos[rear_idx] = out_rear
+
+
 class HelhestControlSimulator(InteractiveSimulator):
     def __init__(self, sim_config, render_config, exec_config, engine_config):
         self.left_indices_cpu = []
         self.right_indices_cpu = []
         super().__init__(sim_config, render_config, exec_config, engine_config)
 
-        # 6 Base DOFs + 3 Wheel DOFs (Left, Right, Rear)
-        # We only control the last 3.
+        # 1. Internal Buffers for Position Control
+        # Stores [v_left, v_right, v_rear]
         self.target_velocities = wp.zeros(3, dtype=wp.float32, device=self.model.device)
+        # Stores [angle_left, angle_right, angle_rear]
+        self.wheel_angles = wp.zeros(3, dtype=wp.float32, device=self.model.device)
 
-        # Initialize full target array
-        # First 6 are for the free joint (base), ignored by control usually but good to keep 0
-        self.joint_target = wp.zeros(9, dtype=wp.float32, device=self.model.device)
+        # Buffer for the full joint array
+        self.joint_target_buffer = wp.zeros_like(self.model.joint_target_pos)
 
     @override
     def _run_simulation_segment(self, segment_num: int):
@@ -45,58 +86,37 @@ class HelhestControlSimulator(InteractiveSimulator):
 
     def _update_input(self):
         """Check keyboard input and update wheel velocities."""
-        base_speed = 5.0
-        turn_speed = 2.5
+        base_speed = 8.0
+        turn_speed = 3.0
 
         left_v = 0.0
         right_v = 0.0
 
-        # Simple WASD/Arrow style logic
-        # Forward/Backward
-        if hasattr(self.viewer, "is_key_down"):
-            if self.viewer.is_key_down("i"):  # Forward
+        # Using I/J/K/L with the correct 'is_key_down' method
+        if self.viewer and hasattr(self.viewer, "is_key_down"):
+            # Forward (I)
+            if self.viewer.is_key_down("i"):
                 left_v += base_speed
                 right_v += base_speed
-            if self.viewer.is_key_down("k"):  # Backward
+            # Backward (K)
+            if self.viewer.is_key_down("k"):
                 left_v -= base_speed
                 right_v -= base_speed
-
-            # Turn Left/Right
-            if self.viewer.is_key_down("j"):  # Left
+            # Left (J)
+            if self.viewer.is_key_down("j"):
                 left_v -= turn_speed
                 right_v += turn_speed
-            if self.viewer.is_key_down("l"):  # Right
+            # Right (L)
+            if self.viewer.is_key_down("l"):
                 left_v += turn_speed
                 right_v -= turn_speed
 
-        # Rear wheel logic: Average of left and right?
-        # Or maybe just let it spin freely if we could (but we are in velocity mode).
-        # Let's try driving it with the average linear speed.
         rear_v = (left_v + right_v) / 2.0
 
-        # Update targets
-        # Indices in Helhest model (from common.py):
-        # 0-5: Base (Free)
-        # 6: Left Wheel
-        # 7: Right Wheel
-        # 8: Rear Wheel
-
-        # We need to update the last 3 elements of self.joint_target
-        # We can't slice assign easily in Warp from python like numpy,
-        # so we'll build a small numpy array and copy.
-
-        # Current logic: The control kernel reads the whole array.
-        # We can construct the array on CPU then copy.
-
-        targets_cpu = np.zeros(9, dtype=np.float32)
-        # Leave 0-5 as 0.0
-        targets_cpu[6] = left_v
-        targets_cpu[7] = right_v
-        targets_cpu[8] = rear_v
-
-        wp.copy(
-            self.joint_target, wp.array(targets_cpu, dtype=wp.float32, device=self.model.device)
-        )
+        # Update the GPU velocity buffer
+        # We assume indices 0=Left, 1=Right, 2=Rear for this small buffer
+        vels_cpu = np.array([left_v, right_v, rear_v], dtype=np.float32)
+        wp.copy(self.target_velocities, wp.array(vels_cpu, device=self.model.device))
 
     @override
     def init_state_fn(
@@ -110,8 +130,25 @@ class HelhestControlSimulator(InteractiveSimulator):
 
     @override
     def control_policy(self, current_state: newton.State):
-        wp.copy(self.control.joint_target, self.joint_target)
-        wp.copy(self.control.joint_target_pos, self.joint_target)
+        # INTEGRATE: Convert Velocity -> Position
+        # Indices in Helhest model: 6=Left, 7=Right, 8=Rear
+        wp.launch(
+            kernel=integrate_wheel_position_kernel,
+            dim=1,
+            inputs=[
+                self.wheel_angles,  # State (read/write)
+                self.target_velocities,  # Input (from keyboard)
+                self.effective_timestep,  # dt
+                self.joint_target_buffer,  # Output
+                6,
+                7,
+                8,  # Indices
+            ],
+            device=self.model.device,
+        )
+
+        # Apply to Position Control Target
+        wp.copy(self.control.joint_target_pos, self.joint_target_buffer)
 
     def build_model(self) -> newton.Model:
         # --- 1. Ground ---
@@ -121,7 +158,7 @@ class HelhestControlSimulator(InteractiveSimulator):
         # Obstacle 1: Stairs (Stepped boxes)
         num_steps = 6
         step_depth = 0.6
-        step_height = 0.08  # Smaller steps for Helhest
+        step_height = 0.08
         step_width = 4.0
         start_x = 5.0
         start_y = -4.0
@@ -199,6 +236,9 @@ def helhest_control_example(cfg: DictConfig):
     render_config: RenderingConfig = hydra.utils.instantiate(cfg.rendering)
     exec_config: ExecutionConfig = hydra.utils.instantiate(cfg.execution)
     engine_config: EngineConfig = hydra.utils.instantiate(cfg.engine)
+
+    # Force GL viewer
+    render_config.vis_type = "gl"
 
     simulator = HelhestControlSimulator(sim_config, render_config, exec_config, engine_config)
     simulator.run()

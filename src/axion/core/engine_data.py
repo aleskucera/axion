@@ -106,7 +106,8 @@ class EngineData:
     world_M_inv: wp.array
     joint_constraint_offsets: wp.array
     control_constraint_offsets: wp.array
-    joint_target: wp.array
+    joint_target_pos: wp.array
+    joint_target_vel: wp.array
 
     # --- Contact Interaction SOA ---
     contact_body_a: wp.array
@@ -322,23 +323,31 @@ class EngineData:
             if self.dims.N_j > 0:
                 constraints_hist["Joint constraint data"] = {
                     "h": self._serialize_to_numpy(self.newton_history.h_history.c.j),
-                    "body_lambda": self._serialize_to_numpy(self.newton_history.body_lambda_history.j),
+                    "body_lambda": self._serialize_to_numpy(
+                        self.newton_history.body_lambda_history.j
+                    ),
                 }
 
             if self.dims.N_ctrl > 0:
                 constraints_hist["Control constraint data"] = {
                     "h": self._serialize_to_numpy(self.newton_history.h_history.c.ctrl),
-                    "body_lambda": self._serialize_to_numpy(self.newton_history.body_lambda_history.ctrl),
+                    "body_lambda": self._serialize_to_numpy(
+                        self.newton_history.body_lambda_history.ctrl
+                    ),
                 }
 
             if self.dims.N_n > 0:
                 constraints_hist["Contact constraint data"] = {
                     "h": self._serialize_to_numpy(self.newton_history.h_history.c.n),
-                    "body_lambda": self._serialize_to_numpy(self.newton_history.body_lambda_history.n),
+                    "body_lambda": self._serialize_to_numpy(
+                        self.newton_history.body_lambda_history.n
+                    ),
                 }
                 constraints_hist["Friction constraint data"] = {
                     "h": self._serialize_to_numpy(self.newton_history.h_history.c.f),
-                    "body_lambda": self._serialize_to_numpy(self.newton_history.body_lambda_history.f),
+                    "body_lambda": self._serialize_to_numpy(
+                        self.newton_history.body_lambda_history.f
+                    ),
                 }
 
             history_snap["constraints"] = constraints_hist
@@ -419,7 +428,8 @@ class EngineData:
         contact_basis_t1_b = _zeros((dims.N_w, dims.N_n), wp.spatial_vector)
         contact_basis_t2_b = _zeros((dims.N_w, dims.N_n), wp.spatial_vector)
 
-        joint_target = _zeros((dims.N_w, dof_count))
+        joint_target_pos = _zeros((dims.N_w, dof_count))
+        joint_target_vel = _zeros((dims.N_w, dof_count))
 
         # ---- Linesearch Arrays ----
         linesearch_data = None
@@ -553,7 +563,8 @@ class EngineData:
             contact_basis_t2_b=contact_basis_t2_b,
             joint_constraint_offsets=joint_constraint_offsets,
             control_constraint_offsets=control_constraint_offsets,
-            joint_target=joint_target,
+            joint_target_pos=joint_target_pos,
+            joint_target_vel=joint_target_vel,
             linesearch=linesearch_data,
             newton_history=newton_history_data,
         )

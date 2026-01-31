@@ -24,7 +24,7 @@ class HelhestConfig:
     # Wheels
     WHEEL_RADIUS = 0.36
     WHEEL_WIDTH = 0.11
-    WHEEL_MASS = 1.0
+    WHEEL_MASS = 2.0
     WHEEL_I = wp.mat33(0.20045, 0.0, 0.0, 0.0, 0.20045, 0.0, 0.0, 0.0, 0.3888)
     WHEEL_ROT = wp.quat_from_axis_angle(wp.vec3(1.0, 0.0, 0.0), wp.pi / 2.0)
 
@@ -35,8 +35,7 @@ class HelhestConfig:
 
     # Joint Control
     TARGET_KE = 200.0
-    TARGET_KI = 0.04
-    TARGET_KD = 0.04
+    TARGET_KD = 0.01
 
     # Fixed Components Configuration
     # Format: name: (position, size, mass, inertia_diagonal)
@@ -279,8 +278,7 @@ def create_helhest_model(
         target_kd=HelhestConfig.TARGET_KD,
         key="left_wheel_j",
         custom_attributes={
-            "joint_target_ki": [HelhestConfig.TARGET_KI],
-            "joint_dof_mode": [JointMode.TARGET_VELOCITY],
+            "joint_dof_mode": [JointMode.TARGET_POSITION],
         },
     )
 
@@ -294,8 +292,7 @@ def create_helhest_model(
         target_kd=HelhestConfig.TARGET_KD,
         key="right_wheel_j",
         custom_attributes={
-            "joint_target_ki": [HelhestConfig.TARGET_KI],
-            "joint_dof_mode": [JointMode.TARGET_VELOCITY],
+            "joint_dof_mode": [JointMode.TARGET_POSITION],
         },
     )
 
@@ -309,8 +306,7 @@ def create_helhest_model(
         target_kd=HelhestConfig.TARGET_KD,
         key="rear_wheel_j",
         custom_attributes={
-            "joint_target_ki": [HelhestConfig.TARGET_KI],
-            "joint_dof_mode": [JointMode.TARGET_VELOCITY],
+            "joint_dof_mode": [JointMode.TARGET_POSITION],
         },
     )
 

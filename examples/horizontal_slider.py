@@ -5,12 +5,12 @@ from typing import override
 import hydra
 import newton
 import warp as wp
-from axion import InteractiveSimulator
 from axion import EngineConfig
 from axion import ExecutionConfig
+from axion import InteractiveSimulator
+from axion import JointMode
 from axion import RenderingConfig
 from axion import SimulationConfig
-from axion.core.control_utils import JointMode
 from omegaconf import DictConfig
 
 os.environ["PYOPENGL_PLATFORM"] = "glx"
@@ -59,7 +59,7 @@ class Simulator(InteractiveSimulator):
             compute_control,
             dim=1,
             inputs=[self.effective_timestep, self.time],
-            outputs=[self.control.joint_target],
+            outputs=[self.control.joint_target_pos],
         )
 
     def build_model(self) -> newton.Model:
@@ -111,12 +111,12 @@ class Simulator(InteractiveSimulator):
         # Stiffness (Kp)
         wp.copy(
             model.joint_target_ke,
-            wp.array([1500.0], dtype=wp.float32, device=model.device),
+            wp.array([600.0], dtype=wp.float32, device=model.device),
         )
         # Damping (Kd)
         wp.copy(
             model.joint_target_kd,
-            wp.array([300.0], dtype=wp.float32, device=model.device),
+            wp.array([3.0], dtype=wp.float32, device=model.device),
         )
 
         return model

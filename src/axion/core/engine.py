@@ -15,12 +15,12 @@ from axion.core.engine_dims import EngineDimensions
 from axion.core.engine_logger import EngineEvents
 from axion.core.engine_logger import EngineMode
 from axion.core.engine_logger import HDF5Observer
+from axion.core.history_utils import copy_state_to_history
 from axion.core.linear_utils import compute_dbody_qd_from_dbody_lambda
 from axion.core.linear_utils import compute_linear_system
 from axion.core.linesearch_utils import perform_linesearch
 from axion.core.linesearch_utils import update_body_q
 from axion.core.model import AxionModel
-from axion.core.history_utils import copy_state_to_history
 from axion.optim import JacobiPreconditioner
 from axion.optim import PCRSolver
 from axion.optim import SystemLinearData
@@ -168,7 +168,8 @@ class AxionEngine(SolverBase):
 
     def _load_control_inputs(self, state: State, control: Control):
         wp.copy(dest=self.data.body_f, src=state.body_f)
-        wp.copy(dest=self.data.joint_target, src=control.joint_target)
+        wp.copy(dest=self.data.joint_target_pos, src=control.joint_target_pos)
+        wp.copy(dest=self.data.joint_target_vel, src=control.joint_target_vel)
 
     def _initialize_variables(self, state_in: State, state_out: State, contacts: Contacts):
         self.init_state_fn(state_in, state_out, contacts, self.data.dt)

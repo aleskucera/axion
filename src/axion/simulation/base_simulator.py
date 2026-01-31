@@ -10,14 +10,14 @@ from typing import Literal
 
 import newton
 import warp as wp
-from axion.core.control_utils import JointMode
-from axion.core.engine import AxionEngine
+from axion import AxionEngine
 from axion.core.engine_config import AxionEngineConfig
 from axion.core.engine_config import EngineConfig
 from axion.core.engine_config import FeatherstoneEngineConfig
 from axion.core.engine_config import MuJoCoEngineConfig
 from axion.core.engine_config import SemiImplicitEngineConfig
 from axion.core.engine_config import XPBDEngineConfig
+from axion.core.joint_types import JointMode
 from axion.core.model_builder import AxionModelBuilder
 from newton import Model
 from newton.solvers import SolverFeatherstone

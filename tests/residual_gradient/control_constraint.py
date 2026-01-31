@@ -4,7 +4,9 @@ import pytest
 import warp as wp
 import warp.autograd
 from axion.constraints.control_constraint import control_constraint_residual_kernel
-from axion.core.control_utils import JointMode
+from axion.core.model import AxionModel
+from axion import JointMode
+import numpy as np
 from axion.core.engine import AxionEngine
 from axion.core.engine_config import AxionEngineConfig
 from axion.core.model_builder import AxionModelBuilder
@@ -139,8 +141,11 @@ def run_control_test(joint_type_str, mode_str):
     body_lambda_ctrl.requires_grad = True
 
     # Joint targets
-    joint_target = wp.clone(engine.data.joint_target)
-    joint_target.requires_grad = True
+    joint_target_pos = wp.clone(engine.data.joint_target_pos)
+    joint_target_pos.requires_grad = True
+    
+    joint_target_vel = wp.clone(engine.data.joint_target_vel)
+    joint_target_vel.requires_grad = True
 
     # Static / non-differentiable inputs
     body_com = wp.clone(engine.axion_model.body_com)
@@ -171,7 +176,8 @@ def run_control_test(joint_type_str, mode_str):
             engine.axion_model.joint_enabled,
             engine.axion_model.joint_dof_mode,
             engine.data.control_constraint_offsets,
-            joint_target,
+            joint_target_pos,
+            joint_target_vel,
             engine.axion_model.joint_target_ke,
             engine.axion_model.joint_target_kd,
             engine.data.dt,
