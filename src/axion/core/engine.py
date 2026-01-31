@@ -250,6 +250,7 @@ class AxionEngine(SolverBase):
                     self.data.contact_basis_n_b,
                     self.data.contact_basis_t1_b,
                     self.data.contact_basis_t2_b,
+                    self.data.constraint_active_mask.n,
                 ],
                 device=self.device,
             )

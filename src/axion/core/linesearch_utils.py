@@ -536,6 +536,7 @@ def compute_linesearch_batch_h(
                 data.contact_dist,
                 data.contact_basis_n_a,
                 data.contact_basis_n_b,
+                data.constraint_active_mask.n,
                 model.body_inv_mass,
                 model.body_inv_inertia,
                 data.dt,

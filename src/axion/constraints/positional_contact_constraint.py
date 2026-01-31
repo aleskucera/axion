@@ -108,6 +108,7 @@ def positional_contact_residual_kernel(
     contact_dist: wp.array(dtype=wp.float32, ndim=2),
     contact_basis_n_a: wp.array(dtype=wp.spatial_vector, ndim=2),
     contact_basis_n_b: wp.array(dtype=wp.spatial_vector, ndim=2),
+    contact_active_mask: wp.array(dtype=wp.float32, ndim=2),
     body_m_inv: wp.array(dtype=wp.float32, ndim=2),
     body_I_inv: wp.array(dtype=wp.mat33, ndim=2),
     dt: wp.float32,
@@ -117,7 +118,7 @@ def positional_contact_residual_kernel(
 ):
     world_idx, contact_idx = wp.tid()
 
-    if contact_dist[world_idx, contact_idx] <= 0.0:
+    if contact_active_mask[world_idx, contact_idx] == 0.0:
         h_n[world_idx, contact_idx] = 0.0
         return
 
@@ -183,12 +184,12 @@ def positional_contact_constraint_kernel(
     contact_dist: wp.array(dtype=wp.float32, ndim=2),
     contact_basis_n_a: wp.array(dtype=wp.spatial_vector, ndim=2),
     contact_basis_n_b: wp.array(dtype=wp.spatial_vector, ndim=2),
+    contact_active_mask: wp.array(dtype=wp.float32, ndim=2),
     body_m_inv: wp.array(dtype=wp.float32, ndim=2),
     body_I_inv: wp.array(dtype=wp.mat33, ndim=2),
     dt: wp.float32,
     stabilization_factor: wp.float32,
     compliance: wp.float32,
-    constraint_active_mask: wp.array(dtype=wp.float32, ndim=2),
     h_d: wp.array(dtype=wp.spatial_vector, ndim=2),
     h_n: wp.array(dtype=wp.float32, ndim=2),
     J_hat_n_values: wp.array(dtype=wp.spatial_vector, ndim=3),
@@ -197,8 +198,7 @@ def positional_contact_constraint_kernel(
 ):
     world_idx, contact_idx = wp.tid()
 
-    if contact_dist[world_idx, contact_idx] <= 0.0:
-        constraint_active_mask[world_idx, contact_idx] = 0.0
+    if contact_active_mask[world_idx, contact_idx] == 0.0:
         body_lambda_n[world_idx, contact_idx] = 0.0
         h_n[world_idx, contact_idx] = 0.0
         J_hat_n_values[world_idx, contact_idx, 0] = wp.spatial_vector()
@@ -207,7 +207,6 @@ def positional_contact_constraint_kernel(
         s_n[world_idx, contact_idx] = 0.0
         return
 
-    constraint_active_mask[world_idx, contact_idx] = 1.0
     lambda_n = body_lambda_n[world_idx, contact_idx]
     body_1 = contact_body_a[world_idx, contact_idx]
     body_2 = contact_body_b[world_idx, contact_idx]
@@ -275,6 +274,7 @@ def batch_positional_contact_residual_kernel(
     contact_dist: wp.array(dtype=wp.float32, ndim=2),
     contact_basis_n_a: wp.array(dtype=wp.spatial_vector, ndim=2),
     contact_basis_n_b: wp.array(dtype=wp.spatial_vector, ndim=2),
+    contact_active_mask: wp.array(dtype=wp.float32, ndim=2),
     body_m_inv: wp.array(dtype=wp.float32, ndim=2),
     body_I_inv: wp.array(dtype=wp.mat33, ndim=2),
     dt: wp.float32,
@@ -284,7 +284,7 @@ def batch_positional_contact_residual_kernel(
 ):
     batch_idx, world_idx, contact_idx = wp.tid()
 
-    if contact_dist[world_idx, contact_idx] <= 0.0:
+    if contact_active_mask[world_idx, contact_idx] == 0.0:
         h_n[batch_idx, world_idx, contact_idx] = 0.0
         return
 
@@ -352,6 +352,7 @@ def fused_batch_positional_contact_residual_kernel(
     contact_dist: wp.array(dtype=wp.float32, ndim=2),
     contact_basis_n_a: wp.array(dtype=wp.spatial_vector, ndim=2),
     contact_basis_n_b: wp.array(dtype=wp.spatial_vector, ndim=2),
+    contact_active_mask: wp.array(dtype=wp.float32, ndim=2),
     body_m_inv: wp.array(dtype=wp.float32, ndim=2),
     body_I_inv: wp.array(dtype=wp.mat33, ndim=2),
     dt: wp.float32,
@@ -364,7 +365,7 @@ def fused_batch_positional_contact_residual_kernel(
     if contact_idx >= contact_dist.shape[1]:
         return
 
-    if contact_dist[world_idx, contact_idx] <= 0.0:
+    if contact_active_mask[world_idx, contact_idx] == 0.0:
         for b in range(num_batches):
             h_n[b, world_idx, contact_idx] = 0.0
         return

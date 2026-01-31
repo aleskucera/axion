@@ -35,6 +35,7 @@ def contact_interaction_kernel(
     contact_basis_n_b: wp.array(dtype=wp.spatial_vector, ndim=2),
     contact_basis_t1_b: wp.array(dtype=wp.spatial_vector, ndim=2),
     contact_basis_t2_b: wp.array(dtype=wp.spatial_vector, ndim=2),
+    contact_active_mask: wp.array(dtype=wp.float32, ndim=2),
 ):
     world_idx, contact_idx = wp.tid()
 
@@ -42,8 +43,10 @@ def contact_interaction_kernel(
     shape_b = contact_shape1[world_idx, contact_idx]
 
     if contact_idx >= contact_count[world_idx] or shape_a == shape_b:
-        contact_dist[world_idx, contact_idx] = -1.0
+        contact_active_mask[world_idx, contact_idx] = 0.0
         return
+
+    contact_active_mask[world_idx, contact_idx] = 1.0
 
     # Contact body indices (default to -1)
     body_a = -1

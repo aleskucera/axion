@@ -265,6 +265,7 @@ def compute_linear_system(
                 data.contact_dist,
                 data.contact_basis_n_a,
                 data.contact_basis_n_b,
+                data.constraint_active_mask.n,
                 model.body_inv_mass,
                 model.body_inv_inertia,
                 dt,
@@ -272,7 +273,6 @@ def compute_linear_system(
                 config.contact_compliance,
             ],
             outputs=[
-                data.constraint_active_mask.n,
                 data.h.d_spatial,
                 data.h.c.n,
                 data.J_values.n,
