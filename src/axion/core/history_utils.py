@@ -54,7 +54,7 @@ def copy_state_to_history(
     wp.launch(
         kernel=copy_h_to_history,
         dim=(data.dims.N_w, data.dims.N_u + data.dims.N_c),
-        inputs=[data._h, newton_iteration],
+        inputs=[data._h],
         outputs=[data.newton_history._h_history[newton_iteration, :, :]],
         device=data.device,
     )
@@ -62,7 +62,7 @@ def copy_state_to_history(
     wp.launch(
         kernel=copy_body_q_to_history,
         dim=(data.dims.N_w, data.dims.N_b),
-        inputs=[data.body_q, newton_iteration],
+        inputs=[data.body_q],
         outputs=[data.newton_history.body_q_history[newton_iteration, :, :]],
         device=data.device,
     )
@@ -70,7 +70,7 @@ def copy_state_to_history(
     wp.launch(
         kernel=copy_body_u_to_history,
         dim=(data.dims.N_w, data.dims.N_b),
-        inputs=[data.body_u, newton_iteration],
+        inputs=[data.body_u],
         outputs=[data.newton_history.body_u_history[newton_iteration, :, :]],
         device=data.device,
     )
@@ -78,7 +78,7 @@ def copy_state_to_history(
     wp.launch(
         kernel=copy_body_lambda_to_history,
         dim=(data.dims.N_w, data.dims.N_c),
-        inputs=[data._body_lambda, newton_iteration],
+        inputs=[data._body_lambda],
         outputs=[data.newton_history._body_lambda_history[newton_iteration, :, :]],
         device=data.device,
     )

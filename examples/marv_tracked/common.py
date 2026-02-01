@@ -158,7 +158,7 @@ class MarvConfig:
     # Control Gains
     FLIPPER_KP = 300.0
     FLIPPER_KD = 50.0
-    FLIPPER_KV = 1000.0
+    FLIPPER_KV = 4000.0
 
 
 def _add_chassis(builder: newton.ModelBuilder, xform: wp.transform, is_visible: bool) -> int:
@@ -251,7 +251,7 @@ def _create_tracked_flipper_leg(
     )
 
     box_shape = newton.ModelBuilder.ShapeConfig(
-        is_visible=True, density=1000.0, mu=1.0, contact_margin=0.3
+        is_visible=True, density=1000.0, mu=1.0, contact_margin=0.1
     )
 
     # We need to pass the parent_world_xform of the FLIPPER LINK, not the chassis.
