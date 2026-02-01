@@ -266,6 +266,12 @@ class XPBDEngineConfig(EngineConfig):
 class SemiImplicitEngineConfig(EngineConfig):
     """Configuration for Newton's Semi-Implicit Euler solver."""
 
+    angular_damping: float = 0.05
+    friction_smoothing: float = 1.0
+    joint_attach_ke: float = 1.0e4
+    joint_attach_kd: float = 1.0e2
+    enable_tri_contact: bool = True
+
     def _get_solver_class(self):
         from newton.solvers import SolverSemiImplicit
 

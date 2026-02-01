@@ -169,7 +169,11 @@ class AxionModelBuilder(newton.ModelBuilder):
         return created_joints
 
     def finalize_replicated(
-        self, num_worlds: int, gravity: float = -9.81, **kwargs
+        self,
+        num_worlds: int,
+        gravity: float = -9.81,
+        requires_grad: bool = False,
+        **kwargs,
     ) -> newton.Model:
         """
         Creates a new newton.ModelBuilder, replicates the content of this builder into it
@@ -179,4 +183,4 @@ class AxionModelBuilder(newton.ModelBuilder):
         for k, v in kwargs.items():
             setattr(final_builder, k, v)
         final_builder.replicate(self, num_worlds=num_worlds)
-        return final_builder.finalize()
+        return final_builder.finalize(requires_grad=requires_grad)
