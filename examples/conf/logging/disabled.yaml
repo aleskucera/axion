@@ -1,3 +1,4 @@
 # @package logging
+_target_: axion.LoggingConfig
 enable_timing: false
 enable_hdf5_logging: false

@@ -37,20 +37,10 @@ class InteractiveSimulator(BaseSimulator, ABC):
             logging_config,
         )
 
-        # Viewer Setup
-        if self.rendering_config.vis_type == "usd":
-            self.viewer = newton.viewer.ViewerUSD(
-                output_path=self.rendering_config.usd_file,
-                fps=self.rendering_config.target_fps,
-                up_axis="Z",
-                num_frames=self.num_segments,
-            )
-        elif self.rendering_config.vis_type == "gl":
-            self.viewer = newton.viewer.ViewerGL()
-        elif self.rendering_config.vis_type == "null" or self.rendering_config.vis_type is None:
-            self.viewer = newton.viewer.ViewerNull(self.num_segments)
-        else:
-            raise ValueError(f"Unsupported rendering type: {self.rendering_config.vis_type}")
+        self.viewer = self.rendering_config.create_viewer(
+            model=self.model,
+            num_segments=self.num_segments,
+        )
 
         self.viewer.set_model(self.model)
         self.viewer.set_world_offsets((20.0, 20.0, 0.0))

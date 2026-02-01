@@ -1,6 +1,5 @@
 from abc import ABC
 from abc import abstractmethod
-from dataclasses import dataclass
 from typing import Optional
 
 import newton
@@ -8,73 +7,20 @@ import warp as wp
 from axion.core.engine_config import AxionEngineConfig
 from axion.core.engine_config import EngineConfig
 from axion.core.engine_config import SemiImplicitEngineConfig
+from axion.core.logging_config import LoggingConfig
 
 from .base_simulator import BaseSimulator
-from .base_simulator import ExecutionConfig
-from .base_simulator import RenderingConfig
-from .base_simulator import SimulationConfig
-
-
-@dataclass
-class TrajectoryData:
-    body_q: wp.array
-    body_u: wp.array
-    step_count: wp.array
-
-
-# @wp.kernel
-# def save_to_trajectory_kernel_1d(
-#     body_q: wp.array(dtype=wp.transform, ndim=1),
-#     body_u: wp.array(dtype=wp.spatial_vector, ndim=1),
-#     num_worlds: int,
-#     num_bodies: int,
-#     step_idx: int,
-#     body_q_trajectory: wp.array(dtype=wp.transform, ndim=3),
-#     body_u_trajectory: wp.array(dtype=wp.spatial_vector, ndim=3),
-# ):
-#     world_idx, body_idx = wp.tid()
-#     if world_idx >= num_worlds or body_idx >= num_bodies:
-#         return
-#     flat_idx = world_idx * num_bodies + body_idx
-#     body_q_trajectory[step_idx, world_idx, body_idx] = body_q[flat_idx]
-#     body_u_trajectory[step_idx, world_idx, body_idx] = body_u[flat_idx]
-#
-#
-# @wp.kernel
-# def save_to_trajectory_kernel_2d(
-#     body_q: wp.array(dtype=wp.transform, ndim=2),
-#     body_u: wp.array(dtype=wp.spatial_vector, ndim=2),
-#     num_worlds: int,
-#     num_bodies: int,
-#     step_idx: int,
-#     body_q_trajectory: wp.array(dtype=wp.transform, ndim=3),
-#     body_u_trajectory: wp.array(dtype=wp.spatial_vector, ndim=3),
-# ):
-#     world_idx, body_idx = wp.tid()
-#     if world_idx >= num_worlds or body_idx >= num_bodies:
-#         return
-#     body_q_trajectory[step_idx, world_idx, body_idx] = body_q[world_idx, body_idx]
-#     body_u_trajectory[step_idx, world_idx, body_idx] = body_u[world_idx, body_idx]
-#
-#
-# @wp.kernel
-# def flatten_trajectory_slice_kernel(
-#     traj_q: wp.array(dtype=wp.transform, ndim=3),
-#     step_idx: int,
-#     flat_q: wp.array(dtype=wp.transform, ndim=1),
-#     num_bodies: int,
-#     num_worlds: int,
-# ):
-#     world_idx, body_idx = wp.tid()
-#     if world_idx >= num_worlds or body_idx >= num_bodies:
-#         return
-#     flat_idx = world_idx * num_bodies + body_idx
-#     flat_q[flat_idx] = traj_q[step_idx, world_idx, body_idx]
+from .sim_config import ExecutionConfig
+from .sim_config import RenderingConfig
+from .sim_config import SimulationConfig
 
 
 class DifferentiableSimulator(BaseSimulator, ABC):
     """
     A specialized simulator for running differentiable physics episodes.
+
+    This simulator manages a full trajectory of states to support backpropagation
+    through time (BPTT) or implicit differentiation schemes.
     """
 
     def __init__(
@@ -83,14 +29,17 @@ class DifferentiableSimulator(BaseSimulator, ABC):
         rendering_config: RenderingConfig,
         execution_config: ExecutionConfig,
         engine_config: EngineConfig,
+        logging_config: Optional[LoggingConfig] = None,
     ):
         super().__init__(
             simulation_config,
             rendering_config,
             execution_config,
             engine_config,
+            logging_config,
         )
 
+        # 1. Validation for Differentiability
         if not self.model.body_mass.requires_grad:
             raise RuntimeError(
                 "DifferentiableSimulator requires a differentiable model.\n"
@@ -98,27 +47,37 @@ class DifferentiableSimulator(BaseSimulator, ABC):
                 "Fix: Ensure your build_model() returns `builder.finalize(requires_grad=True)`."
             )
 
+        # 2. State Management
+        # Unlike interactive sim (which keeps 1 state), we need the full history for gradients.
         self.states = [
             self.model.state(requires_grad=True) for _ in range(self.total_sim_steps + 1)
         ]
-        # self.trajectory: Optional[TrajectoryData] = None
         self.control = self.model.control()
 
+        # 3. Collision Setup
         self.collision_pipeline = newton.CollisionPipeline.from_model(self.model)
+        # Initialize contact data
         self.contacts = self.model.collide(self.states[0], self.collision_pipeline)
 
-        self.viewer = newton.viewer.ViewerGL()
-        self.viewer.set_model(self.model)
+        # 4. Viewer Initialization (Using Factory)
+        self.viewer = self.rendering_config.create_viewer(
+            self.model, num_segments=self.total_sim_steps
+        )
+        if self.viewer:
+            self.viewer.set_model(self.model)
+
+        # 5. Gradient Tape & Graphing
         self.cuda_graph: Optional[wp.Graph] = None
         self.tape = wp.Tape()
         self.loss = wp.zeros(1, dtype=wp.float32)
 
     def forward_backward(self):
+        """
+        Runs the simulation forward and computes gradients backward.
+        """
         self.tape = wp.Tape()
-        
-        # Dispatch engine
-        # Note: We do NOT wrap this in `with self.tape:` because the engine runner
-        # handles granular tape scoping (e.g. excluding collision).
+
+        # Dispatch engine execution strategy
         if isinstance(self.engine_config, AxionEngineConfig):
             self._run_axion_forward()
         elif isinstance(self.engine_config, SemiImplicitEngineConfig):
@@ -131,6 +90,7 @@ class DifferentiableSimulator(BaseSimulator, ABC):
         self.tape.backward(self.loss)
 
     def capture(self):
+        """Captures the simulation step into a CUDA graph if enabled."""
         if (
             self.execution_config.use_cuda_graph
             and wp.get_device().is_cuda
@@ -143,6 +103,7 @@ class DifferentiableSimulator(BaseSimulator, ABC):
             self.cuda_graph = capture.graph
 
     def diff_step(self):
+        """Executes one differentiable step (either graph-launched or eager)."""
         if self.cuda_graph:
             wp.capture_launch(self.cuda_graph)
         else:
@@ -151,81 +112,52 @@ class DifferentiableSimulator(BaseSimulator, ABC):
     def perform_step(self):
         """
         Runs the simulation step (differentiable).
+        API Compatibility method.
         """
         self.diff_step()
 
-    # def _allocate_trajectory(self, steps: int):
-    #     if self.trajectory is None or self.trajectory.body_q.shape[0] < steps:
-    #         trajectory_shape = (steps, self.model.num_worlds, self.model.body_count)
-    #         self.trajectory = TrajectoryData(
-    #             body_q=wp.zeros(trajectory_shape, dtype=wp.transform, requires_grad=True),
-    #             body_u=wp.zeros(trajectory_shape, dtype=wp.spatial_vector, requires_grad=True),
-    #             step_count=wp.zeros(1, dtype=wp.int32),
-    #         )
-    #     else:
-    #         self.trajectory.step_count.zero_()
-
-    # def _save_trajectory_axion(self, step_idx):
-    #     wp.launch(
-    #         kernel=save_to_trajectory_kernel_2d,
-    #         dim=(self.model.num_worlds, self.model.body_count),
-    #         inputs=[
-    #             self.solver.data.body_q,
-    #             self.solver.data.body_u,
-    #             self.model.num_worlds,
-    #             self.model.body_count,
-    #             step_idx,
-    #             self.trajectory.body_q,
-    #             self.trajectory.body_u,
-    #         ],
-    #         device=self.solver.device,
-    #     )
-
     def _run_axion_forward(self):
-        return
-        # self._allocate_trajectory(steps)
-        # for i in range(steps):
-        #     # Axion engine handles collision internally, but if we need to support
-        #     # differentiation, we might need to expose the phases.
-        #     # For now, assuming AxionEngine.step handles tape safety or is fully differentiable.
-        #     # (If AxionEngine also runs non-diff collision, it needs similar splitting).
-        #
-        #     if tape:
-        #         with tape:
-        #             self._single_physics_step(i)
-        #             self._save_trajectory_axion(i)
-        #     else:
-        #         self._single_physics_step(i)
-        #         self._save_trajectory_axion(i)
-        #
-        # self.trajectory.step_count.fill_(steps)
+        # TODO: Implement implicit differentiation trajectory for Axion
+        pass
 
     def _run_newton_forward(self):
+        """
+        Standard explicit differentiation (unrolling loop on tape).
+        Used for Newton solvers (SemiImplicit, etc).
+        """
+        dt = self.effective_timestep
+
         for i in range(self.total_sim_steps):
+            # Clear forces on the tape
             with self.tape:
                 self.states[i].clear_forces()
 
+            # Collision is usually non-differentiable or handled separately
             self.contacts = self.model.collide(self.states[i], self.collision_pipeline)
+
+            # Optional: Apply control policy if defined
             # self.control_policy(self.states[i])
 
+            # Integrate step on the tape
             with self.tape:
                 self.solver.step(
                     state_in=self.states[i],
                     state_out=self.states[i + 1],
                     control=self.control,
                     contacts=self.contacts,
-                    dt=self.effective_timestep,
+                    dt=dt,
                 )
 
+        # Compute loss on the final state (or trajectory)
         with self.tape:
             self.compute_loss()
 
     @abstractmethod
     def update(self):
-        # Should modify the self.states[0]
+        """Should modify self.states[0] before the run."""
         pass
 
     @abstractmethod
     def compute_loss(self):
-        # This should take the self.states[-1] and modify the self.loss
+        """Should take self.states[-1] (or full trajectory) and modify self.loss."""
         pass

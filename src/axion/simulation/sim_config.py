@@ -2,6 +2,8 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Literal
 
+import newton
+
 
 class SyncMode(Enum):
     ALIGN_FPS_TO_DT = 1
@@ -27,6 +29,24 @@ class RenderingConfig:
     usd_file: str | None = "sim.usd"
     usd_scaling: float | None = 100.0
     start_paused: bool = True
+
+    def create_viewer(self, model: newton.Model, num_segments: int | None):
+        """
+        Factory method to create the appropriate viewer instance.
+        """
+        if self.vis_type == "usd":
+            return newton.viewer.ViewerUSD(
+                output_path=self.usd_file,
+                fps=self.target_fps,
+                up_axis="Z",
+                num_frames=num_segments,
+            )
+        elif self.vis_type == "gl":
+            return newton.viewer.ViewerGL()
+        elif self.vis_type == "null" or self.vis_type is None:
+            return newton.viewer.ViewerNull(num_segments)
+        else:
+            raise ValueError(f"Unsupported rendering type: {self.vis_type}")
 
 
 @dataclass
