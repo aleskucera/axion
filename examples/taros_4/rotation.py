@@ -11,6 +11,7 @@ from axion import EngineConfig
 from axion import ExecutionConfig
 from axion import RenderingConfig
 from axion import SimulationConfig
+from axion import LoggingConfig
 from omegaconf import DictConfig
 
 try:
@@ -24,10 +25,23 @@ CONFIG_PATH = pathlib.Path(__file__).parent.parent.joinpath("conf")
 
 
 class TarosRotationSimulator(InteractiveSimulator):
-    def __init__(self, sim_config, render_config, exec_config, engine_config):
+    def __init__(
+        self,
+        sim_config: SimulationConfig,
+        render_config: RenderingConfig,
+        exec_config: ExecutionConfig,
+        engine_config: EngineConfig,
+        logging_config: LoggingConfig,
+    ):
         self.left_indices_cpu = []
         self.right_indices_cpu = []
-        super().__init__(sim_config, render_config, exec_config, engine_config)
+        super().__init__(
+            sim_config,
+            render_config,
+            exec_config,
+            engine_config,
+            logging_config,
+        )
 
         # Taros-4 DOFs: 6 (Base) + 4 (Wheels) = 10
         # Rotation: Left wheels -12.0, Right wheels 12.0
@@ -88,8 +102,15 @@ def taros4_rotation_example(cfg: DictConfig):
     render_config: RenderingConfig = hydra.utils.instantiate(cfg.rendering)
     exec_config: ExecutionConfig = hydra.utils.instantiate(cfg.execution)
     engine_config: EngineConfig = hydra.utils.instantiate(cfg.engine)
+    logging_config: LoggingConfig = hydra.utils.instantiate(cfg.logging)
 
-    simulator = TarosRotationSimulator(sim_config, render_config, exec_config, engine_config)
+    simulator = TarosRotationSimulator(
+        sim_config,
+        render_config,
+        exec_config,
+        engine_config,
+        logging_config,
+    )
     simulator.run()
 
 

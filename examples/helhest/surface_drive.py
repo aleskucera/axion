@@ -7,11 +7,12 @@ import newton
 import numpy as np
 import openmesh
 import warp as wp
+from axion import InteractiveSimulator
 from axion import EngineConfig
 from axion import ExecutionConfig
-from axion import InteractiveSimulator
 from axion import RenderingConfig
 from axion import SimulationConfig
+from axion import LoggingConfig
 from omegaconf import DictConfig
 
 try:
@@ -26,10 +27,23 @@ ASSETS_DIR = pathlib.Path(__file__).parent.parent.joinpath("assets")
 
 
 class HelhestSurfaceSimulator(InteractiveSimulator):
-    def __init__(self, sim_config, render_config, exec_config, engine_config):
+    def __init__(
+        self,
+        sim_config: SimulationConfig,
+        render_config: RenderingConfig,
+        exec_config: ExecutionConfig,
+        engine_config: EngineConfig,
+        logging_config: LoggingConfig,
+    ):
         self.left_indices_cpu = []
         self.right_indices_cpu = []
-        super().__init__(sim_config, render_config, exec_config, engine_config)
+        super().__init__(
+            sim_config,
+            render_config,
+            exec_config,
+            engine_config,
+            logging_config,
+        )
 
         # Helhest DOFs: 6 (Base) + 3 (Left, Right, Rear)
         self.joint_target = wp.zeros(9, dtype=wp.float32, device=self.model.device)
@@ -130,8 +144,15 @@ def helhest_surface_drive_example(cfg: DictConfig):
     render_config: RenderingConfig = hydra.utils.instantiate(cfg.rendering)
     exec_config: ExecutionConfig = hydra.utils.instantiate(cfg.execution)
     engine_config: EngineConfig = hydra.utils.instantiate(cfg.engine)
+    logging_config: LoggingConfig = hydra.utils.instantiate(cfg.logging)
 
-    simulator = HelhestSurfaceSimulator(sim_config, render_config, exec_config, engine_config)
+    simulator = HelhestSurfaceSimulator(
+        sim_config,
+        render_config,
+        exec_config,
+        engine_config,
+        logging_config,
+    )
     simulator.run()
 
 

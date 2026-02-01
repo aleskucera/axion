@@ -3,15 +3,16 @@ from typing import Optional
 
 import newton
 import warp as wp
-from tqdm import tqdm
-
 from axion.core.engine import AxionEngine
 from axion.core.engine_config import AxionEngineConfig
+from axion.core.engine_config import EngineConfig
+from axion.core.logging_config import LoggingConfig
+from tqdm import tqdm
+
 from .base_simulator import BaseSimulator
 from .base_simulator import ExecutionConfig
 from .base_simulator import RenderingConfig
 from .base_simulator import SimulationConfig
-from axion.core.engine_config import EngineConfig
 
 
 class InteractiveSimulator(BaseSimulator, ABC):
@@ -26,9 +27,14 @@ class InteractiveSimulator(BaseSimulator, ABC):
         rendering_config: RenderingConfig,
         execution_config: ExecutionConfig,
         engine_config: EngineConfig,
+        logging_config: LoggingConfig,
     ):
         super().__init__(
-            simulation_config, rendering_config, execution_config, engine_config
+            simulation_config,
+            rendering_config,
+            execution_config,
+            engine_config,
+            logging_config,
         )
 
         # Viewer Setup

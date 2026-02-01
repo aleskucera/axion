@@ -3,6 +3,7 @@ from .core import AxionEngineConfig
 from .core import EngineConfig
 from .core import FeatherstoneEngineConfig
 from .core import JointMode
+from .core import LoggingConfig
 from .core import MuJoCoEngineConfig
 from .core import SemiImplicitEngineConfig
 from .core import XPBDEngineConfig
@@ -26,4 +27,5 @@ __all__ = [
     "RenderingConfig",
     "SimulationConfig",
     "JointMode",
+    "LoggingConfig",
 ]

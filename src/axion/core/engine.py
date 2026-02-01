@@ -20,6 +20,7 @@ from axion.core.linear_utils import compute_dbody_qd_from_dbody_lambda
 from axion.core.linear_utils import compute_linear_system
 from axion.core.linesearch_utils import perform_linesearch
 from axion.core.linesearch_utils import update_body_q
+from axion.core.logging_config import LoggingConfig
 from axion.core.model import AxionModel
 from axion.optim import JacobiPreconditioner
 from axion.optim import PCRSolver
@@ -73,10 +74,12 @@ class AxionEngine(SolverBase):
         model: Model,
         init_state_fn: Callable[[State, State, Contacts, float], None],
         config: Optional[AxionEngineConfig] = AxionEngineConfig(),
+        logging_config: Optional[LoggingConfig] = LoggingConfig(),
     ):
         super().__init__(model)
         self.init_state_fn = init_state_fn
         self.config = config
+        self.logging_config = logging_config
 
         # --- 1. Event System Setup ---
         self.events = EngineEvents()
@@ -411,7 +414,7 @@ class AxionEngine(SolverBase):
 
             # 3. Log Data Snapshot
             # (In debug mode, we assume HDF5 is enabled)
-            if self.config.enable_hdf5_logging:
+            if self.logging_config.enable_hdf5_logging:
                 snapshot = self.data.get_snapshot()
                 if solver_stats:
                     snapshot["linear_solver_stats"] = solver_stats
@@ -428,10 +431,10 @@ class AxionEngine(SolverBase):
         self.iter_count.zero_()
 
         # Decide Mode
-        if self.config.enable_hdf5_logging:
+        if self.logging_config.enable_hdf5_logging:
             self.events.current_mode = EngineMode.DEBUG
             self._solve_debug(dt)
-        elif self.config.enable_timing:
+        elif self.logging_config.enable_timing:
             self.events.current_mode = EngineMode.TIMING
             self._solve_timing(dt)
         else:

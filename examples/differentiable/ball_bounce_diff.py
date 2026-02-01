@@ -9,6 +9,7 @@ from axion import ExecutionConfig
 from axion import RenderingConfig
 from axion import SemiImplicitEngineConfig
 from axion import SimulationConfig
+from axion import LoggingConfig
 from newton import Model
 from newton import ModelBuilder
 
@@ -72,8 +73,9 @@ class BallBounceOptimizer(DifferentiableSimulator):
         exec_config = ExecutionConfig()
 
         engine_config = SemiImplicitEngineConfig()
+        logging_config = LoggingConfig()
 
-        super().__init__(sim_config, render_config, exec_config, engine_config)
+        super().__init__(sim_config, render_config, exec_config, engine_config, logging_config)
 
         self.target_pos = wp.vec3(0.0, -2.0, 1.5)
         self.loss = wp.zeros(1, dtype=float, requires_grad=True)

@@ -11,6 +11,7 @@ from axion import ExecutionConfig
 from axion import InteractiveSimulator
 from axion import RenderingConfig
 from axion import SimulationConfig
+from axion import LoggingConfig
 from omegaconf import DictConfig
 
 try:
@@ -33,12 +34,14 @@ class MarvControlSimulator(InteractiveSimulator):
         render_config: RenderingConfig,
         exec_config: ExecutionConfig,
         engine_config: EngineConfig,
+        logging_config: LoggingConfig,
     ):
         super().__init__(
             sim_config,
             render_config,
             exec_config,
             engine_config,
+            logging_config,
         )
 
         # DOFs: 6 (Base) + 4 legs * 5 joints/leg = 26
@@ -247,8 +250,15 @@ def marv_control_example(cfg: DictConfig):
     render_config = hydra.utils.instantiate(cfg.rendering)
     exec_config = hydra.utils.instantiate(cfg.execution)
     engine_config = hydra.utils.instantiate(cfg.engine)
+    logging_config = hydra.utils.instantiate(cfg.logging)
 
-    simulator = MarvControlSimulator(sim_config, render_config, exec_config, engine_config)
+    simulator = MarvControlSimulator(
+        sim_config,
+        render_config,
+        exec_config,
+        engine_config,
+        logging_config,
+    )
     simulator.run()
 
 

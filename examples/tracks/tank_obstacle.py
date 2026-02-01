@@ -11,6 +11,7 @@ from axion import EngineConfig
 from axion import ExecutionConfig
 from axion import RenderingConfig
 from axion import SimulationConfig
+from axion import LoggingConfig
 from omegaconf import DictConfig
 
 os.environ["PYOPENGL_PLATFORM"] = "glx"
@@ -215,6 +216,7 @@ class TankObstacleSimulator(InteractiveSimulator):
         render_config: RenderingConfig,
         exec_config: ExecutionConfig,
         engine_config: EngineConfig,
+        logging_config: LoggingConfig,
     ):
         self.left_indices_cpu = []
         self.right_indices_cpu = []
@@ -223,6 +225,7 @@ class TankObstacleSimulator(InteractiveSimulator):
             render_config,
             exec_config,
             engine_config,
+            logging_config,
         )
 
         self.track_left_u = wp.zeros(1, dtype=wp.float32, device=self.model.device)
@@ -456,8 +459,15 @@ def tank_example(cfg: DictConfig):
     render_config: RenderingConfig = hydra.utils.instantiate(cfg.rendering)
     exec_config: ExecutionConfig = hydra.utils.instantiate(cfg.execution)
     engine_config: EngineConfig = hydra.utils.instantiate(cfg.engine)
+    logging_config: LoggingConfig = hydra.utils.instantiate(cfg.logging)
 
-    simulator = TankObstacleSimulator(sim_config, render_config, exec_config, engine_config)
+    simulator = TankObstacleSimulator(
+        sim_config,
+        render_config,
+        exec_config,
+        engine_config,
+        logging_config,
+    )
     simulator.run()
 
 

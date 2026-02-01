@@ -13,6 +13,7 @@ from axion import InteractiveSimulator
 from axion import JointMode
 from axion import RenderingConfig
 from axion import SimulationConfig
+from axion import LoggingConfig
 from omegaconf import DictConfig
 
 try:
@@ -226,7 +227,14 @@ def compute_wheel_angles_kernel(
 
 
 class HelhestPositionControlSimulator(InteractiveSimulator):
-    def __init__(self, sim_config, render_config, exec_config, engine_config):
+    def __init__(
+        self,
+        sim_config: SimulationConfig,
+        render_config: RenderingConfig,
+        exec_config: ExecutionConfig,
+        engine_config: EngineConfig,
+        logging_config: LoggingConfig,
+    ):
         # 6 Base DOFs + 3 Wheel DOFs
         # Note: Model is built during super().__init__, so we need some vars ready
 
@@ -238,7 +246,13 @@ class HelhestPositionControlSimulator(InteractiveSimulator):
         self.max_linear = 8.0
         self.max_angular = 5.0
 
-        super().__init__(sim_config, render_config, exec_config, engine_config)
+        super().__init__(
+            sim_config,
+            render_config,
+            exec_config,
+            engine_config,
+            logging_config,
+        )
 
         self.joint_target = wp.zeros(9, dtype=wp.float32, device=self.model.device)
 
@@ -312,9 +326,14 @@ def helhest_pos_control_example(cfg: DictConfig):
     render_config: RenderingConfig = hydra.utils.instantiate(cfg.rendering)
     exec_config: ExecutionConfig = hydra.utils.instantiate(cfg.execution)
     engine_config: EngineConfig = hydra.utils.instantiate(cfg.engine)
+    logging_config: LoggingConfig = hydra.utils.instantiate(cfg.logging)
 
     simulator = HelhestPositionControlSimulator(
-        sim_config, render_config, exec_config, engine_config
+        sim_config,
+        render_config,
+        exec_config,
+        engine_config,
+        logging_config,
     )
     simulator.run()
 

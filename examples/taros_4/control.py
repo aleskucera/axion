@@ -11,6 +11,7 @@ from axion import EngineConfig
 from axion import ExecutionConfig
 from axion import RenderingConfig
 from axion import SimulationConfig
+from axion import LoggingConfig
 from omegaconf import DictConfig
 
 try:
@@ -31,12 +32,14 @@ class Taros4ControlSimulator(InteractiveSimulator):
         render_config: RenderingConfig,
         exec_config: ExecutionConfig,
         engine_config: EngineConfig,
+        logging_config: LoggingConfig,
     ):
         super().__init__(
             sim_config,
             render_config,
             exec_config,
             engine_config,
+            logging_config,
         )
 
         # 6 Base DOFs + 4 Wheel DOFs (Front Left, Front Right, Rear Left, Rear Right)
@@ -196,12 +199,14 @@ def taros4_control_example(cfg: DictConfig):
     render_config: RenderingConfig = hydra.utils.instantiate(cfg.rendering)
     exec_config: ExecutionConfig = hydra.utils.instantiate(cfg.execution)
     engine_config: EngineConfig = hydra.utils.instantiate(cfg.engine)
+    logging_config: LoggingConfig = hydra.utils.instantiate(cfg.logging)
 
     simulator = Taros4ControlSimulator(
         sim_config=sim_config,
         render_config=render_config,
         exec_config=exec_config,
         engine_config=engine_config,
+        logging_config=logging_config,
     )
 
     simulator.run()

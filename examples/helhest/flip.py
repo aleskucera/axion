@@ -11,6 +11,7 @@ from axion import ExecutionConfig
 from axion import InteractiveSimulator
 from axion import RenderingConfig
 from axion import SimulationConfig
+from axion import LoggingConfig
 from omegaconf import DictConfig
 
 try:
@@ -24,10 +25,23 @@ CONFIG_PATH = pathlib.Path(__file__).parent.parent.joinpath("conf")
 
 
 class HelhestFlipSimulator(InteractiveSimulator):
-    def __init__(self, sim_config, render_config, exec_config, engine_config):
+    def __init__(
+        self,
+        sim_config: SimulationConfig,
+        render_config: RenderingConfig,
+        exec_config: ExecutionConfig,
+        engine_config: EngineConfig,
+        logging_config: LoggingConfig,
+    ):
         self.left_indices_cpu = []
         self.right_indices_cpu = []
-        super().__init__(sim_config, render_config, exec_config, engine_config)
+        super().__init__(
+            sim_config,
+            render_config,
+            exec_config,
+            engine_config,
+            logging_config,
+        )
 
         # Helhest DOFs: 6 (Base) + 1 (Left) + 1 (Right) + 1 (Rear) = 9
         # High speed for flipping: 19.0 rad/s
@@ -134,8 +148,15 @@ def helhest_flip_example(cfg: DictConfig):
     render_config: RenderingConfig = hydra.utils.instantiate(cfg.rendering)
     exec_config: ExecutionConfig = hydra.utils.instantiate(cfg.execution)
     engine_config: EngineConfig = hydra.utils.instantiate(cfg.engine)
+    logging_config: LoggingConfig = hydra.utils.instantiate(cfg.logging)
 
-    simulator = HelhestFlipSimulator(sim_config, render_config, exec_config, engine_config)
+    simulator = HelhestFlipSimulator(
+        sim_config,
+        render_config,
+        exec_config,
+        engine_config,
+        logging_config,
+    )
     simulator.run()
 
 

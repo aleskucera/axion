@@ -10,6 +10,7 @@ from axion import AxionEngine
 from axion import EngineConfig
 from axion import ExecutionConfig
 from axion import InteractiveSimulator
+from axion import LoggingConfig
 from axion import RenderingConfig
 from axion import SimulationConfig
 from omegaconf import DictConfig
@@ -65,10 +66,23 @@ def integrate_wheel_position_kernel(
 
 
 class HelhestControlSimulator(InteractiveSimulator):
-    def __init__(self, sim_config, render_config, exec_config, engine_config):
+    def __init__(
+        self,
+        sim_config: SimulationConfig,
+        render_config: RenderingConfig,
+        exec_config: ExecutionConfig,
+        engine_config: EngineConfig,
+        logging_config: LoggingConfig,
+    ):
         self.left_indices_cpu = []
         self.right_indices_cpu = []
-        super().__init__(sim_config, render_config, exec_config, engine_config)
+        super().__init__(
+            sim_config,
+            render_config,
+            exec_config,
+            engine_config,
+            logging_config,
+        )
 
         # 1. Internal Buffers for Position Control
         # Stores [v_left, v_right, v_rear]
@@ -236,11 +250,18 @@ def helhest_control_example(cfg: DictConfig):
     render_config: RenderingConfig = hydra.utils.instantiate(cfg.rendering)
     exec_config: ExecutionConfig = hydra.utils.instantiate(cfg.execution)
     engine_config: EngineConfig = hydra.utils.instantiate(cfg.engine)
+    logging_config: LoggingConfig = hydra.utils.instantiate(cfg.logging)
 
     # Force GL viewer
     render_config.vis_type = "gl"
 
-    simulator = HelhestControlSimulator(sim_config, render_config, exec_config, engine_config)
+    simulator = HelhestControlSimulator(
+        sim_config,
+        render_config,
+        exec_config,
+        engine_config,
+        logging_config,
+    )
     simulator.run()
 
 

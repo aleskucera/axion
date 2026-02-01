@@ -1,16 +1,39 @@
 from dataclasses import dataclass
+from typing import Any
+from typing import Callable
+from typing import Optional
 
 
 @dataclass(frozen=True)
 class EngineConfig:
-    # --- Logging & Profiling ---
-    enable_timing: bool = False
-    enable_hdf5_logging: bool = False
-    hdf5_log_file: str = "simulation.h5"
+    """
+    Base configuration class.
+    Defines the factory interface for creating physics engines.
+    """
 
-    log_dynamics_state: bool = True
-    log_linear_system_data: bool = True
-    log_constraint_data: bool = True
+    def create_engine(
+        self,
+        model: Any,
+        init_state_fn: Optional[Callable] = None,
+        logging_config: Optional[Any] = None,
+    ) -> Any:
+        """
+        Factory method to create the appropriate solver instance.
+
+        For standard Newton solvers (Featherstone, MuJoCo, etc.), this
+        automatically passes all configuration fields as kwargs.
+
+        Note: We intentionally DO NOT pass 'logging_config' to generic solvers
+        because they do not support this custom Axion logging system.
+        """
+        solver_cls = self._get_solver_class()
+        return solver_cls(model, **vars(self))
+
+    def _get_solver_class(self):
+        """Subclasses must implement this to return their solver class."""
+        raise NotImplementedError(
+            f"Solver class resolution not implemented for {type(self).__name__}"
+        )
 
 
 @dataclass(frozen=True)
@@ -24,6 +47,7 @@ class AxionEngineConfig(EngineConfig):
     during a simulation run.
     """
 
+    # --- Physics Parameters ---
     max_newton_iters: int = 8
     max_linear_iters: int = 16
 
@@ -54,13 +78,11 @@ class AxionEngineConfig(EngineConfig):
     enable_linesearch: bool = False
 
     # --- 1. Conservative Cluster (Safety first) ---
-    # Small steps to handle instability.
     linesearch_conservative_step_count: int = 32
     linesearch_conservative_upper_bound: float = 0.05
-    linesearch_min_step: float = 1e-6  # Floor to prevent log(0) errors
+    linesearch_min_step: float = 1e-6
 
     # --- 2. Optimistic Cluster (The "Attitude") ---
-    # Steps around 1.0, assuming the Newton direction is good.
     linesearch_optimistic_step_count: int = 32
     linesearch_optimistic_window: float = 0.2
 
@@ -73,28 +95,49 @@ class AxionEngineConfig(EngineConfig):
     differentiable_simulation: bool = False
     max_trajectory_steps: int = 0
 
+    # --- Logging & Profiling (MOVED HERE from Base Class) ---
+    enable_timing: bool = False
+    enable_hdf5_logging: bool = False
+    hdf5_log_file: str = "simulation.h5"
+
+    log_dynamics_state: bool = True
+    log_linear_system_data: bool = True
+    log_constraint_data: bool = True
+
+    def create_engine(
+        self,
+        model: Any,
+        init_state_fn: Optional[Callable] = None,
+        logging_config: Optional[Any] = None,
+    ):
+        # Import internally to avoid circular imports
+        from axion.core.engine import AxionEngine
+
+        if init_state_fn is None:
+            raise ValueError("AxionEngine requires an init_state_fn.")
+
+        # Pass the separate config objects to the constructor
+        return AxionEngine(
+            model=model,
+            init_state_fn=init_state_fn,
+            config=self,
+            logging_config=logging_config,
+        )
+
     def __post_init__(self):
         """Validate all configuration parameters."""
 
         def _validate_positive_int(value: int, name: str, min_value: int = 1) -> None:
-            """Validate that a value is a positive integer >= min_value."""
             if value < min_value:
                 raise ValueError(f"{name} must be >= {min_value}, got {value}")
 
         def _validate_non_negative_float(value: float, name: str) -> None:
-            """Validate that a value is a non-negative float."""
             if value < 0:
                 raise ValueError(f"{name} must be >= 0, got {value}")
 
         def _validate_unit_interval(value: float, name: str) -> None:
-            """Validate that a value is in the unit interval [0, 1]."""
             if not (0 <= value <= 1):
                 raise ValueError(f"{name} must be in [0, 1], got {value}")
-
-        def _validate_non_negative_int(value: int, name: str) -> None:
-            """Validate that a value is a non-negative integer."""
-            if value < 0:
-                raise ValueError(f"{name} must be >= 0, got {value}")
 
         # Validate iteration counts
         _validate_positive_int(self.max_newton_iters, "max_newton_iters")
@@ -116,7 +159,7 @@ class AxionEngineConfig(EngineConfig):
         _validate_non_negative_float(self.linear_tol, "linear_tol")
         _validate_non_negative_float(self.linear_atol, "linear_atol")
 
-        # Validate non-negative values
+        # Validate physics params
         _validate_non_negative_float(self.joint_stabilization_factor, "joint_stabilization_factor")
         _validate_non_negative_float(
             self.contact_stabilization_factor, "contact_stabilization_factor"
@@ -125,10 +168,9 @@ class AxionEngineConfig(EngineConfig):
         _validate_non_negative_float(self.equality_compliance, "equality_compliance")
         _validate_non_negative_float(self.contact_compliance, "contact_compliance")
         _validate_non_negative_float(self.friction_compliance, "friction_compliance")
-
         _validate_non_negative_float(self.regularization, "regularization")
 
-        # Validate Fisher-Burmeister parameters (should be in [0, 1])
+        # Validate Fisher-Burmeister parameters
         _validate_unit_interval(self.contact_fb_alpha, "contact_fb_alpha")
         _validate_unit_interval(self.contact_fb_beta, "contact_fb_beta")
         _validate_unit_interval(self.friction_fb_alpha, "friction_fb_alpha")
@@ -141,7 +183,6 @@ class AxionEngineConfig(EngineConfig):
             _validate_positive_int(
                 self.linesearch_optimistic_step_count, "linesearch_optimistic_step_count"
             )
-
             _validate_non_negative_float(
                 self.linesearch_conservative_upper_bound, "linesearch_conservative_upper_bound"
             )
@@ -169,6 +210,11 @@ class FeatherstoneEngineConfig(EngineConfig):
     use_tile_gemm: bool = False
     fuse_cholesky: bool = True
 
+    def _get_solver_class(self):
+        from newton.solvers import SolverFeatherstone
+
+        return SolverFeatherstone
+
 
 @dataclass(frozen=True)
 class MuJoCoEngineConfig(EngineConfig):
@@ -190,6 +236,11 @@ class MuJoCoEngineConfig(EngineConfig):
     ls_parallel: bool = False
     use_mujoco_contacts: bool = True
 
+    def _get_solver_class(self):
+        from newton.solvers import SolverMuJoCo
+
+        return SolverMuJoCo
+
 
 @dataclass(frozen=True)
 class XPBDEngineConfig(EngineConfig):
@@ -205,8 +256,17 @@ class XPBDEngineConfig(EngineConfig):
     angular_damping: float = 0.0
     enable_restitution: bool = False
 
+    def _get_solver_class(self):
+        from newton.solvers import SolverXPBD
+
+        return SolverXPBD
+
 
 @dataclass(frozen=True)
 class SemiImplicitEngineConfig(EngineConfig):
     """Configuration for Newton's Semi-Implicit Euler solver."""
-    pass
+
+    def _get_solver_class(self):
+        from newton.solvers import SolverSemiImplicit
+
+        return SolverSemiImplicit
