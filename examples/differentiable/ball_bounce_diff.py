@@ -6,10 +6,10 @@ import warp as wp
 import warp.optim
 from axion import DifferentiableSimulator
 from axion import ExecutionConfig
+from axion import LoggingConfig
 from axion import RenderingConfig
 from axion import SemiImplicitEngineConfig
 from axion import SimulationConfig
-from axion import LoggingConfig
 from newton import Model
 from newton import ModelBuilder
 
@@ -79,7 +79,7 @@ class BallBounceOptimizer(DifferentiableSimulator):
 
         self.target_pos = wp.vec3(0.0, -2.0, 1.5)
         self.loss = wp.zeros(1, dtype=float, requires_grad=True)
-        self.learning_rate = 0.05
+        self.learning_rate = 0.06
 
         self.frame = 0
         self.frame_dt = 1.0 / 60.0
@@ -87,6 +87,7 @@ class BallBounceOptimizer(DifferentiableSimulator):
         # Optimization Parameters
         # Initial velocity guessing (w, v) -> v=(0, 5, -5)
         self.init_vel = wp.spatial_vector(0.0, 5.0, -4.0, 0.0, 0.0, 0.0)
+        self.track_body(body_idx=0, name="ball", color=(0.0, 1.0, 0.0))
 
         self.capture()
 
@@ -142,34 +143,22 @@ class BallBounceOptimizer(DifferentiableSimulator):
         )
 
     def render(self, train_iter):
+        # Only render every 10 iterations
         if self.frame > 0 and train_iter % 10 != 0:
             return
 
-        # draw trajectory
-        q = self.states[0].body_q.numpy()[0]
-        traj_verts = [q[:3].tolist()]
+        # 2. Update the tracked color dynamically based on loss
+        loss_val = self.loss.numpy()[0]
+        color = bourke_color_map(0.0, 7.0, loss_val)
+        # Update the internal config for the track_body system
+        self._tracked_bodies[0]["color"] = tuple(color)
 
-        # We need to map simulation steps to visualization frames or just draw the path
-        # iterating through all states
-        for i in range(len(self.states)):
-            state = self.states[i]
-            q = state.body_q.numpy()[0]
-            pos = q[:3].tolist()
-            traj_verts.append(pos)
-            # Only render frames at 60fps
-            # self.effective_timestep is ~2ms. 60fps is ~16ms.
-            # So every ~8 steps.
-            steps_per_frame = int(self.frame_dt / self.effective_timestep)
-            if i % steps_per_frame != 0:
-                continue
+        # 3. Define callback for extra visuals (Target & Loss Text)
+        def draw_extras(viewer, step_idx, state):
+            viewer.log_scalar("/loss", loss_val)
 
-            self.viewer.begin_frame(self.frame * self.frame_dt)
-            self.viewer.log_scalar("/loss", self.loss.numpy()[0])
-            self.viewer.log_state(state)
-            self.viewer.log_contacts(self.contacts, state)
-
-            # Log target
-            self.viewer.log_shapes(
+            # Draw target box
+            viewer.log_shapes(
                 "/target",
                 newton.GeoType.BOX,
                 (0.1, 0.1, 0.1),
@@ -177,17 +166,17 @@ class BallBounceOptimizer(DifferentiableSimulator):
                 wp.array([wp.vec3(0.0, 0.0, 0.0)], dtype=wp.vec3),
             )
 
-            # Log trajectory line
-            if len(traj_verts) > 1:
-                self.viewer.log_lines(
-                    f"/traj_{train_iter}",
-                    wp.array(traj_verts[0:-1], dtype=wp.vec3),
-                    wp.array(traj_verts[1:], dtype=wp.vec3),
-                    tuple(bourke_color_map(0.0, 7.0, self.loss.numpy()[0])),
-                )
+        # 4. Call render_episode with looping options
+        print(f"Rendering iteration {train_iter}...")
+        self.render_episode(
+            iteration=train_iter,
+            callback=draw_extras,
+            loop=True,  # Enable looping
+            loops_count=1,  # Replay 3 times
+            playback_speed=0.3,  # 50% speed (Slow Motion)
+        )
 
-            self.viewer.end_frame()
-            self.frame += 1
+        self.frame += 1
 
     def train(self, iterations=20):
         # Initialize velocity in the first state

@@ -1,8 +1,11 @@
 from abc import ABC
 from abc import abstractmethod
+from typing import Any
+from typing import Callable
 from typing import Optional
 
 import newton
+import numpy as np
 import warp as wp
 from axion.core.engine_config import AxionEngineConfig
 from axion.core.engine_config import EngineConfig
@@ -70,6 +73,98 @@ class DifferentiableSimulator(BaseSimulator, ABC):
         self.cuda_graph: Optional[wp.Graph] = None
         self.tape = wp.Tape()
         self.loss = wp.zeros(1, dtype=wp.float32)
+
+        self._tracked_bodies = {}
+
+    def track_body(self, body_idx: int, name: str = None, color: tuple = (1.0, 0.0, 0.0)):
+        """
+        Register a body to have its trajectory visualized automatically.
+        """
+        if name is None:
+            name = f"body_{body_idx}"
+        self._tracked_bodies[body_idx] = {"name": name, "color": color}
+
+    def render_episode(
+        self,
+        iteration: int = 0,
+        callback: Optional[Callable[[Any, int, newton.State], None]] = None,
+        loop: bool = False,
+        loops_count: int = 1,
+        playback_speed: float = 1.0,
+    ):
+        """
+        Replays the simulation episode in the viewer, rendering tracked trajectories.
+
+        Args:
+            iteration: Current training iteration (used for unique names).
+            callback: Optional function(viewer, step_idx, state) for extra rendering.
+            loop: Whether to replay the episode multiple times.
+            loops_count: Number of times to replay if loop is True.
+            playback_speed: Speed multiplier (1.0 = real time, 0.5 = slow motion).
+        """
+        if not self.viewer:
+            return
+
+        import time
+
+        # 1. Pre-calculate trajectories for all tracked bodies
+        # This prevents re-extracting numpy arrays every single frame
+        trajectories = {}
+        for body_idx, metadata in self._tracked_bodies.items():
+            path = []
+            for state in self.states:
+                # Extract position: (num_worlds, num_bodies, 7) -> (x, y, z)
+                # We use [0] assuming single world for differentiable sim
+                q = state.body_q.numpy()[body_idx]
+                path.append(q[:3])
+            trajectories[body_idx] = np.array(path, dtype=np.float32)
+
+        # 2. Setup Timing
+        dt = self.clock.effective_timestep
+        total_sim_time = len(self.states) * dt
+        plays = loops_count if loop else 1
+
+        # 3. Replay Loop
+        for play_idx in range(plays):
+            # Sync start time for this loop iteration
+            start_wall_time = time.time()
+
+            while True:
+                # Calculate how much simulation time has passed based on wall clock
+                current_wall_time = time.time()
+                elapsed_sim_time = (current_wall_time - start_wall_time) * playback_speed
+
+                # Check if we reached the end of the episode
+                if elapsed_sim_time > total_sim_time:
+                    break
+
+                # Map time to the closest state index
+                step_idx = int(elapsed_sim_time / dt)
+                step_idx = min(step_idx, len(self.states) - 1)
+                state = self.states[step_idx]
+
+                self.viewer.begin_frame(elapsed_sim_time)
+
+                # A. Log Physics State
+                self.viewer.log_state(state)
+
+                # B. Log Trajectories (Draw full path)
+                for body_idx, metadata in self._tracked_bodies.items():
+                    pts = trajectories[body_idx]
+                    if len(pts) > 1:
+                        line_name = f"/traj_{iteration}/{metadata['name']}"
+                        self.viewer.log_lines(
+                            line_name,
+                            wp.array(pts[:-1], dtype=wp.vec3),
+                            wp.array(pts[1:], dtype=wp.vec3),
+                            metadata["color"],
+                        )
+
+                # C. Custom Callback (Target, Loss, etc.)
+                if callback:
+                    callback(self.viewer, step_idx, state)
+
+                self.viewer.end_frame()
 
     def forward_backward(self):
         """
