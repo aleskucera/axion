@@ -102,7 +102,7 @@ class DifferentiableSimulator(BaseSimulator, ABC):
 
     def _forward_backward(self):
         if isinstance(self.engine_config, AxionEngineConfig):
-            self._axion_forward_backward()
+            self._axion_forward_backward_explicit()
         elif isinstance(self.engine_config, SemiImplicitEngineConfig):
             self._newton_forward_backward()
         else:
@@ -110,7 +110,7 @@ class DifferentiableSimulator(BaseSimulator, ABC):
                 "Differentiation only supported for Axion and SemiImplicit engines."
             )
 
-    def _axion_forward_backward(self):
+    def _axion_forward_backward_explicit(self):
         # --- FORWARD PASS ---
         for i in range(self.clock.total_sim_steps):
             # Clear forces on the tape
@@ -121,10 +121,10 @@ class DifferentiableSimulator(BaseSimulator, ABC):
             self.contacts = self.model.collide(self.states[i], self.collision_pipeline)
 
             # Optional: Apply control policy if defined
-            # self.control_policy(self.states[i])
 
             # Integrate step on the tape
             with self.tape:
+                self.control_policy(self.states[i])
                 self.solver.step(
                     state_in=self.states[i],
                     state_out=self.states[i + 1],
@@ -132,8 +132,12 @@ class DifferentiableSimulator(BaseSimulator, ABC):
                     contacts=self.contacts,
                     dt=self.clock.dt,
                 )
+
+        with self.tape:
+            self.compute_loss()
+
         # --- BACKWARD PASS ---
-        pass
+        self.tape.backward(self.loss)
 
     def _newton_forward_backward(self):
         """
