@@ -6,12 +6,12 @@ import hydra
 import newton
 import numpy as np
 import warp as wp
-from axion import InteractiveSimulator
 from axion import EngineConfig
 from axion import ExecutionConfig
+from axion import InteractiveSimulator
+from axion import LoggingConfig
 from axion import RenderingConfig
 from axion import SimulationConfig
-from axion import LoggingConfig
 from omegaconf import DictConfig
 
 try:
@@ -35,8 +35,8 @@ def apply_force_ramp(
     if t < 0.1:
         return
 
-    joint_f[6] = (-1.0) * (t) * 10.0
-    joint_f[7] = (t) * 10.0
+    joint_f[6] = (-1.0) * (t) * 40.0
+    joint_f[7] = (t) * 40.0
 
     wp.printf("Joint f: %f, %f\n", joint_f[6], joint_f[7])
 
@@ -79,6 +79,7 @@ class HelhestRotationSimulator(InteractiveSimulator):
     @override
     def control_policy(self, current_state: newton.State):
         # wp.copy(self.control.joint_f, self.joint_target)
+        # return
         wp.launch(
             apply_force_ramp,
             dim=1,
@@ -104,8 +105,8 @@ class HelhestRotationSimulator(InteractiveSimulator):
         # Environment parameters from original rotation.py
         FRICTION = 0.8
         RESTITUTION = 0.0
-        KE = 60000.0
-        KD = 30000.0
+        KE = 6000.0
+        KD = 3000.0
         KF = 500.0
 
         # Ground plane

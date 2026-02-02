@@ -53,7 +53,7 @@ class DifferentiableSimulator(BaseSimulator, ABC):
         # 2. State Management
         # Unlike interactive sim (which keeps 1 state), we need the full history for gradients.
         self.states = [
-            self.model.state(requires_grad=True) for _ in range(self.total_sim_steps + 1)
+            self.model.state(requires_grad=True) for _ in range(self.clock.total_sim_steps + 1)
         ]
         self.control = self.model.control()
 
@@ -64,7 +64,7 @@ class DifferentiableSimulator(BaseSimulator, ABC):
 
         # 4. Viewer Initialization (Using Factory)
         self.viewer = self.rendering_config.create_viewer(
-            self.model, num_segments=self.total_sim_steps
+            self.model, num_segments=self.clock.total_sim_steps
         )
         if self.viewer:
             self.viewer.set_model(self.model)
@@ -76,6 +76,104 @@ class DifferentiableSimulator(BaseSimulator, ABC):
 
         self._tracked_bodies = {}
 
+    # ============== ABSTRACT METHODS ==============
+    # These methods together with the world model define the experiment
+    @abstractmethod
+    def update(self):
+        """Should modify self.states[0] before the run."""
+        pass
+
+    @abstractmethod
+    def compute_loss(self):
+        """Should take self.states[-1] (or full trajectory) and modify self.loss."""
+        pass
+
+    # ============== DIFFERENTIABLE SIMULATION METHODS ==============
+    def diff_step(self):
+        if self.use_cuda_graph and self.cuda_graph is None:
+            with wp.ScopedCapture() as capture:
+                self._forward_backward()
+            self.cuda_graph = capture.graph
+
+        if self.use_cuda_graph and self.cuda_graph:
+            wp.capture_launch(self.cuda_graph)
+        else:
+            self._forward_backward()
+
+    def _forward_backward(self):
+        if isinstance(self.engine_config, AxionEngineConfig):
+            self._axion_forward_backward()
+        elif isinstance(self.engine_config, SemiImplicitEngineConfig):
+            self._newton_forward_backward()
+        else:
+            raise NotImplementedError(
+                "Differentiation only supported for Axion and SemiImplicit engines."
+            )
+
+    def _axion_forward_backward(self):
+        # --- FORWARD PASS ---
+        for i in range(self.clock.total_sim_steps):
+            # Clear forces on the tape
+            with self.tape:
+                self.states[i].clear_forces()
+
+            # Collision is usually non-differentiable or handled separately
+            self.contacts = self.model.collide(self.states[i], self.collision_pipeline)
+
+            # Optional: Apply control policy if defined
+            # self.control_policy(self.states[i])
+
+            # Integrate step on the tape
+            with self.tape:
+                self.solver.step(
+                    state_in=self.states[i],
+                    state_out=self.states[i + 1],
+                    control=self.control,
+                    contacts=self.contacts,
+                    dt=self.clock.dt,
+                )
+        # --- BACKWARD PASS ---
+        pass
+
+    def _newton_forward_backward(self):
+        """
+        Standard explicit differentiation (unrolling loop on tape).
+        Used for Newton solvers (SemiImplicit, etc).
+        """
+
+        # Zero-out the gradients
+        self.tape.zero()
+
+        # --- FORWARD PASS ---
+        for i in range(self.clock.total_sim_steps):
+            # Clear forces on the tape
+            with self.tape:
+                self.states[i].clear_forces()
+
+            # Collision is usually non-differentiable or handled separately
+            self.contacts = self.model.collide(self.states[i], self.collision_pipeline)
+
+            # Optional: Apply control policy if defined
+            # self.control_policy(self.states[i])
+
+            # Integrate step on the tape
+            with self.tape:
+                self.solver.step(
+                    state_in=self.states[i],
+                    state_out=self.states[i + 1],
+                    control=self.control,
+                    contacts=self.contacts,
+                    dt=self.clock.dt,
+                )
+
+        # Compute loss on the final state (or trajectory)
+        with self.tape:
+            self.compute_loss()
+
+        # --- BACKWARD PASS ---
+        self.tape.backward(self.loss)
+
+    # ============== VISUALIZATION METHODS ==============
     def track_body(self, body_idx: int, name: str = None, color: tuple = (1.0, 0.0, 0.0)):
         """
         Register a body to have its trajectory visualized automatically.
@@ -120,7 +218,7 @@ class DifferentiableSimulator(BaseSimulator, ABC):
             trajectories[body_idx] = np.array(path, dtype=np.float32)
 
         # 2. Setup Timing
-        dt = self.clock.effective_timestep
+        dt = self.clock.dt
         total_sim_time = len(self.states) * dt
         plays = loops_count if loop else 1
 
@@ -165,94 +263,3 @@ class DifferentiableSimulator(BaseSimulator, ABC):
                     callback(self.viewer, step_idx, state)
 
                 self.viewer.end_frame()
-
-    def forward_backward(self):
-        """
-        Runs the simulation forward and computes gradients backward.
-        """
-        self.tape = wp.Tape()
-
-        # Dispatch engine execution strategy
-        if isinstance(self.engine_config, AxionEngineConfig):
-            self._run_axion_forward()
-        elif isinstance(self.engine_config, SemiImplicitEngineConfig):
-            self._run_newton_forward()
-        else:
-            raise NotImplementedError(
-                "Differentiation only supported for Axion and SemiImplicit engines."
-            )
-
-        self.tape.backward(self.loss)
-
-    def capture(self):
-        """Captures the simulation step into a CUDA graph if enabled."""
-        if (
-            self.execution_config.use_cuda_graph
-            and wp.get_device().is_cuda
-            and self.cuda_graph is None
-        ):
-            # We must run one pass to capture the graph
-            self.tape = wp.Tape()
-            with wp.ScopedCapture() as capture:
-                self.forward_backward()
-            self.cuda_graph = capture.graph
-
-    def diff_step(self):
-        """Executes one differentiable step (either graph-launched or eager)."""
-        if self.cuda_graph:
-            wp.capture_launch(self.cuda_graph)
-        else:
-            self.forward_backward()
-
-    def perform_step(self):
-        """
-        Runs the simulation step (differentiable).
-        API Compatibility method.
-        """
-        self.diff_step()
-
-    def _run_axion_forward(self):
-        # TODO: Implement implicit differentiation trajectory for Axion
-        pass
-
-    def _run_newton_forward(self):
-        """
-        Standard explicit differentiation (unrolling loop on tape).
-        Used for Newton solvers (SemiImplicit, etc).
-        """
-        dt = self.effective_timestep
-
-        for i in range(self.total_sim_steps):
-            # Clear forces on the tape
-            with self.tape:
-                self.states[i].clear_forces()
-
-            # Collision is usually non-differentiable or handled separately
-            self.contacts = self.model.collide(self.states[i], self.collision_pipeline)
-
-            # Optional: Apply control policy if defined
-            # self.control_policy(self.states[i])
-
-            # Integrate step on the tape
-            with self.tape:
-                self.solver.step(
-                    state_in=self.states[i],
-                    state_out=self.states[i + 1],
-                    control=self.control,
-                    contacts=self.contacts,
-                    dt=dt,
-                )
-
-        # Compute loss on the final state (or trajectory)
-        with self.tape:
-            self.compute_loss()
-
-    @abstractmethod
-    def update(self):
-        """Should modify self.states[0] before the run."""
-        pass
-
-    @abstractmethod
-    def compute_loss(self):
-        """Should take self.states[-1] (or full trajectory) and modify self.loss."""
-        pass

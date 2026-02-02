@@ -97,7 +97,7 @@ class InteractiveSimulator(BaseSimulator, ABC):
             self.viewer.end_frame()
 
     def _render(self, segment_num: int):
-        sim_time = segment_num * self.steps_per_segment * self.effective_timestep
+        sim_time = segment_num * self.steps_per_segment * self.clock.dt
         self.viewer.begin_frame(sim_time)
         self.viewer.log_state(self.current_state)
         self.viewer.log_contacts(self.contacts, self.current_state)
@@ -114,7 +114,7 @@ class InteractiveSimulator(BaseSimulator, ABC):
         for step in range(n_steps):
             self._single_physics_step(step)
             self._current_step += 1
-            self._current_time += self.effective_timestep
+            self._current_time += self.dt
 
         if isinstance(self.solver, AxionEngine):
             self.solver.events.record_timings()

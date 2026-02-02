@@ -34,8 +34,8 @@ class HelhestConfig:
     REAR_WHEEL_POS = wp.vec3(-0.697, 0.0, 0.0)
 
     # Joint Control
-    TARGET_KE = 200.0
-    TARGET_KD = 0.01
+    TARGET_KE = 50.0
+    TARGET_KD = 0.1
 
     # Fixed Components Configuration
     # Format: name: (position, size, mass, inertia_diagonal)

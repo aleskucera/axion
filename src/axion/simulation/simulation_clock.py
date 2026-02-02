@@ -30,11 +30,11 @@ class SimulationClock:
         self._current_time: float = 0.0
 
         # --- Calculated Parameters ---
-        self.effective_timestep: float = 0.0
+        self.dt: float = 0.0
         self.steps_per_segment: int = 0
         self.num_segments: int = 0
         self.total_sim_steps: int = 0
-        self.effective_duration: float = 0.0
+        self.sim_duration: float = 0.0
 
         self._resolve_timing_parameters()
 
@@ -49,11 +49,11 @@ class SimulationClock:
     def advance(self):
         """Advances the clock by one physics step."""
         self._current_step += 1
-        self._current_time += self.effective_timestep
+        self._current_time += self.dt
 
     def get_segment_time(self, segment_idx: int) -> float:
         """Returns the simulation time at the start of a specific segment (frame)."""
-        return segment_idx * self.steps_per_segment * self.effective_timestep
+        return segment_idx * self.steps_per_segment * self.dt
 
     def _resolve_timing_parameters(self):
         """Calculates timing parameters based on configuration."""
@@ -65,28 +65,28 @@ class SimulationClock:
             target_fps = self.render_config.target_fps
 
             if mode == SyncMode.ALIGN_DT_TO_FPS:
-                self.effective_timestep, self.steps_per_segment = (
-                    self._calculate_render_aligned_timestep(target_dt, target_fps, force_even=False)
+                self.dt, self.steps_per_segment = self._calculate_render_aligned_timestep(
+                    target_dt, target_fps, force_even=False
                 )
             elif mode == SyncMode.ALIGN_FPS_TO_DT:
-                self.effective_timestep = target_dt
+                self.dt = target_dt
                 target_frame_duration = 1.0 / target_fps
                 ideal_steps = round(target_frame_duration / target_dt)
                 self.steps_per_segment = max(1, ideal_steps)
 
                 # Adjust FPS to match exact multiple of dt
-                actual_frame_duration = self.steps_per_segment * self.effective_timestep
+                actual_frame_duration = self.steps_per_segment * self.dt
                 new_fps = 1.0 / actual_frame_duration
 
                 if abs(new_fps - target_fps) > 0.1:
                     print(f"INFO: Rendering FPS adjusted from {target_fps} to {new_fps:.2f}")
                 self.render_config.target_fps = new_fps
         else:
-            self.effective_timestep = target_dt
+            self.dt = target_dt
             self.steps_per_segment = self.exec_config.headless_steps_per_segment
 
         # 2. Determine Total Duration
-        self.effective_duration, self.num_segments = self._align_duration_to_segment(
+        self.sim_duration, self.num_segments = self._align_duration_to_segment(
             self.sim_config.duration_seconds
         )
         self.total_sim_steps = self.steps_per_segment * self.num_segments
@@ -114,7 +114,7 @@ class SimulationClock:
         return effective_timestep, steps_per_frame
 
     def _align_duration_to_segment(self, target_duration: float) -> Tuple[float, int]:
-        segment_duration = self.effective_timestep * self.steps_per_segment
+        segment_duration = self.dt * self.steps_per_segment
         num_segments = math.ceil(target_duration / segment_duration)
         effective_duration = num_segments * segment_duration
 

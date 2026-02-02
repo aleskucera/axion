@@ -13,14 +13,15 @@ from axion import LoggingConfig
 from axion import RenderingConfig
 from axion import SimulationConfig
 from newton import Model
-from newton import ModelBuilder
 from omegaconf import DictConfig
 
 os.environ["PYOPENGL_PLATFORM"] = "glx"
+
 CONFIG_PATH = pathlib.Path(__file__).parent.parent.joinpath("conf")
 
 
 def bourke_color_map(v_min, v_max, v):
+    """Maps a scalar value to a color gradient (White -> Blue -> Red)."""
     c = wp.vec3(1.0, 1.0, 1.0)
     v = np.clip(v, v_min, v_max)
     dv = v_max - v_min
@@ -44,16 +45,29 @@ def bourke_color_map(v_min, v_max, v):
 @wp.kernel
 def loss_kernel(
     body_q: wp.array(dtype=wp.transform),
+    body_qd: wp.array(dtype=wp.spatial_vector),
     target_pos: wp.vec3,
     loss: wp.array(dtype=wp.float32),
 ):
+    """
+    Calculates loss based on distance to target AND remaining velocity.
+    We want the stone to stop AT the target.
+    """
     tid = wp.tid()
     if tid > 0:
         return
 
+    # 1. Position Error
     pos = wp.transform_get_translation(body_q[0])
-    delta = pos - target_pos
-    loss[0] = wp.dot(delta, delta)
+    diff = pos - target_pos
+    dist_sq = wp.dot(diff, diff)
+
+    # 2. Velocity Penalty (We want it to stop)
+    # Extract linear velocity from spatial vector (indices 3,4,5)
+    qd_x = body_qd[0][0]
+
+    # Combine: distance + penalty for still moving
+    loss[0] = dist_sq + 0.1 * wp.pow(qd_x, 2.0)
 
 
 @wp.kernel
@@ -66,11 +80,15 @@ def update_kernel(
     if tid > 0:
         return
 
-    # gradient descent step
-    qd[0] = qd[0] - qd_grad[0] * alpha
+    # Gradient Descent Step
+    # We only update the initial velocity to minimize loss
+    qd_x = qd[0][0]
+    qd_x_grad = qd_grad[0][0]
+    qd_x_new = qd_x - alpha * qd_x_grad
+    qd[0] = wp.spatial_vector(qd_x_new, 0.0, 0.0, 0.0, 0.0, 0.0)
 
 
-class BallBounceOptimizer(DifferentiableSimulator):
+class CurlingOptimizer(DifferentiableSimulator):
     def __init__(
         self,
         sim_config: SimulationConfig,
@@ -87,39 +105,40 @@ class BallBounceOptimizer(DifferentiableSimulator):
             logging_config,
         )
 
-        # 2. Optimization Setup
-        self.target_pos = wp.vec3(0.0, -2.0, 1.5)
+        # --- Optimization Setup ---
+        # Target: 4 meters along X-axis
+        self.target_pos = wp.vec3(4.0, 0.0, 0.1)
+
         self.loss = wp.zeros(1, dtype=float, requires_grad=True)
-        self.learning_rate = 0.06
+        self.learning_rate = 0.2
 
         self.frame = 0
 
-        # Initial velocity guessing (w, v) -> v=(0, 5, -5)
-        self.init_vel = wp.spatial_vector(0.0, 5.0, -4.0, 0.0, 0.0, 0.0)
+        # Initial velocity guessing
+        self.init_vel = wp.spatial_vector(1.0, 0.0, 0.0, 0.0, 0.0, 0.0)
 
-        # 3. Setup Automatic Trajectory Tracking
-        self.track_body(body_idx=0, name="ball", color=(0.0, 1.0, 0.0))
+        # --- Tracking Setup ---
+        # Auto-track the stone (Body 0)
+        self.track_body(body_idx=0, name="stone", color=(0.0, 0.5, 1.0))
+
+        # Compile graph
+        self.capture()
 
     def build_model(self) -> Model:
-        shape_config = newton.ModelBuilder.ShapeConfig(ke=1e6, kf=1e3, kd=1e3, mu=0.2)
+        # Use moderate friction (mu=0.1) to allow sliding
+        shape_config = newton.ModelBuilder.ShapeConfig(ke=1e5, kd=1e2, kf=1e3, mu=0.2)
 
-        # Initialize the ball
+        # 1. The Stone (Box)
         self.builder.add_body(
-            xform=wp.transform(wp.vec3(0.0, -0.5, 1.0), wp.quat_identity()),
-            mass=1.0,
+            xform=wp.transform(wp.vec3(0.0, 0.0, 0.15), wp.quat_identity()),
+            mass=5.0,  # Heavy stone
         )
-        self.builder.add_shape_sphere(body=0, radius=0.2, cfg=shape_config)
+        # self.builder.add_shape_box(body=0, hx=0.1, hy=0.1, hz=0.1, cfg=shape_config)
+        self.builder.add_shape_cylinder(body=0, radius=0.3, half_height=0.1, cfg=shape_config)
 
-        # Initialize the environment
-        self.builder.add_shape_box(
-            body=-1,
-            xform=wp.transform(wp.vec3(0.0, 2.0, 1.0), wp.quat_identity()),
-            hx=1.0,
-            hy=0.30,
-            hz=1.0,
-            cfg=shape_config,
-        )
+        # 2. The Ice/Floor
         self.builder.add_ground_plane(cfg=shape_config)
+
         return self.builder.finalize_replicated(
             num_worlds=self.simulation_config.num_worlds,
             requires_grad=True,
@@ -130,7 +149,8 @@ class BallBounceOptimizer(DifferentiableSimulator):
             kernel=loss_kernel,
             dim=1,
             inputs=[
-                self.states[-1].body_q,
+                self.states[-1].body_q,  # Final Position
+                self.states[-1].body_qd,  # Final Velocity
                 self.target_pos,
             ],
             outputs=[
@@ -153,50 +173,61 @@ class BallBounceOptimizer(DifferentiableSimulator):
         )
 
     def render(self, train_iter):
-        # Only render every 10 iterations
-        if self.frame > 0 and train_iter % 10 != 0:
+        # Render every 5 iterations to see progress
+        if self.frame > 0 and train_iter % 5 != 0:
             return
 
-        # Update the tracked color dynamically based on loss
         loss_val = self.loss.numpy()[0]
-        color = bourke_color_map(0.0, 7.0, loss_val)
-        self._tracked_bodies[0]["color"] = tuple(color)
 
-        # Define callback for extra visuals (Target & Loss Text)
+        # Define callback for drawing the target
         def draw_extras(viewer, step_idx, state):
             viewer.log_scalar("/loss", loss_val)
-            # Draw target box
+
+            # Draw Target Marker (Red Cylinder)
             viewer.log_shapes(
                 "/target",
-                newton.GeoType.BOX,
-                (0.1, 0.1, 0.1),
+                newton.GeoType.CYLINDER,
+                (0.3, 0.01, 0.3),  # radius, null, half_height
                 wp.array([wp.transform(self.target_pos, wp.quat_identity())], dtype=wp.transform),
-                wp.array([wp.vec3(0.0, 0.0, 0.0)], dtype=wp.vec3),
+                wp.array([wp.vec3(1.0, 0.0, 0.0)], dtype=wp.vec3),  # Red
             )
 
-        print(f"Rendering iteration {train_iter}...")
+        print(f"Rendering iteration {train_iter} (Loss: {loss_val:.4f})...")
 
-        # Use the powerful render_episode method we just added
+        # Playback Loop
         self.render_episode(
             iteration=train_iter,
             callback=draw_extras,
-            loop=True,  # Enable looping
-            loops_count=1,  # Play once (loop=True makes the logic cleaner)
-            playback_speed=0.3,  # Slow Motion
+            loop=True,
+            loops_count=1,
+            playback_speed=1.0,  # Real-time speed
         )
 
         self.frame += 1
 
-    def train(self, iterations=20):
-        # Set initial velocity
+    def train(self, iterations=50):
+        # Set initial velocity state
         wp.copy(self.states[0].body_qd, wp.array([self.init_vel], dtype=wp.spatial_vector))
         self.states[0].body_qd.requires_grad = True
 
         for i in range(iterations):
+            # 1. Run Simulation (Forward + Backward)
             self.diff_step()
+
+            # 2. Visualize
             self.render(i)
-            print(f"Train iter: {i} Loss: {self.loss.numpy()[0]:.4f}")
+
+            # 3. Print Progress
+            curr_loss = self.loss.numpy()[0]
+            vel = self.states[0].body_qd.numpy()[0][0:3]
+            print(
+                f"Iter {i}: Loss={curr_loss:.4f} | Init Vel=({vel[0]:.2f}, {vel[1]:.2f}, {vel[2]:.2f})"
+            )
+
+            # 4. Update
             self.update()
+
+            # 5. Clear Gradients
             self.tape.zero()
             self.loss.zero_()
 
@@ -209,14 +240,14 @@ def main(cfg: DictConfig):
     engine_config: EngineConfig = hydra.utils.instantiate(cfg.engine)
     logging_config: LoggingConfig = hydra.utils.instantiate(cfg.logging)
 
-    sim = BallBounceOptimizer(
+    sim = CurlingOptimizer(
         sim_config,
         render_config,
         exec_config,
         engine_config,
         logging_config,
     )
-    sim.train(iterations=60)
+    sim.train(iterations=40)
 
 
 if __name__ == "__main__":

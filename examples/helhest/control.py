@@ -51,18 +51,18 @@ def integrate_wheel_position_kernel(
     current_wheel_angles[1] = new_ang_r
     current_wheel_angles[2] = new_ang_rear
 
-    # Wrap to [-PI, PI] to preserve precision
-    PI = 3.14159265
-    TWO_PI = 6.2831853
-
-    out_l = new_ang_l - TWO_PI * wp.floor((new_ang_l + PI) / TWO_PI)
-    out_r = new_ang_r - TWO_PI * wp.floor((new_ang_r + PI) / TWO_PI)
-    out_rear = new_ang_rear - TWO_PI * wp.floor((new_ang_rear + PI) / TWO_PI)
+    # # Wrap to [-PI, PI] to preserve precision
+    # PI = 3.14159265
+    # TWO_PI = 6.2831853
+    #
+    # out_l = new_ang_l - TWO_PI * wp.floor((new_ang_l + PI) / TWO_PI)
+    # out_r = new_ang_r - TWO_PI * wp.floor((new_ang_r + PI) / TWO_PI)
+    # out_rear = new_ang_rear - TWO_PI * wp.floor((new_ang_rear + PI) / TWO_PI)
 
     # Write to global array
-    joint_target_pos[left_idx] = out_l
-    joint_target_pos[right_idx] = out_r
-    joint_target_pos[rear_idx] = out_rear
+    joint_target_pos[left_idx] = new_ang_l
+    joint_target_pos[right_idx] = new_ang_r
+    joint_target_pos[rear_idx] = new_ang_rear
 
 
 class HelhestControlSimulator(InteractiveSimulator):
@@ -100,8 +100,8 @@ class HelhestControlSimulator(InteractiveSimulator):
 
     def _update_input(self):
         """Check keyboard input and update wheel velocities."""
-        base_speed = 8.0
-        turn_speed = 3.0
+        base_speed = 6.0
+        turn_speed = 2.0
 
         left_v = 0.0
         right_v = 0.0

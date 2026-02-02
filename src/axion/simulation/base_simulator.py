@@ -65,6 +65,10 @@ class BaseSimulator(ABC):
         # Viewer initialization is deferred to subclasses (Interactive vs Headless/Diff)
         self.viewer = None
 
+    @property
+    def use_cuda_graph(self):
+        return self.execution_config.use_cuda_graph and wp.get_device().is_cuda
+
     @abstractmethod
     def build_model(self) -> Model:
         """
@@ -118,7 +122,7 @@ class BaseSimulator(ABC):
             state_out=self.next_state,
             control=self.control,
             contacts=self.contacts,
-            dt=self.clock.effective_timestep,
+            dt=self.clock.dt,
         )
 
         # Explicitly copy next_state back to current_state
@@ -131,17 +135,9 @@ class BaseSimulator(ABC):
     # --- Backward Compatibility / Convenience Properties ---
 
     @property
-    def effective_timestep(self) -> float:
-        return self.clock.effective_timestep
-
-    @property
     def steps_per_segment(self) -> int:
         return self.clock.steps_per_segment
 
     @property
     def num_segments(self) -> int:
         return self.clock.num_segments
-
-    @property
-    def total_sim_steps(self) -> int:
-        return self.clock.total_sim_steps
