@@ -1,3 +1,7 @@
+"""
+Documentation in docs/nerd-module-in-axion/neural-pendulum.md
+"""
+
 from importlib.resources import files
 from typing import override
 
@@ -18,7 +22,7 @@ os.environ['PYOPENGL_PLATFORM'] = 'glx'
 
 CONFIG_PATH = files("axion").joinpath("examples").joinpath("conf")
 
-PENDULUM_HEIGHT = 2.0  # 5.0 #---> no ground contact 
+PENDULUM_HEIGHT = 2.0  # 5.0 ---> no ground contact, 2.0 ---> ground contact 
 
 
 class Simulator(AbstractSimulator):
