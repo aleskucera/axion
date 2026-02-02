@@ -10,7 +10,6 @@ import numpy as np
 import warp as wp
 import warp.context as wpc
 from axion.tiled.tiled_utils import TiledSqNorm
-from axion.types import ContactInteraction
 from axion.types import SpatialInertia
 from newton import Model
 
@@ -20,7 +19,7 @@ from .engine_config import EngineConfig
 from .engine_dims import EngineDimensions
 
 
-@dataclass(frozen=True)
+@dataclass
 class LinesearchData:
     dims: EngineDimensions
     steps: wp.array
@@ -42,22 +41,15 @@ class LinesearchData:
         return ConstraintView(self._batch_body_lambda, self.dims)
 
 
-@dataclass(frozen=True)
-class HistoryData:
+@dataclass
+class NewtonHistoryData:
     dims: EngineDimensions
     _h_history: wp.array
     body_q_history: wp.array
     body_u_history: wp.array
     _body_lambda_history: wp.array
 
-    pca_batch_body_q: wp.array
-    pca_batch_body_u: wp.array
-    _pca_batch_body_lambda: wp.array
-    _pca_batch_h: wp.array
-    pca_batch_h_norm: wp.array
-
     _h_history_spatial: Optional[wp.array] = None
-    _pca_batch_h_spatial: Optional[wp.array] = None
 
     @cached_property
     def h_history(self) -> SystemView:
@@ -67,16 +59,8 @@ class HistoryData:
     def body_lambda_history(self) -> ConstraintView:
         return ConstraintView(self._body_lambda_history, self.dims)
 
-    @cached_property
-    def pca_batch_h(self) -> SystemView:
-        return SystemView(self._pca_batch_h, self.dims, _d_spatial=self._pca_batch_h_spatial)
 
-    @cached_property
-    def pca_batch_body_lambda(self) -> ConstraintView:
-        return ConstraintView(self._pca_batch_body_lambda, self.dims)
-
-
-@dataclass(frozen=True)
+@dataclass
 class EngineData:
     """
     Manages all Warp arrays (vectors and matrices) used by the AxionEngine.
@@ -122,11 +106,28 @@ class EngineData:
     world_M_inv: wp.array
     joint_constraint_offsets: wp.array
     control_constraint_offsets: wp.array
-    contact_interaction: wp.array
-    joint_target: wp.array
+    joint_target_pos: wp.array
+    joint_target_vel: wp.array
+
+    # --- Contact Interaction SOA ---
+    contact_body_a: wp.array
+    contact_body_b: wp.array
+    contact_point_a: wp.array
+    contact_point_b: wp.array
+    contact_thickness_a: wp.array
+    contact_thickness_b: wp.array
+    contact_dist: wp.array
+    contact_friction_coeff: wp.array
+    contact_restitution_coeff: wp.array
+    contact_basis_n_a: wp.array
+    contact_basis_t1_a: wp.array
+    contact_basis_t2_a: wp.array
+    contact_basis_n_b: wp.array
+    contact_basis_t1_b: wp.array
+    contact_basis_t2_b: wp.array
 
     linesearch: Optional[LinesearchData] = None
-    history: Optional[HistoryData] = None
+    newton_history: Optional[NewtonHistoryData] = None
 
     g_accel: wp.array = None
     _h_spatial: Optional[wp.array] = None
@@ -181,7 +182,7 @@ class EngineData:
 
     @property
     def allocated_history_arrays(self) -> bool:
-        return self.history is not None
+        return self.newton_history is not None
 
     def set_g_accel(self, model: Model):
         assert (
@@ -266,6 +267,13 @@ class EngineData:
                 "h": self._serialize_to_numpy(self.h.c.n),
                 "s": self._serialize_to_numpy(self.s_n),
                 "body_lambda": self._serialize_to_numpy(self.body_lambda.n),
+                "contact_body_a": self._serialize_to_numpy(self.contact_body_a),
+                "contact_body_b": self._serialize_to_numpy(self.contact_body_b),
+                "contact_dist": self._serialize_to_numpy(self.contact_dist),
+                "contact_friction_coeff": self._serialize_to_numpy(self.contact_friction_coeff),
+                "contact_restitution_coeff": self._serialize_to_numpy(
+                    self.contact_restitution_coeff
+                ),
             }
             constraints["Friction constraint data"] = {
                 "h": self._serialize_to_numpy(self.h.c.f),
@@ -300,38 +308,46 @@ class EngineData:
             }
 
         # 5. History (if allocated)
-        if self.history:
+        if self.newton_history:
             history_snap = {}
 
             # Dynamics History
             history_snap["dynamics"] = {
-                "h_d": self._serialize_to_numpy(self.history.h_history.d),
-                "body_q": self._serialize_to_numpy(self.history.body_q_history),
-                "body_u": self._serialize_to_numpy(self.history.body_u_history),
+                "h_d": self._serialize_to_numpy(self.newton_history.h_history.d),
+                "body_q": self._serialize_to_numpy(self.newton_history.body_q_history),
+                "body_u": self._serialize_to_numpy(self.newton_history.body_u_history),
             }
 
             # Constraints History
             constraints_hist = {}
             if self.dims.N_j > 0:
                 constraints_hist["Joint constraint data"] = {
-                    "h": self._serialize_to_numpy(self.history.h_history.c.j),
-                    "body_lambda": self._serialize_to_numpy(self.history.body_lambda_history.j),
+                    "h": self._serialize_to_numpy(self.newton_history.h_history.c.j),
+                    "body_lambda": self._serialize_to_numpy(
+                        self.newton_history.body_lambda_history.j
+                    ),
                 }
 
             if self.dims.N_ctrl > 0:
                 constraints_hist["Control constraint data"] = {
-                    "h": self._serialize_to_numpy(self.history.h_history.c.ctrl),
-                    "body_lambda": self._serialize_to_numpy(self.history.body_lambda_history.ctrl),
+                    "h": self._serialize_to_numpy(self.newton_history.h_history.c.ctrl),
+                    "body_lambda": self._serialize_to_numpy(
+                        self.newton_history.body_lambda_history.ctrl
+                    ),
                 }
 
             if self.dims.N_n > 0:
                 constraints_hist["Contact constraint data"] = {
-                    "h": self._serialize_to_numpy(self.history.h_history.c.n),
-                    "body_lambda": self._serialize_to_numpy(self.history.body_lambda_history.n),
+                    "h": self._serialize_to_numpy(self.newton_history.h_history.c.n),
+                    "body_lambda": self._serialize_to_numpy(
+                        self.newton_history.body_lambda_history.n
+                    ),
                 }
                 constraints_hist["Friction constraint data"] = {
-                    "h": self._serialize_to_numpy(self.history.h_history.c.f),
-                    "body_lambda": self._serialize_to_numpy(self.history.body_lambda_history.f),
+                    "h": self._serialize_to_numpy(self.newton_history.h_history.c.f),
+                    "body_lambda": self._serialize_to_numpy(
+                        self.newton_history.body_lambda_history.f
+                    ),
                 }
 
             history_snap["constraints"] = constraints_hist
@@ -347,14 +363,8 @@ class EngineData:
         control_constraint_offsets: wp.array,
         dof_count: int,
         device: wpc.Device,
-        allocate_pca: bool = False,
         allocate_history: bool = False,
-        pca_grid_res: int = 100,
     ) -> EngineData:
-
-        # Backwards compatibility if allocate_pca is used as positional arg or kwarg
-        if allocate_pca and not allocate_history:
-            allocate_history = True
 
         def _zeros(shape, dtype=wp.float32, ndim=None):
             return wp.zeros(shape, dtype=dtype, device=device, ndim=ndim).contiguous()
@@ -402,9 +412,24 @@ class EngineData:
         world_M = _empty((dims.N_w, dims.N_b), SpatialInertia)
         world_M_inv = _empty((dims.N_w, dims.N_b), SpatialInertia)
 
-        contact_interaction = _empty((dims.N_w, dims.N_n), ContactInteraction)
+        contact_body_a = _zeros((dims.N_w, dims.N_n), wp.int32)
+        contact_body_b = _zeros((dims.N_w, dims.N_n), wp.int32)
+        contact_point_a = _zeros((dims.N_w, dims.N_n), wp.vec3)
+        contact_point_b = _zeros((dims.N_w, dims.N_n), wp.vec3)
+        contact_thickness_a = _zeros((dims.N_w, dims.N_n), wp.float32)
+        contact_thickness_b = _zeros((dims.N_w, dims.N_n), wp.float32)
+        contact_dist = _zeros((dims.N_w, dims.N_n), wp.float32)
+        contact_friction_coeff = _zeros((dims.N_w, dims.N_n), wp.float32)
+        contact_restitution_coeff = _zeros((dims.N_w, dims.N_n), wp.float32)
+        contact_basis_n_a = _zeros((dims.N_w, dims.N_n), wp.spatial_vector)
+        contact_basis_t1_a = _zeros((dims.N_w, dims.N_n), wp.spatial_vector)
+        contact_basis_t2_a = _zeros((dims.N_w, dims.N_n), wp.spatial_vector)
+        contact_basis_n_b = _zeros((dims.N_w, dims.N_n), wp.spatial_vector)
+        contact_basis_t1_b = _zeros((dims.N_w, dims.N_n), wp.spatial_vector)
+        contact_basis_t2_b = _zeros((dims.N_w, dims.N_n), wp.spatial_vector)
 
-        joint_target = _zeros((dims.N_w, dof_count))
+        joint_target_pos = _zeros((dims.N_w, dof_count))
+        joint_target_vel = _zeros((dims.N_w, dof_count))
 
         # ---- Linesearch Arrays ----
         linesearch_data = None
@@ -470,10 +495,8 @@ class EngineData:
             )
 
         # ---- PCA Storage Buffers ----
-        history_data = None
+        newton_history_data = None
         if allocate_history:
-            pca_batch_size = pca_grid_res * pca_grid_res
-
             # Separate Allocations
             h_history = _zeros((config.max_newton_iters + 1, dims.N_w, dims.N_u + dims.N_c))
             h_history_spatial = _zeros(
@@ -488,31 +511,13 @@ class EngineData:
             )
             body_lambda_history = _zeros((config.max_newton_iters + 1, dims.N_w, dims.N_c))
 
-            pca_batch_body_q = _zeros((pca_batch_size, dims.N_w, dims.N_b), wp.transform)
-            pca_batch_body_u = _zeros((pca_batch_size, dims.N_w, dims.N_b), wp.spatial_vector)
-            pca_batch_body_lambda = _zeros((pca_batch_size, dims.N_w, dims.N_c))
-
-            # Separate Allocations
-            pca_batch_h = _zeros((pca_batch_size, dims.N_w, dims.N_u + dims.N_c))
-            pca_batch_h_spatial = _zeros(
-                (pca_batch_size, dims.N_w, dims.N_b), dtype=wp.spatial_vector
-            )
-
-            pca_batch_h_norm = _zeros((pca_batch_size, dims.N_w))
-
-            history_data = HistoryData(
+            newton_history_data = NewtonHistoryData(
                 dims=dims,
                 _h_history=h_history,
                 body_q_history=body_q_history,
                 body_u_history=body_u_history,
                 _body_lambda_history=body_lambda_history,
-                pca_batch_body_q=pca_batch_body_q,
-                pca_batch_body_u=pca_batch_body_u,
-                _pca_batch_body_lambda=pca_batch_body_lambda,
-                _pca_batch_h=pca_batch_h,
-                pca_batch_h_norm=pca_batch_h_norm,
                 _h_history_spatial=h_history_spatial,
-                _pca_batch_h_spatial=pca_batch_h_spatial,
             )
 
         return EngineData(
@@ -541,10 +546,25 @@ class EngineData:
             _constraint_active_mask=constraint_active_mask,
             s_n=s_n,
             s_n_prev=s_n_prev,
-            contact_interaction=contact_interaction,
+            contact_body_a=contact_body_a,
+            contact_body_b=contact_body_b,
+            contact_point_a=contact_point_a,
+            contact_point_b=contact_point_b,
+            contact_thickness_a=contact_thickness_a,
+            contact_thickness_b=contact_thickness_b,
+            contact_dist=contact_dist,
+            contact_friction_coeff=contact_friction_coeff,
+            contact_restitution_coeff=contact_restitution_coeff,
+            contact_basis_n_a=contact_basis_n_a,
+            contact_basis_t1_a=contact_basis_t1_a,
+            contact_basis_t2_a=contact_basis_t2_a,
+            contact_basis_n_b=contact_basis_n_b,
+            contact_basis_t1_b=contact_basis_t1_b,
+            contact_basis_t2_b=contact_basis_t2_b,
             joint_constraint_offsets=joint_constraint_offsets,
             control_constraint_offsets=control_constraint_offsets,
-            joint_target=joint_target,
+            joint_target_pos=joint_target_pos,
+            joint_target_vel=joint_target_vel,
             linesearch=linesearch_data,
-            history=history_data,
+            newton_history=newton_history_data,
         )

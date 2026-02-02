@@ -5,12 +5,13 @@ from typing import override
 import hydra
 import newton
 import warp as wp
-from axion import AbstractSimulator
 from axion import EngineConfig
 from axion import ExecutionConfig
+from axion import InteractiveSimulator
+from axion import JointMode
 from axion import RenderingConfig
 from axion import SimulationConfig
-from axion.core.control_utils import JointMode
+from axion import LoggingConfig
 from omegaconf import DictConfig
 
 os.environ["PYOPENGL_PLATFORM"] = "glx"
@@ -33,19 +34,21 @@ def compute_control(
     # wp.printf("Joint target: %f \n", joint_target[0])
 
 
-class Simulator(AbstractSimulator):
+class Simulator(InteractiveSimulator):
     def __init__(
         self,
         sim_config: SimulationConfig,
         render_config: RenderingConfig,
         exec_config: ExecutionConfig,
         engine_config: EngineConfig,
+        logging_config: LoggingConfig,
     ):
         super().__init__(
             sim_config,
             render_config,
             exec_config,
             engine_config,
+            logging_config,
         )
         self.time = wp.zeros(1, dtype=wp.float32)
 
@@ -59,7 +62,7 @@ class Simulator(AbstractSimulator):
             compute_control,
             dim=1,
             inputs=[self.effective_timestep, self.time],
-            outputs=[self.control.joint_target],
+            outputs=[self.control.joint_target_pos],
         )
 
     def build_model(self) -> newton.Model:
@@ -111,12 +114,12 @@ class Simulator(AbstractSimulator):
         # Stiffness (Kp)
         wp.copy(
             model.joint_target_ke,
-            wp.array([1500.0], dtype=wp.float32, device=model.device),
+            wp.array([600.0], dtype=wp.float32, device=model.device),
         )
         # Damping (Kd)
         wp.copy(
             model.joint_target_kd,
-            wp.array([300.0], dtype=wp.float32, device=model.device),
+            wp.array([3.0], dtype=wp.float32, device=model.device),
         )
 
         return model
@@ -128,12 +131,14 @@ def horizontal_slider_example(cfg: DictConfig):
     render_config: RenderingConfig = hydra.utils.instantiate(cfg.rendering)
     exec_config: ExecutionConfig = hydra.utils.instantiate(cfg.execution)
     engine_config: EngineConfig = hydra.utils.instantiate(cfg.engine)
+    logging_config: LoggingConfig = hydra.utils.instantiate(cfg.logging)
 
     simulator = Simulator(
         sim_config=sim_config,
         render_config=render_config,
         exec_config=exec_config,
         engine_config=engine_config,
+        logging_config=logging_config,
     )
 
     simulator.run()

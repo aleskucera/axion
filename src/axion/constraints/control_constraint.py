@@ -1,6 +1,9 @@
 import warp as wp
 from axion.constraints.joint_kinematics import compute_joint_transforms
-from axion.core.control_utils import JointMode
+from axion.core.joint_types import JointMode
+
+
+# --- 1. KINEMATICS ---
 
 
 @wp.func
@@ -25,14 +28,10 @@ def compute_revolute_q_qd(
     q = 2.0 * wp.atan2(sin_half_theta, cos_half_theta)
 
     # 2. Compute qd (velocity)
-    # relative angular velocity in world space
-    # NOTE: spatial_bottom is angular velocity in (linear, angular) convention
     w_p = wp.spatial_bottom(body_u_p)
     w_c = wp.spatial_bottom(body_u_c)
 
     w_rel_world = w_c - w_p
-
-    # Project onto world axis
     axis_world = wp.quat_rotate(q_p, axis_local)
     qd = wp.dot(w_rel_world, axis_world)
 
@@ -58,121 +57,182 @@ def compute_prismatic_q_qd(
     q = wp.dot(delta, axis_w)
 
     # 2. qd (Velocity along axis)
-    # u = (v, w)
     w_p = wp.spatial_bottom(body_u_p)
     v_p = wp.spatial_top(body_u_p)
     w_c = wp.spatial_bottom(body_u_c)
     v_c = wp.spatial_top(body_u_c)
 
-    # Velocity of attachment points
     vel_c = v_c + wp.cross(w_c, r_c)
     vel_p = v_p + wp.cross(w_p, r_p)
 
     delta_dot = vel_c - vel_p
-
-    # Rate of change of axis (attached to parent)
     axis_dot = wp.cross(w_p, axis_w)
 
-    # qd = d/dt(delta . axis) = delta_dot . axis + delta . axis_dot
     qd = wp.dot(delta_dot, axis_w) + wp.dot(delta, axis_dot)
 
     return q, qd
 
 
+# --- 2. GEOMETRY (JACOBIANS) ---
+
+
 @wp.func
-def get_control_component(
+def compute_revolute_jacobians(
     X_w_p: wp.transform,
     axis_local: wp.vec3,
-    q: wp.float32,
-    qd: wp.float32,
-    target: wp.float32,
-    mode: wp.int32,
-    dt: wp.float32,
 ):
-    """
-    Computes Jacobian and Error for control constraint (Revolute).
-    """
-    J_p = wp.spatial_vector()
-    J_c = wp.spatial_vector()
-    error = 0.0
-
-    # 1. Compute Jacobian (Same as joint axis)
-    # Hinge axis in world space
     q_p = wp.transform_get_rotation(X_w_p)
     axis_w = wp.quat_rotate(q_p, axis_local)
 
-    # J_c = [0, axis], J_p = [0, -axis]
     J_c = wp.spatial_vector(wp.vec3(0.0), axis_w)
     J_p = wp.spatial_vector(wp.vec3(0.0), -axis_w)
 
-    # 2. Compute Error (Velocity level)
-    # We want h_c such that b = (JHinvg - h_c) / dt is Acceleration.
-    # So h_c should be Velocity.
-    if mode == JointMode.TARGET_POSITION:
-        # C(q) = q - target = 0
-        # h_c = (q - target) / dt
-        error = (q - target) / dt
-
-    elif mode == JointMode.TARGET_VELOCITY:
-        # C(u) = qd - target = 0
-        # h_c = qd - target
-        error = qd - target
-
-    return J_p, J_c, error
+    return J_p, J_c
 
 
 @wp.func
-def get_prismatic_control_component(
+def compute_prismatic_jacobians(
+    X_w_p: wp.transform,
+    axis_local: wp.vec3,
     r_c: wp.vec3,
     pos_c: wp.vec3,
     com_p: wp.vec3,
-    X_w_p: wp.transform,
-    axis_local: wp.vec3,
-    q: wp.float32,
-    qd: wp.float32,
-    target: wp.float32,
-    mode: wp.int32,
-    dt: wp.float32,
 ):
-    """
-    Computes Jacobian and Error for prismatic control constraint.
-    """
     q_p = wp.transform_get_rotation(X_w_p)
     axis_w = wp.quat_rotate(q_p, axis_local)
 
-    # Child Jacobian
-    # Force: axis_w
-    # Torque: r_c x axis_w
     ang_c = wp.cross(r_c, axis_w)
     J_c = wp.spatial_vector(axis_w, ang_c)
 
-    # Parent Jacobian
-    # Force: -axis_w
-    # Torque: axis_w x (pos_c - com_p)
-    # Note: pos_c - com_p = r_p + delta
     r_p_plus_delta = pos_c - com_p
     ang_p = wp.cross(r_p_plus_delta, axis_w)
     J_p = wp.spatial_vector(-axis_w, -ang_p)
 
-    # Error
+    return J_p, J_c
+
+
+# --- 3. CONTROL LAW (PHYSICS) ---
+
+
+@wp.func
+def compute_control_properties(
+    q: float,
+    qd: float,
+    target: float,
+    mode: int,
+    ke: float,
+    kd: float,
+    dt: float,
+    is_angular: bool,
+):
     error = 0.0
+    alpha = 0.0
+
     if mode == JointMode.TARGET_POSITION:
-        error = (q - target) / dt
+        raw_error = q - target
+
+        # If it's a rotating joint, find the shortest path (-PI to +PI)
+        # to prevent explosion when the angle wraps around.
+        if is_angular:
+            PI = 3.141592653589793
+            TWO_PI = 6.283185307179586
+
+            # Shift domain to [0, 2PI)
+            raw_error_shifted = raw_error + PI
+            # Modulo arithmetic
+            mod_error = raw_error_shifted - TWO_PI * wp.floor(raw_error_shifted / TWO_PI)
+            # Shift back to [-PI, PI)
+            error = mod_error - PI
+        else:
+            error = raw_error
+
+        # Convert position error to velocity level for the solver
+        error = error / dt
+
+        denom = dt * dt * ke + dt * kd
+        if denom > 1e-6:
+            alpha = 1.0 / denom
+        else:
+            alpha = 1.0e8
+
     elif mode == JointMode.TARGET_VELOCITY:
         error = qd - target
+        denom = dt * ke
+        if denom > 1e-6:
+            alpha = 1.0 / denom
+        else:
+            alpha = 1.0e8
 
-    return J_p, J_c, error
+    return error, alpha
+
+
+# --- 4. ORCHESTRATOR ---
+
+
+@wp.func
+def compute_control_local(
+    j_type: int,
+    X_w_p: wp.transform,
+    X_w_c: wp.transform,
+    r_p: wp.vec3,
+    r_c: wp.vec3,
+    pos_p: wp.vec3,
+    pos_c: wp.vec3,
+    com_p: wp.vec3,
+    axis_local: wp.vec3,
+    body_u_p: wp.spatial_vector,
+    body_u_c: wp.spatial_vector,
+    target: float,
+    mode: int,
+    ke: float,
+    kd: float,
+    current_lambda: float,
+    dt: float,
+):
+    J_p = wp.spatial_vector()
+    J_c = wp.spatial_vector()
+
+    current_q = 0.0
+    current_qd = 0.0
+    is_angular = False
+
+    if j_type == 1:
+        # REVOLUTE
+        current_q, current_qd = compute_revolute_q_qd(X_w_p, X_w_c, axis_local, body_u_p, body_u_c)
+        J_p, J_c = compute_revolute_jacobians(X_w_p, axis_local)
+        is_angular = True
+    elif j_type == 0:
+        # PRISMATIC
+        current_q, current_qd = compute_prismatic_q_qd(
+            pos_p, pos_c, X_w_p, axis_local, body_u_p, body_u_c, r_p, r_c
+        )
+        J_p, J_c = compute_prismatic_jacobians(X_w_p, axis_local, r_c, pos_c, com_p)
+        is_angular = False
+
+    # Compliance & Error (Unified)
+    error_vel, alpha = compute_control_properties(
+        current_q, current_qd, target, mode, ke, kd, dt, is_angular
+    )
+
+    return (
+        -J_p * current_lambda * dt,  # delta_h_d_p
+        -J_c * current_lambda * dt,  # delta_h_d_c
+        error_vel + alpha * current_lambda * dt,  # h_ctrl_val
+        J_p,  # J_p
+        J_c,  # J_c
+        alpha,  # alpha
+    )
+
+
+# --- 5. KERNELS ---
 
 
 @wp.kernel
 def control_constraint_kernel(
-    # --- State ---
     body_q: wp.array(dtype=wp.transform, ndim=2),
-    body_u: wp.array(dtype=wp.spatial_vector, ndim=2),  # Needed for qd
+    body_u: wp.array(dtype=wp.spatial_vector, ndim=2),
     body_lambda_ctrl: wp.array(dtype=wp.float32, ndim=2),
-    # --- Body Definition ---
     body_com: wp.array(dtype=wp.vec3, ndim=2),
-    # --- Joint Definition Inputs ---
     joint_type: wp.array(dtype=wp.int32, ndim=2),
     joint_parent: wp.array(dtype=wp.int32, ndim=2),
     joint_child: wp.array(dtype=wp.int32, ndim=2),
@@ -183,13 +243,11 @@ def control_constraint_kernel(
     joint_enabled: wp.array(dtype=wp.int32, ndim=2),
     joint_dof_mode: wp.array(dtype=wp.int32, ndim=2),
     control_constraint_offsets: wp.array(dtype=wp.int32, ndim=2),
-    # --- Control Inputs ---
-    joint_target: wp.array(dtype=wp.float32, ndim=2),
+    joint_target_pos: wp.array(dtype=wp.float32, ndim=2),
+    joint_target_vel: wp.array(dtype=wp.float32, ndim=2),
     joint_target_ke: wp.array(dtype=wp.float32, ndim=2),
     joint_target_kd: wp.array(dtype=wp.float32, ndim=2),
-    # --- Params ---
     dt: wp.float32,
-    # --- Solver State Output ---
     constraint_active_mask: wp.array(dtype=wp.float32, ndim=2),
     h_d: wp.array(dtype=wp.spatial_vector, ndim=2),
     h_ctrl: wp.array(dtype=wp.float32, ndim=2),
@@ -202,122 +260,87 @@ def control_constraint_kernel(
         return
 
     j_type = joint_type[world_idx, joint_idx]
-
-    # Support Revolute(1) and Prismatic(0)
     if j_type != 1 and j_type != 0:
         return
 
     qd_start_idx = joint_qd_start[world_idx, joint_idx]
-
-    # Check mode
     mode = joint_dof_mode[world_idx, qd_start_idx]
-    if mode == 0:  # NONE
+    if mode == 0:
         return
 
-    # Indices
     p_idx = joint_parent[world_idx, joint_idx]
     c_idx = joint_child[world_idx, joint_idx]
-
     if c_idx < 0:
         return
 
     ctrl_offset = control_constraint_offsets[world_idx, joint_idx]
-
-    # Activate
     constraint_active_mask[world_idx, ctrl_offset] = 1.0
 
-    # Kinematics
     X_w_c, r_c, pos_c = compute_joint_transforms(
         body_q[world_idx, c_idx], body_com[world_idx, c_idx], joint_X_c[world_idx, joint_idx]
     )
 
     X_body_p = wp.transform_identity()
     com_p = wp.vec3(0.0)
+    body_u_p = wp.spatial_vector()
     if p_idx >= 0:
         X_body_p = body_q[world_idx, p_idx]
         com_p = body_com[world_idx, p_idx]
+        body_u_p = body_u[world_idx, p_idx]
 
     X_w_p, r_p, pos_p = compute_joint_transforms(X_body_p, com_p, joint_X_p[world_idx, joint_idx])
 
     axis_local = joint_axis[world_idx, qd_start_idx]
-
-    # Compute current_q and current_qd
     body_u_c = body_u[world_idx, c_idx]
-    body_u_p = wp.spatial_vector()
-    if p_idx >= 0:
-        body_u_p = body_u[world_idx, p_idx]
 
-    current_q = 0.0
-    current_qd = 0.0
-    J_p = wp.spatial_vector()
-    J_c = wp.spatial_vector()
-    error_vel = 0.0
-
-    target = joint_target[world_idx, qd_start_idx]
-
-    if j_type == 1:
-        # REVOLUTE
-        current_q, current_qd = compute_revolute_q_qd(X_w_p, X_w_c, axis_local, body_u_p, body_u_c)
-        J_p, J_c, error_vel = get_control_component(
-            X_w_p, axis_local, current_q, current_qd, target, mode, dt
-        )
-    elif j_type == 0:
-        # PRISMATIC
-        current_q, current_qd = compute_prismatic_q_qd(
-            pos_p, pos_c, X_w_p, axis_local, body_u_p, body_u_c, r_p, r_c
-        )
-        J_p, J_c, error_vel = get_prismatic_control_component(
-            r_c, pos_c, com_p, X_w_p, axis_local, current_q, current_qd, target, mode, dt
-        )
+    # --- Select Target based on Mode ---
+    target = 0.0
+    if mode == JointMode.TARGET_POSITION:
+        target = joint_target_pos[world_idx, qd_start_idx]
+    elif mode == JointMode.TARGET_VELOCITY:
+        target = joint_target_vel[world_idx, qd_start_idx]
 
     ke = joint_target_ke[world_idx, qd_start_idx]
+    # wp.printf("Joint target ke: %f", ke)
     kd = joint_target_kd[world_idx, qd_start_idx]
-
-    # Calculate Compliance (alpha)
-    # alpha should have units 1/Mass
-    alpha = 0.0
-
-    if mode == JointMode.TARGET_POSITION:
-        # alpha = 1 / (dt^2 * Kp + dt * Kd)
-        denom = dt * dt * ke + dt * kd
-        if denom > 1e-6:
-            alpha = 1.0 / denom
-
-    elif mode == JointMode.TARGET_VELOCITY:
-        # alpha = 1 / (dt * Kv)
-        # We use 'ke' as the velocity gain Kv
-        denom = dt * ke
-        if denom > 1e-6:
-            alpha = 1.0 / denom
-
-    # Submit constraint
+    # wp.printf("Joint target kd: %f", kd)
     current_lambda = body_lambda_ctrl[world_idx, ctrl_offset]
 
-    # 1. Apply forces
+    (res_hdp, res_hdc, res_hctrl, res_jp, res_jc, res_alpha) = compute_control_local(
+        j_type,
+        X_w_p,
+        X_w_c,
+        r_p,
+        r_c,
+        pos_p,
+        pos_c,
+        com_p,
+        axis_local,
+        body_u_p,
+        body_u_c,
+        target,
+        mode,
+        ke,
+        kd,
+        current_lambda,
+        dt,
+    )
+
     if p_idx >= 0:
-        wp.atomic_add(h_d, world_idx, p_idx, -J_p * current_lambda * dt)
-    wp.atomic_add(h_d, world_idx, c_idx, -J_c * current_lambda * dt)
+        wp.atomic_add(h_d, world_idx, p_idx, res_hdp)
+    wp.atomic_add(h_d, world_idx, c_idx, res_hdc)
 
-    # 2. Residual
-    # h_c = velocity_error + alpha * current_lambda * dt
-    # alpha * lambda * dt -> (1/Mass) * Force * Time = Velocity. Consistent.
-    h_ctrl[world_idx, ctrl_offset] = error_vel + alpha * current_lambda * dt
-
-    # 3. Jacobians
-    J_hat_values[world_idx, ctrl_offset, 0] = J_p
-    J_hat_values[world_idx, ctrl_offset, 1] = J_c
-
-    # 4. Compliance
-    C_values[world_idx, ctrl_offset] = alpha
+    h_ctrl[world_idx, ctrl_offset] = res_hctrl
+    J_hat_values[world_idx, ctrl_offset, 0] = res_jp
+    J_hat_values[world_idx, ctrl_offset, 1] = res_jc
+    C_values[world_idx, ctrl_offset] = res_alpha
 
 
 @wp.kernel
-def batch_control_constraint_residual_kernel(
-    # --- State (Batched) ---
-    body_q: wp.array(dtype=wp.transform, ndim=3),  # [Batch, World, Body]
-    body_u: wp.array(dtype=wp.spatial_vector, ndim=3),
-    body_lambda_ctrl: wp.array(dtype=wp.float32, ndim=3),  # [Batch, World, Constraint]
-    # --- Model Data (Shared) ---
+def control_constraint_residual_kernel(
+    body_q: wp.array(dtype=wp.transform, ndim=2),
+    body_u: wp.array(dtype=wp.spatial_vector, ndim=2),
+    body_lambda_ctrl: wp.array(dtype=wp.float32, ndim=2),
     body_com: wp.array(dtype=wp.vec3, ndim=2),
     joint_type: wp.array(dtype=wp.int32, ndim=2),
     joint_parent: wp.array(dtype=wp.int32, ndim=2),
@@ -329,13 +352,111 @@ def batch_control_constraint_residual_kernel(
     joint_enabled: wp.array(dtype=wp.int32, ndim=2),
     joint_dof_mode: wp.array(dtype=wp.int32, ndim=2),
     control_constraint_offsets: wp.array(dtype=wp.int32, ndim=2),
-    # --- Control Inputs (Shared) ---
-    joint_target: wp.array(dtype=wp.float32, ndim=2),
+    joint_target_pos: wp.array(dtype=wp.float32, ndim=2),
+    joint_target_vel: wp.array(dtype=wp.float32, ndim=2),
     joint_target_ke: wp.array(dtype=wp.float32, ndim=2),
     joint_target_kd: wp.array(dtype=wp.float32, ndim=2),
-    # --- Params ---
     dt: wp.float32,
-    # --- Output (Batched) ---
+    h_d: wp.array(dtype=wp.spatial_vector, ndim=2),
+    h_ctrl: wp.array(dtype=wp.float32, ndim=2),
+):
+    world_idx, joint_idx = wp.tid()
+
+    if joint_enabled[world_idx, joint_idx] == 0:
+        return
+
+    j_type = joint_type[world_idx, joint_idx]
+    if j_type != 1 and j_type != 0:
+        return
+
+    qd_start_idx = joint_qd_start[world_idx, joint_idx]
+    mode = joint_dof_mode[world_idx, qd_start_idx]
+    if mode == 0:
+        return
+
+    p_idx = joint_parent[world_idx, joint_idx]
+    c_idx = joint_child[world_idx, joint_idx]
+    if c_idx < 0:
+        return
+
+    ctrl_offset = control_constraint_offsets[world_idx, joint_idx]
+
+    X_w_c, r_c, pos_c = compute_joint_transforms(
+        body_q[world_idx, c_idx], body_com[world_idx, c_idx], joint_X_c[world_idx, joint_idx]
+    )
+
+    X_body_p = wp.transform_identity()
+    com_p = wp.vec3(0.0)
+    body_u_p = wp.spatial_vector()
+    if p_idx >= 0:
+        X_body_p = body_q[world_idx, p_idx]
+        com_p = body_com[world_idx, p_idx]
+        body_u_p = body_u[world_idx, p_idx]
+
+    X_w_p, r_p, pos_p = compute_joint_transforms(X_body_p, com_p, joint_X_p[world_idx, joint_idx])
+
+    axis_local = joint_axis[world_idx, qd_start_idx]
+    body_u_c = body_u[world_idx, c_idx]
+
+    # --- Select Target based on Mode ---
+    target = 0.0
+    if mode == JointMode.TARGET_POSITION:
+        target = joint_target_pos[world_idx, qd_start_idx]
+    elif mode == JointMode.TARGET_VELOCITY:
+        target = joint_target_vel[world_idx, qd_start_idx]
+
+    ke = joint_target_ke[world_idx, qd_start_idx]
+    kd = joint_target_kd[world_idx, qd_start_idx]
+    current_lambda = body_lambda_ctrl[world_idx, ctrl_offset]
+
+    (res_hdp, res_hdc, res_hctrl, skip_jp, skip_jc, skip_alpha) = compute_control_local(
+        j_type,
+        X_w_p,
+        X_w_c,
+        r_p,
+        r_c,
+        pos_p,
+        pos_c,
+        com_p,
+        axis_local,
+        body_u_p,
+        body_u_c,
+        target,
+        mode,
+        ke,
+        kd,
+        current_lambda,
+        dt,
+    )
+
+    if p_idx >= 0:
+        wp.atomic_add(h_d, world_idx, p_idx, res_hdp)
+    wp.atomic_add(h_d, world_idx, c_idx, res_hdc)
+
+    h_ctrl[world_idx, ctrl_offset] = res_hctrl
+
+
+@wp.kernel
+def batch_control_constraint_residual_kernel(
+    body_q: wp.array(dtype=wp.transform, ndim=3),
+    body_u: wp.array(dtype=wp.spatial_vector, ndim=3),
+    body_lambda_ctrl: wp.array(dtype=wp.float32, ndim=3),
+    body_com: wp.array(dtype=wp.vec3, ndim=2),
+    joint_type: wp.array(dtype=wp.int32, ndim=2),
+    joint_parent: wp.array(dtype=wp.int32, ndim=2),
+    joint_child: wp.array(dtype=wp.int32, ndim=2),
+    joint_X_p: wp.array(dtype=wp.transform, ndim=2),
+    joint_X_c: wp.array(dtype=wp.transform, ndim=2),
+    joint_axis: wp.array(dtype=wp.vec3, ndim=2),
+    joint_qd_start: wp.array(dtype=wp.int32, ndim=2),
+    joint_enabled: wp.array(dtype=wp.int32, ndim=2),
+    joint_dof_mode: wp.array(dtype=wp.int32, ndim=2),
+    control_constraint_offsets: wp.array(dtype=wp.int32, ndim=2),
+    joint_target_pos: wp.array(dtype=wp.float32, ndim=2),
+    joint_target_vel: wp.array(dtype=wp.float32, ndim=2),
+    joint_target_ke: wp.array(dtype=wp.float32, ndim=2),
+    joint_target_kd: wp.array(dtype=wp.float32, ndim=2),
+    dt: wp.float32,
     h_d: wp.array(dtype=wp.spatial_vector, ndim=3),
     h_ctrl: wp.array(dtype=wp.float32, ndim=3),
 ):
@@ -345,28 +466,21 @@ def batch_control_constraint_residual_kernel(
         return
 
     j_type = joint_type[world_idx, joint_idx]
-
-    # Support Revolute(1) and Prismatic(0)
     if j_type != 1 and j_type != 0:
         return
 
     qd_start_idx = joint_qd_start[world_idx, joint_idx]
-
-    # Check mode
     mode = joint_dof_mode[world_idx, qd_start_idx]
-    if mode == 0:  # NONE
+    if mode == 0:
         return
 
-    # Indices
     p_idx = joint_parent[world_idx, joint_idx]
     c_idx = joint_child[world_idx, joint_idx]
-
     if c_idx < 0:
         return
 
     ctrl_offset = control_constraint_offsets[world_idx, joint_idx]
 
-    # Kinematics
     X_w_c, r_c, pos_c = compute_joint_transforms(
         body_q[batch_idx, world_idx, c_idx],
         body_com[world_idx, c_idx],
@@ -375,72 +489,60 @@ def batch_control_constraint_residual_kernel(
 
     X_body_p = wp.transform_identity()
     com_p = wp.vec3(0.0)
+    body_u_p = wp.spatial_vector()
     if p_idx >= 0:
         X_body_p = body_q[batch_idx, world_idx, p_idx]
         com_p = body_com[world_idx, p_idx]
+        body_u_p = body_u[batch_idx, world_idx, p_idx]
 
     X_w_p, r_p, pos_p = compute_joint_transforms(X_body_p, com_p, joint_X_p[world_idx, joint_idx])
 
     axis_local = joint_axis[world_idx, qd_start_idx]
-
-    # Compute current_q and current_qd
     body_u_c = body_u[batch_idx, world_idx, c_idx]
-    body_u_p = wp.spatial_vector()
-    if p_idx >= 0:
-        body_u_p = body_u[batch_idx, world_idx, p_idx]
 
-    target = joint_target[world_idx, qd_start_idx]
-
-    J_p = wp.spatial_vector()
-    J_c = wp.spatial_vector()
-    error_vel = 0.0
-
-    if j_type == 1:
-        current_q, current_qd = compute_revolute_q_qd(X_w_p, X_w_c, axis_local, body_u_p, body_u_c)
-        J_p, J_c, error_vel = get_control_component(
-            X_w_p, axis_local, current_q, current_qd, target, mode, dt
-        )
-    elif j_type == 0:
-        current_q, current_qd = compute_prismatic_q_qd(
-            pos_p, pos_c, X_w_p, axis_local, body_u_p, body_u_c, r_p, r_c
-        )
-        J_p, J_c, error_vel = get_prismatic_control_component(
-            r_c, pos_c, com_p, X_w_p, axis_local, current_q, current_qd, target, mode, dt
-        )
+    # --- Select Target based on Mode ---
+    target = 0.0
+    if mode == JointMode.TARGET_POSITION:
+        target = joint_target_pos[world_idx, qd_start_idx]
+    elif mode == JointMode.TARGET_VELOCITY:
+        target = joint_target_vel[world_idx, qd_start_idx]
 
     ke = joint_target_ke[world_idx, qd_start_idx]
     kd = joint_target_kd[world_idx, qd_start_idx]
-
-    # Compliance
-    alpha = 0.0
-    if mode == JointMode.TARGET_POSITION:
-        denom = dt * dt * ke + dt * kd
-        if denom > 1e-6:
-            alpha = 1.0 / denom
-    elif mode == JointMode.TARGET_VELOCITY:
-        denom = dt * ke
-        if denom > 1e-6:
-            alpha = 1.0 / denom
-
-    # Submit constraint
     current_lambda = body_lambda_ctrl[batch_idx, world_idx, ctrl_offset]
 
-    # 1. Apply forces
-    if p_idx >= 0:
-        wp.atomic_add(h_d, batch_idx, world_idx, p_idx, -J_p * current_lambda * dt)
-    wp.atomic_add(h_d, batch_idx, world_idx, c_idx, -J_c * current_lambda * dt)
+    (b_hdp, b_hdc, b_hctrl, skip_jp, skip_jc, skip_alpha) = compute_control_local(
+        j_type,
+        X_w_p,
+        X_w_c,
+        r_p,
+        r_c,
+        pos_p,
+        pos_c,
+        com_p,
+        axis_local,
+        body_u_p,
+        body_u_c,
+        target,
+        mode,
+        ke,
+        kd,
+        current_lambda,
+        dt,
+    )
 
-    # 2. Residual
-    h_ctrl[batch_idx, world_idx, ctrl_offset] = error_vel + alpha * current_lambda * dt
+    if p_idx >= 0:
+        wp.atomic_add(h_d, batch_idx, world_idx, p_idx, b_hdp)
+    wp.atomic_add(h_d, batch_idx, world_idx, c_idx, b_hdc)
+
+    h_ctrl[batch_idx, world_idx, ctrl_offset] = b_hctrl
 
 
 @wp.kernel
 def fused_batch_control_constraint_residual_kernel(
-    # --- State (Batched) ---
-    body_q: wp.array(dtype=wp.transform, ndim=3),  # [Batch, World, Body]
+    body_q: wp.array(dtype=wp.transform, ndim=3),
     body_u: wp.array(dtype=wp.spatial_vector, ndim=3),
-    body_lambda_ctrl: wp.array(dtype=wp.float32, ndim=3),  # [Batch, World, Constraint]
-    # --- Model Data (Shared) ---
+    body_lambda_ctrl: wp.array(dtype=wp.float32, ndim=3),
     body_com: wp.array(dtype=wp.vec3, ndim=2),
     joint_type: wp.array(dtype=wp.int32, ndim=2),
     joint_parent: wp.array(dtype=wp.int32, ndim=2),
@@ -452,14 +554,12 @@ def fused_batch_control_constraint_residual_kernel(
     joint_enabled: wp.array(dtype=wp.int32, ndim=2),
     joint_dof_mode: wp.array(dtype=wp.int32, ndim=2),
     control_constraint_offsets: wp.array(dtype=wp.int32, ndim=2),
-    # --- Control Inputs (Shared) ---
-    joint_target: wp.array(dtype=wp.float32, ndim=2),
+    joint_target_pos: wp.array(dtype=wp.float32, ndim=2),
+    joint_target_vel: wp.array(dtype=wp.float32, ndim=2),
     joint_target_ke: wp.array(dtype=wp.float32, ndim=2),
     joint_target_kd: wp.array(dtype=wp.float32, ndim=2),
-    # --- Params ---
     dt: wp.float32,
     num_batches: int,
-    # --- Output (Batched) ---
     h_d: wp.array(dtype=wp.spatial_vector, ndim=3),
     h_ctrl: wp.array(dtype=wp.float32, ndim=3),
 ):
@@ -467,108 +567,85 @@ def fused_batch_control_constraint_residual_kernel(
 
     if joint_idx >= joint_type.shape[1]:
         return
-
     if joint_enabled[world_idx, joint_idx] == 0:
         return
 
     j_type = joint_type[world_idx, joint_idx]
-
-    # Support Revolute(1) and Prismatic(0)
     if j_type != 1 and j_type != 0:
         return
 
     qd_start_idx = joint_qd_start[world_idx, joint_idx]
-
-    # Check mode
     mode = joint_dof_mode[world_idx, qd_start_idx]
-    if mode == 0:  # NONE
+    if mode == 0:
         return
 
-    # Indices
     p_idx = joint_parent[world_idx, joint_idx]
     c_idx = joint_child[world_idx, joint_idx]
-
     if c_idx < 0:
         return
 
     ctrl_offset = control_constraint_offsets[world_idx, joint_idx]
 
-    # Pre-load Static Data
     joint_X_c_val = joint_X_c[world_idx, joint_idx]
     joint_X_p_val = joint_X_p[world_idx, joint_idx]
-
     com_c = body_com[world_idx, c_idx]
     com_p = wp.vec3(0.0)
     if p_idx >= 0:
         com_p = body_com[world_idx, p_idx]
 
     axis_local = joint_axis[world_idx, qd_start_idx]
-    target = joint_target[world_idx, qd_start_idx]
+
+    # --- Select Target based on Mode ---
+    target = 0.0
+    if mode == JointMode.TARGET_POSITION:
+        target = joint_target_pos[world_idx, qd_start_idx]
+    elif mode == JointMode.TARGET_VELOCITY:
+        target = joint_target_vel[world_idx, qd_start_idx]
+
     ke = joint_target_ke[world_idx, qd_start_idx]
     kd = joint_target_kd[world_idx, qd_start_idx]
 
-    # Compliance (Independent of batch state)
-    alpha = 0.0
-    if mode == JointMode.TARGET_POSITION:
-        denom = dt * dt * ke + dt * kd
-        if denom > 1e-6:
-            alpha = 1.0 / denom
-    elif mode == JointMode.TARGET_VELOCITY:
-        denom = dt * ke
-        if denom > 1e-6:
-            alpha = 1.0 / denom
-
     for b in range(num_batches):
-        # Kinematics
         X_w_c, r_c, pos_c = compute_joint_transforms(
-            body_q[b, world_idx, c_idx],
-            com_c,
-            joint_X_c_val,
+            body_q[b, world_idx, c_idx], com_c, joint_X_c_val
         )
-
         X_body_p = wp.transform_identity()
         if p_idx >= 0:
             X_body_p = body_q[b, world_idx, p_idx]
+        X_w_p, r_p, pos_p = compute_joint_transforms(X_body_p, com_p, joint_X_p_val)
 
-        X_w_p, r_p, pos_p = compute_joint_transforms(
-            X_body_p,
-            com_p,
-            joint_X_p_val,
-        )
-
-        # Compute current_q and current_qd
         body_u_c = body_u[b, world_idx, c_idx]
         body_u_p = wp.spatial_vector()
         if p_idx >= 0:
             body_u_p = body_u[b, world_idx, p_idx]
 
-        J_p = wp.spatial_vector()
-        J_c = wp.spatial_vector()
-        error_vel = 0.0
-
-        if j_type == 1:
-            current_q, current_qd = compute_revolute_q_qd(X_w_p, X_w_c, axis_local, body_u_p, body_u_c)
-            J_p, J_c, error_vel = get_control_component(
-                X_w_p, axis_local, current_q, current_qd, target, mode, dt
-            )
-        elif j_type == 0:
-            current_q, current_qd = compute_prismatic_q_qd(
-                pos_p, pos_c, X_w_p, axis_local, body_u_p, body_u_c, r_p, r_c
-            )
-            J_p, J_c, error_vel = get_prismatic_control_component(
-                r_c, pos_c, com_p, X_w_p, axis_local, current_q, current_qd, target, mode, dt
-            )
-
-        # Submit constraint
         current_lambda = body_lambda_ctrl[b, world_idx, ctrl_offset]
 
-        # 1. Apply forces
-        if p_idx >= 0:
-            wp.atomic_add(h_d, b, world_idx, p_idx, -J_p * current_lambda * dt)
-        wp.atomic_add(h_d, b, world_idx, c_idx, -J_c * current_lambda * dt)
+        (f_hdp, f_hdc, f_hctrl, skip_jp, skip_jc, skip_alpha) = compute_control_local(
+            j_type,
+            X_w_p,
+            X_w_c,
+            r_p,
+            r_c,
+            pos_p,
+            pos_c,
+            com_p,
+            axis_local,
+            body_u_p,
+            body_u_c,
+            target,
+            mode,
+            ke,
+            kd,
+            current_lambda,
+            dt,
+        )
 
-        # 2. Residual
-        h_ctrl[b, world_idx, ctrl_offset] = error_vel + alpha * current_lambda * dt
+        if p_idx >= 0:
+            wp.atomic_add(h_d, b, world_idx, p_idx, f_hdp)
+        wp.atomic_add(h_d, b, world_idx, c_idx, f_hdc)
+
+        h_ctrl[b, world_idx, ctrl_offset] = f_hctrl
 
 
 @wp.kernel
@@ -579,17 +656,13 @@ def count_control_constraints_kernel(
     counts: wp.array(dtype=wp.int32, ndim=2),
 ):
     world_idx, joint_idx = wp.tid()
-
     j_type = joint_type[world_idx, joint_idx]
-
     count = 0
-    # Support Revolute(1) and Prismatic(0)
     if j_type == 1 or j_type == 0:
         qd_start = joint_qd_start[world_idx, joint_idx]
         mode = joint_dof_mode[world_idx, qd_start]
         if mode != 0:
             count = 1
-
     counts[world_idx, joint_idx] = count
 
 
@@ -600,7 +673,6 @@ def compute_control_constraint_offsets_batched(
 ):
     num_worlds = joint_type.shape[0]
     num_joints = joint_type.shape[1]
-
     counts = wp.zeros((num_worlds, num_joints), dtype=wp.int32, device=joint_type.device)
 
     wp.launch(
@@ -615,13 +687,10 @@ def compute_control_constraint_offsets_batched(
     import numpy as np
 
     offsets_np = np.zeros_like(counts_np)
-
     row_counts = counts_np[0]
     row_offsets = np.cumsum(np.concatenate(([0], row_counts[:-1])))
     total = np.sum(row_counts)
-
     offsets_np[:] = row_offsets
-
     offsets = wp.from_numpy(offsets_np, dtype=wp.int32, device=joint_type.device)
 
     return offsets, int(total)
@@ -635,28 +704,21 @@ def fill_control_constraint_body_idx_kernel(
     joint_dof_mode: wp.array(dtype=wp.int32, ndim=2),
     joint_qd_start: wp.array(dtype=wp.int32, ndim=2),
     control_offsets: wp.array(dtype=wp.int32, ndim=2),
-    # Output
     constraint_body_idx_ctrl: wp.array(dtype=wp.int32, ndim=3),
 ):
     world_idx, joint_idx = wp.tid()
-
     j_type = joint_type[world_idx, joint_idx]
-
     count = 0
-    # Support Revolute(1) and Prismatic(0)
     if j_type == 1 or j_type == 0:
         qd_start = joint_qd_start[world_idx, joint_idx]
         mode = joint_dof_mode[world_idx, qd_start]
         if mode != 0:
             count = 1
-
     if count == 0:
         return
 
     offset = control_offsets[world_idx, joint_idx]
-
     p_idx = joint_parent[world_idx, joint_idx]
     c_idx = joint_child[world_idx, joint_idx]
-
     constraint_body_idx_ctrl[world_idx, offset, 0] = p_idx
     constraint_body_idx_ctrl[world_idx, offset, 1] = c_idx

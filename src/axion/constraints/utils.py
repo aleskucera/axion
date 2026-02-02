@@ -1,17 +1,19 @@
 import numpy as np
 import warp as wp
-from axion.types import ContactInteraction
-from axion.types import SpatialInertia
-from axion.types import to_spatial_momentum
-from axion.types.spatial_inertia import compute_world_inertia
+from axion.math import compute_spatial_momentum
+from axion.math import compute_world_inertia
 
 
 @wp.func
 def compute_effective_mass(
+    body_q_1: wp.transform,
+    body_q_2: wp.transform,
     J_1: wp.spatial_vector,
     J_2: wp.spatial_vector,
-    M_inv_1: SpatialInertia,
-    M_inv_2: SpatialInertia,
+    m_inv_1: wp.float32,
+    I_inv_b_1: wp.mat33,
+    m_inv_2: wp.float32,
+    I_inv_b_2: wp.mat33,
     body_1_idx: int,
     body_2_idx: int,
 ) -> float:
@@ -22,120 +24,14 @@ def compute_effective_mass(
     val = 0.0
     if body_1_idx >= 0:
         # compute J M^-1 J^T
-        val += wp.dot(J_1, to_spatial_momentum(M_inv_1, J_1))
+        I_inv_w_1 = compute_world_inertia(body_q_1, I_inv_b_1)
+        val += wp.dot(J_1, compute_spatial_momentum(m_inv_1, I_inv_w_1, J_1))
 
     if body_2_idx >= 0:
-        val += wp.dot(J_2, to_spatial_momentum(M_inv_2, J_2))
+        I_inv_w_2 = compute_world_inertia(body_q_2, I_inv_b_2)
+        val += wp.dot(J_2, compute_spatial_momentum(m_inv_2, I_inv_w_2, J_2))
 
     return val
-
-
-@wp.func
-def compute_effective_mass2(
-    J: wp.spatial_vector,
-    body_idx: int,
-    body_q: wp.array(dtype=wp.transform, ndim=2),
-    body_inv_mass: wp.array(dtype=wp.float32, ndim=2),
-    body_inv_inertia: wp.array(dtype=wp.mat33, ndim=2),
-    world_idx: int,
-) -> wp.float32:
-    """
-    Computes w = J * M^-1 * J^T for a single body along a specific Jacobian row J.
-    """
-    if body_idx < 0:
-        return 0.0
-
-    # Load body properties
-    q = body_q[world_idx, body_idx]
-    m_inv = body_inv_mass[world_idx, body_idx]
-    I_inv = body_inv_inertia[world_idx, body_idx]
-
-    # Compute World Space Inverse Inertia
-    M_inv_spatial = compute_world_inertia(q, m_inv, I_inv)
-
-    # Compute projected inverse mass: J^T * M_inv * J
-    # Note: to_spatial_momentum computes (M_inv * J)
-    term = wp.dot(J, to_spatial_momentum(M_inv_spatial, J))
-
-    return term
-
-
-@wp.func
-def compute_constraint_compliance(
-    J_1: wp.spatial_vector,
-    J_2: wp.spatial_vector,
-    body_1_idx: int,
-    body_2_idx: int,
-    body_q: wp.array(dtype=wp.transform, ndim=2),
-    body_inv_mass: wp.array(dtype=wp.float32, ndim=2),
-    body_inv_inertia: wp.array(dtype=wp.mat33, ndim=2),
-    world_idx: int,
-) -> wp.float32:
-    """
-    Computes total w = J_1 M_1^-1 J_1^T + J_2 M_2^-1 J_2^T
-    """
-    w_1 = compute_effective_mass2(
-        J_1, body_1_idx, body_q, body_inv_mass, body_inv_inertia, world_idx
-    )
-    w_2 = compute_effective_mass2(
-        J_2, body_2_idx, body_q, body_inv_mass, body_inv_inertia, world_idx
-    )
-    return w_1 + w_2
-
-
-@wp.func
-def compute_effective_mass_batched(
-    J: wp.spatial_vector,
-    body_idx: int,
-    body_q: wp.array(dtype=wp.transform, ndim=3),
-    body_inv_mass: wp.array(dtype=wp.float32, ndim=2),
-    body_inv_inertia: wp.array(dtype=wp.mat33, ndim=2),
-    batch_idx: int,
-    world_idx: int,
-) -> wp.float32:
-    """
-    Computes w = J * M^-1 * J^T for a single body along a specific Jacobian row J.
-    """
-    if body_idx < 0:
-        return 0.0
-
-    # Load body properties
-    # Note: mass/inertia are static (ndim=2), but state q is batched (ndim=3)
-    q = body_q[batch_idx, world_idx, body_idx]
-    m_inv = body_inv_mass[world_idx, body_idx]
-    I_inv = body_inv_inertia[world_idx, body_idx]
-
-    # Compute World Space Inverse Inertia
-    M_inv_spatial = compute_world_inertia(q, m_inv, I_inv)
-
-    # Compute projected inverse mass: J^T * M_inv * J
-    term = wp.dot(J, to_spatial_momentum(M_inv_spatial, J))
-
-    return term
-
-
-@wp.func
-def compute_constraint_compliance_batched(
-    J_1: wp.spatial_vector,
-    J_2: wp.spatial_vector,
-    body_1_idx: int,
-    body_2_idx: int,
-    body_q: wp.array(dtype=wp.transform, ndim=3),
-    body_inv_mass: wp.array(dtype=wp.float32, ndim=2),
-    body_inv_inertia: wp.array(dtype=wp.mat33, ndim=2),
-    batch_idx: int,
-    world_idx: int,
-) -> wp.float32:
-    """
-    Computes total w = J_1 M_1^-1 J_1^T + J_2 M_2^-1 J_2^T for batched inputs.
-    """
-    w_1 = compute_effective_mass_batched(
-        J_1, body_1_idx, body_q, body_inv_mass, body_inv_inertia, batch_idx, world_idx
-    )
-    w_2 = compute_effective_mass_batched(
-        J_2, body_2_idx, body_q, body_inv_mass, body_inv_inertia, batch_idx, world_idx
-    )
-    return w_1 + w_2
 
 
 def compute_joint_constraint_offsets_batched(joint_types: wp.array):
@@ -223,33 +119,37 @@ def fill_joint_constraint_body_idx_kernel(
 
 @wp.kernel
 def fill_contact_constraint_body_idx_kernel(
-    contact_interaction: wp.array(dtype=ContactInteraction, ndim=2),
+    contact_body_a: wp.array(dtype=wp.int32, ndim=2),
+    contact_body_b: wp.array(dtype=wp.int32, ndim=2),
     contact_constraint_body_idx: wp.array(dtype=wp.int32, ndim=3),
 ):
     world_idx, contact_idx = wp.tid()
 
-    if world_idx >= contact_interaction.shape[0] or contact_idx >= contact_interaction.shape[1]:
+    if world_idx >= contact_body_a.shape[0] or contact_idx >= contact_body_a.shape[1]:
         return
 
-    interaction = contact_interaction[world_idx, contact_idx]
-    contact_constraint_body_idx[world_idx, contact_idx, 0] = interaction.body_a_idx
-    contact_constraint_body_idx[world_idx, contact_idx, 1] = interaction.body_b_idx
+    contact_constraint_body_idx[world_idx, contact_idx, 0] = contact_body_a[world_idx, contact_idx]
+    contact_constraint_body_idx[world_idx, contact_idx, 1] = contact_body_b[world_idx, contact_idx]
 
 
 @wp.kernel
 def fill_friction_constraint_body_idx_kernel(
-    contact_interaction: wp.array(dtype=ContactInteraction, ndim=2),
+    contact_body_a: wp.array(dtype=wp.int32, ndim=2),
+    contact_body_b: wp.array(dtype=wp.int32, ndim=2),
     friction_constraint_body_idx: wp.array(dtype=wp.int32, ndim=3),
 ):
     world_idx, constraint_idx = wp.tid()
     contact_idx = constraint_idx // 2
 
-    if world_idx >= contact_interaction.shape[0] or contact_idx >= contact_interaction.shape[1]:
+    if world_idx >= contact_body_a.shape[0] or contact_idx >= contact_body_a.shape[1]:
         return
 
-    interaction = contact_interaction[world_idx, contact_idx]
-    friction_constraint_body_idx[world_idx, constraint_idx, 0] = interaction.body_a_idx
-    friction_constraint_body_idx[world_idx, constraint_idx, 1] = interaction.body_b_idx
+    friction_constraint_body_idx[world_idx, constraint_idx, 0] = contact_body_a[
+        world_idx, contact_idx
+    ]
+    friction_constraint_body_idx[world_idx, constraint_idx, 1] = contact_body_b[
+        world_idx, contact_idx
+    ]
 
 
 @wp.kernel
@@ -298,16 +198,15 @@ def fill_joint_constraint_active_mask_kernel(
 
 @wp.kernel
 def fill_contact_constraint_active_mask_kernel(
-    contact_interaction: wp.array(dtype=ContactInteraction, ndim=2),
+    contact_dist: wp.array(dtype=wp.float32, ndim=2),
     contact_constraint_active_mask: wp.array(dtype=wp.float32, ndim=2),
 ):
     world_idx, contact_idx = wp.tid()
 
-    if world_idx >= contact_interaction.shape[0] or contact_idx >= contact_interaction.shape[1]:
+    if world_idx >= contact_dist.shape[0] or contact_idx >= contact_dist.shape[1]:
         return
 
-    interaction = contact_interaction[world_idx, contact_idx]
-    if interaction.is_active:
+    if contact_dist[world_idx, contact_idx] > 0.0:
         contact_constraint_active_mask[world_idx, contact_idx] = 1.0
     else:
         contact_constraint_active_mask[world_idx, contact_idx] = 0.0
@@ -315,17 +214,16 @@ def fill_contact_constraint_active_mask_kernel(
 
 @wp.kernel
 def fill_friction_constraint_active_mask_kernel(
-    contact_interaction: wp.array(dtype=ContactInteraction, ndim=2),
+    contact_dist: wp.array(dtype=wp.float32, ndim=2),
     friction_constraint_active_mask: wp.array(dtype=wp.float32, ndim=2),
 ):
     world_idx, constraint_idx = wp.tid()
     contact_idx = constraint_idx // 2
 
-    if world_idx >= contact_interaction.shape[0] or contact_idx >= contact_interaction.shape[1]:
+    if world_idx >= contact_dist.shape[0] or contact_idx >= contact_dist.shape[1]:
         return
 
-    interaction = contact_interaction[world_idx, contact_idx]
-    if interaction.is_active:
+    if contact_dist[world_idx, contact_idx] > 0.0:
         friction_constraint_active_mask[world_idx, constraint_idx] = 1.0
     else:
         friction_constraint_active_mask[world_idx, constraint_idx] = 0.0

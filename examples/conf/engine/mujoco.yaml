@@ -16,4 +16,4 @@ actuator_gears: null
 update_data_interval: 1
 save_to_mjcf: null
 ls_parallel: False
-use_mujoco_contacts: true
+use_mujoco_contacts: false

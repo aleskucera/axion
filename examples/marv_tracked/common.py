@@ -215,10 +215,10 @@ def _create_tracked_flipper_leg(
         parent_xform=wp.transform(flipper_offset, MarvConfig.FLIPPER_ROT),
         child_xform=wp.transform_identity(),
         axis=(0.0, 0.0, 1.0),
-        target_ke=0.0,
-        target_kd=MarvConfig.FLIPPER_KV,
+        target_ke=MarvConfig.FLIPPER_KV,
+        target_kd=0.0,
         key=f"{name_prefix}_joint",
-        custom_attributes={"joint_dof_mode": [JointMode.TARGET_VELOCITY], "joint_target": [0.0]},
+        custom_attributes={"joint_dof_mode": [JointMode.TARGET_VELOCITY]},
     )
 
     # 2. Track

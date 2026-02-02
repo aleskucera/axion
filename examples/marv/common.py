@@ -45,15 +45,16 @@ class MarvConfig:
         {"pos": 0.29, "radius": 0.095},  # wheel_4
     ]
 
-    WHEEL_MASS = 0.1
+    WHEEL_MASS = 0.5
     # Simple Sphere Inertia: 2/5 * m * r^2
-    _Iw = 0.4 * 0.1 * (0.1**2)
+    _Iw = 0.4 * 1.0 * (0.1**2)
     WHEEL_I = wp.mat33(_Iw, 0.0, 0.0, 0.0, _Iw, 0.0, 0.0, 0.0, _Iw)
 
     # Control Gains
-    FLIPPER_KP = 50.0
-    FLIPPER_KD = 5.0  # Estimated damping
-    WHEEL_KV = 5.0  # Velocity gain
+    FLIPPER_KP = 100.0
+    FLIPPER_KD = 50.0  # Estimated damping
+    WHEEL_KV = 1.0  # Velocity gain, mujoco 90
+    WHEEL_KP = 6.0  # Position gain, mujoco 600
 
 
 def _add_chassis(builder: newton.ModelBuilder, xform: wp.transform, is_visible: bool) -> int:
@@ -100,7 +101,7 @@ def _create_flipper_leg(
     flipper_link = builder.add_link(
         xform=wp.transform(flipper_pos_world, flipper_rot_world),
         key=f"{name_prefix}_arm",
-        mass=1.0,
+        mass=0.1,
         I_m=wp.mat33(0.01, 0.0, 0.0, 0.0, 0.01, 0.0, 0.0, 0.0, 0.01),
     )
 
@@ -114,7 +115,7 @@ def _create_flipper_leg(
         target_ke=MarvConfig.FLIPPER_KP,
         target_kd=MarvConfig.FLIPPER_KD,
         key=f"{name_prefix}_joint",
-        custom_attributes={"joint_dof_mode": [JointMode.TARGET_POSITION], "joint_target": [0.0]},
+        custom_attributes={"joint_dof_mode": [JointMode.TARGET_POSITION]},
     )
 
     created_joints = [j_flipper]
@@ -138,7 +139,11 @@ def _create_flipper_leg(
             body=wheel_link,
             radius=w_cfg["radius"],
             cfg=newton.ModelBuilder.ShapeConfig(
-                density=1000.0, is_visible=is_visible, collision_group=-1, mu=0.8
+                density=1000.0,
+                is_visible=is_visible,
+                collision_group=-1,
+                mu=1.0,
+                contact_margin=0.3,
             ),
         )
 
@@ -149,10 +154,11 @@ def _create_flipper_leg(
             parent_xform=wp.transform(w_pos_local, wp.quat_identity()),
             child_xform=wp.transform_identity(),
             axis=(0.0, 0.0, 1.0),
+            target_ke=MarvConfig.WHEEL_KP,
             target_kd=MarvConfig.WHEEL_KV,
             key=f"{name_prefix}_wheel_joint_{i+1}",
             custom_attributes={
-                "joint_dof_mode": [JointMode.TARGET_VELOCITY],
+                "joint_dof_mode": [JointMode.TARGET_POSITION],
             },
         )
         created_joints.append(j_wheel)

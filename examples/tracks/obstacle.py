@@ -6,11 +6,12 @@ import hydra
 import newton
 import numpy as np
 import warp as wp
-from axion import AbstractSimulator
+from axion import InteractiveSimulator
 from axion import EngineConfig
 from axion import ExecutionConfig
 from axion import RenderingConfig
 from axion import SimulationConfig
+from axion import LoggingConfig
 from omegaconf import DictConfig
 
 os.environ["PYOPENGL_PLATFORM"] = "glx"
@@ -208,10 +209,23 @@ def generate_track_data(r1, r2, dist, tube_radius=0.1, segments=200, sides=12):
     return np.array(vertices, dtype=np.float32), np.array(indices, dtype=np.int32)
 
 
-class TrackObstacleSimulator(AbstractSimulator):
-    def __init__(self, sim_config, render_config, exec_config, engine_config):
+class TrackObstacleSimulator(InteractiveSimulator):
+    def __init__(
+        self,
+        sim_config: SimulationConfig,
+        render_config: RenderingConfig,
+        exec_config: ExecutionConfig,
+        engine_config: EngineConfig,
+        logging_config: LoggingConfig,
+    ):
         self.indices_cpu = []
-        super().__init__(sim_config, render_config, exec_config, engine_config)
+        super().__init__(
+            sim_config,
+            render_config,
+            exec_config,
+            engine_config,
+            logging_config,
+        )
         self.track_global_u = wp.zeros(1, dtype=wp.float32, device=self.model.device)
         self.track_velocity = wp.array([0.6], dtype=wp.float32, device=self.model.device)
 
@@ -338,8 +352,15 @@ def track_drop_example(cfg: DictConfig):
     render_config: RenderingConfig = hydra.utils.instantiate(cfg.rendering)
     exec_config: ExecutionConfig = hydra.utils.instantiate(cfg.execution)
     engine_config: EngineConfig = hydra.utils.instantiate(cfg.engine)
+    logging_config: LoggingConfig = hydra.utils.instantiate(cfg.logging)
 
-    simulator = TrackObstacleSimulator(sim_config, render_config, exec_config, engine_config)
+    simulator = TrackObstacleSimulator(
+        sim_config,
+        render_config,
+        exec_config,
+        engine_config,
+        logging_config,
+    )
     simulator.run()
 
 

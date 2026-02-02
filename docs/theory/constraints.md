@@ -177,6 +177,58 @@ Here, the solver finds impulses that force the relative velocity **u** along the
 
 ---
 
+## 5. Control Constraints
+
+Control constraints allow Axion to drive joints towards a desired state, effectively acting as implicit motors or drives. Unlike external forces, which are applied explicitly, control constraints are solved for as part of the unified system, ensuring stability even with high gains or stiff tracking requirements.
+
+### Mathematical Formulation
+
+A control constraint introduces a new residual equation that relates the joint state to a target value, modulated by a compliance term. The general form is:
+
+\[
+\text{Error}(\mathbf{q}^+, \mathbf{u}^+) + \alpha \cdot \boldsymbol{\lambda}_{\text{ctrl}} \cdot h = 0
+\]
+
+where \(\boldsymbol{\lambda}_{\text{ctrl}}\) is the actuation impulse computed by the solver, \(h\) is the time step, and \(\alpha\) is a compliance parameter derived from the control gains.
+
+Axion supports two primary control modes:
+
+**1. Target Position Mode**
+
+This mode drives the joint position \(q\) towards a target \(q_{\text{target}}\). The error is defined as the average velocity required to reach the target:
+
+\[
+\text{Error} = \frac{q^+ - q_{\text{target}}}{h}
+\]
+
+The compliance term \(\alpha\) is derived from the stiffness (\(k_p\)) and damping (\(k_d\)) gains:
+
+\[
+\alpha = \frac{1}{h^2 k_p + h k_d}
+\]
+
+This formulation behaves like an implicit spring-damper system. If \(\alpha \approx 0\) (infinite gains), it acts as a hard servo, forcing the joint exactly to the target position.
+
+**2. Target Velocity Mode**
+
+This mode drives the joint velocity \(u\) towards a target \(v_{\text{target}}\). The error is simply the velocity difference:
+
+\[
+\text{Error} = u^+ - v_{\text{target}}
+\]
+
+The compliance term depends on the stiffness gain (acting as a velocity gain here):
+
+\[
+\alpha = \frac{1}{h k_p}
+\]
+
+This acts as a velocity servo or a viscous damper.
+
+By solving for the actuation impulse \(\boldsymbol{\lambda}_{\text{ctrl}}\) implicitly, Axion avoids the instability often associated with explicit PD controllers in physics simulations.
+
+---
+
 ## Conclusion: From Constraints to Optimization
 
 The constraint formulations presented in this section—position/velocity-level approaches, contact complementarity, friction stick-slip behavior, and joint restrictions—create a complex system mixing equalities and inequalities that must be satisfied simultaneously.

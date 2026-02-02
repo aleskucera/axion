@@ -15,12 +15,13 @@ from axion.core.engine_dims import EngineDimensions
 from axion.core.engine_logger import EngineEvents
 from axion.core.engine_logger import EngineMode
 from axion.core.engine_logger import HDF5Observer
+from axion.core.history_utils import copy_state_to_history
 from axion.core.linear_utils import compute_dbody_qd_from_dbody_lambda
 from axion.core.linear_utils import compute_linear_system
 from axion.core.linesearch_utils import perform_linesearch
 from axion.core.linesearch_utils import update_body_q
+from axion.core.logging_config import LoggingConfig
 from axion.core.model import AxionModel
-from axion.core.pca_utils import copy_state_to_history
 from axion.optim import JacobiPreconditioner
 from axion.optim import PCRSolver
 from axion.optim import SystemLinearData
@@ -73,10 +74,12 @@ class AxionEngine(SolverBase):
         model: Model,
         init_state_fn: Callable[[State, State, Contacts, float], None],
         config: Optional[AxionEngineConfig] = AxionEngineConfig(),
+        logging_config: Optional[LoggingConfig] = LoggingConfig(),
     ):
         super().__init__(model)
         self.init_state_fn = init_state_fn
         self.config = config
+        self.logging_config = logging_config
 
         # --- 1. Event System Setup ---
         self.events = EngineEvents()
@@ -168,7 +171,8 @@ class AxionEngine(SolverBase):
 
     def _load_control_inputs(self, state: State, control: Control):
         wp.copy(dest=self.data.body_f, src=state.body_f)
-        wp.copy(dest=self.data.joint_target, src=control.joint_target)
+        wp.copy(dest=self.data.joint_target_pos, src=control.joint_target_pos)
+        wp.copy(dest=self.data.joint_target_vel, src=control.joint_target_vel)
 
     def _initialize_variables(self, state_in: State, state_out: State, contacts: Contacts):
         self.init_state_fn(state_in, state_out, contacts, self.data.dt)
@@ -234,7 +238,22 @@ class AxionEngine(SolverBase):
                     self.axion_contacts.contact_thickness1,
                 ],
                 outputs=[
-                    self.data.contact_interaction,
+                    self.data.contact_body_a,
+                    self.data.contact_body_b,
+                    self.data.contact_point_a,
+                    self.data.contact_point_b,
+                    self.data.contact_thickness_a,
+                    self.data.contact_thickness_b,
+                    self.data.contact_dist,
+                    self.data.contact_friction_coeff,
+                    self.data.contact_restitution_coeff,
+                    self.data.contact_basis_n_a,
+                    self.data.contact_basis_t1_a,
+                    self.data.contact_basis_t2_a,
+                    self.data.contact_basis_n_b,
+                    self.data.contact_basis_t1_b,
+                    self.data.contact_basis_t2_b,
+                    self.data.constraint_active_mask.n,
                 ],
                 device=self.device,
             )
@@ -278,7 +297,8 @@ class AxionEngine(SolverBase):
                 kernel=fill_contact_constraint_body_idx_kernel,
                 dim=(self.axion_model.num_worlds, self.dims.N_n),
                 inputs=[
-                    self.data.contact_interaction,
+                    self.data.contact_body_a,
+                    self.data.contact_body_b,
                 ],
                 outputs=[
                     self.data.constraint_body_idx.n,
@@ -291,7 +311,8 @@ class AxionEngine(SolverBase):
                 kernel=fill_friction_constraint_body_idx_kernel,
                 dim=(self.axion_model.num_worlds, self.dims.N_f),
                 inputs=[
-                    self.data.contact_interaction,
+                    self.data.contact_body_a,
+                    self.data.contact_body_b,
                 ],
                 outputs=[
                     self.data.constraint_body_idx.f,
@@ -330,7 +351,7 @@ class AxionEngine(SolverBase):
                 atol=self.config.linear_atol,
                 log=log_linear_solver,
             )
-            compute_dbody_qd_from_dbody_lambda(self.data, self.config, self.dims)
+            compute_dbody_qd_from_dbody_lambda(self.axion_model, self.data, self.config, self.dims)
 
         # Linesearch
         with self.events.linesearch.scope(iter_idx=iter_idx):
@@ -362,7 +383,7 @@ class AxionEngine(SolverBase):
             self._execute_newton_step_math(dt, iter_idx=0)
             self._check_convergence_kernel_launch()
 
-        # If we are already capturing (e.g. AbstractSimulator), we insert the while loop node.
+        # If we are already capturing (e.g. InteractiveSimulator), we insert the while loop node.
         if self.device.is_capturing:
             wp.capture_while(self.keep_running, loop_body)
         else:
@@ -393,7 +414,7 @@ class AxionEngine(SolverBase):
 
             # 3. Log Data Snapshot
             # (In debug mode, we assume HDF5 is enabled)
-            if self.config.enable_hdf5_logging:
+            if self.logging_config.enable_hdf5_logging:
                 snapshot = self.data.get_snapshot()
                 if solver_stats:
                     snapshot["linear_solver_stats"] = solver_stats
@@ -410,10 +431,10 @@ class AxionEngine(SolverBase):
         self.iter_count.zero_()
 
         # Decide Mode
-        if self.config.enable_hdf5_logging:
+        if self.logging_config.enable_hdf5_logging:
             self.events.current_mode = EngineMode.DEBUG
             self._solve_debug(dt)
-        elif self.config.enable_timing:
+        elif self.logging_config.enable_timing:
             self.events.current_mode = EngineMode.TIMING
             self._solve_timing(dt)
         else:
@@ -437,8 +458,6 @@ class AxionEngine(SolverBase):
         contacts: Contacts,
         dt: float,
     ):
-        # We can use scope() here too. In PRODUCTION, it's a pass.
-        # In TIMING, it records the whole step time.
         with self.events.step.scope(iter_idx=self._timestep):
 
             self.data.set_dt(dt)
@@ -454,8 +473,8 @@ class AxionEngine(SolverBase):
             self._solve_nonlinear_system(dt)
             self._finalize_step(state_out)
 
-        # After step, if timing, we might want to print
-        if self.events.current_mode == EngineMode.TIMING:
-            # Note: This requires synchronizing/reading back events
-            # Usually you'd do this once per second or at end of sim
-            pass
+        # # After step, if timing, we might want to print
+        # if self.events.current_mode == EngineMode.TIMING:
+        #     # Note: This requires synchronizing/reading back events
+        #     # Usually you'd do this once per second or at end of sim
+        #     pass

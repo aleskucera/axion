@@ -65,6 +65,189 @@ def submit_velocity_component(
     C_j_values[world_idx, constraint_idx] = compliance
 
 
+@wp.func
+def submit_velocity_residual_component(
+    # --- Constraint Data ---
+    J_p: wp.spatial_vector,
+    J_c: wp.spatial_vector,
+    error: wp.float32,  # This is position error "C(x)"
+    # --- Identifiers ---
+    world_idx: wp.int32,
+    constraint_idx: wp.int32,
+    p_idx: wp.int32,
+    c_idx: wp.int32,
+    # --- System State ---
+    body_u: wp.array(dtype=wp.spatial_vector, ndim=2),
+    body_lambda_j: wp.array(dtype=wp.float32, ndim=2),
+    # --- Params ---
+    dt: wp.float32,
+    upsilon: wp.float32,
+    compliance: wp.float32,
+    # --- Outputs ---
+    h_d: wp.array(dtype=wp.spatial_vector, ndim=2),
+    h_j: wp.array(dtype=wp.float32, ndim=2),
+):
+    lambda_j = body_lambda_j[world_idx, constraint_idx]
+
+    # Get Velocities
+    u_c = body_u[world_idx, c_idx]
+    u_p = wp.spatial_vector()
+    if p_idx >= 0:
+        u_p = body_u[world_idx, p_idx]
+
+    # Compute Relative Velocity along Constraint: J * u
+    v_j = wp.dot(J_c, u_c) + wp.dot(J_p, u_p)
+
+    if p_idx >= 0:
+        wp.atomic_add(h_d, world_idx, p_idx, -dt * J_p * lambda_j)
+    wp.atomic_add(h_d, world_idx, c_idx, -dt * J_c * lambda_j)
+
+    # Compute Residual
+    bias = (upsilon / dt) * error
+    h_j[world_idx, constraint_idx] = v_j + bias + dt * compliance * lambda_j
+
+
+@wp.kernel
+def velocity_joint_residual_kernel(
+    # --- State ---
+    body_q: wp.array(dtype=wp.transform, ndim=2),
+    body_com: wp.array(dtype=wp.vec3, ndim=2),
+    body_u: wp.array(dtype=wp.spatial_vector, ndim=2),
+    body_lambda_j: wp.array(dtype=wp.float32, ndim=2),
+    # --- Joint Definition ---
+    joint_type: wp.array(dtype=wp.int32, ndim=2),
+    joint_parent: wp.array(dtype=wp.int32, ndim=2),
+    joint_child: wp.array(dtype=wp.int32, ndim=2),
+    joint_X_p: wp.array(dtype=wp.transform, ndim=2),
+    joint_X_c: wp.array(dtype=wp.transform, ndim=2),
+    joint_axis: wp.array(dtype=wp.vec3, ndim=2),
+    joint_qd_start: wp.array(dtype=wp.int32, ndim=2),
+    joint_enabled: wp.array(dtype=wp.int32, ndim=2),
+    constraint_offsets: wp.array(dtype=wp.int32, ndim=2),
+    # --- Parameters ---
+    dt: wp.float32,
+    upsilon: wp.float32,
+    compliance: wp.float32,
+    # --- Outputs ---
+    h_d: wp.array(dtype=wp.spatial_vector, ndim=2),
+    h_j: wp.array(dtype=wp.float32, ndim=2),
+):
+    world_idx, joint_idx = wp.tid()
+
+    j_type = joint_type[world_idx, joint_idx]
+
+    if joint_enabled[world_idx, joint_idx] == 0:
+        return
+
+    p_idx = joint_parent[world_idx, joint_idx]
+    c_idx = joint_child[world_idx, joint_idx]
+    if c_idx < 0:
+        return
+
+    start_offset = constraint_offsets[world_idx, joint_idx]
+
+    # Kinematics
+    # Child
+    X_w_c, r_c, pos_c = compute_joint_transforms(
+        body_q[world_idx, c_idx], body_com[world_idx, c_idx], joint_X_c[world_idx, joint_idx]
+    )
+
+    # Parent
+    X_body_p = wp.transform_identity()
+    com_p = wp.vec3(0.0)
+    if p_idx >= 0:
+        X_body_p = body_q[world_idx, p_idx]
+        com_p = body_com[world_idx, p_idx]
+
+    X_w_p, r_p, pos_p = compute_joint_transforms(X_body_p, com_p, joint_X_p[world_idx, joint_idx])
+
+    # === REVOLUTE (1) or BALL (2) or FIXED (3) ===
+    if j_type == 1 or j_type == 2 or j_type == 3:
+        for i in range(wp.static(3)):
+            J_p, J_c, err = get_linear_component(r_p, r_c, pos_p, pos_c, i)
+            submit_velocity_residual_component(
+                J_p,
+                J_c,
+                err,
+                world_idx,
+                start_offset + i,
+                p_idx,
+                c_idx,
+                body_u,
+                body_lambda_j,
+                dt,
+                upsilon,
+                compliance,
+                h_d,
+                h_j,
+            )
+
+    # === REVOLUTE (1) ===
+    if j_type == 1:
+        axis_idx = joint_qd_start[world_idx, joint_idx]
+        axis_local = joint_axis[world_idx, axis_idx]
+
+        # Ortho 1
+        J_p, J_c, err = get_revolute_angular_component(X_w_p, X_w_c, axis_local, 0)
+        submit_velocity_residual_component(
+            J_p,
+            J_c,
+            err,
+            world_idx,
+            start_offset + 3,
+            p_idx,
+            c_idx,
+            body_u,
+            body_lambda_j,
+            dt,
+            upsilon,
+            compliance,
+            h_d,
+            h_j,
+        )
+
+        # Ortho 2
+        J_p, J_c, err = get_revolute_angular_component(X_w_p, X_w_c, axis_local, 1)
+        submit_velocity_residual_component(
+            J_p,
+            J_c,
+            err,
+            world_idx,
+            start_offset + 4,
+            p_idx,
+            c_idx,
+            body_u,
+            body_lambda_j,
+            dt,
+            upsilon,
+            compliance,
+            h_d,
+            h_j,
+        )
+
+    # === FIXED (3) ===
+    if j_type == 3:
+        for i in range(wp.static(3)):
+            J_p, J_c, err = get_angular_component(X_w_p, X_w_c, i)
+            # Row index starts after linear (3)
+            submit_velocity_residual_component(
+                J_p,
+                J_c,
+                err,
+                world_idx,
+                start_offset + 3 + i,
+                p_idx,
+                c_idx,
+                body_u,
+                body_lambda_j,
+                dt,
+                upsilon,
+                compliance,
+                h_d,
+                h_j,
+            )
+
+
 @wp.kernel
 def velocity_joint_constraint_kernel(
     # --- State ---

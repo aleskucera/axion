@@ -2,43 +2,6 @@ import warp as wp
 from axion.math import orthogonal_basis
 
 
-@wp.struct
-class ContactBasis:
-    """The spatial vector basis (n, t1, t2) for a single body in a contact constraint."""
-
-    normal: wp.spatial_vector
-    tangent1: wp.spatial_vector
-    tangent2: wp.spatial_vector
-
-
-@wp.struct
-class ContactInteraction:
-    """A complete description of a single contact constraint for the solver."""
-
-    is_active: wp.bool
-
-    # Indices of the two interacting bodies (-1 for static objects)
-    body_a_idx: wp.int32
-    body_b_idx: wp.int32
-
-    # Per-body constraint data
-    basis_a: ContactBasis
-    basis_b: ContactBasis
-
-    # Contact point vectors relative to body frames
-    contact_point_a: wp.vec3
-    contact_point_b: wp.vec3
-
-    # ContactThickness
-    contact_thickness_a: wp.float32
-    contact_thickness_b: wp.float32
-
-    # Shared geometric and material properties
-    penetration_depth: wp.float32
-    restitution_coeff: wp.float32
-    friction_coeff: wp.float32
-
-
 @wp.kernel
 def contact_interaction_kernel(
     # --- Inputs ---
@@ -56,19 +19,34 @@ def contact_interaction_kernel(
     contact_shape1: wp.array(dtype=wp.int32, ndim=2),
     contact_thickness0: wp.array(dtype=wp.float32, ndim=2),
     contact_thickness1: wp.array(dtype=wp.float32, ndim=2),
-    # --- Single Output ---
-    interactions: wp.array(dtype=ContactInteraction, ndim=2),
+    # --- Outputs ---
+    contact_body_a: wp.array(dtype=wp.int32, ndim=2),
+    contact_body_b: wp.array(dtype=wp.int32, ndim=2),
+    contact_point_a: wp.array(dtype=wp.vec3, ndim=2),
+    contact_point_b: wp.array(dtype=wp.vec3, ndim=2),
+    contact_thickness_a: wp.array(dtype=wp.float32, ndim=2),
+    contact_thickness_b: wp.array(dtype=wp.float32, ndim=2),
+    contact_dist: wp.array(dtype=wp.float32, ndim=2),
+    contact_friction_coeff: wp.array(dtype=wp.float32, ndim=2),
+    contact_restitution_coeff: wp.array(dtype=wp.float32, ndim=2),
+    contact_basis_n_a: wp.array(dtype=wp.spatial_vector, ndim=2),
+    contact_basis_t1_a: wp.array(dtype=wp.spatial_vector, ndim=2),
+    contact_basis_t2_a: wp.array(dtype=wp.spatial_vector, ndim=2),
+    contact_basis_n_b: wp.array(dtype=wp.spatial_vector, ndim=2),
+    contact_basis_t1_b: wp.array(dtype=wp.spatial_vector, ndim=2),
+    contact_basis_t2_b: wp.array(dtype=wp.spatial_vector, ndim=2),
+    contact_active_mask: wp.array(dtype=wp.float32, ndim=2),
 ):
     world_idx, contact_idx = wp.tid()
 
-    interaction = ContactInteraction()
     shape_a = contact_shape0[world_idx, contact_idx]
     shape_b = contact_shape1[world_idx, contact_idx]
 
     if contact_idx >= contact_count[world_idx] or shape_a == shape_b:
-        interaction.is_active = False
-        interactions[world_idx, contact_idx] = interaction
+        contact_active_mask[world_idx, contact_idx] = 0.0
         return
+
+    contact_active_mask[world_idx, contact_idx] = 1.0
 
     # Contact body indices (default to -1)
     body_a = -1
@@ -121,35 +99,31 @@ def contact_interaction_kernel(
     # Compute contact Jacobians
     t1, t2 = orthogonal_basis(n)
 
-    # Fill the manifold struct
-    interaction.is_active = True
-    interaction.body_a_idx = body_a
-    interaction.body_b_idx = body_b
+    # Fill the output arrays
+    contact_body_a[world_idx, contact_idx] = body_a
+    contact_body_b[world_idx, contact_idx] = body_b
 
-    interaction.contact_point_a = p_a_local
-    interaction.contact_point_b = p_b_local
+    contact_point_a[world_idx, contact_idx] = p_a_local
+    contact_point_b[world_idx, contact_idx] = p_b_local
 
-    interaction.contact_thickness_a = contact_thickness0[world_idx, contact_idx]
-    interaction.contact_thickness_b = contact_thickness1[world_idx, contact_idx]
+    contact_thickness_a[world_idx, contact_idx] = contact_thickness0[world_idx, contact_idx]
+    contact_thickness_b[world_idx, contact_idx] = contact_thickness1[world_idx, contact_idx]
 
     # Penetration depth (positive for penetration)
-    interaction.penetration_depth = wp.dot(n, p_b_world_adj - p_a_world_adj)
+    contact_dist[world_idx, contact_idx] = wp.dot(n, p_b_world_adj - p_a_world_adj)
 
-    interaction.basis_a.normal = wp.spatial_vector(n, wp.cross(r_a, n))
-    interaction.basis_a.tangent1 = wp.spatial_vector(t1, wp.cross(r_a, t1))
-    interaction.basis_a.tangent2 = wp.spatial_vector(t2, wp.cross(r_a, t2))
+    contact_basis_n_a[world_idx, contact_idx] = wp.spatial_vector(n, wp.cross(r_a, n))
+    contact_basis_t1_a[world_idx, contact_idx] = wp.spatial_vector(t1, wp.cross(r_a, t1))
+    contact_basis_t2_a[world_idx, contact_idx] = wp.spatial_vector(t2, wp.cross(r_a, t2))
 
-    interaction.basis_b.normal = wp.spatial_vector(-n, -wp.cross(r_b, n))
-    interaction.basis_b.tangent1 = wp.spatial_vector(-t1, -wp.cross(r_b, t1))
-    interaction.basis_b.tangent2 = wp.spatial_vector(-t2, -wp.cross(r_b, t2))
+    contact_basis_n_b[world_idx, contact_idx] = wp.spatial_vector(-n, -wp.cross(r_b, n))
+    contact_basis_t1_b[world_idx, contact_idx] = wp.spatial_vector(-t1, -wp.cross(r_b, t1))
+    contact_basis_t2_b[world_idx, contact_idx] = wp.spatial_vector(-t2, -wp.cross(r_b, t2))
 
     mu_a = shape_material_mu[world_idx, shape_a]
     mu_b = shape_material_mu[world_idx, shape_b]
-    interaction.friction_coeff = (mu_a + mu_b) * 0.5
+    contact_friction_coeff[world_idx, contact_idx] = (mu_a + mu_b) * 0.5
 
     e_a = shape_material_restitution[world_idx, shape_a]
     e_b = shape_material_restitution[world_idx, shape_b]
-    interaction.restitution_coeff = (e_a + e_b) * 0.5
-
-    # Write the complete struct to the output array
-    interactions[world_idx, contact_idx] = interaction
+    contact_restitution_coeff[world_idx, contact_idx] = (e_a + e_b) * 0.5

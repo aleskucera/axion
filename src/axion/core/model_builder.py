@@ -1,6 +1,6 @@
 import newton
 import warp as wp
-from axion.core.control_utils import JointMode
+from axion.core.joint_types import JointMode
 
 
 class AxionModelBuilder(newton.ModelBuilder):
@@ -13,39 +13,6 @@ class AxionModelBuilder(newton.ModelBuilder):
         self._add_axion_custom_attributes()
 
     def _add_axion_custom_attributes(self):
-        # integral constant (PID control)
-        self.add_custom_attribute(
-            newton.ModelBuilder.CustomAttribute(
-                name="joint_target_ki",
-                frequency=newton.ModelAttributeFrequency.JOINT_DOF,
-                dtype=wp.float32,
-                default=0.0,
-                assignment=newton.ModelAttributeAssignment.MODEL,
-            )
-        )
-
-        # previous instance of the control error (PID control)
-        self.add_custom_attribute(
-            newton.ModelBuilder.CustomAttribute(
-                name="joint_err_prev",
-                frequency=newton.ModelAttributeFrequency.JOINT_DOF,
-                dtype=wp.float32,
-                default=0.0,
-                assignment=newton.ModelAttributeAssignment.CONTROL,
-            )
-        )
-
-        # cumulative error of the integral part (PID control)
-        self.add_custom_attribute(
-            newton.ModelBuilder.CustomAttribute(
-                name="joint_err_i",
-                frequency=newton.ModelAttributeFrequency.JOINT_DOF,
-                dtype=wp.float32,
-                default=0.0,
-                assignment=newton.ModelAttributeAssignment.CONTROL,
-            )
-        )
-
         self.add_custom_attribute(
             newton.ModelBuilder.CustomAttribute(
                 name="joint_dof_mode",
@@ -53,16 +20,6 @@ class AxionModelBuilder(newton.ModelBuilder):
                 dtype=wp.int32,
                 default=JointMode.NONE,
                 assignment=newton.ModelAttributeAssignment.MODEL,
-            )
-        )
-
-        self.add_custom_attribute(
-            newton.ModelBuilder.CustomAttribute(
-                name="joint_target",
-                frequency=newton.ModelAttributeFrequency.JOINT_DOF,
-                dtype=wp.float32,
-                default=0.0,
-                assignment=newton.ModelAttributeAssignment.CONTROL,
             )
         )
 
@@ -212,7 +169,11 @@ class AxionModelBuilder(newton.ModelBuilder):
         return created_joints
 
     def finalize_replicated(
-        self, num_worlds: int, gravity: float = -9.81, **kwargs
+        self,
+        num_worlds: int,
+        gravity: float = -9.81,
+        requires_grad: bool = False,
+        **kwargs,
     ) -> newton.Model:
         """
         Creates a new newton.ModelBuilder, replicates the content of this builder into it
@@ -222,4 +183,4 @@ class AxionModelBuilder(newton.ModelBuilder):
         for k, v in kwargs.items():
             setattr(final_builder, k, v)
         final_builder.replicate(self, num_worlds=num_worlds)
-        return final_builder.finalize()
+        return final_builder.finalize(requires_grad=requires_grad)

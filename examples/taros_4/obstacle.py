@@ -6,11 +6,12 @@ import hydra
 import newton
 import numpy as np
 import warp as wp
-from axion import AbstractSimulator
+from axion import InteractiveSimulator
 from axion import EngineConfig
 from axion import ExecutionConfig
 from axion import RenderingConfig
 from axion import SimulationConfig
+from axion import LoggingConfig
 from omegaconf import DictConfig
 
 try:
@@ -23,19 +24,21 @@ os.environ["PYOPENGL_PLATFORM"] = "glx"
 CONFIG_PATH = pathlib.Path(__file__).parent.parent.joinpath("conf")
 
 
-class TarosObstacleSimulator(AbstractSimulator):
+class TarosObstacleSimulator(InteractiveSimulator):
     def __init__(
         self,
         sim_config: SimulationConfig,
         render_config: RenderingConfig,
         exec_config: ExecutionConfig,
         engine_config: EngineConfig,
+        logging_config: LoggingConfig,
     ):
         super().__init__(
             sim_config,
             render_config,
             exec_config,
             engine_config,
+            logging_config,
         )
 
         # Taros-4 DOFs: 6 (Base) + 4 (Wheels) = 10
@@ -57,7 +60,7 @@ class TarosObstacleSimulator(AbstractSimulator):
 
     @override
     def control_policy(self, current_state: newton.State):
-        wp.copy(self.control.joint_target, self.joint_target)
+        wp.copy(self.control.joint_target_vel, self.joint_target)
 
     def build_model(self) -> newton.Model:
         """
@@ -144,8 +147,15 @@ def taros4_obstacle_example(cfg: DictConfig):
     render_config: RenderingConfig = hydra.utils.instantiate(cfg.rendering)
     exec_config: ExecutionConfig = hydra.utils.instantiate(cfg.execution)
     engine_config: EngineConfig = hydra.utils.instantiate(cfg.engine)
+    logging_config: LoggingConfig = hydra.utils.instantiate(cfg.logging)
 
-    simulator = TarosObstacleSimulator(sim_config, render_config, exec_config, engine_config)
+    simulator = TarosObstacleSimulator(
+        sim_config=sim_config,
+        render_config=render_config,
+        exec_config=exec_config,
+        engine_config=engine_config,
+        logging_config=logging_config,
+    )
     simulator.run()
 
 

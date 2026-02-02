@@ -1,0 +1,7 @@
+# @package engine
+_target_: axion.SemiImplicitEngineConfig
+angular_damping: 0.05
+friction_smoothing: 1.0
+joint_attach_ke: 1.0e4
+joint_attach_kd: 1.0e2
+enable_tri_contact: True

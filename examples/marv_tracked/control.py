@@ -9,11 +9,12 @@ import hydra
 import newton
 import numpy as np
 import warp as wp
-from axion import AbstractSimulator
 from axion import EngineConfig
 from axion import ExecutionConfig
+from axion import InteractiveSimulator
 from axion import RenderingConfig
 from axion import SimulationConfig
+from axion import LoggingConfig
 from omegaconf import DictConfig
 
 try:
@@ -115,18 +116,19 @@ def update_track_joints_kernel(
     joint_X_p[joint_idx] = X_in_parent
 
 
-class MarvTrackedSimulator(AbstractSimulator):
+class MarvTrackedSimulator(InteractiveSimulator):
     def __init__(
         self,
         sim_config: SimulationConfig,
         render_config: RenderingConfig,
         exec_config: ExecutionConfig,
         engine_config: EngineConfig,
+        logging_config: LoggingConfig,
     ):
         # We need to defer track initialization until AFTER build_model is called
         # but build_model is called inside super().__init__.
         # So we initialize containers here, but populate them later?
-        # No, AbstractSimulator.__init__ calls build_model, then creates the model, then we can init our stuff.
+        # No, InteractiveSimulator.__init__ calls build_model, then creates the model, then we can init our stuff.
         # But we need to capture the track info from build_model.
         self.track_info_cpu = {}
 
@@ -135,6 +137,7 @@ class MarvTrackedSimulator(AbstractSimulator):
             render_config,
             exec_config,
             engine_config,
+            logging_config,
         )
 
         # Initialize Track States
@@ -213,7 +216,7 @@ class MarvTrackedSimulator(AbstractSimulator):
             dof_idx = joint_start_dof[j_idx]
             self.flipper_dof_indices[code] = dof_idx
 
-        self.joint_targets = wp.zeros_like(self.model.joint_target)
+        self.joint_targets = wp.zeros_like(self.model.joint_target_vel)
 
     @override
     def _run_simulation_segment(self, segment_num: int):
@@ -348,7 +351,7 @@ class MarvTrackedSimulator(AbstractSimulator):
             )
 
         # 2. Apply Flipper Targets
-        wp.copy(self.control.joint_target, self.joint_targets)
+        wp.copy(self.control.joint_target_vel, self.joint_targets)
 
     def build_model(self) -> newton.Model:
         # Create Marv Tracked
@@ -465,8 +468,15 @@ def marv_tracked_example(cfg: DictConfig):
     render_config = hydra.utils.instantiate(cfg.rendering)
     exec_config = hydra.utils.instantiate(cfg.execution)
     engine_config = hydra.utils.instantiate(cfg.engine)
+    logging_config = hydra.utils.instantiate(cfg.logging)
 
-    simulator = MarvTrackedSimulator(sim_config, render_config, exec_config, engine_config)
+    simulator = MarvTrackedSimulator(
+        sim_config,
+        render_config,
+        exec_config,
+        engine_config,
+        logging_config,
+    )
     simulator.run()
 
 

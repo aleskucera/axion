@@ -50,7 +50,6 @@ class Taros4Config:
 
     # Joint Control
     TARGET_KE = 2000.0  # Stiffer for heavier robot
-    TARGET_KI = 100.0
     TARGET_KD = 500.0
 
 
@@ -243,7 +242,6 @@ def create_taros4_model(
         target_kd=Taros4Config.TARGET_KD,
         key="front_left_wheel_j",
         custom_attributes={
-            "joint_target_ki": [Taros4Config.TARGET_KI],
             "joint_dof_mode": [JointMode.TARGET_VELOCITY],
         },
     )
@@ -258,7 +256,6 @@ def create_taros4_model(
         target_kd=Taros4Config.TARGET_KD,
         key="front_right_wheel_j",
         custom_attributes={
-            "joint_target_ki": [Taros4Config.TARGET_KI],
             "joint_dof_mode": [JointMode.TARGET_VELOCITY],
         },
     )
@@ -273,7 +270,6 @@ def create_taros4_model(
         target_kd=Taros4Config.TARGET_KD,
         key="rear_left_wheel_j",
         custom_attributes={
-            "joint_target_ki": [Taros4Config.TARGET_KI],
             "joint_dof_mode": [JointMode.TARGET_VELOCITY],
         },
     )
@@ -288,7 +284,6 @@ def create_taros4_model(
         target_kd=Taros4Config.TARGET_KD,
         key="rear_right_wheel_j",
         custom_attributes={
-            "joint_target_ki": [Taros4Config.TARGET_KI],
             "joint_dof_mode": [JointMode.TARGET_VELOCITY],
         },
     )

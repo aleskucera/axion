@@ -7,11 +7,12 @@ import newton
 import numpy as np
 import openmesh
 import warp as wp
-from axion import AbstractSimulator
+from axion import InteractiveSimulator
 from axion import EngineConfig
 from axion import ExecutionConfig
 from axion import RenderingConfig
 from axion import SimulationConfig
+from axion import LoggingConfig
 from omegaconf import DictConfig
 
 os.environ["PYOPENGL_PLATFORM"] = "glx"
@@ -210,11 +211,24 @@ def generate_track_data(r1, r2, dist, tube_radius=0.1, segments=200, sides=12):
     return np.array(vertices, dtype=np.float32), np.array(indices, dtype=np.int32)
 
 
-class TankSurfaceSimulator(AbstractSimulator):
-    def __init__(self, sim_config, render_config, exec_config, engine_config):
+class TankSurfaceSimulator(InteractiveSimulator):
+    def __init__(
+        self,
+        sim_config: SimulationConfig,
+        render_config: RenderingConfig,
+        exec_config: ExecutionConfig,
+        engine_config: EngineConfig,
+        logging_config: LoggingConfig,
+    ):
         self.left_indices_cpu = []
         self.right_indices_cpu = []
-        super().__init__(sim_config, render_config, exec_config, engine_config)
+        super().__init__(
+            sim_config,
+            render_config,
+            exec_config,
+            engine_config,
+            logging_config,
+        )
 
         self.track_left_u = wp.zeros(1, dtype=wp.float32, device=self.model.device)
         self.track_right_u = wp.zeros(1, dtype=wp.float32, device=self.model.device)
@@ -489,8 +503,15 @@ def tank_example(cfg: DictConfig):
     sim_config: SimulationConfig = hydra.utils.instantiate(cfg.simulation)
     render_config: RenderingConfig = hydra.utils.instantiate(cfg.rendering)
     exec_config: ExecutionConfig = hydra.utils.instantiate(cfg.execution)
+    logging_config: LoggingConfig = hydra.utils.instantiate(cfg.logging)
 
-    simulator = TankSurfaceSimulator(sim_config, render_config, exec_config, engine_config)
+    simulator = TankSurfaceSimulator(
+        sim_config,
+        render_config,
+        exec_config,
+        engine_config,
+        logging_config,
+    )
     simulator.run()
 
 

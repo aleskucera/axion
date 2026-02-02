@@ -13,6 +13,7 @@ from axion.constraints import fused_batch_velocity_contact_residual_kernel
 from axion.constraints import fused_batch_velocity_joint_residual_kernel
 from axion.constraints.control_constraint import batch_control_constraint_residual_kernel
 from axion.constraints.control_constraint import fused_batch_control_constraint_residual_kernel
+from axion.math import G_matvec
 
 from .engine_config import EngineConfig
 from .engine_data import EngineData
@@ -68,30 +69,70 @@ def compute_linesearch_batch_body_u_kernel(
     linesearch_batch_body_u[batch_idx, world_idx, body_idx] = u + alpha * du
 
 
+# @wp.kernel
+# def compute_linesearch_batch_body_q_kernel(
+#     batch_body_u: wp.array(dtype=wp.spatial_vector, ndim=3),
+#     body_q_prev: wp.array(dtype=wp.transform, ndim=2),
+#     body_com: wp.array(dtype=wp.vec3, ndim=2),
+#     dt: wp.float32,
+#     # Outputs
+#     batch_body_q: wp.array(dtype=wp.transform, ndim=3),
+# ):
+#     batch_idx, world_idx, body_idx = wp.tid()
+#
+#     v = wp.spatial_top(batch_body_u[batch_idx, world_idx, body_idx])
+#     w = wp.spatial_bottom(batch_body_u[batch_idx, world_idx, body_idx])
+#
+#     x_prev = wp.transform_get_translation(body_q_prev[world_idx, body_idx])
+#     r_prev = wp.transform_get_rotation(body_q_prev[world_idx, body_idx])
+#
+#     com = body_com[world_idx, body_idx]
+#     x_com = x_prev + wp.quat_rotate(r_prev, com)
+#
+#     x = x_com + v * dt
+#     r = wp.normalize(r_prev + wp.quat(w, 0.0) * r_prev * 0.5 * dt)
+#
+#     batch_body_q[batch_idx, world_idx, body_idx] = wp.transform(x - wp.quat_rotate(r, com), r)
+
+
 @wp.kernel
 def compute_linesearch_batch_body_q_kernel(
     batch_body_u: wp.array(dtype=wp.spatial_vector, ndim=3),
     body_q_prev: wp.array(dtype=wp.transform, ndim=2),
     body_com: wp.array(dtype=wp.vec3, ndim=2),
     dt: wp.float32,
-    # Outputs
     batch_body_q: wp.array(dtype=wp.transform, ndim=3),
 ):
     batch_idx, world_idx, body_idx = wp.tid()
 
-    v = wp.spatial_top(batch_body_u[batch_idx, world_idx, body_idx])
-    w = wp.spatial_bottom(batch_body_u[batch_idx, world_idx, body_idx])
-
-    x_prev = wp.transform_get_translation(body_q_prev[world_idx, body_idx])
-    r_prev = wp.transform_get_rotation(body_q_prev[world_idx, body_idx])
-
+    u = batch_body_u[batch_idx, world_idx, body_idx]
+    tf_prev = body_q_prev[world_idx, body_idx]
     com = body_com[world_idx, body_idx]
-    x_com = x_prev + wp.quat_rotate(r_prev, com)
 
-    x = x_com + v * dt
-    r = wp.normalize(r_prev + wp.quat(w, 0.0) * r_prev * 0.5 * dt)
+    # 1. Prepare 'y' (Previous state, shifted to CoM)
+    # We must operate in CoM space because G's top-left block is Identity (decoupled v and w)
+    p_geom = wp.transform_get_translation(tf_prev)
+    r_prev = wp.transform_get_rotation(tf_prev)
+    p_com = p_geom + wp.quat_rotate(r_prev, com)
 
-    batch_body_q[batch_idx, world_idx, body_idx] = wp.transform(x - wp.quat_rotate(r, com), r)
+    tf_prev_com = wp.transform(p_com, r_prev)
+
+    # 2. Perform Fused Update
+    # res = tf_prev_com + dt * (G * u)
+    tf_new_com = G_matvec(dt, u, tf_prev_com, tf_prev_com)
+
+    # 3. Post-Process
+    # Extract results
+    p_com_new = wp.transform_get_translation(tf_new_com)
+    r_new_unnormalized = wp.transform_get_rotation(tf_new_com)
+
+    # Normalize quaternion (standard for explicit integration)
+    r_final = wp.normalize(r_new_unnormalized)
+
+    # Shift back to Geometric Origin
+    p_geom_final = p_com_new - wp.quat_rotate(r_final, com)
+
+    batch_body_q[batch_idx, world_idx, body_idx] = wp.transform(p_geom_final, r_final)
 
 
 @wp.kernel
@@ -176,6 +217,31 @@ def find_minimal_residual_index_kernel(
     minimal_index[world_idx] = min_idx
 
 
+# @wp.kernel
+# def update_body_q_kernel(
+#     body_u: wp.array(dtype=wp.spatial_vector, ndim=2),
+#     body_q_prev: wp.array(dtype=wp.transform, ndim=2),
+#     body_com: wp.array(dtype=wp.vec3, ndim=2),
+#     dt: wp.float32,
+#     body_q: wp.array(dtype=wp.transform, ndim=2),
+# ):
+#     world_idx, body_idx = wp.tid()
+#
+#     v = wp.spatial_top(body_u[world_idx, body_idx])
+#     w = wp.spatial_bottom(body_u[world_idx, body_idx])
+#
+#     x_prev = wp.transform_get_translation(body_q_prev[world_idx, body_idx])
+#     r_prev = wp.transform_get_rotation(body_q_prev[world_idx, body_idx])
+#
+#     com = body_com[world_idx, body_idx]
+#     x_com = x_prev + wp.quat_rotate(r_prev, com)
+#
+#     x = x_com + v * dt
+#     r = wp.normalize(r_prev + wp.quat(w, 0.0) * r_prev * 0.5 * dt)
+#
+#     body_q[world_idx, body_idx] = wp.transform(x - wp.quat_rotate(r, com), r)
+
+
 @wp.kernel
 def update_body_q_kernel(
     body_u: wp.array(dtype=wp.spatial_vector, ndim=2),
@@ -186,19 +252,40 @@ def update_body_q_kernel(
 ):
     world_idx, body_idx = wp.tid()
 
-    v = wp.spatial_top(body_u[world_idx, body_idx])
-    w = wp.spatial_bottom(body_u[world_idx, body_idx])
-
-    x_prev = wp.transform_get_translation(body_q_prev[world_idx, body_idx])
-    r_prev = wp.transform_get_rotation(body_q_prev[world_idx, body_idx])
-
+    # 1. Fetch Inputs
+    u = body_u[world_idx, body_idx]
+    tf_prev = body_q_prev[world_idx, body_idx]
     com = body_com[world_idx, body_idx]
-    x_com = x_prev + wp.quat_rotate(r_prev, com)
 
-    x = x_com + v * dt
-    r = wp.normalize(r_prev + wp.quat(w, 0.0) * r_prev * 0.5 * dt)
+    # 2. Shift State to Center of Mass
+    # The Matrix G identity block (top-left) assumes linear velocity 'v'
+    # moves the Center of Mass, not the geometric origin.
+    p_geom = wp.transform_get_translation(tf_prev)
+    r_prev = wp.transform_get_rotation(tf_prev)
 
-    body_q[world_idx, body_idx] = wp.transform(x - wp.quat_rotate(r, com), r)
+    p_com = p_geom + wp.quat_rotate(r_prev, com)
+
+    # Construct temporary CoM transform for the update
+    # Note: Rotation is the same for CoM and Geometric Origin
+    tf_prev_com = wp.transform(p_com, r_prev)
+
+    # 3. Fused Integration Step (AXPY)
+    # tf_new = tf_prev + dt * (G(tf_prev) * u)
+    # q_params is tf_prev_com because G is evaluated at the current state
+    tf_new_com = G_matvec(dt, u, tf_prev_com, tf_prev_com)
+
+    # 4. Post-Process
+    p_com_new = wp.transform_get_translation(tf_new_com)
+    r_new_raw = wp.transform_get_rotation(tf_new_com)
+
+    # Normalize quaternion (Explicit integration drifts off manifold)
+    r_new = wp.normalize(r_new_raw)
+
+    # Shift Position back to Geometric Origin
+    p_geom_new = p_com_new - wp.quat_rotate(r_new, com)
+
+    # 5. Store Result
+    body_q[world_idx, body_idx] = wp.transform(p_geom_new, r_new)
 
 
 def update_body_q(
@@ -416,7 +503,8 @@ def compute_linesearch_batch_h(
             model.joint_enabled,
             model.joint_dof_mode,
             data.control_constraint_offsets,
-            data.joint_target,
+            data.joint_target_pos,
+            data.joint_target_vel,
             model.joint_target_ke,
             model.joint_target_kd,
             data.dt,
@@ -439,8 +527,18 @@ def compute_linesearch_batch_h(
                 data.linesearch.batch_body_u,
                 data.body_u_prev,
                 data.linesearch.batch_body_lambda.n,
-                data.contact_interaction,
-                data.world_M_inv,
+                data.contact_body_a,
+                data.contact_body_b,
+                data.contact_point_a,
+                data.contact_point_b,
+                data.contact_thickness_a,
+                data.contact_thickness_b,
+                data.contact_dist,
+                data.contact_basis_n_a,
+                data.contact_basis_n_b,
+                data.constraint_active_mask.n,
+                model.body_inv_mass,
+                model.body_inv_inertia,
                 data.dt,
                 config.contact_compliance,
                 B,
@@ -459,7 +557,12 @@ def compute_linesearch_batch_h(
                 data.linesearch.batch_body_u,
                 data.body_u_prev,
                 data.linesearch.batch_body_lambda.n,
-                data.contact_interaction,
+                data.contact_body_a,
+                data.contact_body_b,
+                data.contact_dist,
+                data.contact_restitution_coeff,
+                data.contact_basis_n_a,
+                data.contact_basis_n_b,
                 data.dt,
                 config.contact_stabilization_factor,
                 config.contact_fb_alpha,
@@ -481,13 +584,21 @@ def compute_linesearch_batch_h(
         kernel=fused_batch_friction_residual_kernel,
         dim=(dims.N_w, dims.N_n),
         inputs=[
+            data.linesearch.batch_body_q,
             data.linesearch.batch_body_u,
             data.linesearch.batch_body_lambda.f,
             data.body_lambda_prev.f,
             data.body_lambda_prev.n,
             data.s_n_prev,
-            data.contact_interaction,
-            data.world_M_inv,
+            data.contact_body_a,
+            data.contact_body_b,
+            data.contact_friction_coeff,
+            data.contact_basis_t1_a,
+            data.contact_basis_t2_a,
+            data.contact_basis_t1_b,
+            data.contact_basis_t2_b,
+            model.body_inv_mass,
+            model.body_inv_inertia,
             data.dt,
             config.friction_compliance,
             B,

@@ -1,8 +1,7 @@
 import newton
 import numpy as np
 import warp as wp
-import pytest
-from axion.core.control_utils import JointMode
+from axion import JointMode
 from axion.core.engine import AxionEngine
 from axion.core.engine_config import AxionEngineConfig
 from axion.core.model_builder import AxionModelBuilder
@@ -88,7 +87,7 @@ def test_prismatic_position_control():
     for step in range(100):
         state_in.body_f.zero_()
         wp.copy(
-            control.joint_target,
+            control.joint_target_pos,
             wp.array(
                 np.array([target_pos], dtype=np.float32), dtype=wp.float32, device=model.device
             ),
@@ -147,7 +146,7 @@ def test_prismatic_velocity_control():
     for step in range(100):
         state_in.body_f.zero_()
         wp.copy(
-            control.joint_target,
+            control.joint_target_vel,
             wp.array(
                 np.array([target_vel], dtype=np.float32), dtype=wp.float32, device=model.device
             ),
