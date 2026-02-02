@@ -12,6 +12,7 @@ import newton
 from newton.solvers import SolverBase
 # from newton import Contacts
 from newton import Model
+
 # from newton import State
 
 # classic axion
@@ -33,7 +34,11 @@ import torch
 import sys
 from axion.nn_prediction.nerd_predictor import NeRDPredictor
 from axion.nn_prediction import models, utils
-from axion.nn_prediction.utils.analysis_utils import write_state_to_csv, write_contacts_to_csv
+from axion.nn_prediction.utils.analysis_utils import (
+    write_state_to_csv,
+    write_contacts_to_csv,
+    write_root_body_q_to_csv,
+)
 
 sys.modules['models'] = models
 sys.modules['utils'] = utils
@@ -164,6 +169,7 @@ class NerdEngine(SolverBase):
 
         self.csv_filename = Path(__file__).parent / 'pendulum_states_NerdEngine.csv'
         self.contacts_csv_filename = Path(__file__).parent / 'pendulum_contacts_NerdEngine.csv'
+        self.root_body_q_csv_filename = Path(__file__).parent / 'pendulum_root_body_q_NerdEngine.csv'
 
     def step(
         self,
@@ -188,7 +194,8 @@ class NerdEngine(SolverBase):
         else:
             shape_body_2d = self.model.shape_body
 
-        # Reorder contact data so body is always in position 0, ground in position 1
+        # Reorder contact data so body is always in position 0, ground in position 1.
+        # Output order: link1_contact1, link1_contact2, link2_contact1, link2_contact2, ...
         reordered_point0 = wp.zeros(
             (self.num_models, max_num_contacts_per_model), 
             dtype=wp.vec3, 
@@ -214,9 +221,18 @@ class NerdEngine(SolverBase):
             dtype=wp.float32, 
             device=str(self.device)
         )
-        reordered_body_shape = wp.zeros(
-            (self.num_models, max_num_contacts_per_model), 
-            dtype=wp.int32, 
+        # Initialize to -1 so unwritten slots are invalid; penetration kernel sets NON_TOUCHING_DEPTH for body_shape < 0
+        reordered_body_shape = wp.full(
+            (self.num_models, max_num_contacts_per_model),
+            -1,
+            dtype=wp.int32,
+            device=str(self.device)
+        )
+
+        # Per-body contact counter (zeroed each step) for output slot order by (link, contact index)
+        body_contact_count = wp.zeros(
+            self.model.body_count,
+            dtype=wp.int32,
             device=str(self.device)
         )
 
@@ -233,6 +249,7 @@ class NerdEngine(SolverBase):
                 contacts.rigid_contact_thickness0,
                 contacts.rigid_contact_thickness1,
                 shape_body_2d,
+                body_contact_count,
             ],
             outputs=[
                 reordered_point0,  # Always body
@@ -264,7 +281,6 @@ class NerdEngine(SolverBase):
             inputs=[
                 body_q_2d,
                 shape_body_2d,
-                contacts.rigid_contact_count,
                 reordered_point0,  # Body points (reordered)
                 reordered_point1,  # Ground points (reordered)
                 reordered_normal,  # Normal from body to ground (reordered)
@@ -281,8 +297,14 @@ class NerdEngine(SolverBase):
         # Convert to torch if needed for your neural network
         contact_depths = wp.to_torch(contact_depths_wp_array)
         contact_normals = wp.to_torch(reordered_normal).flatten().unsqueeze(0).clone()
+        # Swap y and z for all four contact slots (NeRD up_axis=Y vs axion up_axis=Z)
+        contact_normals = contact_normals.view(1, 4, 3)
+        contact_normals[:, :, [1, 2]] = contact_normals[:, :, [2, 1]]
+        contact_normals = contact_normals.view(1, 12)
         contact_thickness = wp.to_torch(reordered_thickness0).flatten().unsqueeze(0).clone()  # Body thickness
         contact_points_0 = wp.to_torch(reordered_point0).flatten().unsqueeze(0).clone()  # Body points
+        # contact_point_0_6 is index 6 (x of slot 2 = link2 contact1); scale as needed
+        contact_points_0[0, 6] *= 1.0
         contact_points_1 = wp.to_torch(reordered_point1).flatten().unsqueeze(0).clone()  # Ground points
         
         contacts = {
@@ -297,7 +319,7 @@ class NerdEngine(SolverBase):
         # Edit 1: switching axis because NeRD had up_axis=Y and axion has up_axis = z
         # Edit 2: Nerd expects root_body_q to be the pos/orient of the first pendulum link, but only its rotational part for some reason? 
         root_body_q = wp.to_torch(state_in.body_q)[0, :].unsqueeze(0)
-        root_body_q[0, :3] = torch.tensor([0.0, 0.0, 5.0])
+        root_body_q[0, :3] = torch.tensor([0.0, 0.0, 5.0]) # TO-DO: 5.0 should not be hardcoded but rather equal to PENDULUM_HEIGHT
         root_body_q[0, 5] = -root_body_q[0, 4]
         root_body_q[0, 4] = torch.tensor([0.0])
 
@@ -319,6 +341,7 @@ class NerdEngine(SolverBase):
         if self.step_cnt < 500:
             write_state_to_csv(self.csv_filename, self.step_cnt, state_predicted)
             write_contacts_to_csv(self.contacts_csv_filename, self.step_cnt, contacts)
+            write_root_body_q_to_csv(self.root_body_q_csv_filename, self.step_cnt, root_body_q)
 
         # Write into state_out 
         state_out.joint_q = wp.from_torch(state_predicted[0,:2].reshape(2,))

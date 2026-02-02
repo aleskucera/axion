@@ -159,7 +159,6 @@ def contact_penetration_depth_kernel(
     # --- Inputs (reordered 2D arrays: body always in position 0, ground in position 1) ---
     body_q: wp.array(dtype=wp.transform, ndim=2),
     shape_body: wp.array(dtype=wp.int32, ndim=2),
-    contact_count: wp.array(dtype=wp.int32, ndim=1),
     contact_point0: wp.array(dtype=wp.vec3, ndim=2),  # Always body (reordered)
     contact_point1: wp.array(dtype=wp.vec3, ndim=2),  # Always ground (reordered)
     contact_normal: wp.array(dtype=wp.vec3, ndim=2),  # From body to ground (reordered)
@@ -184,10 +183,9 @@ def contact_penetration_depth_kernel(
 
     world_idx, contact_idx = wp.tid()
 
-    # contact_count is shape (1,) from Newton, use [0]
-    if contact_idx >= contact_count[0]:
-        depths[world_idx, contact_idx] = NON_TOUCHING_DEPTH  # Inactive contact slot
-        return
+    # After reordering, we compute depth for every slot; inactive slots have body_shape < 0
+    # (Do not use contact_count here: the reorder kernel scatters Newton contacts into slots
+    # by body/link, so the active contact may be in any slot, e.g. slot 3.)
 
     # Get body index from body shape
     body_shape_idx = body_shape[world_idx, contact_idx]
@@ -227,6 +225,12 @@ def contact_penetration_depth_kernel(
     depths[world_idx, contact_idx] = -raw
 
 
+# Output slot order: link1_contact1, link1_contact2, link2_contact1, link2_contact2, ...
+# Link index = body index (body 0 = first link, body 1 = second link). Slot = body_idx * 2 + contact_index.
+MAX_CONTACTS_PER_BODY = 2
+BODY_INDEX_OFFSET = 0  # link_index = body_idx; body 0 -> slots 0,1, body 1 -> slots 2,3 (contact_point_0_6..8)
+
+
 @wp.kernel
 def reorder_ground_contacts_kernel(
     # --- Inputs from Newton (1D arrays) ---
@@ -239,6 +243,8 @@ def reorder_ground_contacts_kernel(
     contact_thickness0: wp.array(dtype=wp.float32, ndim=1),
     contact_thickness1: wp.array(dtype=wp.float32, ndim=1),
     shape_body: wp.array(dtype=wp.int32, ndim=2),
+    # --- Per-body contact counter (zeroed before launch), used to assign output slots ---
+    body_contact_count: wp.array(dtype=wp.int32, ndim=1),
     # --- Outputs (reordered, 2D arrays for neural network) ---
     reordered_point0: wp.array(dtype=wp.vec3, ndim=2),  # Always body
     reordered_point1: wp.array(dtype=wp.vec3, ndim=2),  # Always ground
@@ -252,6 +258,9 @@ def reorder_ground_contacts_kernel(
     - shape0/point0/thickness0 always belong to the body (body >= 0)
     - shape1/point1/thickness1 always belong to the ground (body == -1)
     - Normal is flipped if needed to point from body to ground
+    - Output order: link1_contact1, link1_contact2, link2_contact1, link2_contact2, ...
+      (slot = link_index * MAX_CONTACTS_PER_BODY + contact_index_within_body,
+       link_index = body_idx - BODY_INDEX_OFFSET; with offset 0: body 0 -> slots 0,1, body 1 -> slots 2,3 -> contact_point_0_6..8)
     """
     world_idx, contact_idx = wp.tid()
 
@@ -281,23 +290,34 @@ def reorder_ground_contacts_kernel(
         # Not a ground contact, skip
         return
 
+    # Body index (the non-ground body); assign output slot by (link, contact index)
+    body_idx = body_a if body_a >= 0 else body_b
+    contact_slot_within_body = wp.atomic_add(body_contact_count, body_idx, 1)
+    link_index = body_idx - BODY_INDEX_OFFSET  # 0 -> body 0 gets slots 0,1; body 1 gets slots 2,3
+    if link_index < 0:
+        return
+    slot = link_index * MAX_CONTACTS_PER_BODY + contact_slot_within_body
+
+    max_slots = reordered_point0.shape[1]
+    if slot >= max_slots:
+        return
+
     # Determine if we need to swap (if body_a is ground, swap everything)
     need_swap = (body_a == -1)
 
     if need_swap:
         # Swap: body is in position 1, ground is in position 0
-        # So we put body data in output position 0, ground data in output position 1
-        reordered_point0[world_idx, contact_idx] = contact_point1[contact_idx]  # Body point
-        reordered_point1[world_idx, contact_idx] = contact_point0[contact_idx]  # Ground point
-        reordered_normal[world_idx, contact_idx] = -contact_normal[contact_idx]  # Flip normal (from body to ground)
-        reordered_thickness0[world_idx, contact_idx] = contact_thickness1[contact_idx]  # Body thickness
-        reordered_thickness1[world_idx, contact_idx] = contact_thickness0[contact_idx]  # Ground thickness
-        reordered_body_shape[world_idx, contact_idx] = shape_b_per_world  # Body shape index (per-world)
+        reordered_point0[world_idx, slot] = contact_point1[contact_idx]  # Body point
+        reordered_point1[world_idx, slot] = contact_point0[contact_idx]  # Ground point
+        reordered_normal[world_idx, slot] = -contact_normal[contact_idx]  # Flip normal (from body to ground)
+        reordered_thickness0[world_idx, slot] = contact_thickness1[contact_idx]  # Body thickness
+        reordered_thickness1[world_idx, slot] = contact_thickness0[contact_idx]  # Ground thickness
+        reordered_body_shape[world_idx, slot] = shape_b_per_world  # Body shape index (per-world)
     else:
         # Already correct: body is in position 0, ground is in position 1
-        reordered_point0[world_idx, contact_idx] = contact_point0[contact_idx]  # Body point
-        reordered_point1[world_idx, contact_idx] = contact_point1[contact_idx]  # Ground point
-        reordered_normal[world_idx, contact_idx] = contact_normal[contact_idx]  # Normal already correct
-        reordered_thickness0[world_idx, contact_idx] = contact_thickness0[contact_idx]  # Body thickness
-        reordered_thickness1[world_idx, contact_idx] = contact_thickness1[contact_idx]  # Ground thickness
-        reordered_body_shape[world_idx, contact_idx] = shape_a_per_world  # Body shape index (per-world)
+        reordered_point0[world_idx, slot] = contact_point0[contact_idx]  # Body point
+        reordered_point1[world_idx, slot] = contact_point1[contact_idx]  # Ground point
+        reordered_normal[world_idx, slot] = contact_normal[contact_idx]  # Normal already correct
+        reordered_thickness0[world_idx, slot] = contact_thickness0[contact_idx]  # Body thickness
+        reordered_thickness1[world_idx, slot] = contact_thickness1[contact_idx]  # Ground thickness
+        reordered_body_shape[world_idx, slot] = shape_a_per_world  # Body shape index (per-world)

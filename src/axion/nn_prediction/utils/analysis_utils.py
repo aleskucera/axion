@@ -78,6 +78,26 @@ def write_state_to_csv(csv_filename, step, states):
             states[0, 3].item()   # dot_theta_2
         ])
 
+
+def write_root_body_q_to_csv(csv_filename, step, root_body_q):
+    """
+    Write root body pose (position + quaternion) to CSV file.
+
+    Args:
+        csv_filename: Path to the CSV file
+        step: Current simulation step
+        root_body_q: Tensor of shape (num_envs, 7), typically [x, y, z, qx, qy, qz, qw]
+    """
+    mode = 'w' if step == 0 else 'a'
+    with open(csv_filename, mode, newline='') as csvfile:
+        csv_writer = csv.writer(csvfile)
+        if step == 0:
+            header = ['step'] + [f'root_body_q_{i}' for i in range(root_body_q.shape[-1])]
+            csv_writer.writerow(header)
+        row = [step] + root_body_q[0, :].cpu().numpy().tolist()
+        csv_writer.writerow(row)
+
+
 def plot_states_from_csv(csv_filename, output_filename=None, format='pdf'):
     """
     Read CSV file produced by write_state_to_csv and plot the 4 state values.

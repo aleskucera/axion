@@ -52,6 +52,8 @@ def _plot_contact_csv(csv_path: Path, title: str, num_steps: int, fig_axes=None)
     """
     df = pd.read_csv(csv_path)
     df = df.head(num_steps)
+    # Ignore the first data point of every time evolution
+    df = df.iloc[1:]
     steps = df["step"].values
     contact_cols = [c for c in df.columns if c != "step"]
     groups = _group_contact_columns(contact_cols)
