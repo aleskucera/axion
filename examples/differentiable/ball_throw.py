@@ -149,7 +149,7 @@ class BallThrowOptimizer(DifferentiableSimulator):
 
     def render(self, train_iter):
         # Only render every 10 iterations
-        if self.frame > 0 and train_iter % 10 != 0:
+        if self.frame > 0 and train_iter % 5 != 0:
             return
 
         # Update the tracked color dynamically based on loss
@@ -211,7 +211,7 @@ def main(cfg: DictConfig):
         engine_config,
         logging_config,
     )
-    sim.train(iterations=60)
+    sim.train(iterations=40)
 
 
 if __name__ == "__main__":

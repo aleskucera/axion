@@ -64,10 +64,10 @@ def loss_kernel(
 
     # 2. Velocity Penalty (We want it to stop)
     # Extract linear velocity from spatial vector (indices 3,4,5)
-    qd_x = body_qd[0][0]
+    qd_y = body_qd[0][1]
 
     # Combine: distance + penalty for still moving
-    loss[0] = dist_sq + 0.1 * wp.pow(qd_x, 2.0)
+    loss[0] = dist_sq + 1.0 * wp.pow(qd_y, 2.0)
 
 
 @wp.kernel
@@ -82,10 +82,10 @@ def update_kernel(
 
     # Gradient Descent Step
     # We only update the initial velocity to minimize loss
-    qd_x = qd[0][0]
-    qd_x_grad = qd_grad[0][0]
-    qd_x_new = qd_x - alpha * qd_x_grad
-    qd[0] = wp.spatial_vector(qd_x_new, 0.0, 0.0, 0.0, 0.0, 0.0)
+    qd_y = qd[0][1]
+    qd_y_grad = qd_grad[0][1]
+    qd_y_new = qd_y - alpha * qd_y_grad
+    qd[0] = wp.spatial_vector(0.0, qd_y_new, 0.0, 0.0, 0.0, 0.0)
 
 
 class CurlingOptimizer(DifferentiableSimulator):
@@ -107,7 +107,7 @@ class CurlingOptimizer(DifferentiableSimulator):
 
         # --- Optimization Setup ---
         # Target: 4 meters along X-axis
-        self.target_pos = wp.vec3(4.0, 0.0, 0.1)
+        self.target_pos = wp.vec3(0.0, 3.0, 0.1)
 
         self.loss = wp.zeros(1, dtype=float, requires_grad=True)
         self.learning_rate = 0.3
@@ -115,7 +115,7 @@ class CurlingOptimizer(DifferentiableSimulator):
         self.frame = 0
 
         # Initial velocity guessing
-        self.init_vel = wp.spatial_vector(1.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+        self.init_vel = wp.spatial_vector(0.0, 0.5, 0.0, 0.0, 0.0, 0.0)
 
         # --- Tracking Setup ---
         # Auto-track the stone (Body 0)
@@ -253,7 +253,7 @@ def main(cfg: DictConfig):
         engine_config,
         logging_config,
     )
-    sim.train(iterations=40)
+    sim.train(iterations=30)
 
 
 if __name__ == "__main__":
