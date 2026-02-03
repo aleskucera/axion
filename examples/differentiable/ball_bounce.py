@@ -90,7 +90,7 @@ class BallBounceOptimizer(DifferentiableSimulator):
         # 2. Optimization Setup
         self.target_pos = wp.vec3(0.0, -2.0, 1.5)
         self.loss = wp.zeros(1, dtype=float, requires_grad=True)
-        self.learning_rate = 0.06
+        self.learning_rate = 0.2
 
         self.frame = 0
 
@@ -101,7 +101,13 @@ class BallBounceOptimizer(DifferentiableSimulator):
         self.track_body(body_idx=0, name="ball", color=(0.0, 1.0, 0.0))
 
     def build_model(self) -> Model:
-        shape_config = newton.ModelBuilder.ShapeConfig(ke=1e6, kf=1e3, kd=1e3, mu=0.2)
+        shape_config = newton.ModelBuilder.ShapeConfig(
+            ke=1e6,
+            kf=1e3,
+            kd=1e3,
+            mu=0.2,
+            contact_margin=0.3,
+        )
 
         # Initialize the ball
         self.builder.add_body(
@@ -182,7 +188,7 @@ class BallBounceOptimizer(DifferentiableSimulator):
             callback=draw_extras,
             loop=True,  # Enable looping
             loops_count=1,  # Play once (loop=True makes the logic cleaner)
-            playback_speed=0.3,  # Slow Motion
+            playback_speed=1.0,  # Slow Motion
         )
 
         self.frame += 1

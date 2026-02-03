@@ -120,8 +120,6 @@ class DifferentiableSimulator(BaseSimulator, ABC):
             # Collision is usually non-differentiable or handled separately
             self.contacts = self.model.collide(self.states[i], self.collision_pipeline)
 
-            # Optional: Apply control policy if defined
-
             # Integrate step on the tape
             with self.tape:
                 self.control_policy(self.states[i])
@@ -138,6 +136,9 @@ class DifferentiableSimulator(BaseSimulator, ABC):
 
         # --- BACKWARD PASS ---
         self.tape.backward(self.loss)
+
+    def _axion_forward_backward_implicit(self):
+        pass
 
     def _newton_forward_backward(self):
         """
