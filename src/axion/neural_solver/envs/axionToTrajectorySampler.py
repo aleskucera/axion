@@ -33,9 +33,9 @@ import shutil
 base_dir = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "../"))
 sys.path.append(base_dir)
 
-from src.neural_solver.utils import warp_utils
-from src.neural_solver.utils.python_utils import print_ok
-from src.neural_solver.envs.axionEnv import AxionEnv
+from src.axion.neural_solver.utils import warp_utils
+from src.axion.neural_solver.utils.python_utils import print_ok
+from src.axion.neural_solver.envs.axionEnv import AxionEnv
 
 
 class AxionEnvToTrajectorySamplerAdapter:

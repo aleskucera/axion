@@ -23,11 +23,11 @@ from tqdm import trange
 
 import warp as wp
 
-from src.neural_solver.envs.axionToTrajectorySampler import AxionEnvToTrajectorySamplerAdapter
-from generate.simulation_sampler import \
+from src.axion.neural_solver.envs.axionToTrajectorySampler import AxionEnvToTrajectorySamplerAdapter
+from src.axion.neural_solver.generate.simulation_sampler import \
     UniformSampler, \
     compute_contact_points_0_world, compute_contact_points_1
-from generate.trajectory_sampler import TrajectorySampler
+from src.axion.neural_solver.generate.trajectory_sampler import TrajectorySampler
 
 import torch
 

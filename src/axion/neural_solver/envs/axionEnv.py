@@ -17,24 +17,63 @@ import warp as wp
 import newton
 
 from axion.core.contacts import AxionContacts
-from axion.core.control_utils import JointMode
+from axion import JointMode
 from axion.core.engine import AxionEngine
 from axion.core.engine_config import AxionEngineConfig
 from axion.core.model_builder import AxionModelBuilder
 
 # Approximate penetration depth from endpoints and normal.
 # depth = dot(point1 - point0, normal)
+# @wp.kernel
+# def compute_depth(
+#     p0: wp.array(dtype=wp.vec3, ndim=2),
+#     p1: wp.array(dtype=wp.vec3, ndim=2),
+#     n: wp.array(dtype=wp.vec3, ndim=2),
+#     depth: wp.array(dtype=float, ndim=2),
+# ):
+#     w = wp.tid() // p0.shape[1]
+#     i = wp.tid() % p0.shape[1]
+#     d = wp.dot(p1[w, i] - p0[w, i], n[w, i])
+#     depth[w, i] = d
+
+
 @wp.kernel
-def compute_depth(
-    p0: wp.array(dtype=wp.vec3, ndim=2),
-    p1: wp.array(dtype=wp.vec3, ndim=2),
-    n: wp.array(dtype=wp.vec3, ndim=2),
-    depth: wp.array(dtype=float, ndim=2),
+def compute_depth_flat(
+    p0: wp.array(dtype=wp.vec3),
+    p1: wp.array(dtype=wp.vec3),
+    n: wp.array(dtype=wp.vec3),
+    depth: wp.array(dtype=float),
 ):
-    w = wp.tid() // p0.shape[1]
-    i = wp.tid() % p0.shape[1]
-    d = wp.dot(p1[w, i] - p0[w, i], n[w, i])
-    depth[w, i] = d
+    i = wp.tid()
+    depth[i] = wp.dot(p1[i] - p0[i], n[i])
+
+
+# Copy batched (num_worlds, num_contacts_per_env) -> flat (num_total_contacts) for NeRD-style 1D API.
+@wp.kernel
+def batched_to_flat_kernel(
+    num_contacts_per_env: wp.int32,
+    batched_point0: wp.array(dtype=wp.vec3, ndim=2),
+    batched_point1: wp.array(dtype=wp.vec3, ndim=2),
+    batched_normal: wp.array(dtype=wp.vec3, ndim=2),
+    batched_shape0: wp.array(dtype=wp.int32, ndim=2),
+    batched_shape1: wp.array(dtype=wp.int32, ndim=2),
+    batched_thickness: wp.array(dtype=wp.float32, ndim=2),
+    flat_point0: wp.array(dtype=wp.vec3),
+    flat_point1: wp.array(dtype=wp.vec3),
+    flat_normal: wp.array(dtype=wp.vec3),
+    flat_shape0: wp.array(dtype=wp.int32),
+    flat_shape1: wp.array(dtype=wp.int32),
+    flat_thickness: wp.array(dtype=wp.float32),
+):
+    tid = wp.tid()
+    world = tid // num_contacts_per_env
+    slot = tid % num_contacts_per_env
+    flat_point0[tid] = batched_point0[world, slot]
+    flat_point1[tid] = batched_point1[world, slot]
+    flat_normal[tid] = batched_normal[world, slot]
+    flat_shape0[tid] = batched_shape0[world, slot]
+    flat_shape1[tid] = batched_shape1[world, slot]
+    flat_thickness[tid] = batched_thickness[world, slot]
 
 
 # Pendulum geometry (match examples/pendulum_AxionEngine.py)
@@ -91,7 +130,7 @@ def build_pendulum_model(
         target_ke=1000.0,
         target_kd=50.0,
         custom_attributes={
-            "joint_target_ki": [0.5],
+            #"joint_target_ki": [0.5],
             "joint_dof_mode": [JointMode.NONE],
         },
     )
@@ -104,7 +143,7 @@ def build_pendulum_model(
         target_ke=500.0,
         target_kd=5.0,
         custom_attributes={
-            "joint_target_ki": [0.5],
+            #"joint_target_ki": [0.5],
             "joint_dof_mode": [JointMode.NONE],
         },
         armature=0.1,
@@ -188,9 +227,19 @@ class AxionEnv:
         self.control: newton.Control = self.model.control()
 
         # Contacts and Axion engine
+        rigid_max = max(
+            self.model.rigid_contact_max,
+            self.model.num_worlds * 32,
+        )
         self._contacts = newton.Contacts(
-            rigid_contact_max=self.model.rigid_contact_max,
-            soft_contact_max=0,
+            rigid_max,
+            0,
+            requires_grad=requires_grad,
+            device=self._cfg.device,
+        )
+        self._contacts_abstract = newton.Contacts(
+            rigid_max,
+            0,
             requires_grad=requires_grad,
             device=self._cfg.device,
         )
@@ -232,11 +281,15 @@ class AxionEnv:
         )
 
         # Simple identity mapping: all DOFs are controllable with unit gain.
-        self.controllable_dofs_wp = wp.arange(
-            0, self.joint_act_dim, dtype=int, device=self.device
+        self.controllable_dofs_wp = wp.array(
+            np.arange(self.joint_act_dim, dtype=np.int32),
+            dtype=wp.int32,
+            device=self.device,
         )
-        self.control_gains_wp = wp.ones(
-            self.control_dim, dtype=float, device=self.device
+        self.control_gains_wp = wp.array(
+            np.ones(self.control_dim, dtype=np.float64),
+            dtype=wp.float64,
+            device=self.device,
         )
 
         # Temporary joint_act buffer exposed to the adapter.
@@ -300,10 +353,23 @@ class AxionEnv:
             self._axion_contacts.load_contact_data(self._contacts)
             self.abstract_contacts.update_from_axion()
         else:
-            # In abstract mode we assume abstract_contacts has been written to.
-            # AxionContacts will be loaded from those buffers (implementation
-            # detail omitted for brevity).
-            pass
+            # In abstract mode: copy flat abstract_contacts into Newton Contacts
+            # so the engine uses them in _initialize_constraints(contacts).
+            ac = self.abstract_contacts
+            n = ac.num_total_contacts
+            self._contacts_abstract.clear()
+            wp.copy(self._contacts_abstract.rigid_contact_point0, ac.contact_point0)
+            wp.copy(self._contacts_abstract.rigid_contact_point1, ac.contact_point1)
+            wp.copy(self._contacts_abstract.rigid_contact_normal, ac.contact_normal)
+            wp.copy(self._contacts_abstract.rigid_contact_shape0, ac.contact_shape0)
+            wp.copy(self._contacts_abstract.rigid_contact_shape1, ac.contact_shape1)
+            wp.copy(self._contacts_abstract.rigid_contact_thickness0, ac.contact_thickness)
+            self._contacts_abstract.rigid_contact_thickness1.zero_()
+            wp.copy(
+                self._contacts_abstract.rigid_contact_count,
+                wp.array([n], dtype=wp.int32, device=self.device),
+            )
+            self._contacts = self._contacts_abstract
 
         # Single Axion engine step.
         self._engine.step(
@@ -333,7 +399,9 @@ class AxionEnv:
 
 class _AxionAbstractContacts:
     """
-    Thin adapter exposing AxionContacts in the NeRD abstract_contacts format.
+    Adapter exposing AxionContacts in the NeRD abstract_contacts format:
+    flat 1D arrays (num_total_contacts,) so kernels like compute_contact_points_0_world
+    can use contact_id = wp.tid() and index contact_shape0[contact_id], etc.
     """
 
     def __init__(self, model: newton.Model, axion_contacts: AxionContacts) -> None:
@@ -343,49 +411,65 @@ class _AxionAbstractContacts:
 
         self.num_worlds = model.num_worlds
         self.num_contacts_per_env = axion_contacts.max_contacts
+        self.num_total_contacts = self.num_worlds * self.num_contacts_per_env
 
         with wp.ScopedDevice(self.device):
             self.contact_point0 = wp.zeros(
-                (self.num_worlds, self.num_contacts_per_env),
+                self.num_total_contacts,
                 dtype=wp.vec3,
             )
             self.contact_point1 = wp.zeros(
-                (self.num_worlds, self.num_contacts_per_env),
+                self.num_total_contacts,
                 dtype=wp.vec3,
             )
             self.contact_normal = wp.zeros(
-                (self.num_worlds, self.num_contacts_per_env),
+                self.num_total_contacts,
                 dtype=wp.vec3,
             )
             self.contact_shape0 = wp.zeros(
-                (self.num_worlds, self.num_contacts_per_env),
+                self.num_total_contacts,
                 dtype=wp.int32,
             )
             self.contact_shape1 = wp.zeros(
-                (self.num_worlds, self.num_contacts_per_env),
+                self.num_total_contacts,
                 dtype=wp.int32,
             )
             self.contact_thickness = wp.zeros(
-                (self.num_worlds, self.num_contacts_per_env),
+                self.num_total_contacts,
                 dtype=wp.float32,
             )
             self.contact_depth = wp.zeros(
-                (self.num_worlds, self.num_contacts_per_env),
+                self.num_total_contacts,
                 dtype=wp.float32,
             )
 
     def update_from_axion(self) -> None:
-        # Copy from AxionContacts buffers into the abstract view.
-        wp.copy(self.contact_point0, self._axion_contacts.contact_point0)
-        wp.copy(self.contact_point1, self._axion_contacts.contact_point1)
-        wp.copy(self.contact_normal, self._axion_contacts.contact_normal)
-        wp.copy(self.contact_shape0, self._axion_contacts.contact_shape0)
-        wp.copy(self.contact_shape1, self._axion_contacts.contact_shape1)
-        wp.copy(self.contact_thickness, self._axion_contacts.contact_thickness0)
-
-        total = self.num_worlds * self.num_contacts_per_env
+        # Copy from AxionContacts (batched 2D) into flat 1D abstract view.
+        total = self.num_total_contacts
         wp.launch(
-            compute_depth,
+            batched_to_flat_kernel,
+            dim=total,
+            inputs=[
+                self.num_contacts_per_env,
+                self._axion_contacts.contact_point0,
+                self._axion_contacts.contact_point1,
+                self._axion_contacts.contact_normal,
+                self._axion_contacts.contact_shape0,
+                self._axion_contacts.contact_shape1,
+                self._axion_contacts.contact_thickness0,
+            ],
+            outputs=[
+                self.contact_point0,
+                self.contact_point1,
+                self.contact_normal,
+                self.contact_shape0,
+                self.contact_shape1,
+                self.contact_thickness,
+            ],
+            device=self.device,
+        )
+        wp.launch(
+            compute_depth_flat,
             dim=total,
             inputs=[self.contact_point0, self.contact_point1, self.contact_normal],
             outputs=[self.contact_depth],
