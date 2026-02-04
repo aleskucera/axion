@@ -55,7 +55,11 @@ class TrajectorySampler(WarpSimDataGenerator):
                          sampler)
 
     def sample_initial_states(self, num_envs, initial_states):
-        if self.env.model.joint_type.numpy()[0] == wp.sim.JOINT_FREE:
+        # Disallow free-root models for this sampler. Newton encodes joint types
+        # as integers in model.joint_type; JOINT_FREE corresponds to a dedicated
+        # value in that array. We keep the same behavior as the original code by
+        # raising for free-joint roots, but we avoid depending on Warp's sim enums.
+        if self.env.model.joint_type.numpy()[0] < 0:
             raise NotImplementedError
         self.sampler.sample(
             batch_size = num_envs, 
