@@ -15,7 +15,7 @@
 
 import torch
 import torch.nn as nn
-from src.neural_solver.models import model_utils
+from src.axion.neural_solver.models import model_utils
 import numpy as np
 
 class MLPBase(nn.Module):
