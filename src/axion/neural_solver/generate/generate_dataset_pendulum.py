@@ -19,24 +19,23 @@ Generate dataset for Pendulum
 import sys
 import os
 
-# Project root (directory containing 'src') so that "from src.neural_solver..." works
-# when run as: python src/neural_solver/generate/generate_dataset_pendulum.py
+# Project root (directory containing 'src') so that "from src.axion.neural_solver..." works
+# when run as: python src/axion/neural_solver/generate/generate_dataset_pendulum.py
 _script_dir = os.path.dirname(os.path.abspath(__file__))
-_project_root = os.path.abspath(os.path.join(_script_dir, "..", "..", ".."))
+_project_root = os.path.abspath(os.path.join(_script_dir, "..", "..", "..", ".."))
 if _project_root not in sys.path:
     sys.path.insert(0, _project_root)
 
 # Default directory for generated datasets (inside project)
-_DEFAULT_DATASET_DIR = os.path.join(_project_root, "datasets")
+_DEFAULT_DATASET_DIR = os.path.join(_project_root, "src/axion/neural_solver/datasets")
 
 import os
 import argparse
 import h5py
-
-from src.neural_solver.generate.trajectory_sampler_pendulum import TrajectorySamplerPendulum
-from src.neural_solver.utils.python_utils import set_random_seed
-from src.neural_solver.envs.axionToTrajectorySampler import AxionEnvToTrajectorySamplerAdapter
-from src.neural_solver.utils.commons import (
+from src.axion.neural_solver.generate.trajectory_sampler_pendulum import TrajectorySamplerPendulum
+from src.axion.neural_solver.utils.python_utils import set_random_seed
+from src.axion.neural_solver.envs.axionToTrajectorySampler import AxionEnvToTrajectorySamplerAdapter
+from src.axion.neural_solver.utils.commons import (
     JOINT_Q_MIN,
     JOINT_Q_MAX,
     JOINT_QD_MIN,

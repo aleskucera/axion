@@ -15,8 +15,8 @@
 
 import torch
 import torch.nn as nn
-from src.neural_solver.models import MLPBase, LSTMBase, GRUBase
-from src.neural_solver.models.model_transformer import GPT, GPTConfig
+from src.axion.neural_solver.models import MLPBase, LSTMBase, GRUBase
+from src.axion.neural_solver.models.model_transformer import GPT, GPTConfig
 
 class MLPDeterministic(nn.Module):
     def __init__(
