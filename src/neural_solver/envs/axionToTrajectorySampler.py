@@ -34,8 +34,8 @@ base_dir = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__
 sys.path.append(base_dir)
 
 from src.neural_solver.utils import warp_utils
-#from utils.env_utils import create_abstract_contact_env
 from src.neural_solver.utils.python_utils import print_ok
+from src.neural_solver.envs.axionEnv import AxionEnv
 
 
 class AxionEnvToTrajectorySamplerAdapter:
@@ -55,13 +55,16 @@ class AxionEnvToTrajectorySamplerAdapter:
         device: str = "cuda:0",
         render: bool = False,
         custom_articulation_builder=None,
+        **kwargs,
     ):
+        # Ignore legacy NeRD kwargs (neural_integrator_cfg, neural_model, default_env_mode, etc.)
         if warp_env_cfg is None:
             warp_env_cfg = {}
         if custom_articulation_builder is not None:
             warp_env_cfg = {**warp_env_cfg, "custom_articulation_builder": custom_articulation_builder}
 
-        self.env = create_abstract_contact_env(
+        # Use AxionEnv as backend, preserving the public API contract.
+        self.env = AxionEnv(
             env_name=env_name,
             num_envs=num_envs,
             requires_grad=False,
@@ -70,13 +73,19 @@ class AxionEnvToTrajectorySamplerAdapter:
             **warp_env_cfg,
         )
 
-        # Dummy neural integrator only for wrap2PI and reset(); no neural model.
-        from integrators.integrator_neural import NeuralIntegrator
+        # Dummy integrator only for wrap2PI and reset(); no neural model.
+        class _DummyIntegrator:
+            def __init__(self, model):
+                self.model = model
 
-        self._integrator_dummy = NeuralIntegrator(
-            model=self.env.model,
-            neural_model=None,
-        )
+            def wrap2PI(self, states):
+                # No-op placeholder; angle wrapping can be added if needed.
+                return states
+
+            def reset(self):
+                return
+
+        self._integrator_dummy = _DummyIntegrator(model=self.env.model)
 
         self.env_mode = "ground-truth"
 
