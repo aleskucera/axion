@@ -13,7 +13,6 @@ from axion import LoggingConfig
 from axion import RenderingConfig
 from axion import SimulationConfig
 from newton import Model
-from newton import ModelBuilder
 from omegaconf import DictConfig
 
 os.environ["PYOPENGL_PLATFORM"] = "glx"
@@ -43,41 +42,48 @@ def bourke_color_map(v_min, v_max, v):
 
 @wp.kernel
 def loss_kernel(
-    body_q: wp.array(dtype=wp.transform),
+    body_q: wp.array(dtype=wp.transform, ndim=2),
+    body_qd: wp.array(dtype=wp.spatial_vector, ndim=2),
+    body_f: wp.array(dtype=wp.spatial_vector, ndim=2),
     target_pos: wp.vec3,
     loss: wp.array(dtype=wp.float32),
 ):
-    tid = wp.tid()
-    if tid > 0:
+    step_idx = wp.tid()
+    if step_idx >= body_q.shape[0]:
         return
 
-    pos = wp.transform_get_translation(body_q[0])
-    delta = pos - target_pos
-    loss[0] = wp.dot(delta, delta)
+    if step_idx == (body_q.shape[0] - 2):  # The last step
+        pos = wp.transform_get_translation(body_q[step_idx, 0])
+        delta = target_pos - pos
+        final_position_loss = wp.dot(delta, delta)
+        wp.atomic_add(loss, 0, final_position_loss)
+
+    # qd = body_qd[step_idx, 0]
+    # velocity_loss = wp.spatial_dot(qd, qd) / wp.float(body_q.shape[0])
+    # wp.atomic_add(loss, 0, velocity_loss)
+
+    # f = body_f[step_idx, 0]
+    # f_delta = wp.spatial_vector(0.0, 2.0, 0.0, 0.0, 0.0, 0.0) - f
+    # f_loss = wp.spatial_dot(f_delta, f_delta)
+    # wp.atomic_add(loss, 0, f_loss)
 
 
 @wp.kernel
 def update_kernel(
-    qd_grad: wp.array(dtype=wp.spatial_vector),
+    body_inv_mass_grad: wp.array(dtype=wp.float32),
     alpha: float,
-    qd: wp.array(dtype=wp.spatial_vector),
+    body_inv_mass: wp.array(dtype=wp.float32),
 ):
-    tid = wp.tid()
-    if tid > 0:
+    step_idx = wp.tid()
+    if step_idx >= body_inv_mass.shape[0]:
         return
 
     # gradient descent step
-    qd[0] = qd[0] - qd_grad[0] * alpha
-
-    wp.printf(
-        "Gradient: [%f %f %f %f %f %f %f]\n",
-        qd_grad[0][0],
-        qd_grad[0][1],
-        qd_grad[0][2],
-        qd_grad[0][3],
-        qd_grad[0][4],
-        qd_grad[0][5],
-    )
+    body_inv_mass[0] = wp.max(body_inv_mass[0] - alpha * body_inv_mass_grad[0], 0.001)
+    if step_idx == 0:
+        wp.printf("Body mass shape: %d\n", body_inv_mass.shape[0])
+        wp.printf("Body mass value: %f\n", body_inv_mass[0])
+        wp.printf("Gradient: %f\n", body_inv_mass_grad[0])
 
 
 class BallThrowOptimizer(DifferentiableSimulator):
@@ -101,24 +107,24 @@ class BallThrowOptimizer(DifferentiableSimulator):
         # Target is now forward in Y, instead of requiring a bounce
         self.target_pos = wp.vec3(0.0, 3.0, 3.5)
         self.loss = wp.zeros(1, dtype=float, requires_grad=True)
-        self.learning_rate = 0.1
+        self.learning_rate = 0.00001
 
         self.frame = 0
 
         # Initial velocity guessing (w, v) -> v=(0, 2, 5)
         # Starting with a velocity that might undershoot or miss
-        self.init_vel = wp.spatial_vector(0.0, 5.0, 2.0, 0.0, 0.0, 0.0)
+        self.init_vel = wp.spatial_vector(0.0, 2.0, 9.0, 0.0, 0.0, 0.0)
 
         # 3. Setup Automatic Trajectory Tracking
         self.track_body(body_idx=0, name="ball", color=(0.0, 1.0, 0.0))
 
     def build_model(self) -> Model:
-        shape_config = newton.ModelBuilder.ShapeConfig(ke=1e6, kf=1e3, kd=1e3, mu=0.2)
+        shape_config = newton.ModelBuilder.ShapeConfig(ke=1e6, kf=1e3, kd=1e3, mu=0.2, density=0.0)
 
         # Initialize the ball
         self.builder.add_body(
             xform=wp.transform(wp.vec3(0.0, -0.5, 1.0), wp.quat_identity()),
-            mass=1.0,
+            mass=10.0,
         )
         self.builder.add_shape_sphere(body=0, radius=0.2, cfg=shape_config)
 
@@ -133,9 +139,11 @@ class BallThrowOptimizer(DifferentiableSimulator):
     def compute_loss(self) -> wp.array:
         wp.launch(
             kernel=loss_kernel,
-            dim=1,
+            dim=self.clock.total_sim_steps,
             inputs=[
-                self.states[-1].body_q,
+                self.episode_buffer.body_q,
+                self.episode_buffer.body_qd,
+                self.episode_buffer.body_f,
                 self.target_pos,
             ],
             outputs=[
@@ -147,13 +155,13 @@ class BallThrowOptimizer(DifferentiableSimulator):
     def update(self):
         wp.launch(
             kernel=update_kernel,
-            dim=1,
+            dim=self.clock.total_sim_steps,
             inputs=[
-                self.states[0].body_qd.grad,
+                self.model.body_inv_mass.grad,
                 self.learning_rate,
             ],
             outputs=[
-                self.states[0].body_qd,
+                self.model.body_inv_mass,
             ],
         )
 

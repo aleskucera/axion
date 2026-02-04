@@ -6,12 +6,12 @@ import hydra
 import newton
 import numpy as np
 import warp as wp
-from axion import InteractiveSimulator
 from axion import EngineConfig
 from axion import ExecutionConfig
+from axion import InteractiveSimulator
+from axion import LoggingConfig
 from axion import RenderingConfig
 from axion import SimulationConfig
-from axion import LoggingConfig
 from omegaconf import DictConfig
 
 os.environ["PYOPENGL_PLATFORM"] = "glx"
@@ -286,7 +286,7 @@ class TrackControlSimulator(InteractiveSimulator):
         wp.launch(
             kernel=integrate_track_kernel,
             dim=1,
-            inputs=[self.track_global_u, self.track_velocity, self.effective_timestep],
+            inputs=[self.track_global_u, self.track_velocity, self.clock.dt],
             device=self.model.device,
         )
 

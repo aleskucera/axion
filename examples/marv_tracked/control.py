@@ -12,9 +12,9 @@ import warp as wp
 from axion import EngineConfig
 from axion import ExecutionConfig
 from axion import InteractiveSimulator
+from axion import LoggingConfig
 from axion import RenderingConfig
 from axion import SimulationConfig
-from axion import LoggingConfig
 from omegaconf import DictConfig
 
 try:
@@ -316,7 +316,7 @@ class MarvTrackedSimulator(InteractiveSimulator):
             wp.launch(
                 kernel=integrate_track_kernel,
                 dim=1,
-                inputs=[state["u"], state["vel"], self.effective_timestep],
+                inputs=[state["u"], state["vel"], self.clock.dt],
                 device=self.model.device,
             )
 

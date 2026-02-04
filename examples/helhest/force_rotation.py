@@ -83,7 +83,7 @@ class HelhestRotationSimulator(InteractiveSimulator):
         wp.launch(
             apply_force_ramp,
             dim=1,
-            inputs=[self.effective_timestep, self.time],
+            inputs=[self.clock.dt, self.time],
             outputs=[self.control.joint_f],
             # device=self.device,
         )

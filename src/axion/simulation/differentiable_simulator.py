@@ -13,6 +13,7 @@ from axion.core.engine_config import SemiImplicitEngineConfig
 from axion.core.logging_config import LoggingConfig
 
 from .base_simulator import BaseSimulator
+from .episode_buffer import EpisodeBuffer
 from .sim_config import ExecutionConfig
 from .sim_config import RenderingConfig
 from .sim_config import SimulationConfig
@@ -55,7 +56,9 @@ class DifferentiableSimulator(BaseSimulator, ABC):
         self.states = [
             self.model.state(requires_grad=True) for _ in range(self.clock.total_sim_steps + 1)
         ]
-        self.control = self.model.control()
+        self.controls = [
+            self.model.control(requires_grad=True) for _ in range(self.clock.total_sim_steps)
+        ]
 
         # 3. Collision Setup
         self.collision_pipeline = newton.CollisionPipeline.from_model(self.model)
@@ -72,9 +75,34 @@ class DifferentiableSimulator(BaseSimulator, ABC):
         # 5. Gradient Tape & Graphing
         self.cuda_graph: Optional[wp.Graph] = None
         self.tape = wp.Tape()
-        self.loss = wp.zeros(1, dtype=wp.float32)
+        self.loss = wp.zeros(1, dtype=wp.float32, requires_grad=True)
 
         self._tracked_bodies = {}
+
+        self.episode_buffer = EpisodeBuffer(
+            model=self.model,
+            num_steps=self.clock.total_sim_steps,
+            device=self.model.device,
+        )
+
+        # Possible optimized values
+        self.optimized_body_f = wp.zeros(
+            shape=(self.clock.total_sim_steps, self.model.body_count),
+            dtype=wp.spatial_vector,
+            requires_grad=True,
+        )
+
+        self.optimized_joint_target_pos = wp.zeros(
+            shape=(self.clock.total_sim_steps, self.model.joint_dof_count),
+            dtype=wp.float32,
+            requires_grad=True,
+        )
+
+        self.optimized_joint_target_vel = wp.zeros(
+            shape=(self.clock.total_sim_steps, self.model.joint_dof_count),
+            dtype=wp.float32,
+            requires_grad=True,
+        )
 
     # ============== ABSTRACT METHODS ==============
     # These methods together with the world model define the experiment
@@ -111,18 +139,23 @@ class DifferentiableSimulator(BaseSimulator, ABC):
             )
 
     def _axion_forward_backward_explicit(self):
+        self.episode_buffer.reset()
+        self.tape.zero()
+
+        with self.tape:
+            self.episode_buffer.save_state(self.states[0], 0)
+
         # --- FORWARD PASS ---
         for i in range(self.clock.total_sim_steps):
             # Clear forces on the tape
             with self.tape:
-                self.states[i].clear_forces()
+                self.episode_buffer.apply_external_force(self.states[i], i)
 
             # Collision is usually non-differentiable or handled separately
             self.contacts = self.model.collide(self.states[i], self.collision_pipeline)
 
             # Integrate step on the tape
             with self.tape:
-                self.control_policy(self.states[i])
                 self.solver.step(
                     state_in=self.states[i],
                     state_out=self.states[i + 1],
@@ -130,6 +163,7 @@ class DifferentiableSimulator(BaseSimulator, ABC):
                     contacts=self.contacts,
                     dt=self.clock.dt,
                 )
+                self.episode_buffer.save_state(self.states[i + 1], i + 1)
 
         with self.tape:
             self.compute_loss()
@@ -147,29 +181,31 @@ class DifferentiableSimulator(BaseSimulator, ABC):
         """
 
         # Zero-out the gradients
+        self.episode_buffer.reset()
         self.tape.zero()
+
+        with self.tape:
+            self.episode_buffer.save_state(self.states[0], 0)
 
         # --- FORWARD PASS ---
         for i in range(self.clock.total_sim_steps):
             # Clear forces on the tape
             with self.tape:
-                self.states[i].clear_forces()
+                self.episode_buffer.apply_external_force(self.states[i], i)
 
             # Collision is usually non-differentiable or handled separately
             self.contacts = self.model.collide(self.states[i], self.collision_pipeline)
-
-            # Optional: Apply control policy if defined
-            # self.control_policy(self.states[i])
 
             # Integrate step on the tape
             with self.tape:
                 self.solver.step(
                     state_in=self.states[i],
                     state_out=self.states[i + 1],
-                    control=self.control,
+                    control=self.controls[i],
                     contacts=self.contacts,
                     dt=self.clock.dt,
                 )
+                self.episode_buffer.save_state(self.states[i + 1], i + 1)
 
         # Compute loss on the final state (or trajectory)
         with self.tape:
