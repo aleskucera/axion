@@ -14,6 +14,7 @@
 # limitations under the License.
 
 import warp as wp
+import newton
 
 @wp.kernel(enable_backward=False)
 def _assign_states(
@@ -117,22 +118,23 @@ def assign_joint_acts_from_actions_torch(warp_env, actions):
 
 ''' apply generalized coordinates to maximal coordinates '''
 def eval_fk(model, state):
-    wp.sim.eval_fk(
+    # Newton-based forward kinematics: updates state.body_q / state.body_qd
+    newton.eval_fk(
         model,
         state.joint_q,
         state.joint_qd,
-        None,
-        state
+        state,
     )
-    
-''' convert new maximal coordinates back to generalized coordinates '''
+
+''' convert maximal coordinates back to generalized coordinates '''
 def eval_ik(model, state):
-    wp.sim.eval_ik(
+    # Newton-based inverse kinematics: updates state.joint_q / state.joint_qd
+    newton.eval_ik(
         model,
         state,
         state.joint_q,
-        state.joint_qd
+        state.joint_qd,
     )
-    
+
 def device_to_torch(warp_device):
     return wp.device_to_torch(warp_device)

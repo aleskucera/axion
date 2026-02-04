@@ -191,8 +191,10 @@ class TrajectorySamplerPendulum(TrajectorySampler):
             device = self.torch_device
         )
         
-        contact_thickness = self.env.abstract_contacts.contact_thickness
-        
+        # Scalar thickness for plane sampling (AxionEnv uses 2D wp arrays; take first element)
+        _ct = self.env.abstract_contacts.contact_thickness
+        contact_thickness_scalar = float(wp.to_torch(_ct).flatten()[0].item())
+
         self.env.set_env_mode('ground-truth')
         
         _eval_collisions = self.env.eval_collisions
@@ -225,22 +227,18 @@ class TrajectorySamplerPendulum(TrajectorySampler):
             self.env.reset(initial_states = initial_states)
 
             """ Sample grounds (normal, d) -> dot(normal, x) = d """
-            # Step 1: compute contact points 0 in world frame
+            # Step 1: compute contact points 0 in world frame (abstract_contacts are wp arrays)
             wp.launch(
                 compute_contact_points_0_world,
                 dim=self.num_envs * num_contacts_per_env,
                 inputs=[
                     self.env.sim_states.body_q,
                     self.env.model.shape_body,
-                    wp.from_torch(self.env.abstract_contacts.contact_shape0),
-                    wp.from_torch(
-                        self.env.abstract_contacts.contact_point0, 
-                        dtype=wp.vec3
-                    )
+                    self.env.abstract_contacts.contact_shape0,
+                    self.env.abstract_contacts.contact_point0,
                 ],
-                outputs=[
-                    wp.from_torch(contact_points_0_world_batch, dtype=wp.vec3)
-                ]
+                outputs=[wp.from_torch(contact_points_0_world_batch, dtype=wp.vec3)],
+                device=self.env.device,
             )
             
             # Step 2: sample a ground normal for each env
@@ -273,7 +271,7 @@ class TrajectorySamplerPendulum(TrajectorySampler):
             root_pos = self.env.root_body_q[:, 0:3]
             d_root = torch.sum(root_pos * normals_batch, dim = -1)
             d_lower = d_root - 3.5
-            d_upper = d_tangential - contact_thickness[0]
+            d_upper = d_tangential - contact_thickness_scalar
             assert (d_upper >= d_lower).all()
             
             self.sampler.sample(
@@ -292,66 +290,65 @@ class TrajectorySamplerPendulum(TrajectorySampler):
                     inputs=[
                         self.env.sim_states.body_q,
                         self.env.model.shape_body,
-                        wp.from_torch(self.env.abstract_contacts.contact_shape0),
-                        wp.from_torch(
-                            self.env.abstract_contacts.contact_point0, 
-                            dtype=wp.vec3
-                        )
+                        self.env.abstract_contacts.contact_shape0,
+                        self.env.abstract_contacts.contact_point0,
                     ],
-                    outputs=[
-                        wp.from_torch(contact_points_0_world_batch, dtype=wp.vec3)
-                    ]
+                    outputs=[wp.from_torch(contact_points_0_world_batch, dtype=wp.vec3)],
+                    device=self.env.device,
                 )
-                
+
                 # compute contact_depths
                 contact_depths[step, :, :] = (
                     contact_points_0_world_batch.view(
                         self.num_envs, num_contacts_per_env, 3
                     ) * expanded_normals_batch
                 ).sum(-1) - ds_batch.unsqueeze(-1)
-                
-                # calculate contact point1 and set abstract contact configurations
-                self.env.abstract_contacts.contact_normal[...] = expanded_normals_batch.view(-1, 3)
-                self.env.abstract_contacts.contact_depth[...] = contact_depths[step, :, :].view(-1)
-                
+
+                # write to abstract_contacts (wp arrays) via copy
+                ac = self.env.abstract_contacts
+                wp.copy(
+                    ac.contact_normal,
+                    wp.from_torch(
+                        expanded_normals_batch.view(-1, 3).contiguous(),
+                        dtype=wp.vec3,
+                    ),
+                )
+                wp.copy(
+                    ac.contact_depth,
+                    wp.from_torch(contact_depths[step, :, :].flatten().contiguous()),
+                )
+
                 wp.launch(
                     compute_contact_points_1,
                     dim=self.num_envs * num_contacts_per_env,
                     inputs=[
                         self.env.sim_states.body_q,
                         self.env.model.shape_body,
-                        wp.from_torch(self.env.abstract_contacts.contact_shape0),
-                        wp.from_torch(self.env.abstract_contacts.contact_point0, dtype=wp.vec3),
-                        wp.from_torch(self.env.abstract_contacts.contact_normal, dtype=wp.vec3),
-                        wp.from_torch(self.env.abstract_contacts.contact_depth)
+                        ac.contact_shape0,
+                        ac.contact_point0,
+                        ac.contact_normal,
+                        ac.contact_depth,
                     ],
-                    outputs=[
-                        wp.from_torch(self.env.abstract_contacts.contact_point1, dtype=wp.vec3)
-                    ],
-                    device=self.env.device
+                    outputs=[ac.contact_point1],
+                    device=self.env.device,
                 )
-                
-                # save contact point 0 (local link frame) to the created buffer
-                contact_points_0[step, ...] = self.env.abstract_contacts.contact_point0.view(
-                    self.num_envs,
-                    num_contacts_per_env,
-                    3,
-                ).clone()
-                
-                # save contact point 1 (world frame) to created buffer
-                contact_points_1[step, ...] = \
-                    self.env.abstract_contacts.contact_point1.view(
-                        self.num_envs, 
-                        num_contacts_per_env, 
-                        3
-                    ).clone()
-                        
-                # save contact thickness to created buffer
-                contact_thicknesses[step, ...] = \
-                    self.env.abstract_contacts.contact_thickness.view(
-                        self.num_envs, 
-                        num_contacts_per_env
-                    ).clone()
+
+                # save contact data to torch buffers (wp -> torch)
+                contact_points_0[step, ...] = (
+                    wp.to_torch(ac.contact_point0)
+                    .view(self.num_envs, num_contacts_per_env, 3)
+                    .clone()
+                )
+                contact_points_1[step, ...] = (
+                    wp.to_torch(ac.contact_point1)
+                    .view(self.num_envs, num_contacts_per_env, 3)
+                    .clone()
+                )
+                contact_thicknesses[step, ...] = (
+                    wp.to_torch(ac.contact_thickness)
+                    .view(self.num_envs, num_contacts_per_env)
+                    .clone()
+                )
 
                 # save contact normals
                 contact_normals[step, ...] = expanded_normals_batch.clone()
