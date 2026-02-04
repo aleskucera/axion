@@ -9,9 +9,9 @@ import warp as wp
 from axion import EngineConfig
 from axion import ExecutionConfig
 from axion import InteractiveSimulator
+from axion import LoggingConfig
 from axion import RenderingConfig
 from axion import SimulationConfig
-from axion import LoggingConfig
 from omegaconf import DictConfig
 
 try:
@@ -112,7 +112,7 @@ class MarvControlSimulator(InteractiveSimulator):
         right_vel = target_fwd + target_turn
 
         # Integrate wheel positions
-        dt = self.effective_timestep
+        dt = self.clock.dt
         self.wheel_pos_left += left_vel * dt
         self.wheel_pos_right += right_vel * dt
 

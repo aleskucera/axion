@@ -69,8 +69,18 @@ def update_kernel(
     # gradient descent step
     qd[0] = qd[0] - qd_grad[0] * alpha
 
+    wp.printf(
+        "Gradient: [%f %f %f %f %f %f %f]\n",
+        qd_grad[0][0],
+        qd_grad[0][1],
+        qd_grad[0][2],
+        qd_grad[0][3],
+        qd_grad[0][4],
+        qd_grad[0][5],
+    )
 
-class BallBounceOptimizer(DifferentiableSimulator):
+
+class BallThrowOptimizer(DifferentiableSimulator):
     def __init__(
         self,
         sim_config: SimulationConfig,
@@ -88,26 +98,22 @@ class BallBounceOptimizer(DifferentiableSimulator):
         )
 
         # 2. Optimization Setup
-        self.target_pos = wp.vec3(0.0, -2.0, 1.5)
+        # Target is now forward in Y, instead of requiring a bounce
+        self.target_pos = wp.vec3(0.0, 3.0, 3.5)
         self.loss = wp.zeros(1, dtype=float, requires_grad=True)
-        self.learning_rate = 0.2
+        self.learning_rate = 0.1
 
         self.frame = 0
 
-        # Initial velocity guessing (w, v) -> v=(0, 5, -5)
-        self.init_vel = wp.spatial_vector(0.0, 5.0, -4.0, 0.0, 0.0, 0.0)
+        # Initial velocity guessing (w, v) -> v=(0, 2, 5)
+        # Starting with a velocity that might undershoot or miss
+        self.init_vel = wp.spatial_vector(0.0, 5.0, 2.0, 0.0, 0.0, 0.0)
 
         # 3. Setup Automatic Trajectory Tracking
         self.track_body(body_idx=0, name="ball", color=(0.0, 1.0, 0.0))
 
     def build_model(self) -> Model:
-        shape_config = newton.ModelBuilder.ShapeConfig(
-            ke=1e6,
-            kf=1e3,
-            kd=1e3,
-            mu=0.2,
-            contact_margin=0.3,
-        )
+        shape_config = newton.ModelBuilder.ShapeConfig(ke=1e6, kf=1e3, kd=1e3, mu=0.2)
 
         # Initialize the ball
         self.builder.add_body(
@@ -116,15 +122,8 @@ class BallBounceOptimizer(DifferentiableSimulator):
         )
         self.builder.add_shape_sphere(body=0, radius=0.2, cfg=shape_config)
 
-        # Initialize the environment
-        self.builder.add_shape_box(
-            body=-1,
-            xform=wp.transform(wp.vec3(0.0, 2.0, 1.0), wp.quat_identity()),
-            hx=1.0,
-            hy=0.30,
-            hz=1.0,
-            cfg=shape_config,
-        )
+        # Removed the box obstacle to allow free throw
+
         self.builder.add_ground_plane(cfg=shape_config)
         return self.builder.finalize_replicated(
             num_worlds=self.simulation_config.num_worlds,
@@ -215,7 +214,7 @@ def main(cfg: DictConfig):
     engine_config: EngineConfig = hydra.utils.instantiate(cfg.engine)
     logging_config: LoggingConfig = hydra.utils.instantiate(cfg.logging)
 
-    sim = BallBounceOptimizer(
+    sim = BallThrowOptimizer(
         sim_config,
         render_config,
         exec_config,

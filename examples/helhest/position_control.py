@@ -11,9 +11,9 @@ from axion import EngineConfig
 from axion import ExecutionConfig
 from axion import InteractiveSimulator
 from axion import JointMode
+from axion import LoggingConfig
 from axion import RenderingConfig
 from axion import SimulationConfig
-from axion import LoggingConfig
 from omegaconf import DictConfig
 
 try:
@@ -285,7 +285,7 @@ class HelhestPositionControlSimulator(InteractiveSimulator):
                 self.kp_angular,
                 self.max_linear,
                 self.max_angular,
-                self.effective_timestep,
+                self.clock.dt,
                 0,  # chassis
                 6,  # left
                 7,  # right

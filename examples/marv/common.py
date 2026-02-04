@@ -51,8 +51,8 @@ class MarvConfig:
     WHEEL_I = wp.mat33(_Iw, 0.0, 0.0, 0.0, _Iw, 0.0, 0.0, 0.0, _Iw)
 
     # Control Gains
-    FLIPPER_KP = 100.0
-    FLIPPER_KD = 50.0  # Estimated damping
+    FLIPPER_KP = 1000.0
+    FLIPPER_KD = 500.0  # Estimated damping
     WHEEL_KV = 1.0  # Velocity gain, mujoco 90
     WHEEL_KP = 6.0  # Position gain, mujoco 600
 

@@ -6,12 +6,12 @@ import hydra
 import newton
 import numpy as np
 import warp as wp
-from axion import InteractiveSimulator
 from axion import EngineConfig
 from axion import ExecutionConfig
+from axion import InteractiveSimulator
+from axion import LoggingConfig
 from axion import RenderingConfig
 from axion import SimulationConfig
-from axion import LoggingConfig
 from omegaconf import DictConfig
 
 os.environ["PYOPENGL_PLATFORM"] = "glx"
@@ -382,7 +382,7 @@ class TankObstacleSimulator(InteractiveSimulator):
         wp.launch(
             kernel=integrate_track_kernel,
             dim=1,
-            inputs=[self.track_left_u, self.track_left_velocity, self.effective_timestep],
+            inputs=[self.track_left_u, self.track_left_velocity, self.clock.dt],
             device=self.model.device,
         )
 
@@ -419,7 +419,7 @@ class TankObstacleSimulator(InteractiveSimulator):
         wp.launch(
             kernel=integrate_track_kernel,
             dim=1,
-            inputs=[self.track_right_u, self.track_right_velocity, self.effective_timestep],
+            inputs=[self.track_right_u, self.track_right_velocity, self.clock.dt],
             device=self.model.device,
         )
 

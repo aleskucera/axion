@@ -152,7 +152,7 @@ class HelhestControlSimulator(InteractiveSimulator):
             inputs=[
                 self.wheel_angles,  # State (read/write)
                 self.target_velocities,  # Input (from keyboard)
-                self.effective_timestep,  # dt
+                self.clock.dt,  # dt
                 self.joint_target_buffer,  # Output
                 6,
                 7,
