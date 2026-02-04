@@ -16,9 +16,18 @@
 """
 Generate dataset for Pendulum
 """
-import sys, os
-base_dir = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '../'))
-sys.path.append(base_dir)
+import sys
+import os
+
+# Project root (directory containing 'src') so that "from src.neural_solver..." works
+# when run as: python src/neural_solver/generate/generate_dataset_pendulum.py
+_script_dir = os.path.dirname(os.path.abspath(__file__))
+_project_root = os.path.abspath(os.path.join(_script_dir, "..", "..", ".."))
+if _project_root not in sys.path:
+    sys.path.insert(0, _project_root)
+
+# Default directory for generated datasets (inside project)
+_DEFAULT_DATASET_DIR = os.path.join(_project_root, "datasets")
 
 import os
 import argparse
@@ -27,10 +36,12 @@ import h5py
 from src.neural_solver.generate.trajectory_sampler_pendulum import TrajectorySamplerPendulum
 from src.neural_solver.utils.python_utils import set_random_seed
 from src.neural_solver.envs.axionToTrajectorySampler import AxionEnvToTrajectorySamplerAdapter
-from utils.commons import (
-    JOINT_Q_MIN, JOINT_Q_MAX, 
-    JOINT_QD_MIN, JOINT_QD_MAX, 
-    JOINT_ACT_SCALE
+from src.neural_solver.utils.commons import (
+    JOINT_Q_MIN,
+    JOINT_Q_MAX,
+    JOINT_QD_MIN,
+    JOINT_QD_MAX,
+    JOINT_ACT_SCALE,
 )
 
 def collect_dataset(
@@ -141,8 +152,8 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--dataset-dir', 
                         type=str, 
-                        default='../../data/datasets/',
-                        help='Directory to store the generated datasets.')
+                        default=_DEFAULT_DATASET_DIR,
+                        help='Directory to store the generated datasets (default: <project_root>/datasets).')
     parser.add_argument('--env-name', 
                         type=str, 
                         default='PendulumWithContact', 
