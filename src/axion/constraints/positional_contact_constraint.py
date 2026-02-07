@@ -112,7 +112,6 @@ def positional_contact_residual_kernel(
     body_m_inv: wp.array(dtype=wp.float32, ndim=2),
     body_I_inv: wp.array(dtype=wp.mat33, ndim=2),
     dt: wp.float32,
-    compliance: wp.float32,
     h_d: wp.array(dtype=wp.spatial_vector, ndim=2),
     h_n: wp.array(dtype=wp.float32, ndim=2),
 ):
@@ -188,8 +187,6 @@ def positional_contact_constraint_kernel(
     body_m_inv: wp.array(dtype=wp.float32, ndim=2),
     body_I_inv: wp.array(dtype=wp.mat33, ndim=2),
     dt: wp.float32,
-    stabilization_factor: wp.float32,
-    compliance: wp.float32,
     h_d: wp.array(dtype=wp.spatial_vector, ndim=2),
     h_n: wp.array(dtype=wp.float32, ndim=2),
     J_hat_n_values: wp.array(dtype=wp.spatial_vector, ndim=3),
@@ -278,7 +275,6 @@ def batch_positional_contact_residual_kernel(
     body_m_inv: wp.array(dtype=wp.float32, ndim=2),
     body_I_inv: wp.array(dtype=wp.mat33, ndim=2),
     dt: wp.float32,
-    compliance: wp.float32,
     h_d: wp.array(dtype=wp.spatial_vector, ndim=3),
     h_n: wp.array(dtype=wp.float32, ndim=3),
 ):
@@ -356,7 +352,6 @@ def fused_batch_positional_contact_residual_kernel(
     body_m_inv: wp.array(dtype=wp.float32, ndim=2),
     body_I_inv: wp.array(dtype=wp.mat33, ndim=2),
     dt: wp.float32,
-    compliance: wp.float32,
     num_batches: int,
     h_d: wp.array(dtype=wp.spatial_vector, ndim=3),
     h_n: wp.array(dtype=wp.float32, ndim=3),

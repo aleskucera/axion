@@ -56,62 +56,32 @@ def compute_residual(
     # 2. Joint Constraints
     # -------------------------------------------------------------------------
     # Adds -J^T * lambda * dt to h_d AND computes constraint violation h_c.j
-    if config.joint_constraint_level == "pos":
-        wp.launch(
-            kernel=positional_joint_residual_kernel,
-            dim=(dims.N_w, dims.joint_count),
-            inputs=[
-                data.body_q,
-                data.body_lambda.j,
-                model.body_com,
-                model.joint_type,
-                model.joint_parent,
-                model.joint_child,
-                model.joint_X_p,
-                model.joint_X_c,
-                model.joint_axis,
-                model.joint_qd_start,
-                model.joint_enabled,
-                data.joint_constraint_offsets,
-                model.joint_compliance,
-                dt,
-                config.joint_compliance,
-            ],
-            outputs=[
-                data.h.d_spatial,
-                data.h.c.j,
-            ],
-            device=device,
-        )
-    elif config.joint_constraint_level == "vel":
-        wp.launch(
-            kernel=velocity_joint_residual_kernel,
-            dim=(dims.N_w, dims.joint_count),
-            inputs=[
-                data.body_q,
-                model.body_com,
-                data.body_u,
-                data.body_lambda.j,
-                model.joint_type,
-                model.joint_parent,
-                model.joint_child,
-                model.joint_X_p,
-                model.joint_X_c,
-                model.joint_axis,
-                model.joint_qd_start,
-                model.joint_enabled,
-                data.joint_constraint_offsets,
-                dt,
-                config.joint_stabilization_factor,
-                config.joint_compliance,
-            ],
-            outputs=[
-                # data.constraint_active_mask.j,  <-- REMOVED to match new kernel signature
-                data.h.d_spatial,
-                data.h.c.j,
-            ],
-            device=device,
-        )
+    wp.launch(
+        kernel=positional_joint_residual_kernel,
+        dim=(dims.N_w, dims.joint_count),
+        inputs=[
+            data.body_q,
+            data.body_lambda.j,
+            model.body_com,
+            model.joint_type,
+            model.joint_parent,
+            model.joint_child,
+            model.joint_X_p,
+            model.joint_X_c,
+            model.joint_axis,
+            model.joint_qd_start,
+            model.joint_enabled,
+            data.joint_constraint_offsets,
+            model.joint_compliance,
+            dt,
+            config.joint_compliance,
+        ],
+        outputs=[
+            data.h.d_spatial,
+            data.h.c.j,
+        ],
+        device=device,
+    )
 
     # -------------------------------------------------------------------------
     # 3. Control Constraints
@@ -150,70 +120,35 @@ def compute_residual(
     # -------------------------------------------------------------------------
     # 4. Contact Constraints
     # -------------------------------------------------------------------------
-    if config.contact_constraint_level == "pos":
-        wp.launch(
-            kernel=positional_contact_residual_kernel,
-            dim=(dims.N_w, dims.N_n),
-            inputs=[
-                data.body_q,
-                data.body_u,
-                data.body_u_prev,
-                data.body_lambda.n,
-                # Expanded contact_interaction struct:
-                data.contact_body_a,
-                data.contact_body_b,
-                data.contact_point_a,
-                data.contact_point_b,
-                data.contact_thickness_a,
-                data.contact_thickness_b,
-                data.contact_dist,
-                data.contact_basis_n_a,
-                data.contact_basis_n_b,
-                # End contact data
-                model.body_inv_mass,
-                model.body_inv_inertia,
-                dt,
-                config.contact_compliance,
-            ],
-            outputs=[
-                data.h.d_spatial,
-                data.h.c.n,
-            ],
-            device=device,
-        )
-    elif config.contact_constraint_level == "vel":
-        # Note: velocity_contact_residual_kernel has extra alpha/beta args.
-        # We assume defaults (1.0) here if they are not present in EngineConfig.
-        fb_alpha = getattr(config, "contact_fb_alpha", 1.0)
-        fb_beta = getattr(config, "contact_fb_beta", 1.0)
-
-        wp.launch(
-            kernel=velocity_contact_residual_kernel,
-            dim=(dims.N_w, dims.N_n),
-            inputs=[
-                data.body_u,
-                data.body_u_prev,
-                data.body_lambda.n,
-                # Expanded contact_interaction struct:
-                data.contact_body_a,
-                data.contact_body_b,
-                data.contact_dist,
-                data.contact_restitution_coeff,
-                data.contact_basis_n_a,
-                data.contact_basis_n_b,
-                # End contact data
-                dt,
-                config.contact_stabilization_factor,
-                fb_alpha,
-                fb_beta,
-                config.contact_compliance,
-            ],
-            outputs=[
-                data.h.d_spatial,
-                data.h.c.n,
-            ],
-            device=device,
-        )
+    wp.launch(
+        kernel=positional_contact_residual_kernel,
+        dim=(dims.N_w, dims.N_n),
+        inputs=[
+            data.body_q,
+            data.body_u,
+            data.body_u_prev,
+            data.body_lambda.n,
+            # Expanded contact_interaction struct:
+            data.contact_body_a,
+            data.contact_body_b,
+            data.contact_point_a,
+            data.contact_point_b,
+            data.contact_thickness_a,
+            data.contact_thickness_b,
+            data.contact_dist,
+            data.contact_basis_n_a,
+            data.contact_basis_n_b,
+            # End contact data
+            model.body_inv_mass,
+            model.body_inv_inertia,
+            dt,
+        ],
+        outputs=[
+            data.h.d_spatial,
+            data.h.c.n,
+        ],
+        device=device,
+    )
 
     # -------------------------------------------------------------------------
     # 5. Friction Constraints
@@ -240,7 +175,6 @@ def compute_residual(
             model.body_inv_mass,
             model.body_inv_inertia,
             dt,
-            config.friction_compliance,
         ],
         outputs=[
             data.h.d_spatial,

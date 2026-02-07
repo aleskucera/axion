@@ -269,8 +269,6 @@ def compute_linear_system(
                 model.body_inv_mass,
                 model.body_inv_inertia,
                 dt,
-                config.contact_stabilization_factor,
-                config.contact_compliance,
             ],
             outputs=[
                 data.h.d_spatial,
@@ -299,7 +297,6 @@ def compute_linear_system(
                 config.contact_stabilization_factor,
                 config.contact_fb_alpha,
                 config.contact_fb_beta,
-                config.contact_compliance,
             ],
             outputs=[
                 data.constraint_active_mask.n,
@@ -336,7 +333,6 @@ def compute_linear_system(
             model.body_inv_mass,
             model.body_inv_inertia,
             data.dt,
-            config.friction_compliance,
         ],
         outputs=[
             data.constraint_active_mask.f,
