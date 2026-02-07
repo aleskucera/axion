@@ -15,6 +15,7 @@ class EngineDimensions:
     body_count: int
     contact_count: int
     joint_count: int
+    joint_dof_count: int
     linesearch_step_count: int
     joint_constraint_count: int
     control_constraint_count: int
