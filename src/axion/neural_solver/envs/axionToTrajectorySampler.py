@@ -65,12 +65,10 @@ class AxionEnvToTrajectorySamplerAdapter:
 
         # Use AxionEnv as backend, preserving the public API contract.
         self.env = AxionEnv(
-            env_name=env_name,
-            num_envs=num_envs,
-            requires_grad=False,
-            device=device,
-            render=render,
-            **warp_env_cfg,
+            env_name = env_name,
+            num_worlds= num_envs,
+            device = device,
+            requires_grad= False # Check if true
         )
 
         # Dummy integrator only for wrap2PI and reset(); no neural model.
