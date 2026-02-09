@@ -339,7 +339,7 @@ class AxionEngine(SolverBase):
 
         # Linearize
         with self.events.linearization.scope(iter_idx=iter_idx):
-            compute_linear_system(self.axion_model, self.data, self.config, self.dims, dt)
+            compute_linear_system(self.axion_model, self.data, self.config, self.dims)
             self.data.h.sync_to_float()
             self.preconditioner.update()
 
@@ -491,12 +491,12 @@ class AxionEngine(SolverBase):
 
         wp.launch(
             kernel=compute_body_adjoint_init_kernel,
-            dims=(self.dims.N_w, self.dims.N_b),
+            dim=(self.dims.N_w, self.dims.N_b),
             inputs=[
-                self.data.body_q.grad,
-                self.data.body_u.grad,
+                self.data.body_q_grad,
+                self.data.body_u_grad,
                 self.data.body_q,
-                self.axion_model.body_inv_m,
+                self.axion_model.body_inv_mass,
                 self.axion_model.body_inv_inertia,
                 self.data.dt,
             ],
@@ -507,11 +507,11 @@ class AxionEngine(SolverBase):
         )
         wp.launch(
             kernel=compute_adjoint_rhs_kernel,
-            dims=(self.dims.N_w, self.dims.N_c),
+            dim=(self.dims.N_w, self.dims.N_c),
             inputs=[
-                self.data.J_values,
-                self.data.constraint_body_idx,
-                self.data.constraint_active_mask,
+                self.data.J_values.full,
+                self.data.constraint_body_idx.full,
+                self.data.constraint_active_mask.full,
                 self.data.w.d_spatial,
             ],
             outputs=[
@@ -522,7 +522,7 @@ class AxionEngine(SolverBase):
         self.data.w.sync_to_float()
         self.preconditioner.update()
 
-        self.data.w_lambda.zero_()
+        self.data.w.c.full.zero_()
         _ = self.cr_solver.solve(
             A=self.A_op,
             b=self.data.adjoint_rhs,
@@ -536,14 +536,14 @@ class AxionEngine(SolverBase):
 
         wp.launch(
             kernel=subtract_constraint_feedback_kernel,
-            dims=(self.dims.N_w, self.dims.N_c),
+            dim=(self.dims.N_w, self.dims.N_c),
             inputs=[
                 self.data.w.c.full,
-                self.data.J_values,
-                self.data.constraint_body_idx,
-                self.data.constraint_active_mask,
-                self.body_q,
-                self.axion_model.body_m_inv,
+                self.data.J_values.full,
+                self.data.constraint_body_idx.full,
+                self.data.constraint_active_mask.full,
+                self.data.body_q,
+                self.axion_model.body_inv_mass,
                 self.axion_model.body_inv_inertia,
             ],
             outputs=[
@@ -553,16 +553,8 @@ class AxionEngine(SolverBase):
         )
 
         tape = wp.Tape()
-        # self.data.body_q_prev.requires_grad = True
-        # self.data.body_u_prev.requires_grad = True
         with tape:
-            compute_residual(self.model, self.engine.data, self.engine.config, self.engine.dt)
+            compute_residual(self.axion_model, self.data, self.config, self.dims)
 
         # This should add implicit gradient to all the arrays in self.data that has requires_grad=True
         tape.backward(grads={self.data._h: self.data._w})
-
-        # body_q_prev
-        # body_u_prev
-        # body_f -
-        # joint_target_pos
-        # joint_target_vel

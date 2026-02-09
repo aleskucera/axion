@@ -17,7 +17,6 @@ def compute_residual(
     data: EngineData,
     config: EngineConfig,
     dims: EngineDimensions,
-    dt: float,
 ):
     """
     Computes the full system residual vector (R) for the current state.
@@ -45,7 +44,7 @@ def compute_residual(
             data.body_f,
             model.body_mass,
             model.body_inertia,
-            dt,
+            data.dt,
             data.g_accel,
         ],
         outputs=[data.h.d_spatial],
@@ -73,7 +72,7 @@ def compute_residual(
             model.joint_enabled,
             data.joint_constraint_offsets,
             model.joint_compliance,
-            dt,
+            data.dt,
             config.joint_compliance,
         ],
         outputs=[
@@ -108,7 +107,7 @@ def compute_residual(
             data.joint_target_vel,
             model.joint_target_ke,
             model.joint_target_kd,
-            dt,
+            data.dt,
         ],
         outputs=[
             data.h.d_spatial,
@@ -138,10 +137,11 @@ def compute_residual(
             data.contact_dist,
             data.contact_basis_n_a,
             data.contact_basis_n_b,
+            data.constraint_active_mask.n,
             # End contact data
             model.body_inv_mass,
             model.body_inv_inertia,
-            dt,
+            data.dt,
         ],
         outputs=[
             data.h.d_spatial,
@@ -174,7 +174,7 @@ def compute_residual(
             # End contact data
             model.body_inv_mass,
             model.body_inv_inertia,
-            dt,
+            data.dt,
         ],
         outputs=[
             data.h.d_spatial,

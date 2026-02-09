@@ -10,17 +10,19 @@ class TrajectoryBuffer:
         self.device = device
 
         # =========================================================================
-        # 1. Body & Joint State (Fixed Size)
+        # 1. Body & Joint State (Requires N+1 slots for Time 0..N)
         # =========================================================================
-        per_body_shape = (num_steps, dims.num_worlds, dims.body_count)
+        # State exists at boundaries (Start -> End)
         per_body_shape_larger = (num_steps + 1, dims.num_worlds, dims.body_count)
+        per_body_shape = (num_steps, dims.num_worlds, dims.body_count)
+
         with wp.ScopedDevice(device):
             self.body_q = wp.zeros(per_body_shape_larger, dtype=wp.transform, requires_grad=True)
-            # self.body_q_prev = wp.zeros(per_body_shape, dtype=wp.transform)
             self.body_u = wp.zeros(
                 per_body_shape_larger, dtype=wp.spatial_vector, requires_grad=True
             )
-            # self.body_u_prev = wp.zeros(per_body_shape, dtype=wp.spatial_vector)
+
+            # Forces apply DURING the step -> Size N
             self.body_f = wp.zeros(per_body_shape, dtype=wp.spatial_vector, requires_grad=True)
 
         per_joint_dof_shape = (num_steps, dims.num_worlds, dims.joint_dof_count)
@@ -33,21 +35,19 @@ class TrajectoryBuffer:
             )
 
         # =========================================================================
-        # 2. Constraint Multipliers (Lambdas)
+        # 2. Constraint Multipliers (Interval Data -> Size N)
         # =========================================================================
-        # We store the raw underlying lambda array which contains [Joints | Control | Contact | Friction]
-        # This is more efficient than copying views separately.
         per_constraint_shape = (num_steps, dims.num_worlds, dims.N_c)
-        per_constraint_shape_2 = (num_steps, dims.num_worlds, dims.N_c, 2)
-        per_constraint_shape_larger = (num_steps + 1, dims.num_worlds, dims.N_c)
+        per_constraint_idx_shape = (num_steps, dims.num_worlds, dims.N_c, 2)
+
         with wp.ScopedDevice(device):
-            self.body_lambda = wp.zeros(per_constraint_shape_larger, dtype=wp.float32)
-            self.body_lambda_prev = wp.zeros(per_constraint_shape_larger, dtype=wp.float32)
+            self.body_lambda = wp.zeros(per_constraint_shape, dtype=wp.float32)
+            self.body_lambda_prev = wp.zeros(per_constraint_shape, dtype=wp.float32)
             self.constraint_active_mask = wp.zeros(per_constraint_shape, dtype=wp.float32)
-            self.constraint_body_idx = wp.zeros(per_constraint_shape_2, dtype=wp.int32)
+            self.constraint_body_idx = wp.zeros(per_constraint_idx_shape, dtype=wp.int32)
 
         # =========================================================================
-        # 3. Contact Manifold (Variable effective size, fixed buffer size)
+        # 3. Contact Manifold (Interval Data -> Size N)
         # =========================================================================
         per_contact_shape = (num_steps, dims.num_worlds, dims.contact_count)
         with wp.ScopedDevice(device):
@@ -67,410 +67,123 @@ class TrajectoryBuffer:
             self.contact_basis_t1_b = wp.zeros(per_contact_shape, dtype=wp.spatial_vector)
             self.contact_basis_t2_b = wp.zeros(per_contact_shape, dtype=wp.spatial_vector)
 
-        # =========================================================================
-        # 4. Strides (Pre-calculated for speed)
-        # =========================================================================
-        self._stride_body = dims.num_worlds * dims.body_count
-        self._stride_joint_dof = dims.num_worlds * dims.joint_dof_count
-        self._stride_constraint = dims.num_worlds * dims.N_c
-        self._stride_constraint_2 = dims.num_worlds * dims.N_c * 2
-        self._stride_contact = dims.num_worlds * dims.contact_count
-        self._stride_world = dims.num_worlds
-
     def zero_grad(self):
-        self.body_q.grad.zero_()
-        self.body_u.grad.zero_()
-        self.body_f.grad.zero_()
-        self.joint_target_pos.grad.zero_()
-        self.joint_target_vel.grad.zero_()
+        if self.body_q.requires_grad:
+            self.body_q.grad.zero_()
+        if self.body_u.requires_grad:
+            self.body_u.grad.zero_()
+        if self.body_f.requires_grad:
+            self.body_f.grad.zero_()
+        if self.joint_target_pos.requires_grad:
+            self.joint_target_pos.grad.zero_()
+        if self.joint_target_vel.requires_grad:
+            self.joint_target_vel.grad.zero_()
 
     def save_step(self, step_idx: int, data: EngineData):
         """
-        Saves the current state from EngineData into the buffer at step_idx.
+        Saves the current state from EngineData into the buffer.
+        State Result -> Index [step_idx + 1]
+        Interval Data -> Index [step_idx]
         """
         assert step_idx >= 0, "Argument 'step_idx' has to be larger or equal to zero."
 
+        # 1. Handle Initial Conditions (Only on first step)
         if step_idx == 0:
-            wp.copy(
-                dest=self.body_q.flatten(),
-                src=data.body_q_prev.flatten(),
-                dest_offset=0,
-                count=self._stride_body,
-            )
-            wp.copy(
-                dest=self.body_u.flatten(),
-                src=data.body_u_prev.flatten(),
-                dest_offset=0,
-                count=self._stride_body,
-            )
+            wp.copy(self.body_q[0], data.body_q_prev)
+            wp.copy(self.body_u[0], data.body_u_prev)
 
-        # --- Body State ---
-        offset_body_curr = step_idx * self._stride_body
-        offset_body_next = (step_idx + 1) * self._stride_body
-        wp.copy(
-            dest=self.body_q.flatten(),
-            src=data.body_q.flatten(),
-            dest_offset=offset_body_next,
-            count=self._stride_body,
-        )
-        wp.copy(
-            dest=self.body_u.flatten(),
-            src=data.body_u.flatten(),
-            dest_offset=offset_body_next,
-            count=self._stride_body,
-        )
-        wp.copy(
-            dest=self.body_f.flatten(),
-            src=data.body_f.flatten(),
-            dest_offset=offset_body_curr,
-            count=self._stride_body,
-        )
+        # 2. Body State (Result of step t goes to t+1)
+        wp.copy(self.body_q[step_idx + 1], data.body_q)
+        wp.copy(self.body_u[step_idx + 1], data.body_u)
+
+        # 3. Interval Data (Forces applied during step t go to t)
+        wp.copy(self.body_f[step_idx], data.body_f)
 
         # --- Inputs ---
-        offset_dof = step_idx * self._stride_joint_dof
-        wp.copy(
-            dest=self.joint_target_pos.flatten(),
-            src=data.joint_target_pos.flatten(),
-            dest_offset=offset_dof,
-            count=self._stride_joint_dof,
-        )
-        wp.copy(
-            dest=self.joint_target_vel.flatten(),
-            src=data.joint_target_vel.flatten(),
-            dest_offset=offset_dof,
-            count=self._stride_joint_dof,
-        )
+        wp.copy(self.joint_target_pos[step_idx], data.joint_target_pos)
+        wp.copy(self.joint_target_vel[step_idx], data.joint_target_vel)
 
         # --- Lambdas ---
-        offset_constraint_curr = step_idx * self._stride_constraint
-        offset_constraint_next = (step_idx + 1) * self._stride_constraint
-        offset_constraint_2_curr = step_idx * self._stride_constraint_2
-        wp.copy(
-            dest=self.body_lambda.flatten(),
-            src=data._body_lambda.flatten(),
-            dest_offset=offset_constraint_next,
-            count=self._stride_constraint,
-        )
-        wp.copy(
-            dest=self.body_lambda_prev.flatten(),
-            src=data._body_lambda_prev.flatten(),
-            dest_offset=offset_constraint_next,
-            count=self._stride_constraint,
-        )
-        wp.copy(
-            dest=self.constraint_active_mask.flatten(),
-            src=data._constraint_active_mask.flatten(),
-            dest_offset=offset_constraint_curr,
-            count=self._stride_constraint,
-        )
-        wp.copy(
-            dest=self.constraint_body_idx.flatten(),
-            src=data._constraint_body_idx.flatten(),
-            dest_offset=offset_constraint_2_curr,
-            count=self._stride_constraint_2,
-        )
+        wp.copy(self.body_lambda[step_idx], data._body_lambda)
+        wp.copy(self.body_lambda_prev[step_idx], data._body_lambda_prev)
+        wp.copy(self.constraint_active_mask[step_idx], data._constraint_active_mask)
+        wp.copy(self.constraint_body_idx[step_idx], data._constraint_body_idx)
 
         # --- Contact Manifold ---
-        offset_contact_curr = step_idx * self._stride_contact
-        wp.copy(
-            dest=self.contact_body_a.flatten(),
-            src=data.contact_body_a.flatten(),
-            dest_offset=offset_contact_curr,
-            count=self._stride_contact,
-        )
-        wp.copy(
-            dest=self.contact_body_b.flatten(),
-            src=data.contact_body_b.flatten(),
-            dest_offset=offset_contact_curr,
-            count=self._stride_contact,
-        )
-        wp.copy(
-            dest=self.contact_point_a.flatten(),
-            src=data.contact_point_a.flatten(),
-            dest_offset=offset_contact_curr,
-            count=self._stride_contact,
-        )
-        wp.copy(
-            dest=self.contact_point_b.flatten(),
-            src=data.contact_point_b.flatten(),
-            dest_offset=offset_contact_curr,
-            count=self._stride_contact,
-        )
-        wp.copy(
-            dest=self.contact_normal.flatten(),
-            src=data.contact_basis_n_a.flatten(),
-            dest_offset=offset_contact_curr,
-            count=self._stride_contact,
-        )
-        wp.copy(
-            dest=self.contact_dist.flatten(),
-            src=data.contact_dist.flatten(),
-            dest_offset=offset_contact_curr,
-            count=self._stride_contact,
-        )
-        wp.copy(
-            dest=self.contact_friction.flatten(),
-            src=data.contact_friction_coeff.flatten(),
-            dest_offset=offset_contact_curr,
-            count=self._stride_contact,
-        )
-        wp.copy(
-            dest=self.contact_restitution.flatten(),
-            src=data.contact_restitution_coeff.flatten(),
-            dest_offset=offset_contact_curr,
-            count=self._stride_contact,
-        )
-        wp.copy(
-            dest=self.contact_thickness_a.flatten(),
-            src=data.contact_thickness_a.flatten(),
-            dest_offset=offset_contact_curr,
-            count=self._stride_contact,
-        )
-        wp.copy(
-            dest=self.contact_thickness_b.flatten(),
-            src=data.contact_thickness_b.flatten(),
-            dest_offset=offset_contact_curr,
-            count=self._stride_contact,
-        )
-        wp.copy(
-            dest=self.contact_basis_t1_a.flatten(),
-            src=data.contact_basis_t1_a.flatten(),
-            dest_offset=offset_contact_curr,
-            count=self._stride_contact,
-        )
-        wp.copy(
-            dest=self.contact_basis_t2_a.flatten(),
-            src=data.contact_basis_t2_a.flatten(),
-            dest_offset=offset_contact_curr,
-            count=self._stride_contact,
-        )
-        wp.copy(
-            dest=self.contact_basis_n_b.flatten(),
-            src=data.contact_basis_n_b.flatten(),
-            dest_offset=offset_contact_curr,
-            count=self._stride_contact,
-        )
-        wp.copy(
-            dest=self.contact_basis_t1_b.flatten(),
-            src=data.contact_basis_t1_b.flatten(),
-            dest_offset=offset_contact_curr,
-            count=self._stride_contact,
-        )
-        wp.copy(
-            dest=self.contact_basis_t2_b.flatten(),
-            src=data.contact_basis_t2_b.flatten(),
-            dest_offset=offset_contact_curr,
-            count=self._stride_contact,
-        )
+        wp.copy(self.contact_body_a[step_idx], data.contact_body_a)
+        wp.copy(self.contact_body_b[step_idx], data.contact_body_b)
+        wp.copy(self.contact_point_a[step_idx], data.contact_point_a)
+        wp.copy(self.contact_point_b[step_idx], data.contact_point_b)
+        wp.copy(self.contact_normal[step_idx], data.contact_basis_n_a)  # Renamed field
+        wp.copy(self.contact_dist[step_idx], data.contact_dist)
+        wp.copy(self.contact_friction[step_idx], data.contact_friction_coeff)
+        wp.copy(self.contact_restitution[step_idx], data.contact_restitution_coeff)
+        wp.copy(self.contact_thickness_a[step_idx], data.contact_thickness_a)
+        wp.copy(self.contact_thickness_b[step_idx], data.contact_thickness_b)
+        wp.copy(self.contact_basis_t1_a[step_idx], data.contact_basis_t1_a)
+        wp.copy(self.contact_basis_t2_a[step_idx], data.contact_basis_t2_a)
+        wp.copy(self.contact_basis_n_b[step_idx], data.contact_basis_n_b)
+        wp.copy(self.contact_basis_t1_b[step_idx], data.contact_basis_t1_b)
+        wp.copy(self.contact_basis_t2_b[step_idx], data.contact_basis_t2_b)
 
     def load_step(self, step_idx: int, data: EngineData):
         """
         Restores the state from the buffer into EngineData.
+        Start State <- Index [step_idx]
+        Result State <- Index [step_idx + 1]
         """
         # --- Body State ---
-        offset_body_curr = step_idx * self._stride_body
-        offset_body_next = (step_idx + 1) * self._stride_body
-        wp.copy(
-            dest=data.body_q.flatten(),
-            src=self.body_q.flatten(),
-            src_offset=offset_body_next,
-            count=self._stride_body,
-        )
-        wp.copy(
-            dest=data.body_q_prev.flatten(),
-            src=self.body_q.flatten(),
-            src_offset=offset_body_curr,
-            count=self._stride_body,
-        )
-        wp.copy(
-            dest=data.body_u.flatten(),
-            src=self.body_u.flatten(),
-            src_offset=offset_body_next,
-            count=self._stride_body,
-        )
-        wp.copy(
-            dest=data.body_u_prev.flatten(),
-            src=self.body_u.flatten(),
-            src_offset=offset_body_curr,
-            count=self._stride_body,
-        )
-        wp.copy(
-            dest=data.body_f.flatten(),
-            src=self.body_f.flatten(),
-            src_offset=offset_body_curr,
-            count=self._stride_body,
-        )
+        wp.copy(data.body_q, self.body_q[step_idx + 1])  # Load Result
+        wp.copy(data.body_q_prev, self.body_q[step_idx])  # Load Start
+
+        wp.copy(data.body_u, self.body_u[step_idx + 1])
+        wp.copy(data.body_u_prev, self.body_u[step_idx])
+
+        wp.copy(data.body_q_grad, self.body_q.grad[step_idx + 1])
+        wp.copy(data.body_u_grad, self.body_u.grad[step_idx + 1])
+
+        wp.copy(data.body_f, self.body_f[step_idx])
 
         # --- Inputs ---
-        offset_dof_curr = step_idx * self._stride_joint_dof
-        wp.copy(
-            dest=data.joint_target_pos.flatten(),
-            src=self.joint_target_pos.flatten(),
-            src_offset=offset_dof_curr,
-            count=self._stride_joint_dof,
-        )
-        wp.copy(
-            dest=data.joint_target_vel.flatten(),
-            src=self.joint_target_vel.flatten(),
-            src_offset=offset_dof_curr,
-            count=self._stride_joint_dof,
-        )
+        wp.copy(data.joint_target_pos, self.joint_target_pos[step_idx])
+        wp.copy(data.joint_target_vel, self.joint_target_vel[step_idx])
 
         # --- Lambdas ---
-        offset_constraint_curr = step_idx * self._stride_constraint
-        offset_constraint_next = (step_idx + 1) * self._stride_constraint
-        offset_constraint_2_curr = step_idx * self._stride_constraint_2
-        wp.copy(
-            dest=data._body_lambda.flatten(),
-            src=self.body_lambda.flatten(),
-            src_offset=offset_constraint_next,
-            count=self._stride_constraint,
-        )
-        wp.copy(
-            dest=data._body_lambda_prev.flatten(),
-            src=self.body_lambda_prev.flatten(),
-            src_offset=offset_constraint_next,
-            count=self._stride_constraint,
-        )
-        wp.copy(
-            dest=data._constraint_active_mask.flatten(),
-            src=self.constraint_active_mask.flatten(),
-            src_offset=offset_constraint_curr,
-            count=self._stride_constraint,
-        )
-        wp.copy(
-            dest=data._constraint_body_idx.flatten(),
-            src=self.constraint_body_idx.flatten(),
-            src_offset=offset_constraint_2_curr,
-            count=self._stride_constraint_2,
-        )
+        wp.copy(data._body_lambda, self.body_lambda[step_idx])
+        wp.copy(data._body_lambda_prev, self.body_lambda_prev[step_idx])
+        wp.copy(data._constraint_active_mask, self.constraint_active_mask[step_idx])
+        wp.copy(data._constraint_body_idx, self.constraint_body_idx[step_idx])
 
         # --- Contact Manifold ---
-        offset_contact_curr = step_idx * self._stride_contact
-        wp.copy(
-            dest=data.contact_body_a.flatten(),
-            src=self.contact_body_a.flatten(),
-            src_offset=offset_contact_curr,
-            count=self._stride_contact,
-        )
-        wp.copy(
-            dest=data.contact_body_b.flatten(),
-            src=self.contact_body_b.flatten(),
-            src_offset=offset_contact_curr,
-            count=self._stride_contact,
-        )
-        wp.copy(
-            dest=data.contact_point_a.flatten(),
-            src=self.contact_point_a.flatten(),
-            src_offset=offset_contact_curr,
-            count=self._stride_contact,
-        )
-        wp.copy(
-            dest=data.contact_point_b.flatten(),
-            src=self.contact_point_b.flatten(),
-            src_offset=offset_contact_curr,
-            count=self._stride_contact,
-        )
-        wp.copy(
-            dest=data.contact_basis_n_a.flatten(),
-            src=self.contact_normal.flatten(),
-            src_offset=offset_contact_curr,
-            count=self._stride_contact,
-        )
-        wp.copy(
-            dest=data.contact_dist.flatten(),
-            src=self.contact_dist.flatten(),
-            src_offset=offset_contact_curr,
-            count=self._stride_contact,
-        )
-        wp.copy(
-            dest=data.contact_friction_coeff.flatten(),
-            src=self.contact_friction.flatten(),
-            src_offset=offset_contact_curr,
-            count=self._stride_contact,
-        )
-        wp.copy(
-            dest=data.contact_restitution_coeff.flatten(),
-            src=self.contact_restitution.flatten(),
-            src_offset=offset_contact_curr,
-            count=self._stride_contact,
-        )
-        wp.copy(
-            dest=data.contact_thickness_a.flatten(),
-            src=self.contact_thickness_a.flatten(),
-            src_offset=offset_contact_curr,
-            count=self._stride_contact,
-        )
-        wp.copy(
-            dest=data.contact_thickness_b.flatten(),
-            src=self.contact_thickness_b.flatten(),
-            src_offset=offset_contact_curr,
-            count=self._stride_contact,
-        )
-        wp.copy(
-            dest=data.contact_basis_t1_a.flatten(),
-            src=self.contact_basis_t1_a.flatten(),
-            src_offset=offset_contact_curr,
-            count=self._stride_contact,
-        )
-        wp.copy(
-            dest=data.contact_basis_t2_a.flatten(),
-            src=self.contact_basis_t2_a.flatten(),
-            src_offset=offset_contact_curr,
-            count=self._stride_contact,
-        )
-        wp.copy(
-            dest=data.contact_basis_n_b.flatten(),
-            src=self.contact_basis_n_b.flatten(),
-            src_offset=offset_contact_curr,
-            count=self._stride_contact,
-        )
-        wp.copy(
-            dest=data.contact_basis_t1_b.flatten(),
-            src=self.contact_basis_t1_b.flatten(),
-            src_offset=offset_contact_curr,
-            count=self._stride_contact,
-        )
-        wp.copy(
-            dest=data.contact_basis_t2_b.flatten(),
-            src=self.contact_basis_t2_b.flatten(),
-            src_offset=offset_contact_curr,
-            count=self._stride_contact,
-        )
+        wp.copy(data.contact_body_a, self.contact_body_a[step_idx])
+        wp.copy(data.contact_body_b, self.contact_body_b[step_idx])
+        wp.copy(data.contact_point_a, self.contact_point_a[step_idx])
+        wp.copy(data.contact_point_b, self.contact_point_b[step_idx])
+        wp.copy(data.contact_basis_n_a, self.contact_normal[step_idx])
+        wp.copy(data.contact_dist, self.contact_dist[step_idx])
+        wp.copy(data.contact_friction_coeff, self.contact_friction[step_idx])
+        wp.copy(data.contact_restitution_coeff, self.contact_restitution[step_idx])
+        wp.copy(data.contact_thickness_a, self.contact_thickness_a[step_idx])
+        wp.copy(data.contact_thickness_b, self.contact_thickness_b[step_idx])
+        wp.copy(data.contact_basis_t1_a, self.contact_basis_t1_a[step_idx])
+        wp.copy(data.contact_basis_t2_a, self.contact_basis_t2_a[step_idx])
+        wp.copy(data.contact_basis_n_b, self.contact_basis_n_b[step_idx])
+        wp.copy(data.contact_basis_t1_b, self.contact_basis_t1_b[step_idx])
+        wp.copy(data.contact_basis_t2_b, self.contact_basis_t2_b[step_idx])
 
     def save_gradients(self, step_idx: int, data: EngineData):
+        """
+        Saves gradients computed during a backward pass from EngineData into the buffer.
+        """
         # --- Body State ---
-        offset_body_curr = step_idx * self._stride_body
-        wp.copy(
-            dest=self.body_q.grad.flatten(),
-            src=data.body_q_prev.grad.flatten(),
-            dest_offset=offset_body_curr,
-            count=self._stride_body,
-        )
-        wp.copy(
-            dest=self.body_u.grad.flatten(),
-            src=data.body_u_prev.grad.flatten(),
-            dest_offset=offset_body_curr,
-            count=self._stride_body,
-        )
-        wp.copy(
-            dest=self.body_f.grad.flatten(),
-            src=data.body_f.grad.flatten(),
-            dest_offset=offset_body_curr,
-            count=self._stride_body,
-        )
+        # Note: We save the gradients w.r.t the INITIAL state of this step (q_prev)
+        # into the buffer at step_idx (which corresponds to q at time T)
+        wp.copy(self.body_q.grad[step_idx], data.body_q_prev.grad)
+        wp.copy(self.body_u.grad[step_idx], data.body_u_prev.grad)
+
+        # Forces and inputs are interval-based (index T)
+        wp.copy(self.body_f.grad[step_idx], data.body_f.grad)
 
         # --- Inputs ---
-        offset_dof = step_idx * self._stride_joint_dof
-        wp.copy(
-            dest=self.joint_target_pos.grad.flatten(),
-            src=data.joint_target_pos.grad.flatten(),
-            dest_offset=offset_dof,
-            count=self._stride_joint_dof,
-        )
-        wp.copy(
-            dest=self.joint_target_vel.grad.flatten(),
-            src=data.joint_target_vel.grad.flatten(),
-            dest_offset=offset_dof,
-            count=self._stride_joint_dof,
-        )
+        wp.copy(self.joint_target_pos.grad[step_idx], data.joint_target_pos.grad)
+        wp.copy(self.joint_target_vel.grad[step_idx], data.joint_target_vel.grad)

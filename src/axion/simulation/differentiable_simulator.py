@@ -7,11 +7,9 @@ from typing import Optional
 import newton
 import numpy as np
 import warp as wp
-from axion.core.adjoint_utils import compute_body_adjoint_init_kernel
 from axion.core.engine_config import AxionEngineConfig
 from axion.core.engine_config import EngineConfig
 from axion.core.engine_config import SemiImplicitEngineConfig
-from axion.core.linear_utils import compute_linear_system
 from axion.core.logging_config import LoggingConfig
 
 from .base_simulator import BaseSimulator
@@ -139,7 +137,7 @@ class DifferentiableSimulator(BaseSimulator, ABC):
 
     def _forward_backward(self):
         if isinstance(self.engine_config, AxionEngineConfig):
-            self._axion_forward_backward_explicit()
+            self._axion_forward_backward_implicit()
         elif isinstance(self.engine_config, SemiImplicitEngineConfig):
             self._newton_forward_backward()
         else:
