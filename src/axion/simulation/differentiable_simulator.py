@@ -7,9 +7,11 @@ from typing import Optional
 import newton
 import numpy as np
 import warp as wp
+from axion.core.adjoint_utils import compute_body_adjoint_init_kernel
 from axion.core.engine_config import AxionEngineConfig
 from axion.core.engine_config import EngineConfig
 from axion.core.engine_config import SemiImplicitEngineConfig
+from axion.core.linear_utils import compute_linear_system
 from axion.core.logging_config import LoggingConfig
 
 from .base_simulator import BaseSimulator
@@ -17,6 +19,7 @@ from .episode_buffer import EpisodeBuffer
 from .sim_config import ExecutionConfig
 from .sim_config import RenderingConfig
 from .sim_config import SimulationConfig
+from .trajectory_buffer import TrajectoryBuffer
 
 
 class DifferentiableSimulator(BaseSimulator, ABC):
@@ -104,6 +107,12 @@ class DifferentiableSimulator(BaseSimulator, ABC):
             requires_grad=True,
         )
 
+        self.trajectory = TrajectoryBuffer(
+            dims=self.solver.dims,
+            num_steps=self.clock.total_sim_steps + 1,
+            device=self.model.device,
+        )
+
     # ============== ABSTRACT METHODS ==============
     # These methods together with the world model define the experiment
     @abstractmethod
@@ -172,7 +181,37 @@ class DifferentiableSimulator(BaseSimulator, ABC):
         self.tape.backward(self.loss)
 
     def _axion_forward_backward_implicit(self):
-        pass
+
+        # We make sure that the gradients are zero
+        self.trajectory.zero_grad()
+
+        # --- FORWARD PASS ---
+        for i in range(self.clock.total_sim_steps):
+            self.contacts = self.model.collide(self.states[i], self.collision_pipeline)
+
+            self.solver.step(
+                state_in=self.states[i],
+                state_out=self.states[i + 1],
+                control=self.control,
+                contacts=self.contacts,
+                dt=self.clock.dt,
+            )
+            self.trajectory.save_step(i, self.solver.data)
+
+        with self.tape:
+            # Record the computation of the loss
+            self.compute_loss()
+
+        # --- BACKWARD PASS ---
+        # We get explicit gradients in the TrajectoryBuffer
+        self.tape.backward(self.loss)
+
+        # Now compute the implicit gradients
+        for i in range(self.clock.total_sim_steps - 1, -1, -1):
+            # TODO : Check if the indexing is correct
+            self.trajectory.load_step(i, self.solver.data)
+            self.solver.step_backward()
+            self.trajectory.save_gradients(i, self.solver.data)
 
     def _newton_forward_backward(self):
         """

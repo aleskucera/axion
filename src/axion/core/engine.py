@@ -35,6 +35,11 @@ from newton import Model
 from newton import State
 from newton.solvers import SolverBase
 
+from .adjoint_utils import compute_adjoint_rhs_kernel
+from .adjoint_utils import compute_body_adjoint_init_kernel
+from .adjoint_utils import subtract_constraint_feedback_kernel
+from .residual_utils import compute_residual
+
 
 @wp.kernel
 def _check_newton_convergence(
@@ -479,3 +484,85 @@ class AxionEngine(SolverBase):
         #     # Note: This requires synchronizing/reading back events
         #     # Usually you'd do this once per second or at end of sim
         #     pass
+
+    def step_backward(self):
+        compute_linear_system(self.axion_model, self.data, self.config, self.dims)
+        self._update_mass_matrix()
+
+        wp.launch(
+            kernel=compute_body_adjoint_init_kernel,
+            dims=(self.dims.N_w, self.dims.N_b),
+            inputs=[
+                self.data.body_q.grad,
+                self.data.body_u.grad,
+                self.data.body_q,
+                self.axion_model.body_inv_m,
+                self.axion_model.body_inv_inertia,
+                self.data.dt,
+            ],
+            outputs=[
+                self.data.w.d_spatial,
+            ],
+            device=self.device,
+        )
+        wp.launch(
+            kernel=compute_adjoint_rhs_kernel,
+            dims=(self.dims.N_w, self.dims.N_c),
+            inputs=[
+                self.data.J_values,
+                self.data.constraint_body_idx,
+                self.data.constraint_active_mask,
+                self.data.w.d_spatial,
+            ],
+            outputs=[
+                self.data.adjoint_rhs,
+            ],
+            device=self.device,
+        )
+        self.data.w.sync_to_float()
+        self.preconditioner.update()
+
+        self.data.w_lambda.zero_()
+        _ = self.cr_solver.solve(
+            A=self.A_op,
+            b=self.data.adjoint_rhs,
+            x=self.data.w.c.full,
+            preconditioner=self.preconditioner,
+            iters=self.config.max_linear_iters,
+            tol=self.config.linear_tol,
+            atol=self.config.linear_atol,
+            log=False,
+        )
+
+        wp.launch(
+            kernel=subtract_constraint_feedback_kernel,
+            dims=(self.dims.N_w, self.dims.N_c),
+            inputs=[
+                self.data.w.c.full,
+                self.data.J_values,
+                self.data.constraint_body_idx,
+                self.data.constraint_active_mask,
+                self.body_q,
+                self.axion_model.body_m_inv,
+                self.axion_model.body_inv_inertia,
+            ],
+            outputs=[
+                self.data.w.d_spatial,
+            ],
+            device=self.device,
+        )
+
+        tape = wp.Tape()
+        # self.data.body_q_prev.requires_grad = True
+        # self.data.body_u_prev.requires_grad = True
+        with tape:
+            compute_residual(self.model, self.engine.data, self.engine.config, self.engine.dt)
+
+        # This should add implicit gradient to all the arrays in self.data that has requires_grad=True
+        tape.backward(grads={self.data._h: self.data._w})
+
+        # body_q_prev
+        # body_u_prev
+        # body_f -
+        # joint_target_pos
+        # joint_target_vel

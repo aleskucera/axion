@@ -182,3 +182,5 @@ def compute_residual(
         ],
         device=device,
     )
+
+    data.h.sync_to_float()

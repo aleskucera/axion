@@ -77,7 +77,8 @@ class EngineData:
     dt: float
 
     # --- Primary allocated arrays ---
-    _h: wp.array  # Residual (Padded)
+    _h: wp.array  # Residual
+    _h_spatial: wp.array
     _J_values: wp.array  # Jacobian values for sparse construction
     _C_values: wp.array  # Compliance values
 
@@ -126,11 +127,18 @@ class EngineData:
     contact_basis_t1_b: wp.array
     contact_basis_t2_b: wp.array
 
+    # Adjoint variables
+    _w: wp.array
+    _w_spatial: wp.array
+    adjoint_rhs: wp.array
+
     linesearch: Optional[LinesearchData] = None
     newton_history: Optional[NewtonHistoryData] = None
 
     g_accel: wp.array = None
-    _h_spatial: Optional[wp.array] = None
+
+    body_q_grad: Optional[wp.array] = None  # Upper gradient of positions
+    body_u_grad: Optional[wp.array] = None  # Upper gradient of velocities
 
     # 1. System Views (Combined Dynamics + Constraints)
     #    Access pattern: sys.d (dynamics), sys.c.j (joint constraints), etc.
@@ -139,6 +147,11 @@ class EngineData:
     def h(self) -> SystemView:
         """Residual vector [h_d, h_c]."""
         return SystemView(self._h, self.dims, _d_spatial=self._h_spatial)
+
+    @cached_property
+    def w(self) -> SystemView:
+        """Residual vector [h_d, h_c]."""
+        return SystemView(self._w, self.dims, _d_spatial=self._w_spatial)
 
     # 2. Constraint Views (Constraints Only)
     #    Access pattern: const.j, const.n, const.f
@@ -362,18 +375,25 @@ class EngineData:
         joint_constraint_offsets: wp.array,
         control_constraint_offsets: wp.array,
         dof_count: int,
-        device: wpc.Device,
+        device: wp.Device,
         allocate_history: bool = False,
+        allocate_grad: bool = True,
     ) -> EngineData:
 
-        def _zeros(shape, dtype=wp.float32, ndim=None):
-            return wp.zeros(shape, dtype=dtype, device=device, ndim=ndim).contiguous()
+        def _zeros(shape, dtype=wp.float32, requires_grad=False):
+            return wp.zeros(
+                shape, dtype=dtype, device=device, requires_grad=requires_grad
+            ).contiguous()
 
-        def _ones(shape, dtype=wp.float32, ndim=None):
-            return wp.ones(shape, dtype=dtype, device=device, ndim=ndim).contiguous()
+        def _ones(shape, dtype=wp.float32, requires_grad=False):
+            return wp.ones(
+                shape, dtype=dtype, device=device, requires_grad=requires_grad
+            ).contiguous()
 
-        def _empty(shape, dtype, device=device):
-            return wp.empty(shape, dtype=dtype, device=device).contiguous()
+        def _empty(shape, dtype, device=device, requires_grad=False):
+            return wp.empty(
+                shape, dtype=dtype, device=device, requires_grad=requires_grad
+            ).contiguous()
 
         # ---- Core arrays ----
 
@@ -381,17 +401,21 @@ class EngineData:
         h = _zeros((dims.N_w, dims.N_u + dims.N_c))
 
         # 2. Separate Spatial Buffer Allocation
-        h_spatial = _zeros((dims.N_w, dims.N_b), dtype=wp.spatial_vector)
+        h_spatial = _zeros((dims.N_w, dims.N_b), wp.spatial_vector)
 
         J_values = _zeros((dims.N_w, dims.N_c, 2), wp.spatial_vector)
         C_values = _zeros((dims.N_w, dims.N_c))
 
-        # ... (Other allocations: body_f, body_q, etc. remain the same) ...
-        body_f = _zeros((dims.N_w, dims.N_b), wp.spatial_vector)
+        body_f = _zeros((dims.N_w, dims.N_b), wp.spatial_vector, allocate_grad)
         body_q = _zeros((dims.N_w, dims.N_b), wp.transform)
-        body_q_prev = _zeros((dims.N_w, dims.N_b), wp.transform)
+        body_q_prev = _zeros((dims.N_w, dims.N_b), wp.transform, allocate_grad)
         body_u = _zeros((dims.N_w, dims.N_b), wp.spatial_vector)
-        body_u_prev = _zeros((dims.N_w, dims.N_b), wp.spatial_vector)
+        body_u_prev = _zeros((dims.N_w, dims.N_b), wp.spatial_vector, allocate_grad)
+
+        body_q_grad, body_u_grad = (None, None)
+        if allocate_grad:
+            body_q_grad = _zeros((dims.N_w, dims.N_b), wp.transform)  # Upper gradient
+            body_u_grad = _zeros((dims.N_w, dims.N_b), wp.spatial_vector)  # Upper gradient
 
         body_lambda = _zeros((dims.N_w, dims.N_c))
         body_lambda_prev = _zeros((dims.N_w, dims.N_c))
@@ -429,7 +453,13 @@ class EngineData:
         contact_basis_t2_b = _zeros((dims.N_w, dims.N_n), wp.spatial_vector)
 
         joint_target_pos = _zeros((dims.N_w, dof_count))
+        joint_target_pos.requires_grad = True
         joint_target_vel = _zeros((dims.N_w, dof_count))
+        joint_target_vel.requires_grad = True
+
+        w = _zeros((dims.N_w, dims.N_u + dims.N_c))
+        w_spatial = _zeros((dims.N_w, dims.N_b), wp.spatial_vector)
+        adjoint_rhs = _zeros((dims.N_w, dims.N_c))
 
         # ---- Linesearch Arrays ----
         linesearch_data = None
@@ -530,8 +560,10 @@ class EngineData:
             _C_values=C_values,
             body_f=body_f,
             body_q=body_q,
+            body_q_grad=body_q_grad,
             body_q_prev=body_q_prev,
             body_u=body_u,
+            body_u_grad=body_u_grad,
             body_u_prev=body_u_prev,
             _body_lambda=body_lambda,
             _body_lambda_prev=body_lambda_prev,
@@ -561,6 +593,9 @@ class EngineData:
             contact_basis_n_b=contact_basis_n_b,
             contact_basis_t1_b=contact_basis_t1_b,
             contact_basis_t2_b=contact_basis_t2_b,
+            _w=w,
+            _w_spatial=w_spatial,
+            adjoint_rhs=adjoint_rhs,
             joint_constraint_offsets=joint_constraint_offsets,
             control_constraint_offsets=control_constraint_offsets,
             joint_target_pos=joint_target_pos,

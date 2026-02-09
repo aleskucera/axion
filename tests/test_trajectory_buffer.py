@@ -65,29 +65,59 @@ class TestTrajectoryBuffer(unittest.TestCase):
         for t in range(num_steps):
             # Dynamics
             body_q_np = np.random.rand(dims.num_worlds, dims.body_count, 7).astype(np.float32)
-            body_q_prev_np = np.random.rand(dims.num_worlds, dims.body_count, 7).astype(np.float32)
+            if t == 0:
+                body_q_prev_np = np.random.rand(dims.num_worlds, dims.body_count, 7).astype(
+                    np.float32
+                )
+            else:
+                body_q_prev_np = ground_truth_history[t - 1]["body_q"]
+
             body_u_np = np.random.rand(dims.num_worlds, dims.body_count, 6).astype(np.float32)
-            body_u_prev_np = np.random.rand(dims.num_worlds, dims.body_count, 6).astype(np.float32)
+            if t == 0:
+                body_u_prev_np = np.random.rand(dims.num_worlds, dims.body_count, 6).astype(
+                    np.float32
+                )
+            else:
+                body_u_prev_np = ground_truth_history[t - 1]["body_u"]
+
             body_f_np = np.random.rand(dims.num_worlds, dims.body_count, 6).astype(np.float32)
 
             # Inputs
-            joint_target_pos_np = np.random.rand(dims.num_worlds, dims.joint_dof_count).astype(np.float32)
-            joint_target_vel_np = np.random.rand(dims.num_worlds, dims.joint_dof_count).astype(np.float32)
+            joint_target_pos_np = np.random.rand(dims.num_worlds, dims.joint_dof_count).astype(
+                np.float32
+            )
+            joint_target_vel_np = np.random.rand(dims.num_worlds, dims.joint_dof_count).astype(
+                np.float32
+            )
 
             # Constraints
             body_lambda_np = np.random.rand(dims.num_worlds, dims.N_c).astype(np.float32)
             body_lambda_prev_np = np.random.rand(dims.num_worlds, dims.N_c).astype(np.float32)
             constraint_active_mask_np = np.random.rand(dims.num_worlds, dims.N_c).astype(np.float32)
-            constraint_body_idx_np = np.random.randint(0, dims.body_count, size=(dims.num_worlds, dims.N_c, 2)).astype(np.int32)
+            constraint_body_idx_np = np.random.randint(
+                0, dims.body_count, size=(dims.num_worlds, dims.N_c, 2)
+            ).astype(np.int32)
 
             # Contacts
-            contact_body_a_np = np.random.randint(0, dims.body_count, size=(dims.num_worlds, dims.contact_count)).astype(np.int32)
-            contact_body_b_np = np.random.randint(0, dims.body_count, size=(dims.num_worlds, dims.contact_count)).astype(np.int32)
-            contact_point_a_np = np.random.rand(dims.num_worlds, dims.contact_count, 3).astype(np.float32)
-            contact_point_b_np = np.random.rand(dims.num_worlds, dims.contact_count, 3).astype(np.float32)
-            contact_basis_n_a_np = np.random.rand(dims.num_worlds, dims.contact_count, 6).astype(np.float32)
+            contact_body_a_np = np.random.randint(
+                0, dims.body_count, size=(dims.num_worlds, dims.contact_count)
+            ).astype(np.int32)
+            contact_body_b_np = np.random.randint(
+                0, dims.body_count, size=(dims.num_worlds, dims.contact_count)
+            ).astype(np.int32)
+            contact_point_a_np = np.random.rand(dims.num_worlds, dims.contact_count, 3).astype(
+                np.float32
+            )
+            contact_point_b_np = np.random.rand(dims.num_worlds, dims.contact_count, 3).astype(
+                np.float32
+            )
+            contact_basis_n_a_np = np.random.rand(dims.num_worlds, dims.contact_count, 6).astype(
+                np.float32
+            )
             contact_dist_np = np.random.rand(dims.num_worlds, dims.contact_count).astype(np.float32)
-            contact_friction_coeff_np = np.random.rand(dims.num_worlds, dims.contact_count).astype(np.float32)
+            contact_friction_coeff_np = np.random.rand(dims.num_worlds, dims.contact_count).astype(
+                np.float32
+            )
 
             with wp.ScopedDevice(self.device):
                 # Dynamics
@@ -103,18 +133,31 @@ class TestTrajectoryBuffer(unittest.TestCase):
 
                 # Constraints
                 wp.copy(data._body_lambda, wp.from_numpy(body_lambda_np, dtype=wp.float32))
-                wp.copy(data._body_lambda_prev, wp.from_numpy(body_lambda_prev_np, dtype=wp.float32))
-                wp.copy(data._constraint_active_mask, wp.from_numpy(constraint_active_mask_np, dtype=wp.float32))
-                wp.copy(data._constraint_body_idx, wp.from_numpy(constraint_body_idx_np, dtype=wp.int32))
+                wp.copy(
+                    data._body_lambda_prev, wp.from_numpy(body_lambda_prev_np, dtype=wp.float32)
+                )
+                wp.copy(
+                    data._constraint_active_mask,
+                    wp.from_numpy(constraint_active_mask_np, dtype=wp.float32),
+                )
+                wp.copy(
+                    data._constraint_body_idx, wp.from_numpy(constraint_body_idx_np, dtype=wp.int32)
+                )
 
                 # Contacts
                 wp.copy(data.contact_body_a, wp.from_numpy(contact_body_a_np, dtype=wp.int32))
                 wp.copy(data.contact_body_b, wp.from_numpy(contact_body_b_np, dtype=wp.int32))
                 wp.copy(data.contact_point_a, wp.from_numpy(contact_point_a_np, dtype=wp.vec3))
                 wp.copy(data.contact_point_b, wp.from_numpy(contact_point_b_np, dtype=wp.vec3))
-                wp.copy(data.contact_basis_n_a, wp.from_numpy(contact_basis_n_a_np, dtype=wp.spatial_vector))
+                wp.copy(
+                    data.contact_basis_n_a,
+                    wp.from_numpy(contact_basis_n_a_np, dtype=wp.spatial_vector),
+                )
                 wp.copy(data.contact_dist, wp.from_numpy(contact_dist_np, dtype=wp.float32))
-                wp.copy(data.contact_friction_coeff, wp.from_numpy(contact_friction_coeff_np, dtype=wp.float32))
+                wp.copy(
+                    data.contact_friction_coeff,
+                    wp.from_numpy(contact_friction_coeff_np, dtype=wp.float32),
+                )
 
             # Store for verification
             gt = {
@@ -173,18 +216,27 @@ class TestTrajectoryBuffer(unittest.TestCase):
             for key, val in gt.items():
                 # Map keys to EngineData attributes
                 attr_name = key
-                if key == "body_lambda": attr_name = "_body_lambda"
-                if key == "body_lambda_prev": attr_name = "_body_lambda_prev"
-                if key == "constraint_active_mask": attr_name = "_constraint_active_mask"
-                if key == "constraint_body_idx": attr_name = "_constraint_body_idx"
-                if key == "contact_friction_coeff": attr_name = "contact_friction_coeff"
-                
+                if key == "body_lambda":
+                    attr_name = "_body_lambda"
+                if key == "body_lambda_prev":
+                    attr_name = "_body_lambda_prev"
+                if key == "constraint_active_mask":
+                    attr_name = "_constraint_active_mask"
+                if key == "constraint_body_idx":
+                    attr_name = "_constraint_body_idx"
+                if key == "contact_friction_coeff":
+                    attr_name = "contact_friction_coeff"
+
                 loaded_val = getattr(data, attr_name).numpy()
-                
+
                 if val.dtype == np.int32:
-                    np.testing.assert_array_equal(loaded_val, val, err_msg=f"{key} mismatch at step {t}")
+                    np.testing.assert_array_equal(
+                        loaded_val, val, err_msg=f"{key} mismatch at step {t}"
+                    )
                 else:
-                    np.testing.assert_array_almost_equal(loaded_val, val, decimal=5, err_msg=f"{key} mismatch at step {t}")
+                    np.testing.assert_array_almost_equal(
+                        loaded_val, val, decimal=5, err_msg=f"{key} mismatch at step {t}"
+                    )
 
     def test_step_isolation(self):
         """
