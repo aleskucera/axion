@@ -91,7 +91,7 @@ class AxionEnv:
 
         # misc
         self.frame_dt = FRAME_DT
-        self.uses_generalized_coordinates = True
+        self.uses_generalized_coordinates = False  # AxionEngine is a maximal-coordinate solver
 
 
     def set_eval_collisions(self, eval_collisions: bool) -> None:
@@ -121,6 +121,10 @@ class AxionEnv:
             )
 
             self.state, self.next_state = self.next_state, self.state
+
+        # AxionEngine is a maximal-coordinate solver: it only writes body_q / body_qd.
+        # Recover generalized coordinates so that joint_q / joint_qd are up-to-date.
+        newton.eval_ik(self.model, self.state, self.state.joint_q, self.state.joint_qd)
 
     def assign_control(
         self,
