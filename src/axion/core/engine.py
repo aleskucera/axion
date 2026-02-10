@@ -85,12 +85,12 @@ class AxionEngine(SolverBase):
         self.events = EngineEvents()
 
         # Pre-allocate timing events if timing might be used
-        if self.config.enable_timing:
+        if self.logging_config.enable_timing:
             self.events.allocate_timing_events(self.config.max_newton_iters)
 
         # Attach Data Observer (Debug)
-        # Note: We pass config here so it only activates if enable_hdf5_logging is True
-        self.data_observer = HDF5Observer(self.events, self.config)
+        # Note: We pass logging_config here so it only activates if enable_hdf5_logging is True
+        self.data_observer = HDF5Observer(self.events, self.logging_config)
 
         # --- 2. Model & Data Setup ---
         self.axion_model = AxionModel(model)

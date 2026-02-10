@@ -12,7 +12,7 @@ from typing import Optional
 
 import numpy as np
 import warp as wp
-from axion.core.engine_config import AxionEngineConfig
+from axion.core.logging_config import LoggingConfig
 from axion.logging import HDF5Logger
 from axion.logging import NullLogger
 
@@ -261,7 +261,7 @@ class EngineEvents:
 class HDF5Observer:
     """Listens to Data Signals and writes to HDF5 (Debug Mode only)."""
 
-    def __init__(self, events: EngineEvents, config: AxionEngineConfig):
+    def __init__(self, events: EngineEvents, config: LoggingConfig):
         self.config = config
         self.logger = NullLogger()
         if config.enable_hdf5_logging:
