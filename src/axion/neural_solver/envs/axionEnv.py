@@ -18,7 +18,7 @@ from axion.neural_solver.envs.abstract_contact import AbstractContact
 
 PENDULUM_HEIGHT = 5.0
 NUM_CONTACTS_PER_ENV = 4 # hardcoded for double pendulum
-FRAME_DT = 1.0/60.0
+FRAME_DT = 0.01
 ENGINE_SUBSTEPS = 10
 ENGINE_DT = FRAME_DT/ENGINE_SUBSTEPS
 
@@ -55,7 +55,32 @@ class AxionEnv:
         self.contacts: newton.Contacts = self.model.collide(self.state)
 
         # integrator (Axion engine):
-        self.engine_cfg = AxionEngineConfig()
+        # Use the same config as examples/conf/engine/axion_pos.yaml
+        # so that dataset generation matches the interactive simulator.
+        self.engine_cfg = AxionEngineConfig(
+            max_newton_iters=12,
+            max_linear_iters=16,
+            enable_linesearch=True,
+            linesearch_conservative_step_count=16,
+            linesearch_conservative_upper_bound=5e-2,
+            linesearch_min_step=1e-6,
+            linesearch_optimistic_step_count=48,
+            linesearch_optimistic_window=0.4,
+            joint_stabilization_factor=0.01,
+            contact_stabilization_factor=0.02,
+            joint_compliance=6e-8,
+            equality_compliance=1e-7,
+            contact_compliance=1e-6,
+            friction_compliance=1e-6,
+            regularization=1e-6,
+            contact_fb_alpha=0.5,
+            contact_fb_beta=1.0,
+            friction_fb_alpha=1.0,
+            friction_fb_beta=1.0,
+            max_contacts_per_world=256,
+            joint_constraint_level="pos",
+            contact_constraint_level="pos",
+        )
         self.engine = AxionEngine(
             model=self.model,
             init_state_fn=self._engine_init_state_fn,
@@ -104,23 +129,37 @@ class AxionEnv:
 
         self.state.clear_forces()
 
-        for i in range(ENGINE_SUBSTEPS):
-            # Collision detection
-            if self.eval_collisions:
-                self.contacts = self.model.collide(self.state)
-            else:
-                raise NotImplementedError
+        # for i in range(ENGINE_SUBSTEPS):
+        #     # Collision detection
+        #     if self.eval_collisions:
+        #         self.contacts = self.model.collide(self.state)
+        #     else:
+        #         raise NotImplementedError
             
-            # Engine (integrator) step
-            self.engine.step(
-                state_in = self.state,
-                state_out = self.next_state,
-                control= self.control,
-                contacts=self.contacts, 
-                dt= ENGINE_DT
-            )
+        #     # Engine (integrator) step
+        #     self.engine.step(
+        #         state_in = self.state,
+        #         state_out = self.next_state,
+        #         control= self.control,
+        #         contacts=self.contacts, 
+        #         dt= ENGINE_DT
+        #     )
 
-            self.state, self.next_state = self.next_state, self.state
+        if self.eval_collisions:
+            self.contacts = self.model.collide(self.state)
+        else:
+            raise NotImplementedError       
+
+        # Engine (integrator) step
+        self.engine.step(
+            state_in = self.state,
+            state_out = self.next_state,
+            control= self.control,
+            contacts=self.contacts, 
+            dt= FRAME_DT
+        )
+
+        self.state, self.next_state = self.next_state, self.state
 
         # AxionEngine is a maximal-coordinate solver: it only writes body_q / body_qd.
         # Recover generalized coordinates so that joint_q / joint_qd are up-to-date.
