@@ -1,0 +1,309 @@
+# Simple Dataset Generation — Pendulum
+
+## Overview
+
+The simple dataset generation pipeline collects **state-transition trajectories** from the Axion physics engine for a **double pendulum** model. Each data point is a transition tuple `(state, joint_act, next_state)` produced by running the ground-truth Axion integrator. The output is a single HDF5 file.
+
+**Current scope:** Only joint states (`joint_q`, `joint_qd`) are meaningfully recorded. Contact buffers exist in the HDF5 schema but are **not populated** by the simple sampler (they contain uninitialized values). Control (`joint_acts`) is recorded but is typically zeroed out when running in `--passive` mode.
+
+---
+
+## Pipeline at a Glance
+
+```
+CLI (simple_generate_dataset_pendulum.py)
+  │
+  ├─ creates HDF5 file
+  ├─ instantiates AxionEnvToTrajectorySamplerAdapter
+  │       └─ internally creates AxionEnv
+  │               └─ builds Newton Model (double pendulum) + AxionEngine
+  ├─ instantiates SimpleTrajectorySamplerPendulum
+  │       └─ extends TrajectorySampler → WarpSimDataGenerator
+  │
+  └─ calls sampler.sample_trajectories_states_only()
+          │
+          │  for each round:
+          │    1. Sample random initial states (UniformSampler)
+          │    2. Sample random joint_acts    (UniformSampler)
+          │    3. env.reset(initial_states)
+          │    4. for each step in trajectory:
+          │         record state  ← env.states  (joint_q ++ joint_qd)
+          │         record root_body_q ← env.root_body_q
+          │         next_state = env.step_with_joint_act(joint_act)
+          │         record next_state
+          │    5. Append round's buffers to rollout_batches
+          │
+          └─ returns rollouts dict → written to HDF5
+```
+
+---
+
+## File-by-File Breakdown
+
+### 1. `simple_generate_dataset_pendulum.py` — Entry Point / CLI
+
+**Role:** Top-level script. Parses CLI arguments, wires together the environment adapter and sampler, runs collection, writes HDF5.
+
+**CLI arguments:**
+
+| Argument | Default | Description |
+|---|---|---|
+| `--dataset-dir` | `<project_root>/src/axion/neural_solver/datasets` | Output directory |
+| `--env-name` | `PendulumWithContact` | Environment name (only choice currently) |
+| `--num-transitions` | `1000000` | Total state transitions to collect |
+| `--trajectory-length` | `100` | Steps per trajectory rollout |
+| `--num-envs` | `1024` | Parallel simulation environments |
+| `--passive` | `False` | If set, zero out all joint_acts (free dynamics only) |
+| `--contact-prob` | `0.5` | Probability of sampling a valid contact (unused in simple sampler) |
+| `--seed` | `0` | Random seed |
+| `--render` | `False` | Render the simulation |
+| `--export-video` | `False` | Export video |
+| `--dataset-name` | `dataset.hdf5` | Output filename |
+
+**What it does step-by-step:**
+
+1. Sets random seed via `set_random_seed(seed)`.
+2. Creates the output directory `<dataset-dir>/<env-name>/`.
+3. Opens an HDF5 file with a `data` group and writes metadata attributes (`env`, `mode`).
+4. Instantiates `AxionEnvToTrajectorySamplerAdapter` (which internally creates `AxionEnv`).
+5. Looks up joint limits from `commons.py` using `env.robot_name` (`"PendulumWithContact"`):
+   - `JOINT_Q_MIN["PendulumWithContact"]` = `-π`
+   - `JOINT_Q_MAX["PendulumWithContact"]` = `π`
+   - `JOINT_QD_MIN["PendulumWithContact"]` = `[-2π, -4π]`
+   - `JOINT_QD_MAX["PendulumWithContact"]` = `[2π, 4π]`
+   - `JOINT_ACT_SCALE["PendulumWithContact"]` = `1500.0`
+6. Instantiates `SimpleTrajectorySamplerPendulum` with these limits.
+7. Calls `sampler.sample_trajectories_states_only(num_transitions, trajectory_length, passive)`.
+8. Writes the returned rollouts dict to HDF5 datasets (see [HDF5 Schema](#hdf5-output-schema) below).
+
+---
+
+### 2. `axionEnv.py` — `AxionEnv` (Low-Level Physics Wrapper)
+
+**Role:** Builds the Newton rigid-body model for a double pendulum, creates the `AxionEngine` integrator, and exposes `update()` / `reset()` to step or reset the simulation.
+
+**Model construction** (`_build_pendulum_model`):
+- Uses `AxionModelBuilder` (extends Newton's `ModelBuilder`).
+- Creates **2 capsule links** (link_0, link_1) each with `half_height=0.75`, `radius=0.1`, `density=500`.
+- Connects them with **2 revolute joints** (j0: world→link_0, j1: link_0→link_1) rotating around the Y axis.
+- Pendulum hangs from height `PENDULUM_HEIGHT = 5.0`.
+- Adds a ground plane.
+- Replicates for `num_worlds` parallel environments via `builder.finalize_replicated(num_worlds, gravity=-9.81, ...)`.
+- Joint modes are set to `JointMode.NONE` (no PD controller by default).
+
+**Key runtime objects held by `AxionEnv`:**
+
+| Object | Type | Description |
+|---|---|---|
+| `self.model` | `newton.Model` | The finalized rigid-body model (all worlds) |
+| `self.state` | `newton.State` | Current simulation state (`body_q`, `body_qd`, `joint_q`, `joint_qd`) |
+| `self.next_state` | `newton.State` | Buffer for the next state after integration |
+| `self.control` | `newton.Control` | Control inputs (unused in passive mode) |
+| `self.contacts` | `newton.Contacts` | Collision contacts from `model.collide()` |
+| `self.engine` | `AxionEngine` | The Axion maximal-coordinate integrator |
+| `self.joint_act` | `wp.array(float)` | Flat Warp array of joint actuator torques |
+| `self.abstract_contacts` | `AbstractContact` | Torch-side contact buffers (for dataset) |
+
+**Simulation constants:**
+
+| Constant | Value | Description |
+|---|---|---|
+| `FRAME_DT` | `1/60 s` | One frame timestep |
+| `ENGINE_SUBSTEPS` | `10` | Substeps per frame |
+| `ENGINE_DT` | `FRAME_DT / 10` | Per-substep dt |
+| `NUM_CONTACTS_PER_ENV` | `4` | Hardcoded for double pendulum |
+
+**`update()` method** (one frame):
+1. Clears forces on `self.state`.
+2. Loops `ENGINE_SUBSTEPS` (10) times:
+   - Runs collision detection: `self.contacts = self.model.collide(self.state)`.
+   - Steps the integrator: `self.engine.step(state_in, state_out, control, contacts, dt)`.
+   - Swaps `self.state` and `self.next_state`.
+3. Runs inverse kinematics (`newton.eval_ik`) to recover generalized coordinates (`joint_q`, `joint_qd`) from the maximal-coordinate state (`body_q`, `body_qd`), since AxionEngine is a maximal-coordinate solver.
+
+**`reset()` method:**
+- Zeros `joint_q` and `joint_qd`, then runs forward kinematics (`newton.eval_fk`) to compute consistent `body_q`.
+
+**DOF info** (for the double pendulum):
+- `dof_q_per_env = 2` (two revolute joint angles)
+- `dof_qd_per_env = 2` (two revolute joint velocities)
+- `state_dim = 4` (q0, q1, qd0, qd1)
+- `joint_act_dim = 2` (torque per joint)
+- `bodies_per_env = 2`
+
+---
+
+### 3. `axionToTrajectorySampler.py` — `AxionEnvToTrajectorySamplerAdapter`
+
+**Role:** Adapter layer between the low-level `AxionEnv` and the trajectory sampler. Exposes a clean API (`reset`, `step`, `step_with_joint_act`, `states`, `root_body_q`) and manages Warp↔Torch data conversion.
+
+**Key state buffers it owns:**
+
+| Buffer | Shape | Source |
+|---|---|---|
+| `self.states` | `(num_envs, state_dim)` | Torch tensor; synced from `newton.State.joint_q` + `joint_qd` |
+| `self.joint_acts` | `(num_envs, joint_act_dim)` | Torch tensor; copy of control joint_act |
+| `self.root_body_q` | `(num_envs, 7)` | Torch view into `newton.State.body_q`, sliced to root body (position `[3]` + quaternion `[4]`) |
+
+**`reset(initial_states)`:**
+1. If `initial_states` is provided (a `(num_envs, 4)` torch tensor of `[q0, q1, qd0, qd1]`):
+   - Calls `_update_states(initial_states)` which:
+     - Copies the torch tensor into `self.states`.
+     - Runs the Warp kernel `_assign_states` to scatter `self.states` → `newton.State.joint_q` and `newton.State.joint_qd`.
+     - Runs `newton.eval_fk()` to compute `body_q` / `body_qd` from the assigned generalized coordinates.
+2. If no `initial_states`: calls `AxionEnv.reset()` (zeros everything), then reads state back.
+
+**`step_with_joint_act(joint_acts)` — the method used by the simple sampler:**
+1. Writes `joint_acts` (torch tensor, shape `(num_envs, 2)`) into the Warp array `self.env.joint_act` via `wp.array(joint_acts.view(-1))`.
+2. Copies the value back into `self.joint_acts` for bookkeeping.
+3. Calls `self.env.update()` — runs one frame (10 substeps) of Axion physics.
+4. Calls `self._update_states()` (no argument) which:
+   - Runs `newton.eval_ik` to update `joint_q` / `joint_qd` from the integrated `body_q` / `body_qd`.
+   - Runs the Warp kernel `_acquire_states` to gather `joint_q` + `joint_qd` → `self.states` (torch).
+5. Returns `self.states` (the post-step state).
+
+**Data flow diagram for a single step:**
+
+```
+joint_acts (torch)
+    │
+    ▼
+self.env.joint_act (warp array)    ──►  AxionEngine.step()
+                                              │
+                                              ▼
+                                    newton.State.body_q / body_qd  (maximal coords)
+                                              │
+                                        newton.eval_ik()
+                                              │
+                                              ▼
+                                    newton.State.joint_q / joint_qd  (generalized coords)
+                                              │
+                                        _acquire_states kernel
+                                              │
+                                              ▼
+                                    self.states (torch)  =  [q0, q1, qd0, qd1]
+```
+
+---
+
+### 4. `simple_trajectory_sampler_pendulum.py` — `SimpleTrajectorySamplerPendulum`
+
+**Role:** The actual sampling loop. Extends `TrajectorySampler` → `WarpSimDataGenerator`. Generates batches of random trajectories by resetting the env to random states and rolling out with random (or zero) joint actuations.
+
+**Inheritance chain:**
+```
+WarpSimDataGenerator          (holds env ref, joint limits, sampler)
+    └─ TrajectorySampler      (base trajectory sampler with contact-aware methods)
+        └─ SimpleTrajectorySamplerPendulum   (states-only simple variant)
+```
+
+**`sample_trajectories_states_only()` — the method called by the entry point:**
+
+**Pre-allocated buffers per round** (all torch tensors on GPU):
+
+| Buffer | Shape | Description |
+|---|---|---|
+| `initial_states` | `(num_envs, state_dim)` | Random initial `[q0, q1, qd0, qd1]` |
+| `states` | `(traj_len, num_envs, state_dim)` | Pre-step states |
+| `next_states` | `(traj_len, num_envs, state_dim)` | Post-step states |
+| `joint_acts` | `(traj_len, num_envs, joint_act_dim)` | Sampled actuator torques |
+| `root_body_q` | `(traj_len, num_envs, 7)` | Root body pose (pos + quat) |
+| `gravity_dir` | `(traj_len, num_envs, 3)` | Gravity direction (hardcoded `[0, 0, -1]` or along `up_axis`) |
+| `contact_*` | `(traj_len, num_envs, num_contacts, ...)` | **Allocated but NOT filled** in this sampler |
+
+**Round loop** (each round produces `num_envs × trajectory_length` transitions):
+
+1. **Sample initial states** — `UniformSampler` fills `initial_states` uniformly from `states_min` to `states_max`:
+   - `q0, q1` ∈ `[-π, π]`
+   - `qd0` ∈ `[-2π, 2π]`, `qd1` ∈ `[-4π, 4π]`
+
+2. **Sample joint actuations** — `UniformSampler` fills `joint_acts` uniformly from `[-1500, 1500]` per DOF. If `--passive`, they are zeroed.
+
+3. **Reset** — `env.reset(initial_states)` writes the random state into the Newton simulation.
+
+4. **Step loop** (for each `step` in `[0, trajectory_length)`):
+   - `root_body_q[step]` ← `env.root_body_q` (torch view of `newton.State.body_q` for root bodies)
+   - `states[step]` ← `env.states` (current `[q0, q1, qd0, qd1]`)
+   - `next_states[step]` ← `env.step_with_joint_act(joint_acts[step])` (runs one Axion frame, returns new state)
+   - Note: the `env.states` at the start of the next iteration equals `next_states` from this iteration (the env state is persistent).
+
+5. **Append** — Clone all buffers into `rollout_batches` lists.
+
+**After all rounds:**
+- Concatenates all batches along the `num_envs` dimension (dim=1).
+- Returns the merged `rollouts` dict.
+
+**Important note on contacts:** Unlike the base class `TrajectorySampler.sample_trajectories_joint_act_mode()` which reads contact data from `env.abstract_contacts` after each step, `sample_trajectories_states_only()` allocates contact buffers but **never writes to them**. The HDF5 file will contain contact datasets with uninitialized/garbage values. This is expected for the current states-only workflow.
+
+---
+
+## Data Flow: From Runtime Objects to HDF5
+
+### Where each HDF5 dataset comes from
+
+| HDF5 Dataset | Tensor Shape (after concat) | Runtime Source |
+|---|---|---|
+| `data/states` | `(traj_len, total_envs, 4)` | `newton.State.joint_q` + `newton.State.joint_qd` → Warp kernel `_acquire_states` → `adapter.states` |
+| `data/next_states` | `(traj_len, total_envs, 4)` | Same as `states`, but captured **after** `env.step_with_joint_act()` |
+| `data/joint_acts` | `(traj_len, total_envs, 2)` | Sampled directly in torch via `UniformSampler` (range `[-1500, 1500]`). Zeroed if `--passive`. |
+| `data/root_body_q` | `(traj_len, total_envs, 7)` | `newton.State.body_q` → `wp.to_torch()` → sliced to root body per env (pos `[3]` + quat `[4]`) |
+| `data/gravity_dir` | `(traj_len, total_envs, 3)` | Hardcoded: `-1.0` on the model's `up_axis` index, `0.0` elsewhere |
+| `data/contact_normals` | `(traj_len, total_envs, 4, 3)` | **Not populated** — uninitialized `torch.empty` |
+| `data/contact_depths` | `(traj_len, total_envs, 4)` | **Not populated** — uninitialized `torch.empty` |
+| `data/contact_points_0` | `(traj_len, total_envs, 4, 3)` | **Not populated** — uninitialized `torch.empty` |
+| `data/contact_points_1` | `(traj_len, total_envs, 4, 3)` | **Not populated** — uninitialized `torch.empty` |
+| `data/contact_thicknesses` | `(traj_len, total_envs, 4)` | **Not populated** — uninitialized `torch.empty` |
+
+Where `total_envs = num_rounds × num_envs` and `traj_len = trajectory_length`.
+
+### HDF5 metadata attributes
+
+| Attribute | Value |
+|---|---|
+| `data.attrs['env']` | `"PendulumWithContact"` |
+| `data.attrs['mode']` | `"trajectory"` |
+| `data.attrs['total_trajectories']` | `states.shape[1]` (= `total_envs`) |
+| `data.attrs['total_transitions']` | `states.shape[0] × states.shape[1]` |
+| `data.attrs['state_dim']` | `4` |
+| `data.attrs['joint_act_dim']` | `2` |
+| `data.attrs['next_state_dim']` | `4` |
+| `data.attrs['contact_prob']` | Value of `--contact-prob` CLI arg |
+| `data.attrs['num_contacts_per_env']` | `4` |
+
+### State vector layout
+
+The state vector `[q0, q1, qd0, qd1]` for the double pendulum:
+
+| Index | Symbol | Description |
+|---|---|---|
+| 0 | `q0` | Joint angle of link 0 (revolute, radians) |
+| 1 | `q1` | Joint angle of link 1 (revolute, radians) |
+| 2 | `qd0` | Angular velocity of link 0 (rad/s) |
+| 3 | `qd1` | Angular velocity of link 1 (rad/s) |
+
+---
+
+## Supporting Classes
+
+### `WarpSimDataGenerator` (`simulation_sampler.py`)
+
+Base class that holds the environment reference and computes sampling ranges. Converts the per-DOF joint limits from numpy (in `commons.py`) into torch tensors `states_min` / `states_max` and `joint_act_scale`. Holds the `UniformSampler` instance.
+
+### `UniformSampler` (`simulation_sampler.py`)
+
+Fills a pre-allocated torch tensor with `uniform_()` samples scaled to `[low, high]`:
+```python
+data.uniform_()
+data[...] = data * (high - low) + low
+```
+
+### `AbstractContact` (`abstract_contact.py`)
+
+Torch-side representation of rigid contact data. Allocates `(num_contacts_per_env × num_envs)` flat tensors for `contact_point0`, `contact_point1`, `contact_normal`, `contact_depth`, `contact_thickness`, etc. Also creates Warp array views mapped to the Newton model's rigid contact fields. **In the simple sampler, these are never read from the simulation** — the buffers stay at their initialized (zero) values in the `AbstractContact` object, while the sampler's own local `contact_*` tensors are `torch.empty` (uninitialized).
+
+---
+
+## Future Work
+
+- **Contacts:** The base class `TrajectorySampler.sample_trajectories_joint_act_mode()` already has the logic to read `abstract_contacts` fields after each step and record them. When contacts are needed, either switch to that method or add equivalent reads to `sample_trajectories_states_only()`.
+- **Controls:** Currently `joint_acts` are randomly sampled torques (or zero in passive mode). Structured control policies can be plugged in by replacing the `UniformSampler` call for `joint_acts`.

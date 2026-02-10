@@ -1,26 +1,29 @@
 from importlib.resources import files
 from typing import override
+import pathlib
 
 import hydra
 import newton
 import warp as wp
-from axion import AbstractSimulator
+from axion import InteractiveSimulator
 from axion import EngineConfig
 from axion import ExecutionConfig
 from axion import LoggingConfig
 from axion import RenderingConfig
 from axion import SimulationConfig
 from omegaconf import DictConfig
-from axion.core.control_utils import JointMode
+from axion.core.model_builder import AxionModelBuilder
+from axion import JointMode
 
 import os
 os.environ['PYOPENGL_PLATFORM'] = 'glx'
 
-CONFIG_PATH = files("axion").joinpath("examples").joinpath("conf")
+#CONFIG_PATH = files("axion").joinpath("examples").joinpath("conf")
+CONFIG_PATH = pathlib.Path(__file__).parent.joinpath("conf")
 
 PENDULUM_HEIGHT = 5.0
 
-class Simulator(AbstractSimulator):
+class Simulator(InteractiveSimulator):
     def __init__(
         self,
         sim_config: SimulationConfig,
@@ -44,7 +47,7 @@ class Simulator(AbstractSimulator):
     @override
     def _render(self, segment_num: int):
         """Renders the current state to the appropriate viewers, including world XYZ axes."""
-        sim_time = segment_num * self.steps_per_segment * self.effective_timestep
+        sim_time = segment_num * self.steps_per_segment * self.clock.dt
         self.viewer.begin_frame(sim_time)
         self.viewer.log_state(self.current_state)
         self.viewer.log_contacts(self.contacts, self.current_state)
@@ -113,48 +116,61 @@ class Simulator(AbstractSimulator):
         
         self.viewer.end_frame()
 
-    def build_model(self) -> newton.Model:
+    def build_model(
+        self,
+    ) -> newton.Model:
+        """Build the same 2-link revolute pendulum as examples/pendulum_AxionEngine.py,
+        replicated for num_worlds."""
+        builder = AxionModelBuilder()
 
         chain_width = 1.5
         shape_ke = 1.0e4
         shape_kd = 1.0e3
         shape_kf = 1.0e4
+        hx = chain_width * 0.5
 
-        hx = chain_width*0.5
+        link_config = newton.ModelBuilder.ShapeConfig(
+            density=500.0, ke=shape_ke, kd=shape_kd, kf=shape_kf
+        )
+        capsule_xform = wp.transform(
+            p=wp.vec3(0.0, 0.0, 0.0),
+            q=wp.quat_from_axis_angle(wp.vec3(0.0, 1.0, 0.0), -wp.pi / 2),
+        )
 
-        link_0 = self.builder.add_link(armature=0.1)
-        link_config = newton.ModelBuilder.ShapeConfig(density=500.0, ke = shape_ke, kd = shape_kd, kf = shape_kf)
-        capsule_shape_transform = wp.transform(p=wp.vec3(0.0, 0.0, 0.0), q=wp.quat_from_axis_angle(wp.vec3(0.0, 1.0, 0.0), -wp.pi/2))
-        
-        self.builder.add_shape_capsule(link_0,
-                                        xform= capsule_shape_transform,
-                                        radius=0.1, 
-                                        half_height=chain_width*0.5,
-                                        cfg = link_config)
+        link_0 = builder.add_link(armature=0.1)
+        builder.add_shape_capsule(
+            link_0,
+            xform=capsule_xform,
+            radius=0.1,
+            half_height=chain_width * 0.5,
+            cfg=link_config,
+        )
 
-        link_1 = self.builder.add_link(armature=0.1)
-        self.builder.add_shape_capsule(link_1,
-                                    xform = capsule_shape_transform,
-                                    radius=0.1, 
-                                    half_height=chain_width*0.5,
-                                    cfg = link_config)
+        link_1 = builder.add_link(armature=0.1)
+        builder.add_shape_capsule(
+            link_1,
+            xform=capsule_xform,
+            radius=0.1,
+            half_height=chain_width * 0.5,
+            cfg=link_config,
+        )
 
-        #rot = wp.quat_from_axis_angle(wp.vec3(0.0, 1.0, 0.0), -wp.pi * 0.5)
-        
-        j0 = self.builder.add_joint_revolute(
+        j0 = builder.add_joint_revolute(
             parent=-1,
             child=link_0,
             axis=wp.vec3(0.0, 1.0, 0.0),
-            parent_xform=wp.transform(p=wp.vec3(0.0, 0.0, PENDULUM_HEIGHT), q= wp.quat_identity()),
-            child_xform=wp.transform(p=wp.vec3(-hx, 0.0, 0.0), q= wp.quat_identity()),
+            parent_xform=wp.transform(
+                p=wp.vec3(0.0, 0.0, PENDULUM_HEIGHT), q=wp.quat_identity()
+            ),
+            child_xform=wp.transform(p=wp.vec3(-hx, 0.0, 0.0), q=wp.quat_identity()),
             target_ke=1000.0,
             target_kd=50.0,
             custom_attributes={
-                "joint_target_ki": [0.5],
+                #"joint_target_ki": [0.5],
                 "joint_dof_mode": [JointMode.NONE],
             },
         )
-        j1 = self.builder.add_joint_revolute(
+        j1 = builder.add_joint_revolute(
             parent=link_0,
             child=link_1,
             axis=wp.vec3(0.0, 1.0, 0.0),
@@ -163,21 +179,18 @@ class Simulator(AbstractSimulator):
             target_ke=500.0,
             target_kd=5.0,
             custom_attributes={
-                "joint_target_ki": [0.5],
+                #"joint_target_ki": [0.5],
                 "joint_dof_mode": [JointMode.NONE],
             },
             armature=0.1,
         )
 
-        # Create articulation from joints
-        self.builder.add_articulation([j0, j1], key="pendulum")
+        builder.add_articulation([j0, j1], key="pendulum")
+        builder.add_ground_plane()
 
-        self.builder.add_ground_plane()
+        return builder.finalize_replicated(num_worlds=1)
 
-        return self.builder.finalize_replicated(num_worlds=self.simulation_config.num_worlds)
-
-
-@hydra.main(config_path=str(CONFIG_PATH), config_name="config", version_base=None)
+@hydra.main(config_path=str(CONFIG_PATH), config_name="pendulum", version_base=None)
 def basic_pendulum_example(cfg: DictConfig):
     sim_config: SimulationConfig = hydra.utils.instantiate(cfg.simulation)
     render_config: RenderingConfig = hydra.utils.instantiate(cfg.rendering)
