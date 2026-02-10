@@ -35,6 +35,11 @@ from newton import Model
 from newton import State
 from newton.solvers import SolverBase
 
+from .adjoint_utils import compute_adjoint_rhs_kernel
+from .adjoint_utils import compute_body_adjoint_init_kernel
+from .adjoint_utils import subtract_constraint_feedback_kernel
+from .residual_utils import compute_residual
+
 
 @wp.kernel
 def _check_newton_convergence(
@@ -122,6 +127,7 @@ class AxionEngine(SolverBase):
             body_count=self.axion_model.body_count,
             contact_count=self.axion_contacts.max_contacts,
             joint_count=self.axion_model.joint_count,
+            joint_dof_count=dof_count,
             linesearch_step_count=linesearch_step_count,
             joint_constraint_count=num_constraints,
             control_constraint_count=num_control_constraints,
@@ -333,7 +339,7 @@ class AxionEngine(SolverBase):
 
         # Linearize
         with self.events.linearization.scope(iter_idx=iter_idx):
-            compute_linear_system(self.axion_model, self.data, self.config, self.dims, dt)
+            compute_linear_system(self.axion_model, self.data, self.config, self.dims)
             self.data.h.sync_to_float()
             self.preconditioner.update()
 
@@ -478,3 +484,85 @@ class AxionEngine(SolverBase):
         #     # Note: This requires synchronizing/reading back events
         #     # Usually you'd do this once per second or at end of sim
         #     pass
+
+    def step_backward(self):
+        compute_linear_system(self.axion_model, self.data, self.config, self.dims)
+
+        wp.launch(
+            kernel=compute_body_adjoint_init_kernel,
+            dim=(self.dims.N_w, self.dims.N_b),
+            inputs=[
+                self.data.body_q_grad,
+                self.data.body_u_grad,
+                self.data.body_q,
+                self.axion_model.body_inv_mass,
+                self.axion_model.body_inv_inertia,
+                self.data.dt,
+            ],
+            outputs=[
+                self.data.w.d_spatial,
+            ],
+            device=self.device,
+        )
+        wp.launch(
+            kernel=compute_adjoint_rhs_kernel,
+            dim=(self.dims.N_w, self.dims.N_c),
+            inputs=[
+                self.data.J_values.full,
+                self.data.constraint_body_idx.full,
+                self.data.constraint_active_mask.full,
+                self.data.w.d_spatial,
+            ],
+            outputs=[
+                self.data.adjoint_rhs,
+            ],
+            device=self.device,
+        )
+        self.preconditioner.update()
+
+        self._update_mass_matrix()
+        self.data.w.c.full.zero_()
+        _ = self.cr_solver.solve(
+            A=self.A_op,
+            b=self.data.adjoint_rhs,
+            x=self.data.w.c.full,
+            preconditioner=self.preconditioner,
+            iters=self.config.max_linear_iters,
+            tol=self.config.linear_tol,
+            atol=self.config.linear_atol,
+            log=False,
+        )
+
+        wp.launch(
+            kernel=subtract_constraint_feedback_kernel,
+            dim=(self.dims.N_w, self.dims.N_c),
+            inputs=[
+                self.data.w.c.full,
+                self.data.J_values.full,
+                self.data.constraint_body_idx.full,
+                self.data.constraint_active_mask.full,
+                self.data.body_q,
+                self.axion_model.body_inv_mass,
+                self.axion_model.body_inv_inertia,
+            ],
+            outputs=[
+                self.data.w.d_spatial,
+            ],
+            device=self.device,
+        )
+
+        self.data.w.sync_to_float()
+
+        self.data.zero_gradients()
+
+        # Initialize with explicit part BEFORE backward
+        # This ensures tape.backward accumulates (adds) the implicit part to the explicit part
+        wp.copy(dest=self.data.body_q_prev.grad, src=self.data.body_q_grad)
+        wp.copy(dest=self.data.body_u_prev.grad, src=self.data.body_u_grad)
+
+        tape = wp.Tape()
+        with tape:
+            compute_residual(self.axion_model, self.data, self.config, self.dims)
+
+        # This adds the implicit gradient (-w^T * dh/d_theta) to the arrays
+        tape.backward(grads={self.data._h: self.data._w})

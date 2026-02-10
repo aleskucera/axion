@@ -540,7 +540,6 @@ def compute_linesearch_batch_h(
                 model.body_inv_mass,
                 model.body_inv_inertia,
                 data.dt,
-                config.contact_compliance,
                 B,
             ],
             outputs=[
@@ -600,7 +599,6 @@ def compute_linesearch_batch_h(
             model.body_inv_mass,
             model.body_inv_inertia,
             data.dt,
-            config.friction_compliance,
             B,
         ],
         outputs=[

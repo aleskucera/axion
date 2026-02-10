@@ -151,7 +151,6 @@ def friction_constraint_kernel(
     # world_M_inv: wp.array(dtype=SpatialInertia, ndim=2),
     # --- Simulation & Solver Parameters ---
     dt: wp.float32,
-    compliance: wp.float32,
     # --- Outputs (contributions to the linear system) ---
     constraint_active_mask: wp.array(dtype=wp.float32, ndim=2),
     h_d: wp.array(dtype=wp.spatial_vector, ndim=2),
@@ -282,7 +281,6 @@ def friction_residual_kernel(
     body_I_inv: wp.array(dtype=wp.mat33, ndim=2),
     # --- Simulation & Solver Parameters ---
     dt: wp.float32,
-    compliance: wp.float32,
     # --- Outputs (contributions to the linear system) ---
     h_d: wp.array(dtype=wp.spatial_vector, ndim=2),
     h_f: wp.array(dtype=wp.float32, ndim=2),
@@ -387,7 +385,6 @@ def batch_friction_residual_kernel(
     body_I_inv: wp.array(dtype=wp.mat33, ndim=2),
     # --- Simulation & Solver Parameters ---
     dt: wp.float32,
-    compliance: wp.float32,
     # --- Outputs (contributions to the linear system) ---
     h_d: wp.array(dtype=wp.spatial_vector, ndim=3),
     h_f: wp.array(dtype=wp.float32, ndim=3),
@@ -492,7 +489,6 @@ def fused_batch_friction_residual_kernel(
     body_I_inv: wp.array(dtype=wp.mat33, ndim=2),
     # --- Simulation & Solver Parameters ---
     dt: wp.float32,
-    compliance: wp.float32,
     num_batches: int,
     # --- Outputs (contributions to the linear system) ---
     h_d: wp.array(dtype=wp.spatial_vector, ndim=3),

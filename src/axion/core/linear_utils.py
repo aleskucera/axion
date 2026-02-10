@@ -119,7 +119,6 @@ def compute_linear_system(
     data: EngineData,
     config: EngineConfig,
     dims: EngineDimensions,
-    dt: float,
 ):
     device = data.device
 
@@ -139,7 +138,7 @@ def compute_linear_system(
             data.body_f,
             model.body_mass,
             model.body_inertia,
-            dt,
+            data.dt,
             data.g_accel,
         ],
         outputs=[data.h.d_spatial],
@@ -268,9 +267,7 @@ def compute_linear_system(
                 data.constraint_active_mask.n,
                 model.body_inv_mass,
                 model.body_inv_inertia,
-                dt,
-                config.contact_stabilization_factor,
-                config.contact_compliance,
+                data.dt,
             ],
             outputs=[
                 data.h.d_spatial,
@@ -295,11 +292,10 @@ def compute_linear_system(
                 data.contact_restitution_coeff,
                 data.contact_basis_n_a,
                 data.contact_basis_n_b,
-                dt,
+                data.dt,
                 config.contact_stabilization_factor,
                 config.contact_fb_alpha,
                 config.contact_fb_beta,
-                config.contact_compliance,
             ],
             outputs=[
                 data.constraint_active_mask.n,
@@ -336,7 +332,6 @@ def compute_linear_system(
             model.body_inv_mass,
             model.body_inv_inertia,
             data.dt,
-            config.friction_compliance,
         ],
         outputs=[
             data.constraint_active_mask.f,
