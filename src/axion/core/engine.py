@@ -487,7 +487,6 @@ class AxionEngine(SolverBase):
 
     def step_backward(self):
         compute_linear_system(self.axion_model, self.data, self.config, self.dims)
-        self._update_mass_matrix()
 
         wp.launch(
             kernel=compute_body_adjoint_init_kernel,
@@ -519,9 +518,9 @@ class AxionEngine(SolverBase):
             ],
             device=self.device,
         )
-        self.data.w.sync_to_float()
         self.preconditioner.update()
 
+        self._update_mass_matrix()
         self.data.w.c.full.zero_()
         _ = self.cr_solver.solve(
             A=self.A_op,
@@ -552,9 +551,11 @@ class AxionEngine(SolverBase):
             device=self.device,
         )
 
+        self.data.w.sync_to_float()
         tape = wp.Tape()
         with tape:
             compute_residual(self.axion_model, self.data, self.config, self.dims)
 
         # This should add implicit gradient to all the arrays in self.data that has requires_grad=True
         tape.backward(grads={self.data._h: self.data._w})
+        wp.copy(dest=self.data.body_q_prev.grad, src=self.data.body_q_grad)

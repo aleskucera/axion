@@ -398,10 +398,10 @@ class EngineData:
         # ---- Core arrays ----
 
         # 1. Standard Float Allocation (No Padding)
-        h = _zeros((dims.N_w, dims.N_u + dims.N_c))
+        h = _zeros((dims.N_w, dims.N_u + dims.N_c), wp.float32, allocate_grad)
 
         # 2. Separate Spatial Buffer Allocation
-        h_spatial = _zeros((dims.N_w, dims.N_b), wp.spatial_vector)
+        h_spatial = _zeros((dims.N_w, dims.N_b), wp.spatial_vector, allocate_grad)
 
         J_values = _zeros((dims.N_w, dims.N_c, 2), wp.spatial_vector)
         C_values = _zeros((dims.N_w, dims.N_c))

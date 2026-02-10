@@ -107,7 +107,7 @@ class DifferentiableSimulator(BaseSimulator, ABC):
 
         self.trajectory = TrajectoryBuffer(
             dims=self.solver.dims,
-            num_steps=self.clock.total_sim_steps + 1,
+            num_steps=self.clock.total_sim_steps,
             device=self.model.device,
         )
 
