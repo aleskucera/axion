@@ -552,6 +552,8 @@ class AxionEngine(SolverBase):
         )
 
         self.data.w.sync_to_float()
+
+        self.data.zero_gradients()
         tape = wp.Tape()
         with tape:
             compute_residual(self.axion_model, self.data, self.config, self.dims)

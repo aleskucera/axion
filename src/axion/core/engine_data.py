@@ -206,6 +206,15 @@ class EngineData:
     def set_dt(self, dt: float):
         object.__setattr__(self, "dt", dt)
 
+    def zero_gradients(self):
+        self._h.grad.zero_()
+        self._h_spatial.grad.zero_()
+        self.body_f.grad.zero_()
+        self.body_q_prev.grad.zero_()
+        self.body_u_prev.grad.zero_()
+        self.joint_target_pos.grad.zero_()
+        self.joint_target_vel.grad.zero_()
+
     def _serialize_to_numpy(self, data: Any) -> Any:
         """
         Recursively converts Warp arrays (and Views) into pure NumPy objects.
