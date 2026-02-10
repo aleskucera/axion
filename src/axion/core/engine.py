@@ -134,7 +134,7 @@ class AxionEngine(SolverBase):
             control_constraint_offsets,
             dof_count,
             self.device,
-            allocate_history=self.config.enable_hdf5_logging,
+            allocate_history=self.logging_config.enable_hdf5_logging,
         )
 
         self.A_op = SystemOperator(

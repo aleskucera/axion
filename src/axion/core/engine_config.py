@@ -116,6 +116,7 @@ class AxionEngineConfig(EngineConfig):
         if init_state_fn is None:
             raise ValueError("AxionEngine requires an init_state_fn.")
 
+        print(f"DEBUG: LoggingConfig {logging_config}")
         # Pass the separate config objects to the constructor
         return AxionEngine(
             model=model,

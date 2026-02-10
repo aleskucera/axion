@@ -496,6 +496,7 @@ class EngineData:
 
         # ---- PCA Storage Buffers ----
         newton_history_data = None
+        print(f"DEBUG: Allocate history {allocate_history}")
         if allocate_history:
             # Separate Allocations
             h_history = _zeros((config.max_newton_iters + 1, dims.N_w, dims.N_u + dims.N_c))

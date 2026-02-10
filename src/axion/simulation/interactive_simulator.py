@@ -113,8 +113,6 @@ class InteractiveSimulator(BaseSimulator, ABC):
         n_steps = self.steps_per_segment
         for step in range(n_steps):
             self._single_physics_step(step)
-            self._current_step += 1
-            self._current_time += self.dt
 
         if isinstance(self.solver, AxionEngine):
             self.solver.events.record_timings()
@@ -135,12 +133,3 @@ class InteractiveSimulator(BaseSimulator, ABC):
             for i in range(n_steps):
                 self._single_physics_step(i)
         self.cuda_graph = capture.graph
-
-    @property
-    def use_cuda_graph(self) -> bool:
-        if (
-            isinstance(self.engine_config, AxionEngineConfig)
-            and self.engine_config.enable_hdf5_logging
-        ):
-            return False
-        return self.execution_config.use_cuda_graph and wp.get_device().is_cuda
