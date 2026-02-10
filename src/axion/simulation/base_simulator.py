@@ -8,6 +8,7 @@ from typing import Optional
 
 import newton
 import warp as wp
+from axion.core.engine_config import AxionEngineConfig
 from axion.core.engine_config import EngineConfig
 from axion.core.logging_config import LoggingConfig
 from axion.core.model_builder import AxionModelBuilder
@@ -57,7 +58,7 @@ class BaseSimulator(ABC):
         self.solver = self.engine_config.create_engine(
             model=self.model,
             init_state_fn=self.init_state_fn,
-            logging_config=logging_config,
+            logging_config=self.logging_config,
         )
 
         newton.eval_fk(self.model, self.model.joint_q, self.model.joint_qd, self.current_state)
@@ -66,8 +67,21 @@ class BaseSimulator(ABC):
         self.viewer = None
 
     @property
-    def use_cuda_graph(self):
+    def use_cuda_graph(self) -> bool:
+        if (
+            isinstance(self.engine_config, AxionEngineConfig)
+            and self.logging_config.enable_hdf5_logging
+        ):
+            return False
         return self.execution_config.use_cuda_graph and wp.get_device().is_cuda
+
+    # @property
+    # def use_cuda_graph(self):
+    #     return (
+    #         self.execution_config.use_cuda_graph
+    #         and wp.get_device().is_cuda
+    #         and not self.logging_config.enable_hdf5_logging
+    #     )
 
     @abstractmethod
     def build_model(self) -> Model:
