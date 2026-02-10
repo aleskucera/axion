@@ -26,8 +26,8 @@ def compute_body_adjoint_init_kernel(
     g_q = grad_q[world_idx, body_idx]
     q_curr = body_q[world_idx, body_idx]
 
-    # 2. Compute Driving Force: f_drive = grad_u + dt * G^T * grad_q
-    f_drive = Gt_matvec(dt, g_q, g_u, q_curr)
+    # 2. Compute Driving Force: f_drive = - grad_u - dt * G^T * grad_q
+    f_drive = (-1.0) * Gt_matvec(dt, g_q, g_u, q_curr)
 
     # 3. Prepare Inverse Inertia in World Frame
     m_inv = body_m_inv[world_idx, body_idx]

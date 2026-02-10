@@ -554,10 +554,15 @@ class AxionEngine(SolverBase):
         self.data.w.sync_to_float()
 
         self.data.zero_gradients()
+
+        # Initialize with explicit part BEFORE backward
+        # This ensures tape.backward accumulates (adds) the implicit part to the explicit part
+        wp.copy(dest=self.data.body_q_prev.grad, src=self.data.body_q_grad)
+        wp.copy(dest=self.data.body_u_prev.grad, src=self.data.body_u_grad)
+
         tape = wp.Tape()
         with tape:
             compute_residual(self.axion_model, self.data, self.config, self.dims)
 
-        # This should add implicit gradient to all the arrays in self.data that has requires_grad=True
+        # This adds the implicit gradient (-w^T * dh/d_theta) to the arrays
         tape.backward(grads={self.data._h: self.data._w})
-        wp.copy(dest=self.data.body_q_prev.grad, src=self.data.body_q_grad)
