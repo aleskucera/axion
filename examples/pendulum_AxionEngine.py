@@ -3,6 +3,7 @@ from typing import override
 import pathlib
 
 import hydra
+import numpy as np
 import newton
 import warp as wp
 from axion import InteractiveSimulator
@@ -23,6 +24,63 @@ CONFIG_PATH = pathlib.Path(__file__).parent.joinpath("conf")
 
 PENDULUM_HEIGHT = 5.0
 
+
+# ---------------------------------------------------------------------------
+# Helper: generalized → maximal coordinate conversion
+# ---------------------------------------------------------------------------
+
+def generalized_to_maximal(
+    model: newton.Model,
+    state: newton.State,
+    q0: float,
+    q1: float,
+    qd0: float = 0.0,
+    qd1: float = 0.0,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Convert generalized pendulum coordinates to maximal coordinates
+    and write them into *state*.
+
+    Uses ``newton.eval_fk`` (forward kinematics) to map joint-space
+    quantities to body-space transforms and spatial velocities.
+
+    Args:
+        model:  The Newton ``Model`` that describes the double pendulum.
+        state:  A ``newton.State`` whose ``joint_q``, ``joint_qd``,
+                ``body_q`` and ``body_qd`` will be **overwritten**.
+        q0:     Joint-0 angle  (revolute, radians).
+        q1:     Joint-1 angle  (revolute, radians).
+        qd0:    Joint-0 angular velocity  (rad/s, default 0).
+        qd1:    Joint-1 angular velocity  (rad/s, default 0).
+
+    Returns:
+        body_q  – ``np.ndarray`` of shape ``(num_bodies, 7)``
+                  ``[x, y, z, qx, qy, qz, qw]`` per body.
+        body_qd – ``np.ndarray`` of shape ``(num_bodies, 6)``
+                  ``[vx, vy, vz, wx, wy, wz]`` per body.
+
+    Example::
+
+        body_q, body_qd = generalized_to_maximal(
+            model, state, q0=0.5, q1=-0.3, qd0=1.0, qd1=-2.0,
+        )
+    """
+    device = state.joint_q.device
+
+    # Write generalized coordinates into the state
+    state.joint_q.assign(
+        wp.array([q0, q1], dtype=wp.float32, device=device)
+    )
+    state.joint_qd.assign(
+        wp.array([qd0, qd1], dtype=wp.float32, device=device)
+    )
+
+    # Forward kinematics: joint_q/joint_qd  →  body_q/body_qd
+    newton.eval_fk(model, state.joint_q, state.joint_qd, state)
+
+    body_q_np = state.body_q.numpy().reshape(-1, 7)
+    body_qd_np = state.body_qd.numpy().reshape(-1, 6)
+    return body_q_np, body_qd_np
+
 class Simulator(InteractiveSimulator):
     def __init__(
         self,
@@ -31,6 +89,7 @@ class Simulator(InteractiveSimulator):
         exec_config: ExecutionConfig,
         engine_config: EngineConfig,
         logging_config: LoggingConfig,
+        initial_state: tuple[float, float, float, float] | None = None,
     ):
         super().__init__(
             sim_config,
@@ -39,6 +98,14 @@ class Simulator(InteractiveSimulator):
             engine_config,
             logging_config,
         )
+
+        # --- Apply custom initial conditions (positions AND velocities) ---
+        if initial_state is not None:
+            q0, q1, qd0, qd1 = initial_state
+            generalized_to_maximal(
+                self.model, self.current_state,
+                q0=q0, q1=q1, qd0=qd0, qd1=qd1,
+            )
 
     @override
     def control_policy(self, state: newton.State):
@@ -198,12 +265,17 @@ def basic_pendulum_example(cfg: DictConfig):
     logging_config: LoggingConfig = hydra.utils.instantiate(cfg.logging)
     engine_config: EngineConfig = hydra.utils.instantiate(cfg.engine)
 
+    # Custom initial conditions: (q0, q1, qd0, qd1)
+    # Set to None to start from the default rest position.
+    INITIAL_STATE = (-4.684e-1, 2.077, -2.048, 4.629)  # e.g. (0.5, -0.3, 1.0, -2.0)
+
     simulator = Simulator(
         sim_config=sim_config,
         render_config=render_config,
         exec_config=exec_config,
         engine_config=engine_config,
         logging_config=logging_config,
+        initial_state=INITIAL_STATE,
     )
 
     simulator.run()

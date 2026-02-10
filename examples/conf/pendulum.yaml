@@ -1,6 +1,6 @@
 defaults:
   - simulation: pendulum
-  - rendering: gl
+  - rendering: headless
   - execution: cuda_graph
   - logging: disabled
   - engine: axion_pos 
