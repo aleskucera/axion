@@ -1,3 +1,5 @@
+from typing import Any
+
 import warp as wp
 from axion.constraints import batch_friction_residual_kernel
 from axion.constraints import batch_positional_contact_residual_kernel
@@ -13,7 +15,8 @@ from axion.constraints import fused_batch_velocity_contact_residual_kernel
 from axion.constraints import fused_batch_velocity_joint_residual_kernel
 from axion.constraints.control_constraint import batch_control_constraint_residual_kernel
 from axion.constraints.control_constraint import fused_batch_control_constraint_residual_kernel
-from axion.math import G_matvec
+from axion.math import integrate_batched_body_pose_kernel
+from axion.math import integrate_body_pose_kernel
 
 from .engine_config import EngineConfig
 from .engine_data import EngineData
@@ -22,179 +25,39 @@ from .model import AxionModel
 
 
 @wp.kernel
-def compute_linesearch_batch_body_lambda_kernel(
-    body_lambda: wp.array(dtype=wp.float32, ndim=2),
-    dbody_lambda: wp.array(dtype=wp.float32, ndim=2),
+def linesearch_spread_kernel(
+    x: wp.array(dtype=Any, ndim=2),
+    dx: wp.array(dtype=Any, ndim=2),
     linesearch_steps: wp.array(dtype=wp.float32),
     # Outputs
-    linesearch_batch_body_lambda: wp.array(dtype=wp.float32, ndim=3),
+    linesearch_x: wp.array(dtype=Any, ndim=3),
 ):
-    batch_idx, world_idx, con_idx = wp.tid()
+    batch_idx, world_idx, x_idx = wp.tid()
 
-    lambda_ = body_lambda[world_idx, con_idx]
-    dlambda = dbody_lambda[world_idx, con_idx]
-    alpha = linesearch_steps[batch_idx]
-
-    linesearch_batch_body_lambda[batch_idx, world_idx, con_idx] = lambda_ + alpha * dlambda
+    spread_x = x[world_idx, x_idx] + linesearch_steps[batch_idx] * dx[world_idx, x_idx]
+    linesearch_x[batch_idx, world_idx, x_idx] = spread_x
 
 
 @wp.kernel
-def compute_body_lambda_without_linesearch_kernel(
-    dbody_lambda: wp.array(dtype=wp.float32, ndim=2),
+def copy_best_sample_kernel(
+    linesearch_x: wp.array(dtype=Any, ndim=3),
+    best_idx: wp.array(dtype=wp.int32),
     # Outputs
-    body_lambda: wp.array(dtype=wp.float32, ndim=2),
+    x: wp.array(dtype=Any, ndim=2),
 ):
-    world_idx, con_idx = wp.tid()
-
-    lambda_ = body_lambda[world_idx, con_idx]
-    dlambda = dbody_lambda[world_idx, con_idx]
-
-    body_lambda[world_idx, con_idx] = lambda_ + dlambda
+    world_idx, x_idx = wp.tid()
+    x[world_idx, x_idx] = linesearch_x[best_idx[world_idx], world_idx, x_idx]
 
 
 @wp.kernel
-def compute_linesearch_batch_body_u_kernel(
-    body_u: wp.array(dtype=wp.spatial_vector, ndim=2),
-    dbody_u: wp.array(dtype=wp.spatial_vector, ndim=2),
-    linesearch_steps: wp.array(dtype=wp.float32),
+def update_without_linesearch(
+    dx: wp.array(dtype=Any, ndim=2),
     # Outputs
-    linesearch_batch_body_u: wp.array(dtype=wp.spatial_vector, ndim=3),
+    x: wp.array(dtype=Any, ndim=2),
 ):
-    batch_idx, world_idx, body_idx = wp.tid()
+    world_idx, x_idx = wp.tid()
 
-    u = body_u[world_idx, body_idx]
-    du = dbody_u[world_idx, body_idx]
-    alpha = linesearch_steps[batch_idx]
-
-    linesearch_batch_body_u[batch_idx, world_idx, body_idx] = u + alpha * du
-
-
-# @wp.kernel
-# def compute_linesearch_batch_body_q_kernel(
-#     batch_body_u: wp.array(dtype=wp.spatial_vector, ndim=3),
-#     body_q_prev: wp.array(dtype=wp.transform, ndim=2),
-#     body_com: wp.array(dtype=wp.vec3, ndim=2),
-#     dt: wp.float32,
-#     # Outputs
-#     batch_body_q: wp.array(dtype=wp.transform, ndim=3),
-# ):
-#     batch_idx, world_idx, body_idx = wp.tid()
-#
-#     v = wp.spatial_top(batch_body_u[batch_idx, world_idx, body_idx])
-#     w = wp.spatial_bottom(batch_body_u[batch_idx, world_idx, body_idx])
-#
-#     x_prev = wp.transform_get_translation(body_q_prev[world_idx, body_idx])
-#     r_prev = wp.transform_get_rotation(body_q_prev[world_idx, body_idx])
-#
-#     com = body_com[world_idx, body_idx]
-#     x_com = x_prev + wp.quat_rotate(r_prev, com)
-#
-#     x = x_com + v * dt
-#     r = wp.normalize(r_prev + wp.quat(w, 0.0) * r_prev * 0.5 * dt)
-#
-#     batch_body_q[batch_idx, world_idx, body_idx] = wp.transform(x - wp.quat_rotate(r, com), r)
-
-
-@wp.kernel
-def compute_linesearch_batch_body_q_kernel(
-    batch_body_u: wp.array(dtype=wp.spatial_vector, ndim=3),
-    body_q_prev: wp.array(dtype=wp.transform, ndim=2),
-    body_com: wp.array(dtype=wp.vec3, ndim=2),
-    dt: wp.float32,
-    batch_body_q: wp.array(dtype=wp.transform, ndim=3),
-):
-    batch_idx, world_idx, body_idx = wp.tid()
-
-    u = batch_body_u[batch_idx, world_idx, body_idx]
-    tf_prev = body_q_prev[world_idx, body_idx]
-    com = body_com[world_idx, body_idx]
-
-    # 1. Prepare 'y' (Previous state, shifted to CoM)
-    # We must operate in CoM space because G's top-left block is Identity (decoupled v and w)
-    p_geom = wp.transform_get_translation(tf_prev)
-    r_prev = wp.transform_get_rotation(tf_prev)
-    p_com = p_geom + wp.quat_rotate(r_prev, com)
-
-    tf_prev_com = wp.transform(p_com, r_prev)
-
-    # 2. Perform Fused Update
-    # res = tf_prev_com + dt * (G * u)
-    tf_new_com = G_matvec(dt, u, tf_prev_com, tf_prev_com)
-
-    # 3. Post-Process
-    # Extract results
-    p_com_new = wp.transform_get_translation(tf_new_com)
-    r_new_unnormalized = wp.transform_get_rotation(tf_new_com)
-
-    # Normalize quaternion (standard for explicit integration)
-    r_final = wp.normalize(r_new_unnormalized)
-
-    # Shift back to Geometric Origin
-    p_geom_final = p_com_new - wp.quat_rotate(r_final, com)
-
-    batch_body_q[batch_idx, world_idx, body_idx] = wp.transform(p_geom_final, r_final)
-
-
-@wp.kernel
-def compute_body_u_without_linesearch_kernel(
-    dbody_u: wp.array(dtype=wp.spatial_vector, ndim=2),
-    # Outputs
-    body_u: wp.array(dtype=wp.spatial_vector, ndim=2),
-):
-    world_idx, body_idx = wp.tid()
-
-    u = body_u[world_idx, body_idx]
-    du = dbody_u[world_idx, body_idx]
-
-    body_u[world_idx, body_idx] = u + du
-
-
-@wp.kernel
-def copy_batch_sample_body_u_kernel(
-    batch_array: wp.array(dtype=wp.spatial_vector, ndim=3),
-    batch_idx_array: wp.array(dtype=wp.int32),
-    # Outputs
-    output_array: wp.array(dtype=wp.spatial_vector, ndim=2),
-):
-    world_idx, body_idx = wp.tid()
-    batch_idx = batch_idx_array[world_idx]
-    output_array[world_idx, body_idx] = batch_array[batch_idx, world_idx, body_idx]
-
-
-@wp.kernel
-def copy_batch_sample_body_q_kernel(
-    batch_array: wp.array(dtype=wp.transform, ndim=3),
-    batch_idx_array: wp.array(dtype=wp.int32),
-    # Outputs
-    output_array: wp.array(dtype=wp.transform, ndim=2),
-):
-    world_idx, body_idx = wp.tid()
-    batch_idx = batch_idx_array[world_idx]
-    output_array[world_idx, body_idx] = batch_array[batch_idx, world_idx, body_idx]
-
-
-@wp.kernel
-def copy_batch_sample_body_lambda_kernel(
-    batch_array: wp.array(dtype=wp.float32, ndim=3),
-    batch_idx_array: wp.array(dtype=wp.int32),
-    # Outputs
-    output_array: wp.array(dtype=wp.float32, ndim=2),
-):
-    world_idx, con_idx = wp.tid()
-    batch_idx = batch_idx_array[world_idx]
-    output_array[world_idx, con_idx] = batch_array[batch_idx, world_idx, con_idx]
-
-
-@wp.kernel
-def copy_batch_sample_h_kernel(
-    batch_array: wp.array(dtype=wp.float32, ndim=3),
-    batch_idx_array: wp.array(dtype=wp.int32),
-    # Outputs
-    output_array: wp.array(dtype=wp.float32, ndim=2),
-):
-    world_idx, h_idx = wp.tid()
-    batch_idx = batch_idx_array[world_idx]
-    output_array[world_idx, h_idx] = batch_array[batch_idx, world_idx, h_idx]
+    x[world_idx, x_idx] = x[world_idx, x_idx] + dx[world_idx, x_idx]
 
 
 @wp.kernel
@@ -217,146 +80,62 @@ def find_minimal_residual_index_kernel(
     minimal_index[world_idx] = min_idx
 
 
-# @wp.kernel
-# def update_body_q_kernel(
-#     body_u: wp.array(dtype=wp.spatial_vector, ndim=2),
-#     body_q_prev: wp.array(dtype=wp.transform, ndim=2),
-#     body_com: wp.array(dtype=wp.vec3, ndim=2),
-#     dt: wp.float32,
-#     body_q: wp.array(dtype=wp.transform, ndim=2),
-# ):
-#     world_idx, body_idx = wp.tid()
-#
-#     v = wp.spatial_top(body_u[world_idx, body_idx])
-#     w = wp.spatial_bottom(body_u[world_idx, body_idx])
-#
-#     x_prev = wp.transform_get_translation(body_q_prev[world_idx, body_idx])
-#     r_prev = wp.transform_get_rotation(body_q_prev[world_idx, body_idx])
-#
-#     com = body_com[world_idx, body_idx]
-#     x_com = x_prev + wp.quat_rotate(r_prev, com)
-#
-#     x = x_com + v * dt
-#     r = wp.normalize(r_prev + wp.quat(w, 0.0) * r_prev * 0.5 * dt)
-#
-#     body_q[world_idx, body_idx] = wp.transform(x - wp.quat_rotate(r, com), r)
-
-
-@wp.kernel
-def update_body_q_kernel(
-    body_u: wp.array(dtype=wp.spatial_vector, ndim=2),
-    body_q_prev: wp.array(dtype=wp.transform, ndim=2),
-    body_com: wp.array(dtype=wp.vec3, ndim=2),
-    dt: wp.float32,
-    body_q: wp.array(dtype=wp.transform, ndim=2),
-):
-    world_idx, body_idx = wp.tid()
-
-    # 1. Fetch Inputs
-    u = body_u[world_idx, body_idx]
-    tf_prev = body_q_prev[world_idx, body_idx]
-    com = body_com[world_idx, body_idx]
-
-    # 2. Shift State to Center of Mass
-    # The Matrix G identity block (top-left) assumes linear velocity 'v'
-    # moves the Center of Mass, not the geometric origin.
-    p_geom = wp.transform_get_translation(tf_prev)
-    r_prev = wp.transform_get_rotation(tf_prev)
-
-    p_com = p_geom + wp.quat_rotate(r_prev, com)
-
-    # Construct temporary CoM transform for the update
-    # Note: Rotation is the same for CoM and Geometric Origin
-    tf_prev_com = wp.transform(p_com, r_prev)
-
-    # 3. Fused Integration Step (AXPY)
-    # tf_new = tf_prev + dt * (G(tf_prev) * u)
-    # q_params is tf_prev_com because G is evaluated at the current state
-    tf_new_com = G_matvec(dt, u, tf_prev_com, tf_prev_com)
-
-    # 4. Post-Process
-    p_com_new = wp.transform_get_translation(tf_new_com)
-    r_new_raw = wp.transform_get_rotation(tf_new_com)
-
-    # Normalize quaternion (Explicit integration drifts off manifold)
-    r_new = wp.normalize(r_new_raw)
-
-    # Shift Position back to Geometric Origin
-    p_geom_new = p_com_new - wp.quat_rotate(r_new, com)
-
-    # 5. Store Result
-    body_q[world_idx, body_idx] = wp.transform(p_geom_new, r_new)
-
-
-def update_body_q(
-    model: AxionModel,
-    data: EngineData,
-    config: EngineConfig,
-    dims: EngineDimensions,
-):
-    device = data.device
-
-    wp.launch(
-        kernel=update_body_q_kernel,
-        dim=(dims.N_w, dims.N_b),
-        inputs=[
-            data.body_u,
-            data.body_q_prev,
-            model.body_com,
-            data.dt,
-        ],
-        outputs=[data.body_q],
-        device=device,
-    )
-
-
 def compute_linesearch_batch_variables(
     model: AxionModel,
     data: EngineData,
     config: EngineConfig,
     dims: EngineDimensions,
 ):
-    device = data.device
-    B = data.linesearch.batch_body_u.shape[0]
-
-    # 1. Compute candidates for U
+    # 1. Compute candidates for body_velocities
     wp.launch(
-        kernel=compute_linesearch_batch_body_u_kernel,
-        dim=(B, dims.N_w, dims.N_b),
+        kernel=linesearch_spread_kernel,
+        dim=(
+            dims.linesearch_step_count,
+            dims.num_worlds,
+            dims.body_count,
+        ),
         inputs=[
-            data.body_u,
-            data.dbody_u,
-            data.linesearch.steps,
+            data.body_vel,
+            data.dbody_vel,
+            data.linesearch_step_size,
         ],
-        outputs=[data.linesearch.batch_body_u],
-        device=device,
+        outputs=[data.linesearch_body_vel],
+        device=data.device,
     )
 
-    # 2. Compute candidates for Q (integration)
+    # 2. Compute candidates for body poses (integration)
     wp.launch(
-        kernel=compute_linesearch_batch_body_q_kernel,
-        dim=(B, dims.N_w, dims.N_b),
+        kernel=integrate_batched_body_pose_kernel,
+        dim=(
+            dims.linesearch_step_count,
+            dims.num_worlds,
+            dims.body_count,
+        ),
         inputs=[
-            data.linesearch.batch_body_u,
-            data.body_q_prev,
+            data.linesearch_body_vel,
+            data.body_pose_prev,
             model.body_com,
             data.dt,
         ],
-        outputs=[data.linesearch.batch_body_q],
-        device=device,
+        outputs=[data.linesearch_body_pose],
+        device=data.device,
     )
 
-    # 3. Compute candidates for Lambda
+    # 3. Compute candidates for constraint forces
     wp.launch(
-        kernel=compute_linesearch_batch_body_lambda_kernel,
-        dim=(B, dims.N_w, dims.N_c),
+        kernel=linesearch_spread_kernel,
+        dim=(
+            dims.linesearch_step_count,
+            dims.num_worlds,
+            dims.num_constraints,
+        ),
         inputs=[
-            data.body_lambda.full,
-            data.dbody_lambda.full,
-            data.linesearch.steps,
+            data.constr_force.full,
+            data.dconstr_force.full,
+            data.linesearch_step_size,
         ],
-        outputs=[data.linesearch.batch_body_lambda.full],
-        device=device,
+        outputs=[data.linesearch_constr_force.full],
+        device=data.device,
     )
 
 
@@ -366,29 +145,33 @@ def update_variables_without_linesearch(
     config: EngineConfig,
     dims: EngineDimensions,
 ):
-    device = data.device
-
     wp.launch(
-        kernel=compute_body_u_without_linesearch_kernel,
-        dim=(dims.N_w, dims.N_b),
-        inputs=[
-            data.dbody_u,
-        ],
-        outputs=[data.body_u],
-        device=device,
+        kernel=update_without_linesearch,
+        dim=(dims.num_worlds, dims.body_count),
+        inputs=[data.dbody_vel],
+        outputs=[data.body_vel],
+        device=data.device,
     )
 
-    # Also update Q
-    update_body_q(model, data, config, dims)
+    wp.launch(
+        kernel=integrate_body_pose_kernel,
+        dim=(dims.num_worlds, dims.body_count),
+        inputs=[
+            data.body_vel,
+            data.body_pose_prev,
+            model.body_com,
+            data.dt,
+        ],
+        outputs=[data.body_pose],
+        device=data.device,
+    )
 
     wp.launch(
-        kernel=compute_body_lambda_without_linesearch_kernel,
-        dim=(dims.N_w, dims.N_c),
-        inputs=[
-            data.dbody_lambda.full,
-        ],
-        outputs=[data.body_lambda.full],
-        device=device,
+        kernel=update_without_linesearch,
+        dim=(dims.num_worlds, dims.num_constraints),
+        inputs=[data.dconstr_force.full],
+        outputs=[data.constr_force.full],
+        device=data.device,
     )
 
 
@@ -398,100 +181,63 @@ def compute_linesearch_batch_h(
     config: EngineConfig,
     dims: EngineDimensions,
 ):
-    device = data.device
-
-    data.linesearch.batch_h.full.zero_()
-    data.linesearch.batch_h_norm_sq.zero_()
-
-    B = data.linesearch.batch_body_u.shape[0]
+    # data.linesearch.batch_h.full.zero_()
+    # data.linesearch.batch_h_norm_sq.zero_()
 
     # Evaluate residual for unconstrained dynamics
     wp.launch(
         kernel=fused_batch_unconstrained_dynamics_kernel,
-        dim=(dims.N_w, dims.N_b),
+        dim=(dims.num_worlds, dims.body_count),
         inputs=[
-            data.linesearch.batch_body_q,
-            data.linesearch.batch_body_u,
-            data.body_u_prev,
-            data.body_f,
+            data.linesearch_body_pose,
+            data.linesearch_body_vel,
+            data.body_vel_prev,
+            data.ext_force,
             model.body_mass,
             model.body_inertia,
             data.dt,
-            data.g_accel,
-            B,
+            model.g_accel,
+            dims.linesearch_step_count,
         ],
-        outputs=[data.linesearch.batch_h.d_spatial],
-        device=device,
+        outputs=[data.linesearch_res.d_spatial],
+        device=data.device,
     )
 
-    # Evaluate residual for joint constraints
-    if config.joint_constraint_level == "pos":
-        wp.launch(
-            kernel=fused_batch_positional_joint_residual_kernel,
-            dim=(dims.N_w, dims.joint_count),
-            inputs=[
-                data.linesearch.batch_body_q,
-                data.linesearch.batch_body_lambda.j,
-                model.body_com,
-                model.joint_type,
-                model.joint_parent,
-                model.joint_child,
-                model.joint_X_p,
-                model.joint_X_c,
-                model.joint_axis,
-                model.joint_qd_start,
-                model.joint_enabled,
-                data.joint_constraint_offsets,
-                data.dt,
-                config.joint_compliance,
-                B,
-            ],
-            outputs=[
-                data.linesearch.batch_h.d_spatial,
-                data.linesearch.batch_h.c.j,
-            ],
-            device=device,
-        )
-    elif config.joint_constraint_level == "vel":
-        wp.launch(
-            kernel=fused_batch_velocity_joint_residual_kernel,
-            dim=(dims.N_w, dims.joint_count),
-            inputs=[
-                data.body_q,
-                model.body_com,
-                data.linesearch.batch_body_u,
-                data.linesearch.batch_body_lambda.j,
-                model.joint_type,
-                model.joint_parent,
-                model.joint_child,
-                model.joint_X_p,
-                model.joint_X_c,
-                model.joint_axis,
-                model.joint_qd_start,
-                model.joint_enabled,
-                data.joint_constraint_offsets,
-                data.dt,
-                config.joint_stabilization_factor,
-                config.joint_compliance,
-                B,
-            ],
-            outputs=[
-                data.linesearch.batch_h.d_spatial,
-                data.linesearch.batch_h.c.j,
-            ],
-            device=device,
-        )
-    else:
-        raise ValueError("Joint constraint level can be only 'pos' or 'vel'.")
+    wp.launch(
+        kernel=fused_batch_positional_joint_residual_kernel,
+        dim=(dims.num_worlds, dims.joint_count),
+        inputs=[
+            data.linesearch_body_pose,
+            data.linesearch_constr_force.j,
+            model.body_com,
+            model.joint_type,
+            model.joint_parent,
+            model.joint_child,
+            model.joint_X_p,
+            model.joint_X_c,
+            model.joint_axis,
+            model.joint_qd_start,
+            model.joint_enabled,
+            model.joint_constraint_offsets,
+            data.dt,
+            config.joint_compliance,
+            dims.linesearch_step_count,
+        ],
+        outputs=[
+            data.linesearch_res.d_spatial,
+            data.linesearch_res.c.j,
+        ],
+        device=data.device,
+    )
 
     # Evaluate residual for control constraints
     wp.launch(
         kernel=fused_batch_control_constraint_residual_kernel,
-        dim=(dims.N_w, dims.joint_count),
+        dim=(dims.num_worlds, dims.joint_count),
         inputs=[
-            data.linesearch.batch_body_q,
-            data.linesearch.batch_body_u,
-            data.linesearch.batch_body_lambda.ctrl,
+            data.linesearch_body_pose,
+            data.linesearch_body_vel,
+            data.linesearch_constr_force.ctrl,
             model.body_com,
             model.joint_type,
             model.joint_parent,
@@ -502,93 +248,62 @@ def compute_linesearch_batch_h(
             model.joint_qd_start,
             model.joint_enabled,
             model.joint_dof_mode,
-            data.control_constraint_offsets,
+            model.control_constraint_offsets,
             data.joint_target_pos,
             data.joint_target_vel,
             model.joint_target_ke,
             model.joint_target_kd,
             data.dt,
-            B,
+            dims.linesearch_step_count,
         ],
         outputs=[
-            data.linesearch.batch_h.d_spatial,
-            data.linesearch.batch_h.c.ctrl,
+            data.linesearch_res.d_spatial,
+            data.linesearch_res.c.ctrl,
         ],
-        device=device,
+        device=data.device,
     )
 
     # Evaluate residual for normal contact constraints
-    if config.contact_constraint_level == "pos":
-        wp.launch(
-            kernel=fused_batch_positional_contact_residual_kernel,
-            dim=(dims.N_w, dims.N_n),
-            inputs=[
-                data.linesearch.batch_body_q,
-                data.linesearch.batch_body_u,
-                data.body_u_prev,
-                data.linesearch.batch_body_lambda.n,
-                data.contact_body_a,
-                data.contact_body_b,
-                data.contact_point_a,
-                data.contact_point_b,
-                data.contact_thickness_a,
-                data.contact_thickness_b,
-                data.contact_dist,
-                data.contact_basis_n_a,
-                data.contact_basis_n_b,
-                data.constraint_active_mask.n,
-                model.body_inv_mass,
-                model.body_inv_inertia,
-                data.dt,
-                B,
-            ],
-            outputs=[
-                data.linesearch.batch_h.d_spatial,
-                data.linesearch.batch_h.c.n,
-            ],
-            device=device,
-        )
-    elif config.contact_constraint_level == "vel":
-        wp.launch(
-            kernel=fused_batch_velocity_contact_residual_kernel,
-            dim=(dims.N_w, dims.N_n),
-            inputs=[
-                data.linesearch.batch_body_u,
-                data.body_u_prev,
-                data.linesearch.batch_body_lambda.n,
-                data.contact_body_a,
-                data.contact_body_b,
-                data.contact_dist,
-                data.contact_restitution_coeff,
-                data.contact_basis_n_a,
-                data.contact_basis_n_b,
-                data.dt,
-                config.contact_stabilization_factor,
-                config.contact_fb_alpha,
-                config.contact_fb_beta,
-                config.contact_compliance,
-                B,
-            ],
-            outputs=[
-                data.linesearch.batch_h.d_spatial,
-                data.linesearch.batch_h.c.n,
-            ],
-            device=device,
-        )
-    else:
-        raise ValueError("Contact constraint level can be only 'pos' or 'vel'.")
+    wp.launch(
+        kernel=fused_batch_positional_contact_residual_kernel,
+        dim=(dims.num_worlds, dims.contact_count),
+        inputs=[
+            data.linesearch_body_pose,
+            data.linesearch_body_vel,
+            data.body_vel_prev,
+            data.linesearch_constr_force.n,
+            data.contact_body_a,
+            data.contact_body_b,
+            data.contact_point_a,
+            data.contact_point_b,
+            data.contact_thickness_a,
+            data.contact_thickness_b,
+            data.contact_dist,
+            data.contact_basis_n_a,
+            data.contact_basis_n_b,
+            data.constr_active_mask.n,
+            model.body_inv_mass,
+            model.body_inv_inertia,
+            data.dt,
+            dims.linesearch_step_count,
+        ],
+        outputs=[
+            data.linesearch_res.d_spatial,
+            data.linesearch_res.c.n,
+        ],
+        device=data.device,
+    )
 
     # Evaluate residual for friction constraints
     wp.launch(
         kernel=fused_batch_friction_residual_kernel,
-        dim=(dims.N_w, dims.N_n),
+        dim=(dims.num_worlds, dims.contact_count),
         inputs=[
-            data.linesearch.batch_body_q,
-            data.linesearch.batch_body_u,
-            data.linesearch.batch_body_lambda.f,
-            data.body_lambda_prev.f,
-            data.body_lambda_prev.n,
-            data.s_n_prev,
+            data.linesearch_body_pose,
+            data.linesearch_body_vel,
+            data.linesearch_constr_force.f,
+            data.constr_force_prev_iter.f,
+            data.constr_force_prev_iter.n,
             data.contact_body_a,
             data.contact_body_b,
             data.contact_friction_coeff,
@@ -599,14 +314,17 @@ def compute_linesearch_batch_h(
             model.body_inv_mass,
             model.body_inv_inertia,
             data.dt,
-            B,
+            dims.linesearch_step_count,
         ],
         outputs=[
-            data.linesearch.batch_h.d_spatial,
-            data.linesearch.batch_h.c.f,
+            data.linesearch_res.d_spatial,
+            data.linesearch_res.c.f,
         ],
-        device=device,
+        device=data.device,
     )
+
+    # FIX: Find out why is this bad?
+    # data.linesearch_res.sync_to_float()
 
 
 def select_minimal_residual_variables(
@@ -614,67 +332,62 @@ def select_minimal_residual_variables(
     config: EngineConfig,
     dims: EngineDimensions,
 ):
-    device = data.device
-    B = data.linesearch.batch_h.full.shape[0]
-
     # Compute norm squared for each batch using TiledSqNorm
-    data.linesearch.tiled_sq_norm.compute(
-        data.linesearch.batch_h.full, data.linesearch.batch_h_norm_sq
-    )
+    data.linesearch_tiled_res_sq_norm.compute(data.linesearch_res.full, data.linesearch_res_norm_sq)
 
     # Find the index with minimal residual norm (per world)
     wp.launch(
         kernel=find_minimal_residual_index_kernel,
-        dim=dims.N_w,
-        inputs=[data.linesearch.batch_h_norm_sq],
-        outputs=[data.linesearch.minimal_index],
-        device=device,
+        dim=dims.num_worlds,
+        inputs=[data.linesearch_res_norm_sq],
+        outputs=[data.linesearch_minimal_index],
+        device=data.device,
     )
 
     # Copy the minimal residual state variables back
     wp.launch(
-        kernel=copy_batch_sample_body_u_kernel,
-        dim=(dims.N_w, dims.N_b),
+        kernel=copy_best_sample_kernel,
+        dim=(dims.num_worlds, dims.body_count),
         inputs=[
-            data.linesearch.batch_body_u,
-            data.linesearch.minimal_index,
+            data.linesearch_body_vel,
+            data.linesearch_minimal_index,
         ],
-        outputs=[data.body_u],
-        device=device,
+        outputs=[data.body_vel],
+        device=data.device,
     )
 
     wp.launch(
-        kernel=copy_batch_sample_body_q_kernel,
-        dim=(dims.N_w, dims.N_b),
+        kernel=copy_best_sample_kernel,
+        dim=(dims.num_worlds, dims.body_count),
         inputs=[
-            data.linesearch.batch_body_q,
-            data.linesearch.minimal_index,
+            data.linesearch_body_pose,
+            data.linesearch_minimal_index,
         ],
-        outputs=[data.body_q],
-        device=device,
+        outputs=[data.body_pose],
+        device=data.device,
     )
 
     wp.launch(
-        kernel=copy_batch_sample_body_lambda_kernel,
-        dim=(dims.N_w, dims.N_c),
+        kernel=copy_best_sample_kernel,
+        dim=(dims.num_worlds, dims.num_constraints),
         inputs=[
-            data.linesearch.batch_body_lambda.full,
-            data.linesearch.minimal_index,
+            data.linesearch_constr_force.full,
+            data.linesearch_minimal_index,
         ],
-        outputs=[data.body_lambda.full],
-        device=device,
+        outputs=[data.constr_force.full],
+        device=data.device,
     )
 
     if config.enable_hdf5_logging:
         wp.launch(
-            kernel=copy_batch_sample_h_kernel,
-            dim=(dims.N_w, dims.N_u + dims.N_c),
+            kernel=copy_best_sample_kernel,
+            dim=(dims.num_worlds, dims.N_u + dims.num_constraints),
             inputs=[
-                data.linesearch.batch_h.full,
-                data.linesearch.minimal_index,
+                data.linesearch_res.full,
+                data.linesearch_minimal_index,
             ],
-            outputs=[data._h],
-            device=device,
+            outputs=[data.res.full],
+            device=data.device,
         )
 
 

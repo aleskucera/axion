@@ -191,7 +191,6 @@ def positional_contact_constraint_kernel(
     h_n: wp.array(dtype=wp.float32, ndim=2),
     J_hat_n_values: wp.array(dtype=wp.spatial_vector, ndim=3),
     C_n_values: wp.array(dtype=wp.float32, ndim=2),
-    s_n: wp.array(dtype=wp.float32, ndim=2),
 ):
     world_idx, contact_idx = wp.tid()
 
@@ -201,7 +200,6 @@ def positional_contact_constraint_kernel(
         J_hat_n_values[world_idx, contact_idx, 0] = wp.spatial_vector()
         J_hat_n_values[world_idx, contact_idx, 1] = wp.spatial_vector()
         C_n_values[world_idx, contact_idx] = 0.0
-        s_n[world_idx, contact_idx] = 0.0
         return
 
     lambda_n = body_lambda_n[world_idx, contact_idx]
@@ -251,7 +249,6 @@ def positional_contact_constraint_kernel(
 
     h_n[world_idx, contact_idx] = h_n_val
     C_n_values[world_idx, contact_idx] = c_val
-    s_n[world_idx, contact_idx] = s_val
     J_hat_n_values[world_idx, contact_idx, 0] = J1
     J_hat_n_values[world_idx, contact_idx, 1] = J2
 

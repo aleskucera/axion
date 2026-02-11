@@ -17,7 +17,6 @@ def compute_inv_diag_kernel(
     regularization: wp.float32,
     # Output array
     P_inv_diag: wp.array(dtype=wp.float32, ndim=2),
-    system_diag: wp.array(dtype=wp.float32, ndim=2),
 ):
     """
     Computes the inverse of the diagonal of the system matrix A = J M⁻¹ Jᵀ + C.
@@ -44,9 +43,6 @@ def compute_inv_diag_kernel(
 
     # Add diagonal compliance term C[i,i]
     diag_A = result + C_values[world_idx, constraint_idx] + regularization
-
-    # Store raw diagonal
-    system_diag[world_idx, constraint_idx] = diag_A
 
     # Compute and store inverse, with stabilization
     P_inv_diag[world_idx, constraint_idx] = 1.0 / (diag_A + 1e-6)
@@ -112,18 +108,17 @@ class JacobiPreconditioner(LinearOperator):
         """
         wp.launch(
             kernel=compute_inv_diag_kernel,
-            dim=(self.engine.dims.N_w, self.engine.dims.N_c),
+            dim=(self.engine.dims.num_worlds, self.engine.dims.num_constraints),
             inputs=[
                 self.engine.data.world_M_inv,
                 self.engine.data.J_values.full,
                 self.engine.data.C_values.full,
-                self.engine.data.constraint_body_idx.full,
-                self.engine.data.constraint_active_mask.full,
+                self.engine.data.constr_body_idx.full,
+                self.engine.data.constr_active_mask.full,
                 self.regularization,
             ],
             outputs=[
                 self._P_inv_diag,
-                self.engine.data.system_diag,
             ],
             device=self.device,
         )
@@ -135,10 +130,10 @@ class JacobiPreconditioner(LinearOperator):
         """
         wp.launch(
             kernel=apply_preconditioner_kernel,
-            dim=(self.engine.dims.N_w, self.engine.dims.N_c),
+            dim=(self.engine.dims.num_worlds, self.engine.dims.num_constraints),
             inputs=[
                 self._P_inv_diag,
-                self.engine.data.constraint_active_mask.full,
+                self.engine.data.constr_active_mask.full,
                 x,
                 y,
                 alpha,

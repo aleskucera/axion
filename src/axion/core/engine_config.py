@@ -104,6 +104,12 @@ class AxionEngineConfig(EngineConfig):
     log_linear_system_data: bool = True
     log_constraint_data: bool = True
 
+    @property
+    def num_linesearch_steps(self):
+        num_steps = self.linesearch_conservative_step_count
+        num_steps += self.linesearch_optimistic_step_count
+        return num_steps
+
     def create_engine(
         self,
         model: Any,

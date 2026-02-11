@@ -1,6 +1,6 @@
 import newton
 import warp as wp
-from axion.core.joint_types import JointMode
+from axion.core.types import JointMode
 
 
 class AxionModelBuilder(newton.ModelBuilder):

@@ -9,6 +9,9 @@ class TrajectoryBuffer:
         self.dims = dims
         self.device = device
 
+        def _alloc(shape, dtype, requires_grad):
+            return wp.zeros(shape, dtype=dtype, device=device, requires_grad=requires_grad)
+
         # =========================================================================
         # 1. Body & Joint State (Requires N+1 slots for Time 0..N)
         # =========================================================================
@@ -16,23 +19,15 @@ class TrajectoryBuffer:
         per_body_shape_larger = (num_steps + 1, dims.num_worlds, dims.body_count)
         per_body_shape = (num_steps, dims.num_worlds, dims.body_count)
 
-        with wp.ScopedDevice(device):
-            self.body_q = wp.zeros(per_body_shape_larger, dtype=wp.transform, requires_grad=True)
-            self.body_u = wp.zeros(
-                per_body_shape_larger, dtype=wp.spatial_vector, requires_grad=True
-            )
-
-            # Forces apply DURING the step -> Size N
-            self.body_f = wp.zeros(per_body_shape, dtype=wp.spatial_vector, requires_grad=True)
+        self.body_q = _alloc(per_body_shape_larger, wp.transform, True)
+        self.body_u = _alloc(per_body_shape_larger, wp.spatial_vector, True)
+        # Forces apply DURING the step -> Size N
+        self.body_f = _alloc(per_body_shape, wp.spatial_vector, True)
 
         per_joint_dof_shape = (num_steps, dims.num_worlds, dims.joint_dof_count)
-        with wp.ScopedDevice(device):
-            self.joint_target_pos = wp.zeros(
-                per_joint_dof_shape, dtype=wp.float32, requires_grad=True
-            )
-            self.joint_target_vel = wp.zeros(
-                per_joint_dof_shape, dtype=wp.float32, requires_grad=True
-            )
+
+        self.joint_target_pos = _alloc(per_joint_dof_shape, wp.float32, True)
+        self.joint_target_vel = _alloc(per_joint_dof_shape, wp.float32, True)
 
         # =========================================================================
         # 2. Constraint Multipliers (Interval Data -> Size N)
@@ -40,32 +35,31 @@ class TrajectoryBuffer:
         per_constraint_shape = (num_steps, dims.num_worlds, dims.N_c)
         per_constraint_idx_shape = (num_steps, dims.num_worlds, dims.N_c, 2)
 
-        with wp.ScopedDevice(device):
-            self.body_lambda = wp.zeros(per_constraint_shape, dtype=wp.float32)
-            self.body_lambda_prev = wp.zeros(per_constraint_shape, dtype=wp.float32)
-            self.constraint_active_mask = wp.zeros(per_constraint_shape, dtype=wp.float32)
-            self.constraint_body_idx = wp.zeros(per_constraint_idx_shape, dtype=wp.int32)
+        self.body_lambda = _alloc(per_constraint_shape, wp.float32)
+        self.body_lambda_prev = _alloc(per_constraint_shape, wp.float32)
+        self.constraint_active_mask = _alloc(per_constraint_shape, wp.float32)
+        self.constraint_body_idx = _alloc(per_constraint_idx_shape, wp.int32)
 
         # =========================================================================
         # 3. Contact Manifold (Interval Data -> Size N)
         # =========================================================================
         per_contact_shape = (num_steps, dims.num_worlds, dims.contact_count)
-        with wp.ScopedDevice(device):
-            self.contact_body_a = wp.zeros(per_contact_shape, dtype=wp.int32)
-            self.contact_body_b = wp.zeros(per_contact_shape, dtype=wp.int32)
-            self.contact_point_a = wp.zeros(per_contact_shape, dtype=wp.vec3)
-            self.contact_point_b = wp.zeros(per_contact_shape, dtype=wp.vec3)
-            self.contact_normal = wp.zeros(per_contact_shape, dtype=wp.spatial_vector)
-            self.contact_dist = wp.zeros(per_contact_shape, dtype=wp.float32)
-            self.contact_friction = wp.zeros(per_contact_shape, dtype=wp.float32)
-            self.contact_restitution = wp.zeros(per_contact_shape, dtype=wp.float32)
-            self.contact_thickness_a = wp.zeros(per_contact_shape, dtype=wp.float32)
-            self.contact_thickness_b = wp.zeros(per_contact_shape, dtype=wp.float32)
-            self.contact_basis_t1_a = wp.zeros(per_contact_shape, dtype=wp.spatial_vector)
-            self.contact_basis_t2_a = wp.zeros(per_contact_shape, dtype=wp.spatial_vector)
-            self.contact_basis_n_b = wp.zeros(per_contact_shape, dtype=wp.spatial_vector)
-            self.contact_basis_t1_b = wp.zeros(per_contact_shape, dtype=wp.spatial_vector)
-            self.contact_basis_t2_b = wp.zeros(per_contact_shape, dtype=wp.spatial_vector)
+
+        self.contact_body_a = _alloc(per_contact_shape, wp.int32)
+        self.contact_body_b = _alloc(per_contact_shape, wp.int32)
+        self.contact_point_a = _alloc(per_contact_shape, wp.vec3)
+        self.contact_point_b = _alloc(per_contact_shape, wp.vec3)
+        self.contact_normal = _alloc(per_contact_shape, wp.spatial_vector)
+        self.contact_dist = _alloc(per_contact_shape, wp.float32)
+        self.contact_friction = _alloc(per_contact_shape, wp.float32)
+        self.contact_restitution = _alloc(per_contact_shape, wp.float32)
+        self.contact_thickness_a = _alloc(per_contact_shape, wp.float32)
+        self.contact_thickness_b = _alloc(per_contact_shape, wp.float32)
+        self.contact_basis_t1_a = _alloc(per_contact_shape, wp.spatial_vector)
+        self.contact_basis_t2_a = _alloc(per_contact_shape, wp.spatial_vector)
+        self.contact_basis_n_b = _alloc(per_contact_shape, wp.spatial_vector)
+        self.contact_basis_t1_b = _alloc(per_contact_shape, wp.spatial_vector)
+        self.contact_basis_t2_b = _alloc(per_contact_shape, wp.spatial_vector)
 
     def zero_grad(self):
         if self.body_q.requires_grad:

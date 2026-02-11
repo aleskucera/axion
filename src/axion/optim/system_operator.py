@@ -24,8 +24,8 @@ class SystemLinearData:
             N_c=engine.dims.N_c,
             N_b=engine.dims.N_b,
             J_values=engine.data.J_values.full,
-            constraint_body_idx=engine.data.constraint_body_idx.full,
-            constraint_active_mask=engine.data.constraint_active_mask.full,
+            constraint_body_idx=engine.data.constr_body_idx.full,
+            constraint_active_mask=engine.data.constr_active_mask.full,
             C_values=engine.data.C_values.full,
             M_inv=engine.data.world_M_inv,
         )
