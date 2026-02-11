@@ -75,14 +75,6 @@ class BaseSimulator(ABC):
             return False
         return self.execution_config.use_cuda_graph and wp.get_device().is_cuda
 
-    # @property
-    # def use_cuda_graph(self):
-    #     return (
-    #         self.execution_config.use_cuda_graph
-    #         and wp.get_device().is_cuda
-    #         and not self.logging_config.enable_hdf5_logging
-    #     )
-
     @abstractmethod
     def build_model(self) -> Model:
         """

@@ -1,5 +1,7 @@
 import numpy as np
 import warp as wp
+from axion.constraints import fill_control_constraint_body_idx_kernel
+from axion.constraints import fill_joint_constraint_body_idx_kernel
 from axion.tiled import TiledSqNorm
 from axion.types.spatial_inertia import SpatialInertia
 
@@ -7,6 +9,7 @@ from .data_views import ConstraintView
 from .data_views import SystemView
 from .engine_config import EngineConfig
 from .engine_dims import EngineDimensions
+from .model import AxionModel
 
 
 def _compute_linesearch_step_size_array(config: EngineConfig) -> wp.array:
@@ -39,6 +42,7 @@ def _compute_linesearch_step_size_array(config: EngineConfig) -> wp.array:
 class EngineData:
     def __init__(
         self,
+        model: AxionModel,
         dims: EngineDimensions,
         config: EngineConfig,
         device: wp.Device,
@@ -221,6 +225,41 @@ class EngineData:
             self.pcr_history_res = SystemView(
                 self._pcr_history_res, dims, self._pcr_history_res_spatial
             )
+
+        # =========================================================================
+        # Init Kernels
+        # =========================================================================
+        wp.launch(
+            kernel=fill_joint_constraint_body_idx_kernel,
+            dim=(dims.num_worlds, dims.joint_count),
+            inputs=[
+                model.joint_type,
+                model.joint_parent,
+                model.joint_child,
+                model.joint_constraint_offsets,
+            ],
+            outputs=[
+                self.constr_body_idx.j,
+            ],
+            device=device,
+        )
+
+        wp.launch(
+            kernel=fill_control_constraint_body_idx_kernel,
+            dim=(dims.num_worlds, dims.joint_count),
+            inputs=[
+                model.joint_parent,
+                model.joint_child,
+                model.joint_type,
+                model.joint_dof_mode,
+                model.joint_qd_start,
+                model.control_constraint_offsets,
+            ],
+            outputs=[
+                self.constr_body_idx.ctrl,
+            ],
+            device=device,
+        )
 
     def zero_gradients(self):
         self.ext_force.grad.zero_()
