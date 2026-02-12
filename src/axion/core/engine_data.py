@@ -1,3 +1,5 @@
+from typing import Any
+
 import numpy as np
 import warp as wp
 from axion.constraints import fill_control_constraint_body_idx_kernel
@@ -9,6 +11,7 @@ from .data_views import ConstraintView
 from .data_views import SystemView
 from .engine_config import EngineConfig
 from .engine_dims import EngineDimensions
+from .history_group import HistoryGroup
 from .model import AxionModel
 
 
@@ -142,6 +145,20 @@ class EngineData:
         self.rhs = _alloc((dims.num_constraints,), wp.float32)
 
         # =========================================================================
+        # Newton-Raphson (NR) Arrays
+        # =========================================================================
+        with wp.ScopedDevice(device):
+            self.keep_running = wp.zeros(shape=(1,), dtype=wp.int32)
+            self.iter_count = wp.zeros(shape=(1,), dtype=wp.int32)
+            self.res_norm_sq = wp.zeros(shape=(dims.num_worlds,), dtype=wp.float32)
+
+        self.tiled_sq_norm = TiledSqNorm(
+            shape=self._res.shape,
+            dtype=wp.float32,
+            device=device,
+        )
+
+        # =========================================================================
         # Adjoint Arrays
         # =========================================================================
         if allocate_grad:
@@ -179,8 +196,9 @@ class EngineData:
                 self._linesearch_res, dims, self._linesearch_res_spatial
             )
 
-            self.linesearch_res_norm_sq = wp.zeros((step_count, dims.num_worlds), wp.float32)
-            self.linesearch_minimal_index = wp.zeros((dims.num_worlds,), wp.int32)
+            with wp.ScopedDevice(device):
+                self.linesearch_res_norm_sq = wp.zeros((step_count, dims.num_worlds), wp.float32)
+                self.linesearch_minimal_index = wp.zeros((dims.num_worlds,), wp.int32)
 
             # Class for computing squared norm efficiently
             self.linesearch_tiled_res_sq_norm = TiledSqNorm(
@@ -189,41 +207,52 @@ class EngineData:
                 device=device,
             )
 
-        # ----- REMOVE -----
         # =========================================================================
-        # LOGGING: Newton-Raphson (NR) History Arrays
+        # LOGGING: History Group (Replaces manual kernel creation)
         # =========================================================================
-        if allocate_history:
-            buffer_size = config.max_newton_iters + 1
-            self.nr_history_body_pose = _alloc_buffer(buffer_size, self.body_pose)
-            self.nr_history_body_vel = _alloc_buffer(buffer_size, self.body_vel)
+        # We use a single HistoryGroup to capture all data at the end of each Newton iteration.
+        self.history = HistoryGroup(
+            capacity=config.max_newton_iters, index_array=self.iter_count, device=device
+        )
 
-            self._nr_history_constr_force = _alloc_buffer(buffer_size, self._constr_force)
-            self.nr_history_constr_force = ConstraintView(self._nr_history_constr_force, dims)
+        # 1. Newton-Raphson (NR) History
+        self.nr_history_body_pose = self.history.register("body_pose", self.body_pose)
+        self.nr_history_body_vel = self.history.register("body_vel", self.body_vel)
+        self._nr_history_constr_force = self.history.register("constr_force", self._constr_force)
+        self.nr_history_constr_force = ConstraintView(self._nr_history_constr_force, dims)
 
-            self._nr_history_res = _alloc_buffer(buffer_size, self._res)
-            self._nr_history_res_spatial = _alloc_buffer(buffer_size, self._res_spatial)
+        self._nr_history_res = self.history.register("res", self._res)
+        self.nr_history_res = SystemView(self._nr_history_res, dims)
+        self.nr_history_res_sq_norm = self.history.register("res_norm_sq", self.res_norm_sq)
 
-            self.nr_history_res = SystemView(
-                self._nr_history_res, dims, self._nr_history_res_spatial
+        # 2. PCR History (Snapshots of the inner solver state)
+        with wp.ScopedDevice(device):
+            self._pcr_iter_count_src = wp.zeros((1,), wp.int32)  # Placeholder source
+            self._pcr_final_res_norm_sq_src = wp.zeros((dims.num_worlds,), wp.float32)
+            self._pcr_res_norm_history_src = wp.zeros(
+                (config.max_linear_iters + 1, dims.num_worlds), wp.float32
             )
 
-        # =========================================================================
-        # LOGGING: Preconditioned Conjugate Residual (PCR) History Arrays
-        # =========================================================================
-        if allocate_history:
-            buffer_size = config.max_linear_iters + 1
-            self.pcr_history_body_pose = _alloc_buffer(buffer_size, self.body_pose)
-            self.pcr_history_body_vel = _alloc_buffer(buffer_size, self.body_vel)
+        self.pcr_history_iter_count = self.history.register(
+            "pcr_iter_count", self._pcr_iter_count_src
+        )
+        self.pcr_history_final_res_norm_sq = self.history.register(
+            "pcr_final_res_norm", self._pcr_final_res_norm_sq_src
+        )
+        self.pcr_history_res_norm_sq_history = self.history.register(
+            "pcr_res_history", self._pcr_res_norm_history_src
+        )
 
-            self._pcr_history_constr_force = _alloc_buffer(buffer_size, self._constr_force)
-            self.pcr_history_constr_force = ConstraintView(self._pcr_history_constr_force, dims)
-
-            self._pcr_history_res = _alloc_buffer(buffer_size, self._res)
-            self._pcr_history_res_spatial = _alloc_buffer(buffer_size, self._res_spatial)
-
-            self.pcr_history_res = SystemView(
-                self._pcr_history_res, dims, self._pcr_history_res_spatial
+        # 3. Linesearch (LS) History
+        if config.enable_linesearch:
+            self.ls_history_step_size = self.history.register(
+                "ls_step_size", self.linesearch_step_size
+            )
+            self.ls_history_res_norm_sq = self.history.register(
+                "ls_res_norm", self.linesearch_res_norm_sq
+            )
+            self.ls_history_minimal_index = self.history.register(
+                "ls_min_index", self.linesearch_minimal_index
             )
 
         # =========================================================================
@@ -271,3 +300,6 @@ class EngineData:
 
         self.joint_target_pos.grad.zero_()
         self.joint_target_vel.grad.zero_()
+
+    def save_iter_to_history(self):
+        self.history.capture()

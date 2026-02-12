@@ -22,6 +22,7 @@ from .engine_config import EngineConfig
 from .engine_data import EngineData
 from .engine_dims import EngineDimensions
 from .model import AxionModel
+from .residual_utils import compute_residual
 
 
 @wp.kernel
@@ -181,9 +182,6 @@ def compute_linesearch_batch_h(
     config: EngineConfig,
     dims: EngineDimensions,
 ):
-    # data.linesearch.batch_h.full.zero_()
-    # data.linesearch.batch_h_norm_sq.zero_()
-
     # Evaluate residual for unconstrained dynamics
     wp.launch(
         kernel=fused_batch_unconstrained_dynamics_kernel,
@@ -378,17 +376,16 @@ def select_minimal_residual_variables(
         device=data.device,
     )
 
-    if config.enable_hdf5_logging:
-        wp.launch(
-            kernel=copy_best_sample_kernel,
-            dim=(dims.num_worlds, dims.N_u + dims.num_constraints),
-            inputs=[
-                data.linesearch_res.full,
-                data.linesearch_minimal_index,
-            ],
-            outputs=[data.res.full],
-            device=data.device,
-        )
+    wp.launch(
+        kernel=copy_best_sample_kernel,
+        dim=(dims.num_worlds, dims.N_u + dims.num_constraints),
+        inputs=[
+            data.linesearch_res.full,
+            data.linesearch_minimal_index,
+        ],
+        outputs=[data.res.full],
+        device=data.device,
+    )
 
 
 def perform_linesearch(
@@ -403,3 +400,4 @@ def perform_linesearch(
         select_minimal_residual_variables(data, config, dims)
     else:
         update_variables_without_linesearch(model, data, config, dims)
+        compute_residual(model, data, config, dims)

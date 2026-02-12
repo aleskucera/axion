@@ -122,14 +122,6 @@ def compute_linear_system(
     config: EngineConfig,
     dims: EngineDimensions,
 ):
-    device = data.device
-
-    # data._res.zero_()
-    # data.J_values.zero_()
-    # data.C_values.zero_()
-    # data.JT_dconstr_force.zero_()
-    # data.rhs.zero_()
-
     wp.launch(
         kernel=unconstrained_dynamics_kernel,
         dim=(dims.N_w, dims.N_b),
@@ -144,7 +136,7 @@ def compute_linear_system(
             model.g_accel,
         ],
         outputs=[data.res.d_spatial],
-        device=device,
+        device=data.device,
     )
 
     wp.launch(
@@ -174,7 +166,7 @@ def compute_linear_system(
             data.J_values.j,
             data.C_values.j,
         ],
-        device=device,
+        device=data.device,
     )
 
     wp.launch(
@@ -208,7 +200,7 @@ def compute_linear_system(
             data.J_values.ctrl,
             data.C_values.ctrl,
         ],
-        device=device,
+        device=data.device,
     )
 
     wp.launch(
@@ -239,7 +231,7 @@ def compute_linear_system(
             data.J_values.n,
             data.C_values.n,
         ],
-        device=device,
+        device=data.device,
     )
 
     wp.launch(
@@ -269,7 +261,7 @@ def compute_linear_system(
             data.J_values.f,
             data.C_values.f,
         ],
-        device=device,
+        device=data.device,
     )
 
     data.res.sync_to_float()
@@ -289,7 +281,7 @@ def compute_linear_system(
             data.dt,
         ],
         outputs=[data.rhs],
-        device=device,
+        device=data.device,
     )
 
 

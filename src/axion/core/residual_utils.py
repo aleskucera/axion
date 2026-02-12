@@ -16,20 +16,6 @@ def compute_residual(
     config: EngineConfig,
     dims: EngineDimensions,
 ):
-    """
-    Computes the full system residual vector (R) for the current state.
-
-    This function populates:
-      - data.h.d_spatial: The dynamics residual (including constraint forces).
-      - data.h.c.*: The constraint violation residuals (Joints, Control, Contacts, Friction).
-    """
-    # Zero out all residual buffers before accumulation
-    # data.res.zero_()
-
-    # -------------------------------------------------------------------------
-    # 1. Unconstrained Dynamics
-    # -------------------------------------------------------------------------
-    # Computes: h_d = M(u - u_prev) - (f_ext + f_g + f_gyro) * dt
     wp.launch(
         kernel=unconstrained_dynamics_kernel,
         dim=(dims.num_worlds, dims.body_count),
@@ -47,10 +33,6 @@ def compute_residual(
         device=data.device,
     )
 
-    # -------------------------------------------------------------------------
-    # 2. Joint Constraints
-    # -------------------------------------------------------------------------
-    # Adds -J^T * lambda * dt to h_d AND computes constraint violation h_c.j
     wp.launch(
         kernel=positional_joint_residual_kernel,
         dim=(dims.num_worlds, dims.joint_count),
@@ -78,9 +60,6 @@ def compute_residual(
         device=data.device,
     )
 
-    # -------------------------------------------------------------------------
-    # 3. Control Constraints
-    # -------------------------------------------------------------------------
     wp.launch(
         kernel=control_constraint_residual_kernel,
         dim=(dims.num_worlds, dims.joint_count),
@@ -112,9 +91,6 @@ def compute_residual(
         device=data.device,
     )
 
-    # -------------------------------------------------------------------------
-    # 4. Contact Constraints
-    # -------------------------------------------------------------------------
     wp.launch(
         kernel=positional_contact_residual_kernel,
         dim=(dims.world_count, dims.contact_count),
@@ -144,9 +120,6 @@ def compute_residual(
         device=data.device,
     )
 
-    # -------------------------------------------------------------------------
-    # 5. Friction Constraints
-    # -------------------------------------------------------------------------
     wp.launch(
         kernel=friction_residual_kernel,
         dim=(dims.num_worlds, dims.contact_count),
@@ -174,4 +147,4 @@ def compute_residual(
         device=data.device,
     )
 
-    data.h.sync_to_float()
+    data.res.sync_to_float()
