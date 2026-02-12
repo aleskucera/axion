@@ -401,3 +401,4 @@ def perform_linesearch(
     else:
         update_variables_without_linesearch(model, data, config, dims)
         compute_residual(model, data, config, dims)
+    data.tiled_sq_norm.compute(data.res.full, data.res_norm_sq)

@@ -304,16 +304,16 @@ class PCRSolver:
         # --- Capture and Run ---
         wp.capture_while(self.keep_running, solver_step)
 
-        if log:
-            iters_cpu = int(self.iter_count.numpy()[0])
-            # History buffer includes iter 0 + iters steps
-            hist_np = self.history_r_sq.numpy()[: iters_cpu + 1]
-            r_sq_np = self.r_sq.numpy()
-
-            return {
-                "final_residual_squared": r_sq_np,
-                "iterations": iters_cpu,
-                "residual_squared_history": hist_np,
-            }
-
-        return {}
+        # if log:
+        #     iters_cpu = int(self.iter_count.numpy()[0])
+        #     # History buffer includes iter 0 + iters steps
+        #     hist_np = self.history_r_sq.numpy()[: iters_cpu + 1]
+        #     r_sq_np = self.r_sq.numpy()
+        #
+        #     return {
+        #         "final_residual_squared": r_sq_np,
+        #         "iterations": iters_cpu,
+        #         "residual_squared_history": hist_np,
+        #     }
+        #
+        # return {}

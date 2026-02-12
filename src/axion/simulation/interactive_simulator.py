@@ -72,8 +72,8 @@ class InteractiveSimulator(BaseSimulator, ABC):
         finally:
             pbar.close()
 
-            if isinstance(self.solver, AxionEngine):
-                self.solver.events.print_timings()
+            # if isinstance(self.solver, AxionEngine):
+            #     self.solver.events.print_timings()
 
             if self.rendering_config.vis_type == "usd":
                 self.viewer.close()
@@ -114,8 +114,8 @@ class InteractiveSimulator(BaseSimulator, ABC):
         for step in range(n_steps):
             self._single_physics_step(step)
 
-        if isinstance(self.solver, AxionEngine):
-            self.solver.events.record_timings()
+        # if isinstance(self.solver, AxionEngine):
+        #     self.solver.events.record_timings()
 
     def _run_segment_with_graph(self, segment_num: int):
         if self.cuda_graph is None:
@@ -123,8 +123,8 @@ class InteractiveSimulator(BaseSimulator, ABC):
 
         wp.capture_launch(self.cuda_graph)
 
-        if isinstance(self.solver, AxionEngine):
-            self.solver.events.record_timings()
+        # if isinstance(self.solver, AxionEngine):
+        #     self.solver.events.record_timings()
 
     def _capture_cuda_graphs(self):
         n_steps = self.steps_per_segment

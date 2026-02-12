@@ -106,6 +106,16 @@ class AxionEngine(SolverBase):
 
         self._timestep = 0
 
+    def _save_iter_to_history(self):
+        if not self.logging_config.enable_hdf5_logging:
+            return
+
+        wp.copy(dest=self.data.pcr_history_iter_count, src=self.cr_solver.iter_count)
+        wp.copy(dest=self.data.pcr_history_final_res_norm_sq, src=self.cr_solver.r_sq)
+        wp.copy(dest=self.data.pcr_history_res_norm_sq_history, src=self.cr_solver.history_r_sq)
+
+        self.data.save_iter_to_history()
+
     def _update_mass_matrix(self):
         wp.launch(
             kernel=world_spatial_inertia_kernel,
@@ -136,7 +146,6 @@ class AxionEngine(SolverBase):
         )
 
     def _check_convergence(self):
-        self.data.tiled_sq_norm.compute(self.data.res.full, self.data.res_norm_sq)
         wp.launch(
             kernel=_check_newton_convergence,
             dim=(self.dims.num_worlds,),
@@ -201,7 +210,7 @@ class AxionEngine(SolverBase):
 
             # Linear Solve
             self.data._dconstr_force.zero_()
-            solver_stats = self.cr_solver.solve(
+            self.cr_solver.solve(
                 A=self.A_op,
                 b=self.data.rhs,
                 x=self.data.dconstr_force.full,
@@ -215,6 +224,8 @@ class AxionEngine(SolverBase):
 
             # Linesearch
             perform_linesearch(self.axion_model, self.data, self.config, self.dims)
+
+            self._save_iter_to_history()
             self._check_convergence()
 
         # Run the NR loop

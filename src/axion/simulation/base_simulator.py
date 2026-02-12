@@ -68,11 +68,11 @@ class BaseSimulator(ABC):
 
     @property
     def use_cuda_graph(self) -> bool:
-        if (
-            isinstance(self.engine_config, AxionEngineConfig)
-            and self.logging_config.enable_hdf5_logging
-        ):
-            return False
+        # if (
+        #     isinstance(self.engine_config, AxionEngineConfig)
+        #     and self.logging_config.enable_hdf5_logging
+        # ):
+        #     return False
         return self.execution_config.use_cuda_graph and wp.get_device().is_cuda
 
     @abstractmethod
