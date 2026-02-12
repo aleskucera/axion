@@ -227,20 +227,18 @@ class EngineData:
 
         # 2. PCR History (Snapshots of the inner solver state)
         with wp.ScopedDevice(device):
-            self._pcr_iter_count_src = wp.zeros((1,), wp.int32)  # Placeholder source
-            self._pcr_final_res_norm_sq_src = wp.zeros((dims.num_worlds,), wp.float32)
-            self._pcr_res_norm_history_src = wp.zeros(
+            self.pcr_iter_count = wp.zeros((1,), wp.int32)  # Placeholder source
+            self.pcr_final_res_norm_sq = wp.zeros((dims.num_worlds,), wp.float32)
+            self.pcr_res_norm_sq_history = wp.zeros(
                 (config.max_linear_iters + 1, dims.num_worlds), wp.float32
             )
 
-        self.pcr_history_iter_count = self.history.register(
-            "pcr_iter_count", self._pcr_iter_count_src
-        )
+        self.pcr_history_iter_count = self.history.register("pcr_iter_count", self.pcr_iter_count)
         self.pcr_history_final_res_norm_sq = self.history.register(
-            "pcr_final_res_norm", self._pcr_final_res_norm_sq_src
+            "pcr_final_res_norm_sq", self.pcr_final_res_norm_sq
         )
         self.pcr_history_res_norm_sq_history = self.history.register(
-            "pcr_res_history", self._pcr_res_norm_history_src
+            "pcr_res_norm_sq_history", self.pcr_res_norm_sq_history
         )
 
         # 3. Linesearch (LS) History

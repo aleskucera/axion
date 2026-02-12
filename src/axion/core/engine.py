@@ -126,9 +126,9 @@ class AxionEngine(SolverBase):
         if not self.logger:
             return
 
-        wp.copy(dest=self.data.pcr_history_iter_count, src=self.cr_solver.iter_count)
-        wp.copy(dest=self.data.pcr_history_final_res_norm_sq, src=self.cr_solver.r_sq)
-        wp.copy(dest=self.data.pcr_history_res_norm_sq_history, src=self.cr_solver.history_r_sq)
+        wp.copy(dest=self.data.pcr_iter_count, src=self.cr_solver.iter_count)
+        wp.copy(dest=self.data.pcr_final_res_norm_sq, src=self.cr_solver.r_sq)
+        wp.copy(dest=self.data.pcr_res_norm_sq_history, src=self.cr_solver.history_r_sq)
 
         self.data.save_iter_to_history()
 
