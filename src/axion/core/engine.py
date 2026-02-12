@@ -26,6 +26,7 @@ from .adjoint_utils import compute_adjoint_rhs_kernel
 from .adjoint_utils import compute_body_adjoint_init_kernel
 from .adjoint_utils import subtract_constraint_feedback_kernel
 from .residual_utils import compute_residual
+from .sim_logger import SimulationHDF5Logger
 
 
 @wp.kernel
@@ -51,6 +52,11 @@ def _check_newton_convergence(
     if tid < h_norm_sq.shape[0]:
         if h_norm_sq[tid] > atol_sq:
             keep_running[0] = 1
+
+
+@wp.kernel
+def increment_timestep_kernel(step_count: wp.array(dtype=int)):
+    step_count[0] = step_count[0] + 1
 
 
 class AxionEngine(SolverBase):
@@ -104,10 +110,20 @@ class AxionEngine(SolverBase):
             device=self.device,
         )
 
-        self._timestep = 0
+        self.logger = None
+        if self.logging_config.enable_hdf5_logging:
+            self.logger = SimulationHDF5Logger(
+                num_steps=self.logging_config.max_simulation_steps,
+                data=self.data,
+                config=self.config,
+                dims=self.dims,
+                device=self.device,
+            )
+
+        self.timestep = wp.zeros(1, dtype=wp.int32, device=self.device)
 
     def _save_iter_to_history(self):
-        if not self.logging_config.enable_hdf5_logging:
+        if not self.logger:
             return
 
         wp.copy(dest=self.data.pcr_history_iter_count, src=self.cr_solver.iter_count)
@@ -218,7 +234,7 @@ class AxionEngine(SolverBase):
                 iters=self.config.max_linear_iters,
                 tol=self.config.linear_tol,
                 atol=self.config.linear_atol,
-                log=False,
+                log=self.logging_config.enable_hdf5_logging,
             )
             compute_dbody_qd_from_dbody_lambda(self.axion_model, self.data, self.config, self.dims)
 
@@ -240,12 +256,18 @@ class AxionEngine(SolverBase):
                 if self.data.keep_running.numpy()[0] == 0:
                     break
 
+        if self.logger:
+            self.logger.capture_step(self.timestep, self.data)
+
         # =========================================================================
         # Copy the computed state into the output state
         # =========================================================================
         wp.copy(dest=state_out.body_q, src=self.data.body_pose)
         wp.copy(dest=state_out.body_qd, src=self.data.body_vel)
-        self._timestep += 1
+
+        wp.launch(
+            kernel=increment_timestep_kernel, dim=(1,), inputs=[self.timestep], device=self.device
+        )
 
     def step_backward(self):
         compute_linear_system(self.axion_model, self.data, self.config, self.dims)
@@ -328,3 +350,7 @@ class AxionEngine(SolverBase):
 
         # This adds the implicit gradient (-w^T * dh/d_theta) to the arrays
         tape.backward(grads={self.data._h: self.data._w})
+
+    def save_logs(self):
+        if self.logger:
+            self.logger.save_to_hdf5(self.logging_config.hdf5_log_file)

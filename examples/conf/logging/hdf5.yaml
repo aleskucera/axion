@@ -3,7 +3,7 @@ _target_: axion.LoggingConfig
 enable_timing: false
 enable_hdf5_logging: true
 hdf5_log_file: "data/logs/${project_name}.h5"
-
+max_simulation_steps: 300
 log_dynamics_state: true
 log_linear_system_data: true
 log_constraint_data: true

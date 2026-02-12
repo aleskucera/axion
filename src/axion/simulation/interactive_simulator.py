@@ -72,8 +72,9 @@ class InteractiveSimulator(BaseSimulator, ABC):
         finally:
             pbar.close()
 
-            # if isinstance(self.solver, AxionEngine):
-            #     self.solver.events.print_timings()
+            if isinstance(self.solver, AxionEngine):
+                # self.solver.events.print_timings()
+                self.solver.save_logs()
 
             if self.rendering_config.vis_type == "usd":
                 self.viewer.close()
