@@ -100,7 +100,9 @@ class BaseSimulator(ABC):
         """
         Initialization hook for Axion engine.
         """
-        self.solver.integrate_bodies(self.model, current_state, next_state, dt)
+        wp.copy(dest=next_state.body_q, src=current_state.body_q)
+        wp.copy(dest=next_state.body_qd, src=current_state.body_qd)
+        # self.solver.integrate_bodies(self.model, current_state, next_state, dt)
 
     def _copy_state(self, dest: newton.State, src: newton.State):
         """Copies the physics state data from src to dest."""

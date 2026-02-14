@@ -93,7 +93,7 @@ def compute_residual(
 
     wp.launch(
         kernel=positional_contact_residual_kernel,
-        dim=(dims.world_count, dims.contact_count),
+        dim=(dims.num_worlds, dims.contact_count),
         inputs=[
             data.body_pose,
             data.body_vel,
@@ -108,7 +108,7 @@ def compute_residual(
             data.contact_dist,
             data.contact_basis_n_a,
             data.contact_basis_n_b,
-            data.constraint_active_mask.n,
+            data.constr_active_mask.n,
             model.body_inv_mass,
             model.body_inv_inertia,
             data.dt,

@@ -140,42 +140,6 @@ def compute_linesearch_batch_variables(
     )
 
 
-def update_variables_without_linesearch(
-    model: AxionModel,
-    data: EngineData,
-    config: EngineConfig,
-    dims: EngineDimensions,
-):
-    wp.launch(
-        kernel=update_without_linesearch,
-        dim=(dims.num_worlds, dims.body_count),
-        inputs=[data.dbody_vel],
-        outputs=[data.body_vel],
-        device=data.device,
-    )
-
-    wp.launch(
-        kernel=integrate_body_pose_kernel,
-        dim=(dims.num_worlds, dims.body_count),
-        inputs=[
-            data.body_vel,
-            data.body_pose_prev,
-            model.body_com,
-            data.dt,
-        ],
-        outputs=[data.body_pose],
-        device=data.device,
-    )
-
-    wp.launch(
-        kernel=update_without_linesearch,
-        dim=(dims.num_worlds, dims.num_constraints),
-        inputs=[data.dconstr_force.full],
-        outputs=[data.constr_force.full],
-        device=data.device,
-    )
-
-
 def compute_linesearch_batch_h(
     model: AxionModel,
     data: EngineData,
@@ -388,6 +352,42 @@ def select_minimal_residual_variables(
     )
 
 
+def update_variables_without_linesearch(
+    model: AxionModel,
+    data: EngineData,
+    config: EngineConfig,
+    dims: EngineDimensions,
+):
+    wp.launch(
+        kernel=update_without_linesearch,
+        dim=(dims.num_worlds, dims.body_count),
+        inputs=[data.dbody_vel],
+        outputs=[data.body_vel],
+        device=data.device,
+    )
+
+    wp.launch(
+        kernel=integrate_body_pose_kernel,
+        dim=(dims.num_worlds, dims.body_count),
+        inputs=[
+            data.body_vel,
+            data.body_pose_prev,
+            model.body_com,
+            data.dt,
+        ],
+        outputs=[data.body_pose],
+        device=data.device,
+    )
+
+    wp.launch(
+        kernel=update_without_linesearch,
+        dim=(dims.num_worlds, dims.num_constraints),
+        inputs=[data.dconstr_force.full],
+        outputs=[data.constr_force.full],
+        device=data.device,
+    )
+
+
 def perform_linesearch(
     model: AxionModel,
     data: EngineData,
@@ -401,4 +401,8 @@ def perform_linesearch(
     else:
         update_variables_without_linesearch(model, data, config, dims)
         compute_residual(model, data, config, dims)
+
+    # FIX: This causes following error
+    # Warp CUDA error 700: an illegal memory access was encountered
+    # (in function wp_free_device_async, /builds/omniverse/warp/warp/native/warp.cu:812)
     data.tiled_sq_norm.compute(data.res.full, data.res_norm_sq)

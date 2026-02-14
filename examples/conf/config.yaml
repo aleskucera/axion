@@ -2,7 +2,7 @@ defaults:
   - simulation: base
   - rendering: gl
   - execution: no_graph
-  - logging: disabled
+  - logging: hdf5
   - engine: axion_pos
   - _self_
 
