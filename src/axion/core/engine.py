@@ -1,6 +1,7 @@
 from typing import Callable
 from typing import Optional
 
+import numpy as np
 import warp as wp
 from axion.core.contacts import AxionContacts
 from axion.core.engine_config import AxionEngineConfig
@@ -219,11 +220,11 @@ class AxionEngine(SolverBase):
         def nr_loop():
             # Linearize
             compute_linear_system(self.axion_model, self.data, self.config, self.dims)
-            # self._update_mass_matrix()
+            self._update_mass_matrix()
             self.preconditioner.update()
 
             # Linear Solve
-            # self.data._dconstr_force.zero_()
+            self.data._dconstr_force.zero_()
             self.cr_solver.solve(
                 A=self.A_op,
                 b=self.data.rhs,
@@ -234,7 +235,7 @@ class AxionEngine(SolverBase):
                 atol=self.config.linear_atol,
                 log=self.logging_config.enable_hdf5_logging,
             )
-            # compute_dbody_qd_from_dbody_lambda(self.axion_model, self.data, self.config, self.dims)
+            compute_dbody_qd_from_dbody_lambda(self.axion_model, self.data, self.config, self.dims)
 
             # Linesearch
             wp.copy(dest=self.data._constr_force_prev_iter, src=self.data._constr_force)
@@ -244,7 +245,7 @@ class AxionEngine(SolverBase):
             self._check_convergence()
 
         # Run the NR loop
-        self.data.keep_running.fill_(0)
+        self.data.keep_running.fill_(1)
         self.data.iter_count.zero_()
         if self.device.is_capturing:
             wp.capture_while(self.data.keep_running, nr_loop)

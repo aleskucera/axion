@@ -15,7 +15,7 @@ def create_tiled_sum_kernel(tile_size: int, dtype: type):
         col_start = block * tile_size
 
         # Load tile of shape (1, tile_size)
-        tile = wp.tile_load(inp, shape=(1, tile_size), offset=(row, col_start))
+        tile = wp.tile_load(inp, shape=(1, tile_size), offset=(row, col_start), bounds_check=True)
 
         # Sum the tile -> (1, 1)
         sum_tile = wp.tile_sum(tile)
@@ -38,8 +38,8 @@ def create_tiled_dot_kernel(tile_size: int, dtype: type):
         row, block = wp.tid()
         col_start = block * tile_size
 
-        tile_a = wp.tile_load(a, shape=(1, tile_size), offset=(row, col_start))
-        tile_b = wp.tile_load(b, shape=(1, tile_size), offset=(row, col_start))
+        tile_a = wp.tile_load(a, shape=(1, tile_size), offset=(row, col_start), bounds_check=True)
+        tile_b = wp.tile_load(b, shape=(1, tile_size), offset=(row, col_start), bounds_check=True)
 
         # Element-wise multiply
         prod = wp.tile_map(wp.mul, tile_a, tile_b)
@@ -340,4 +340,3 @@ class TiledArgMin:
         self.launch.set_param_at_index(1, out_idx_view)
         self.launch.set_param_at_index(2, out_val_view)
         self.launch.launch()
-

@@ -19,10 +19,14 @@ def create_save_to_buffer_kernel(arr: wp.array):
         def save_to_buffer_kernel_1d(
             x: wp.array(dtype=dtype, ndim=1),
             iter_idx: wp.array(dtype=wp.int32),
+            max_iter: wp.int32,
             x_buffer: wp.array(dtype=dtype, ndim=2),
         ):
             tid = wp.tid()
             idx = iter_idx[0]
+
+            if idx >= max_iter:
+                return
 
             if tid < x.shape[0]:
                 x_buffer[idx, tid] = x[tid]
@@ -35,10 +39,14 @@ def create_save_to_buffer_kernel(arr: wp.array):
         def save_to_buffer_kernel_2d(
             x: wp.array(dtype=dtype, ndim=2),
             iter_idx: wp.array(dtype=wp.int32),
+            max_iter: wp.int32,
             x_buffer: wp.array(dtype=dtype, ndim=3),
         ):
             i, j = wp.tid()
             idx = iter_idx[0]
+
+            if idx >= max_iter:
+                return
 
             if i < x.shape[0] and j < x.shape[1]:
                 x_buffer[idx, i, j] = x[i, j]
@@ -51,10 +59,14 @@ def create_save_to_buffer_kernel(arr: wp.array):
         def save_to_buffer_kernel_3d(
             x: wp.array(dtype=dtype, ndim=3),
             iter_idx: wp.array(dtype=wp.int32),
+            max_iter: wp.int32,
             x_buffer: wp.array(dtype=dtype, ndim=4),
         ):
             i, j, k = wp.tid()
             idx = iter_idx[0]
+
+            if idx >= max_iter:
+                return
 
             if i < x.shape[0] and j < x.shape[1] and k < x.shape[2]:
                 x_buffer[idx, i, j, k] = x[i, j, k]
@@ -111,7 +123,11 @@ class HistoryGroup:
             wp.launch(
                 kernel=kernel,
                 dim=source.shape,
-                inputs=[source, self.index_array],
+                inputs=[
+                    source,
+                    self.index_array,
+                    self.capacity,
+                ],
                 outputs=[buffer],
                 device=self.device,
             )

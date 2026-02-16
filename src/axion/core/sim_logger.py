@@ -6,6 +6,7 @@ from axion.core.data_views import SystemView
 from axion.core.engine_config import EngineConfig
 from axion.core.engine_data import EngineData
 from axion.core.engine_dims import EngineDimensions
+from axion.core.history_group import create_save_to_buffer_kernel
 from axion.core.history_group import get_or_create_save_kernel
 
 
@@ -20,7 +21,7 @@ class SimulationHDF5Logger:
     ):
         self.device = device
         self.dims = dims
-        self.num_steps = num_steps
+        self.max_num_steps = num_steps
         self.dt = data.dt if data.dt is not None else 0.0
         self.config = config
 
@@ -39,151 +40,151 @@ class SimulationHDF5Logger:
             # 2. Get the specific kernel for this array's dimensionality
             # Note: source_array can be 1D, 2D, or 3D.
             # get_or_create_save_kernel handles dim -> dim+1 mapping.
-            kernel = get_or_create_save_kernel(source_array)
+            kernel = create_save_to_buffer_kernel(source_array)
 
             # 3. Store operation
             self._capture_ops.append((source_array, dest_array, kernel))
 
             return dest_array
 
-        # # =========================================================================
-        # # 1. Body State
-        # # =========================================================================
-        # self.ext_force = _register_log("ext_force", data.ext_force)
-        # self.body_pose = _register_log("body_pose", data.body_pose)
-        # self.body_vel = _register_log("body_vel", data.body_vel)
-        # self.body_pose_prev = _register_log("body_pose_prev", data.body_pose_prev)
-        # self.body_vel_prev = _register_log("body_vel_prev", data.body_vel_prev)
-        # self.joint_target_pos = _register_log("joint_target_pos", data.joint_target_pos)
-        # self.joint_target_vel = _register_log("joint_target_vel", data.joint_target_vel)
+        # =========================================================================
+        # 1. Body State
+        # =========================================================================
+        self.ext_force = _register_log("ext_force", data.ext_force)
+        self.body_pose = _register_log("body_pose", data.body_pose)
+        self.body_vel = _register_log("body_vel", data.body_vel)
+        self.body_pose_prev = _register_log("body_pose_prev", data.body_pose_prev)
+        self.body_vel_prev = _register_log("body_vel_prev", data.body_vel_prev)
+        self.joint_target_pos = _register_log("joint_target_pos", data.joint_target_pos)
+        self.joint_target_vel = _register_log("joint_target_vel", data.joint_target_vel)
 
         # =========================================================================
         # 2. Constraints
         # =========================================================================
         self._constr_force = _register_log("_constr_force", data._constr_force)
-        # self._constr_force_prev_iter = _register_log(
-        #     "_constr_force_prev_iter", data._constr_force_prev_iter
-        # )
-        # self._constr_body_idx = _register_log("_constr_body_idx", data._constr_body_idx)
-        # self._constr_active_mask = _register_log("_constr_active_mask", data._constr_active_mask)
+        self._constr_force_prev_iter = _register_log(
+            "_constr_force_prev_iter", data._constr_force_prev_iter
+        )
+        self._constr_body_idx = _register_log("_constr_body_idx", data._constr_body_idx)
+        self._constr_active_mask = _register_log("_constr_active_mask", data._constr_active_mask)
 
-        # self.constr_force = ConstraintView(self._constr_force, dims)
-        # self.constr_force_prev_iter = ConstraintView(self._constr_force_prev_iter, dims)
-        # self.constr_body_idx = ConstraintView(self._constr_body_idx, dims, axis=-2)
-        # self.constr_active_mask = ConstraintView(self._constr_active_mask, dims)
-        #
-        # # # =========================================================================
-        # # # 3. Contact Data
-        # # # =========================================================================
-        # # self.contact_body_a = _register_log("contact_body_a", data.contact_body_a)
-        # # self.contact_body_b = _register_log("contact_body_b", data.contact_body_b)
-        # # self.contact_point_a = _register_log("contact_point_a", data.contact_point_a)
-        # # self.contact_point_b = _register_log("contact_point_b", data.contact_point_b)
-        # # self.contact_thickness_a = _register_log("contact_thickness_a", data.contact_thickness_a)
-        # # self.contact_thickness_b = _register_log("contact_thickness_b", data.contact_thickness_b)
-        # # self.contact_dist = _register_log("contact_dist", data.contact_dist)
-        # # self.contact_friction_coeff = _register_log("contact_friction_coeff", data.contact_friction_coeff)
-        # # self.contact_restitution_coeff = _register_log("contact_restitution_coeff", data.contact_restitution_coeff)
-        # #
-        # # self.contact_basis_n_a = _register_log("contact_basis_n_a", data.contact_basis_n_a)
-        # # self.contact_basis_t1_a = _register_log("contact_basis_t1_a", data.contact_basis_t1_a)
-        # # self.contact_basis_t2_a = _register_log("contact_basis_t2_a", data.contact_basis_t2_a)
-        # # self.contact_basis_n_b = _register_log("contact_basis_n_b", data.contact_basis_n_b)
-        # # self.contact_basis_t1_b = _register_log("contact_basis_t1_b", data.contact_basis_t1_b)
-        # # self.contact_basis_t2_b = _register_log("contact_basis_t2_b", data.contact_basis_t2_b)
-        #
-        # # # =========================================================================
-        # # # 4. Linear System
-        # # # =========================================================================
-        # # self._res = _register_log("_res", data._res)
-        # # self._res_spatial = _register_log("_res_spatial", data._res_spatial)
-        # # self.res = SystemView(self._res, dims, self._res_spatial)
-        # #
-        # # self.world_M = _register_log("world_M", data.world_M)
-        # # self.world_M_inv = _register_log("world_M_inv", data.world_M_inv)
-        # # self._J_values = _register_log("_J_values", data._J_values)
-        # # self._C_values = _register_log("_C_values", data._C_values)
-        # #
-        # # self.J_values = ConstraintView(self._J_values, dims, axis=-2)
-        # # self.C_values = ConstraintView(self._C_values, dims)
-        # #
-        # # self.JT_dconstr_force = _register_log("JT_dconstr_force", data.JT_dconstr_force)
-        # # self.dbody_vel = _register_log("dbody_vel", data.dbody_vel)
-        # # self._dconstr_force = _register_log("_dconstr_force", data._dconstr_force)
-        # # self.dconstr_force = ConstraintView(self._dconstr_force, dims)
-        # # self.rhs = _register_log("rhs", data.rhs)
-        #
+        self.constr_force = ConstraintView(self._constr_force, dims)
+        self.constr_force_prev_iter = ConstraintView(self._constr_force_prev_iter, dims)
+        self.constr_body_idx = ConstraintView(self._constr_body_idx, dims, axis=-2)
+        self.constr_active_mask = ConstraintView(self._constr_active_mask, dims)
+
         # # =========================================================================
-        # # 5. NR Stats
+        # # 3. Contact Data
         # # =========================================================================
-        # self.keep_running = _register_log("keep_running", data.keep_running)
-        # self.iter_count = _register_log("iter_count", data.iter_count)
-        # self.res_norm_sq = _register_log("res_norm_sq", data.res_norm_sq)
+        # self.contact_body_a = _register_log("contact_body_a", data.contact_body_a)
+        # self.contact_body_b = _register_log("contact_body_b", data.contact_body_b)
+        # self.contact_point_a = _register_log("contact_point_a", data.contact_point_a)
+        # self.contact_point_b = _register_log("contact_point_b", data.contact_point_b)
+        # self.contact_thickness_a = _register_log("contact_thickness_a", data.contact_thickness_a)
+        # self.contact_thickness_b = _register_log("contact_thickness_b", data.contact_thickness_b)
+        # self.contact_dist = _register_log("contact_dist", data.contact_dist)
+        # self.contact_friction_coeff = _register_log("contact_friction_coeff", data.contact_friction_coeff)
+        # self.contact_restitution_coeff = _register_log("contact_restitution_coeff", data.contact_restitution_coeff)
         #
-        # # # =========================================================================
-        # # # 6. Adjoint (Conditional)
-        # # # =========================================================================
-        # # if hasattr(data, "_w"):
-        # #     self._w = _register_log("_w", data._w)
-        # #     self._w_spatial = _register_log("_w_spatial", data._w_spatial)
-        # #     self.w = SystemView(self._w, dims, self._w_spatial)
-        # #     self.adjoint_rhs = _register_log("adjoint_rhs", data.adjoint_rhs)
-        # #     self.body_pose_grad = _register_log("body_pose_grad", data.body_pose_grad)
-        # #     self.body_vel_grad = _register_log("body_vel_grad", data.body_vel_grad)
-        #
-        # # # =========================================================================
-        # # # 7. Linesearch (Working arrays)
-        # # # =========================================================================
-        # # if config.enable_linesearch:
-        # #     self.linesearch_step_size = _register_log("linesearch_step_size", data.linesearch_step_size)
-        # #     self.linesearch_body_pose = _register_log("linesearch_body_pose", data.linesearch_body_pose)
-        # #     self.linesearch_body_vel = _register_log("linesearch_body_vel", data.linesearch_body_vel)
-        # #     self._linesearch_constr_force = _register_log("_linesearch_constr_force", data._linesearch_constr_force)
-        # #     self._linesearch_res = _register_log("_linesearch_res", data._linesearch_res)
-        # #     self._linesearch_res_spatial = _register_log("_linesearch_res_spatial", data._linesearch_res_spatial)
-        # #     self.linesearch_res_norm_sq = _register_log("linesearch_res_norm_sq", data.linesearch_res_norm_sq)
-        # #     self.linesearch_minimal_index = _register_log("linesearch_minimal_index", data.linesearch_minimal_index)
-        # #
-        # #     self.linesearch_constr_force = ConstraintView(self._linesearch_constr_force, dims)
-        # #     self.linesearch_res = SystemView(self._linesearch_res, dims, self._linesearch_res_spatial)
-        #
+        # self.contact_basis_n_a = _register_log("contact_basis_n_a", data.contact_basis_n_a)
+        # self.contact_basis_t1_a = _register_log("contact_basis_t1_a", data.contact_basis_t1_a)
+        # self.contact_basis_t2_a = _register_log("contact_basis_t2_a", data.contact_basis_t2_a)
+        # self.contact_basis_n_b = _register_log("contact_basis_n_b", data.contact_basis_n_b)
+        # self.contact_basis_t1_b = _register_log("contact_basis_t1_b", data.contact_basis_t1_b)
+        # self.contact_basis_t2_b = _register_log("contact_basis_t2_b", data.contact_basis_t2_b)
+
         # # =========================================================================
-        # # 8. Detailed History (From EngineData HistoryGroup)
+        # # 4. Linear System
         # # =========================================================================
-        # # These are usually 3D or 4D arrays
-        # self.nr_history_body_pose = _register_log("nr_history_body_pose", data.nr_history_body_pose)
-        # self.nr_history_body_vel = _register_log("nr_history_body_vel", data.nr_history_body_vel)
-        # self._nr_history_constr_force = _register_log(
-        #     "_nr_history_constr_force", data._nr_history_constr_force
-        # )
-        # self._nr_history_res = _register_log("_nr_history_res", data._nr_history_res)
-        # self.nr_history_res_sq_norm = _register_log(
-        #     "nr_history_res_sq_norm", data.nr_history_res_sq_norm
-        # )
+        # self._res = _register_log("_res", data._res)
+        # self._res_spatial = _register_log("_res_spatial", data._res_spatial)
+        # self.res = SystemView(self._res, dims, self._res_spatial)
         #
-        # self.nr_history_constr_force = ConstraintView(self._nr_history_constr_force, dims)
-        # self.nr_history_res = SystemView(self._nr_history_res, dims)
+        # self.world_M = _register_log("world_M", data.world_M)
+        # self.world_M_inv = _register_log("world_M_inv", data.world_M_inv)
+        # self._J_values = _register_log("_J_values", data._J_values)
+        # self._C_values = _register_log("_C_values", data._C_values)
         #
-        # self.pcr_history_iter_count = _register_log(
-        #     "pcr_history_iter_count", data.pcr_history_iter_count
-        # )
-        # self.pcr_history_final_res_norm_sq = _register_log(
-        #     "pcr_history_final_res_norm_sq", data.pcr_history_final_res_norm_sq
-        # )
-        # self.pcr_history_res_norm_sq_history = _register_log(
-        #     "pcr_history_res_norm_sq_history", data.pcr_history_res_norm_sq_history
-        # )
+        # self.J_values = ConstraintView(self._J_values, dims, axis=-2)
+        # self.C_values = ConstraintView(self._C_values, dims)
         #
+        # self.JT_dconstr_force = _register_log("JT_dconstr_force", data.JT_dconstr_force)
+        # self.dbody_vel = _register_log("dbody_vel", data.dbody_vel)
+        # self._dconstr_force = _register_log("_dconstr_force", data._dconstr_force)
+        # self.dconstr_force = ConstraintView(self._dconstr_force, dims)
+        # self.rhs = _register_log("rhs", data.rhs)
+
+        # =========================================================================
+        # 5. NR Stats
+        # =========================================================================
+        self.keep_running = _register_log("keep_running", data.keep_running)
+        self.iter_count = _register_log("iter_count", data.iter_count)
+        self.res_norm_sq = _register_log("res_norm_sq", data.res_norm_sq)
+
+        # # =========================================================================
+        # # 6. Adjoint (Conditional)
+        # # =========================================================================
+        # if hasattr(data, "_w"):
+        #     self._w = _register_log("_w", data._w)
+        #     self._w_spatial = _register_log("_w_spatial", data._w_spatial)
+        #     self.w = SystemView(self._w, dims, self._w_spatial)
+        #     self.adjoint_rhs = _register_log("adjoint_rhs", data.adjoint_rhs)
+        #     self.body_pose_grad = _register_log("body_pose_grad", data.body_pose_grad)
+        #     self.body_vel_grad = _register_log("body_vel_grad", data.body_vel_grad)
+
+        # # =========================================================================
+        # # 7. Linesearch (Working arrays)
+        # # =========================================================================
         # if config.enable_linesearch:
-        #     self.ls_history_step_size = _register_log(
-        #         "ls_history_step_size", data.ls_history_step_size
-        #     )
-        #     self.ls_history_res_norm_sq = _register_log(
-        #         "ls_history_res_norm_sq", data.ls_history_res_norm_sq
-        #     )
-        #     self.ls_history_minimal_index = _register_log(
-        #         "ls_history_minimal_index", data.ls_history_minimal_index
-        #     )
+        #     self.linesearch_step_size = _register_log("linesearch_step_size", data.linesearch_step_size)
+        #     self.linesearch_body_pose = _register_log("linesearch_body_pose", data.linesearch_body_pose)
+        #     self.linesearch_body_vel = _register_log("linesearch_body_vel", data.linesearch_body_vel)
+        #     self._linesearch_constr_force = _register_log("_linesearch_constr_force", data._linesearch_constr_force)
+        #     self._linesearch_res = _register_log("_linesearch_res", data._linesearch_res)
+        #     self._linesearch_res_spatial = _register_log("_linesearch_res_spatial", data._linesearch_res_spatial)
+        #     self.linesearch_res_norm_sq = _register_log("linesearch_res_norm_sq", data.linesearch_res_norm_sq)
+        #     self.linesearch_minimal_index = _register_log("linesearch_minimal_index", data.linesearch_minimal_index)
+        #
+        #     self.linesearch_constr_force = ConstraintView(self._linesearch_constr_force, dims)
+        #     self.linesearch_res = SystemView(self._linesearch_res, dims, self._linesearch_res_spatial)
+
+        # =========================================================================
+        # 8. Detailed History (From EngineData HistoryGroup)
+        # =========================================================================
+        # These are usually 3D or 4D arrays
+        self.nr_history_body_pose = _register_log("nr_history_body_pose", data.nr_history_body_pose)
+        self.nr_history_body_vel = _register_log("nr_history_body_vel", data.nr_history_body_vel)
+        self._nr_history_constr_force = _register_log(
+            "_nr_history_constr_force", data._nr_history_constr_force
+        )
+        self._nr_history_res = _register_log("_nr_history_res", data._nr_history_res)
+        self.nr_history_res_sq_norm = _register_log(
+            "nr_history_res_sq_norm", data.nr_history_res_sq_norm
+        )
+
+        self.nr_history_constr_force = ConstraintView(self._nr_history_constr_force, dims)
+        self.nr_history_res = SystemView(self._nr_history_res, dims)
+
+        self.pcr_history_iter_count = _register_log(
+            "pcr_history_iter_count", data.pcr_history_iter_count
+        )
+        self.pcr_history_final_res_norm_sq = _register_log(
+            "pcr_history_final_res_norm_sq", data.pcr_history_final_res_norm_sq
+        )
+        self.pcr_history_res_norm_sq_history = _register_log(
+            "pcr_history_res_norm_sq_history", data.pcr_history_res_norm_sq_history
+        )
+
+        if config.enable_linesearch:
+            self.ls_history_step_size = _register_log(
+                "ls_history_step_size", data.ls_history_step_size
+            )
+            self.ls_history_res_norm_sq = _register_log(
+                "ls_history_res_norm_sq", data.ls_history_res_norm_sq
+            )
+            self.ls_history_minimal_index = _register_log(
+                "ls_history_minimal_index", data.ls_history_minimal_index
+            )
 
     def capture_step(self, step_idx_array: wp.array, data: EngineData):
         """
@@ -197,7 +198,11 @@ class SimulationHDF5Logger:
             wp.launch(
                 kernel=kernel,
                 dim=source.shape,
-                inputs=[source, step_idx_array],
+                inputs=[
+                    source,
+                    step_idx_array,
+                    self.max_num_steps,
+                ],
                 outputs=[dest],
                 device=self.device,
             )
@@ -210,7 +215,7 @@ class SimulationHDF5Logger:
         wp.synchronize()
 
         with h5py.File(filepath, "w") as f:
-            f.attrs["num_steps"] = self.num_steps
+            f.attrs["num_steps"] = self.max_num_steps
             f.attrs["num_worlds"] = self.dims.num_worlds
             f.attrs["dt"] = self.dt
 

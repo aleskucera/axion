@@ -16,10 +16,10 @@ os.environ["PYOPENGL_PLATFORM"] = "glx"
 
 CONFIG_PATH = pathlib.Path(__file__).parent.joinpath("conf")
 # wp.config.print_launches = True
-wp.config.verbose = True
-wp.config.verbose_warnings = True
+# wp.config.verbose = True
+# wp.config.verbose_warnings = True
 # wp.config.mode = "debug"
-wp.config.verify_cuda = True
+# wp.config.verify_cuda = True
 
 
 class Simulator(InteractiveSimulator):

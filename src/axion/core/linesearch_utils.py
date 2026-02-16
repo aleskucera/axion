@@ -388,6 +388,16 @@ def update_variables_without_linesearch(
     )
 
 
+@wp.kernel
+def simple_sq_norm_kernel(
+    val: wp.array(dtype=wp.float32, ndim=2), out_norm: wp.array(dtype=wp.float32, ndim=1)
+):
+    world_idx, i = wp.tid()
+    # Simple atomic add - perfectly safe, no alignment requirements
+    val_sq = val[world_idx, i] * val[world_idx, i]
+    wp.atomic_add(out_norm, world_idx, val_sq)
+
+
 def perform_linesearch(
     model: AxionModel,
     data: EngineData,
@@ -406,3 +416,15 @@ def perform_linesearch(
     # Warp CUDA error 700: an illegal memory access was encountered
     # (in function wp_free_device_async, /builds/omniverse/warp/warp/native/warp.cu:812)
     data.tiled_sq_norm.compute(data.res.full, data.res_norm_sq)
+    # data.res_norm_sq.zero_()
+    # wp.launch(
+    #     kernel=simple_sq_norm_kernel,
+    #     dim=(dims.num_worlds, dims.num_constraints),
+    #     inputs=[
+    #         data._res,
+    #     ],
+    #     outputs=[
+    #         data.res_norm_sq,
+    #     ],
+    #     device=data.device,
+    # )
