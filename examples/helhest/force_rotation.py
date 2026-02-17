@@ -49,7 +49,15 @@ class HelhestRotationSimulator(InteractiveSimulator):
         exec_config: ExecutionConfig,
         engine_config: EngineConfig,
         logging_config: LoggingConfig,
+        control_mode: str = "position",
+        k_p: float = 50.0,
+        k_d: float = 0.1,
+        friction: float = 0.7,
     ):
+        self.control_mode = control_mode
+        self.k_p = k_p
+        self.k_d = k_d
+        self.friction = friction
         super().__init__(
             sim_config,
             render_config,
@@ -99,7 +107,13 @@ class HelhestRotationSimulator(InteractiveSimulator):
         robot_z = 0.4
 
         create_helhest_model(
-            self.builder, xform=wp.transform((robot_x, robot_y, robot_z), wp.quat_identity())
+            self.builder,
+            xform=wp.transform((robot_x, robot_y, robot_z), wp.quat_identity()),
+            control_mode=self.control_mode,
+            k_p=self.k_p,
+            k_d=self.k_d,
+            friction_left_right=self.friction,
+            friction_rear=self.friction * 0.5,
         )
 
         # Environment parameters from original rotation.py
@@ -133,6 +147,10 @@ def helhest_rotation_example(cfg: DictConfig):
         exec_config,
         engine_config,
         logging_config,
+        control_mode=cfg.control.mode,
+        k_p=cfg.control.k_p,
+        k_d=cfg.control.k_d,
+        friction=cfg.friction_coeff,
     )
     simulator.run()
 

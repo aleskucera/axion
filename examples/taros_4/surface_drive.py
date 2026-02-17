@@ -26,6 +26,40 @@ CONFIG_PATH = pathlib.Path(__file__).parent.parent.joinpath("conf")
 ASSETS_DIR = pathlib.Path(__file__).parent.parent.joinpath("assets")
 
 
+@wp.kernel
+def integrate_wheel_position_kernel(
+    current_wheel_angles: wp.array(dtype=wp.float32),
+    target_velocities: wp.array(dtype=wp.float32),
+    dt: float,
+    joint_target_pos: wp.array(dtype=wp.float32),
+    fl_idx: int,
+    fr_idx: int,
+    rl_idx: int,
+    rr_idx: int,
+):
+    # Read command velocities
+    v_l = target_velocities[0]
+    v_r = target_velocities[1]
+
+    # Integrate: Angle = Angle + Velocity * dt
+    new_ang_fl = current_wheel_angles[0] + v_l * dt
+    new_ang_fr = current_wheel_angles[1] + v_r * dt
+    new_ang_rl = current_wheel_angles[2] + v_l * dt
+    new_ang_rr = current_wheel_angles[3] + v_r * dt
+
+    # Store state
+    current_wheel_angles[0] = new_ang_fl
+    current_wheel_angles[1] = new_ang_fr
+    current_wheel_angles[2] = new_ang_rl
+    current_wheel_angles[3] = new_ang_rr
+
+    # Write to global array
+    joint_target_pos[fl_idx] = new_ang_fl
+    joint_target_pos[fr_idx] = new_ang_fr
+    joint_target_pos[rl_idx] = new_ang_rl
+    joint_target_pos[rr_idx] = new_ang_rr
+
+
 class TarosSurfaceSimulator(InteractiveSimulator):
     def __init__(
         self,
@@ -34,9 +68,15 @@ class TarosSurfaceSimulator(InteractiveSimulator):
         exec_config: ExecutionConfig,
         engine_config: EngineConfig,
         logging_config: LoggingConfig,
+        control_mode: str = "velocity",
+        k_p: float = 1000.0,
+        k_d: float = 0.0,
+        friction: float = 0.5,
     ):
-        self.left_indices_cpu = []
-        self.right_indices_cpu = []
+        self.control_mode = control_mode
+        self.k_p = k_p
+        self.k_d = k_d
+        self.friction = friction
         super().__init__(
             sim_config,
             render_config,
@@ -44,6 +84,13 @@ class TarosSurfaceSimulator(InteractiveSimulator):
             engine_config,
             logging_config,
         )
+
+        # 2 Target velocities [left, right]
+        self.target_velocities = wp.zeros(2, dtype=wp.float32, device=self.model.device)
+
+        if self.control_mode == "position":
+            # Stores [angle_fl, angle_fr, angle_rl, angle_rr]
+            self.wheel_angles = wp.zeros(4, dtype=wp.float32, device=self.model.device)
 
         # Taros-4 DOFs: 6 (Base) + 4 Wheels
         self.joint_target = wp.zeros(10, dtype=wp.float32, device=self.model.device)
@@ -79,15 +126,19 @@ class TarosSurfaceSimulator(InteractiveSimulator):
                 right_v -= turn_speed
 
         # Update targets
-        targets_cpu = np.zeros(10, dtype=np.float32)
-        targets_cpu[6] = left_v
-        targets_cpu[7] = right_v
-        targets_cpu[8] = left_v
-        targets_cpu[9] = right_v
+        if self.control_mode == "velocity":
+            targets_cpu = np.zeros(10, dtype=np.float32)
+            targets_cpu[6] = left_v
+            targets_cpu[7] = right_v
+            targets_cpu[8] = left_v
+            targets_cpu[9] = right_v
 
-        wp.copy(
-            self.joint_target, wp.array(targets_cpu, dtype=wp.float32, device=self.model.device)
-        )
+            wp.copy(
+                self.joint_target, wp.array(targets_cpu, dtype=wp.float32, device=self.model.device)
+            )
+        else:
+            vels_cpu = np.array([left_v, right_v], dtype=np.float32)
+            wp.copy(self.target_velocities, wp.array(vels_cpu, device=self.model.device))
 
     @override
     def init_state_fn(
@@ -101,7 +152,23 @@ class TarosSurfaceSimulator(InteractiveSimulator):
 
     @override
     def control_policy(self, current_state: newton.State):
-        wp.copy(self.control.joint_target_vel, self.joint_target)
+        if self.control_mode == "velocity":
+            wp.copy(self.control.joint_target_vel, self.joint_target)
+        else:
+            # INTEGRATE: Convert Velocity -> Position
+            wp.launch(
+                kernel=integrate_wheel_position_kernel,
+                dim=1,
+                inputs=[
+                    self.wheel_angles,
+                    self.target_velocities,
+                    self.clock.dt,
+                    self.joint_target,
+                    6, 7, 8, 9,
+                ],
+                device=self.model.device,
+            )
+            wp.copy(self.control.joint_target_pos, self.joint_target)
 
     def build_model(self) -> newton.Model:
         """
@@ -114,7 +181,12 @@ class TarosSurfaceSimulator(InteractiveSimulator):
         robot_z = 2.0
 
         create_taros4_model(
-            self.builder, xform=wp.transform((robot_x, robot_y, robot_z), wp.quat_identity())
+            self.builder,
+            xform=wp.transform((robot_x, robot_y, robot_z), wp.quat_identity()),
+            control_mode=self.control_mode,
+            k_p=self.k_p,
+            k_d=self.k_d,
+            friction=self.friction,
         )
 
         # Surface Mesh
@@ -151,6 +223,10 @@ def taros4_surface_drive_example(cfg: DictConfig):
         exec_config,
         engine_config,
         logging_config,
+        control_mode=cfg.control.mode,
+        k_p=cfg.control.k_p,
+        k_d=cfg.control.k_d,
+        friction=cfg.friction_coeff,
     )
     simulator.run()
 

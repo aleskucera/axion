@@ -17,133 +17,13 @@ from axion import SimulationConfig
 from omegaconf import DictConfig
 
 try:
-    from examples.helhest.common import (
-        create_helhest_model,
-        HelhestConfig,
-        _load_wheel_mesh,
-        _add_chassis,
-        _add_wheel,
-        _add_fixed_component,
-    )
+    from examples.helhest.common import create_helhest_model
 except ImportError:
-    from common import (
-        create_helhest_model,
-        HelhestConfig,
-        _load_wheel_mesh,
-        _add_chassis,
-        _add_wheel,
-        _add_fixed_component,
-    )
+    from common import create_helhest_model
 
 os.environ["PYOPENGL_PLATFORM"] = "glx"
 
 CONFIG_PATH = pathlib.Path(__file__).parent.parent.joinpath("conf")
-
-
-def create_helhest_model_position(
-    builder: newton.ModelBuilder,
-    xform: wp.transform = wp.transform_identity(),
-    is_visible: bool = True,
-):
-    """
-    Creates a Helhest robot model configured for POSITION CONTROL.
-    """
-
-    wheel_mesh_render = _load_wheel_mesh()
-
-    # 1. Chassis
-    chassis = _add_chassis(builder, xform, is_visible)
-    j_base = builder.add_joint_free(parent=-1, child=chassis, key="base_joint")
-
-    # 2. Wheels
-    left_wheel = _add_wheel(
-        builder,
-        xform,
-        "left_wheel",
-        HelhestConfig.LEFT_WHEEL_POS,
-        0.7,
-        wheel_mesh_render,
-        is_visible,
-    )
-    right_wheel = _add_wheel(
-        builder,
-        xform,
-        "right_wheel",
-        HelhestConfig.RIGHT_WHEEL_POS,
-        0.7,
-        wheel_mesh_render,
-        is_visible,
-    )
-    rear_wheel = _add_wheel(
-        builder,
-        xform,
-        "rear_wheel",
-        HelhestConfig.REAR_WHEEL_POS,
-        0.4,
-        wheel_mesh_render,
-        is_visible,
-    )
-
-    # 3. Wheel Joints
-    Y_AXIS = (0.0, 1.0, 0.0)
-
-    # Note: We use TARGET_POSITION mode here!
-    # We might need higher gains for position tracking to be stiff enough
-    ke_pos = 1000.0
-    kd_pos = 10.0
-
-    j_left = builder.add_joint_revolute(
-        parent=chassis,
-        child=left_wheel,
-        parent_xform=wp.transform(HelhestConfig.LEFT_WHEEL_POS, wp.quat_identity()),
-        child_xform=wp.transform_identity(),
-        axis=Y_AXIS,
-        target_ke=ke_pos,
-        target_kd=kd_pos,
-        key="left_wheel_j",
-        custom_attributes={
-            "joint_dof_mode": [JointMode.TARGET_POSITION],
-        },
-    )
-
-    j_right = builder.add_joint_revolute(
-        parent=chassis,
-        child=right_wheel,
-        parent_xform=wp.transform(HelhestConfig.RIGHT_WHEEL_POS, wp.quat_identity()),
-        child_xform=wp.transform_identity(),
-        axis=Y_AXIS,
-        target_ke=ke_pos,
-        target_kd=kd_pos,
-        key="right_wheel_j",
-        custom_attributes={
-            "joint_dof_mode": [JointMode.TARGET_POSITION],
-        },
-    )
-
-    j_rear = builder.add_joint_revolute(
-        parent=chassis,
-        child=rear_wheel,
-        parent_xform=wp.transform(HelhestConfig.REAR_WHEEL_POS, wp.quat_identity()),
-        child_xform=wp.transform_identity(),
-        axis=Y_AXIS,
-        target_ke=ke_pos,
-        target_kd=kd_pos,
-        key="rear_wheel_j",
-        custom_attributes={
-            "joint_dof_mode": [JointMode.TARGET_POSITION],
-        },
-    )
-
-    # 4. Fixed Components
-    fixed_joints = []
-    for name, params in HelhestConfig.FIXED_COMPONENTS.items():
-        j_fixed = _add_fixed_component(builder, chassis, xform, name, params, is_visible)
-        fixed_joints.append(j_fixed)
-
-    # 5. Articulation
-    builder.add_articulation([j_base, j_left, j_right, j_rear] + fixed_joints, key="helhest")
-
-    return chassis, [left_wheel]
 
 
 @wp.kernel
@@ -234,6 +114,10 @@ class HelhestPositionControlSimulator(InteractiveSimulator):
         exec_config: ExecutionConfig,
         engine_config: EngineConfig,
         logging_config: LoggingConfig,
+        control_mode: str = "position",
+        k_p: float = 50.0,
+        k_d: float = 0.1,
+        friction: float = 0.7,
     ):
         # 6 Base DOFs + 3 Wheel DOFs
         # Note: Model is built during super().__init__, so we need some vars ready
@@ -245,6 +129,11 @@ class HelhestPositionControlSimulator(InteractiveSimulator):
         self.kp_angular = 5.0
         self.max_linear = 8.0
         self.max_angular = 5.0
+
+        self.control_mode = control_mode
+        self.k_p = k_p
+        self.k_d = k_d
+        self.friction = friction
 
         super().__init__(
             sim_config,
@@ -295,9 +184,14 @@ class HelhestPositionControlSimulator(InteractiveSimulator):
         )
 
         # Apply to control
-        # Note: We are writing to joint_target (which is position/angle target)
-        # Not joint_target_vel
-        wp.copy(self.control.joint_target_pos, self.joint_target)
+        if self.control_mode == "velocity":
+            # For velocity mode, the navigation kernel would need to output velocities
+            # But here it outputs integrated angles. To support velocity mode properly
+            # we would need to modify the kernel.
+            # For now, let's just copy to joint_target_pos as it was intended for position control.
+            wp.copy(self.control.joint_target_pos, self.joint_target)
+        else:
+            wp.copy(self.control.joint_target_pos, self.joint_target)
 
     def build_model(self) -> newton.Model:
         # Ground
@@ -313,8 +207,14 @@ class HelhestPositionControlSimulator(InteractiveSimulator):
         )
 
         # Robot
-        create_helhest_model_position(
-            self.builder, xform=wp.transform((0.0, 0.0, 0.5), wp.quat_identity())
+        create_helhest_model(
+            self.builder,
+            xform=wp.transform((0.0, 0.0, 0.5), wp.quat_identity()),
+            control_mode=self.control_mode,
+            k_p=self.k_p,
+            k_d=self.k_d,
+            friction_left_right=self.friction,
+            friction_rear=self.friction * 0.5,
         )
 
         return self.builder.finalize_replicated(num_worlds=self.simulation_config.num_worlds)
@@ -334,6 +234,10 @@ def helhest_pos_control_example(cfg: DictConfig):
         exec_config,
         engine_config,
         logging_config,
+        control_mode=cfg.control.mode,
+        k_p=cfg.control.k_p,
+        k_d=cfg.control.k_d,
+        friction=cfg.friction_coeff,
     )
     simulator.run()
 

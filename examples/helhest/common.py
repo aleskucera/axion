@@ -219,6 +219,11 @@ def create_helhest_model(
     builder: newton.ModelBuilder,
     xform: wp.transform = wp.transform_identity(),
     is_visible: bool = True,
+    control_mode: str = "position",
+    k_p: float = 50.0,
+    k_d: float = 0.1,
+    friction_left_right: float = 0.7,
+    friction_rear: float = 0.4,
 ):
     """
     Creates a Helhest robot model using physical parameters from the URDF
@@ -228,6 +233,11 @@ def create_helhest_model(
         builder: The model builder to add the robot to.
         xform: The world transform of the robot base.
         is_visible: Whether to enable visual shapes.
+        control_mode: Actuation mode, either "velocity" or "position".
+        k_p: Proportional gain (target_ke).
+        k_d: Derivative gain (target_kd).
+        friction_left_right: Friction coefficient for front wheels.
+        friction_rear: Friction coefficient for the rear wheel.
     """
 
     wheel_mesh_render = _load_wheel_mesh()
@@ -242,7 +252,7 @@ def create_helhest_model(
         xform,
         "left_wheel",
         HelhestConfig.LEFT_WHEEL_POS,
-        0.7,
+        friction_left_right,
         wheel_mesh_render,
         is_visible,
     )
@@ -251,7 +261,7 @@ def create_helhest_model(
         xform,
         "right_wheel",
         HelhestConfig.RIGHT_WHEEL_POS,
-        0.7,
+        friction_left_right,
         wheel_mesh_render,
         is_visible,
     )
@@ -260,7 +270,7 @@ def create_helhest_model(
         xform,
         "rear_wheel",
         HelhestConfig.REAR_WHEEL_POS,
-        0.4,
+        friction_rear,
         wheel_mesh_render,
         is_visible,
     )
@@ -268,17 +278,19 @@ def create_helhest_model(
     # 3. Wheel Joints
     Y_AXIS = (0.0, 1.0, 0.0)
 
+    mode = JointMode.TARGET_VELOCITY if control_mode == "velocity" else JointMode.TARGET_POSITION
+
     j_left = builder.add_joint_revolute(
         parent=chassis,
         child=left_wheel,
         parent_xform=wp.transform(HelhestConfig.LEFT_WHEEL_POS, wp.quat_identity()),
         child_xform=wp.transform_identity(),
         axis=Y_AXIS,
-        target_ke=HelhestConfig.TARGET_KE,
-        target_kd=HelhestConfig.TARGET_KD,
+        target_ke=k_p,
+        target_kd=k_d,
         key="left_wheel_j",
         custom_attributes={
-            "joint_dof_mode": [JointMode.TARGET_POSITION],
+            "joint_dof_mode": [mode],
         },
     )
 
@@ -288,11 +300,11 @@ def create_helhest_model(
         parent_xform=wp.transform(HelhestConfig.RIGHT_WHEEL_POS, wp.quat_identity()),
         child_xform=wp.transform_identity(),
         axis=Y_AXIS,
-        target_ke=HelhestConfig.TARGET_KE,
-        target_kd=HelhestConfig.TARGET_KD,
+        target_ke=k_p,
+        target_kd=k_d,
         key="right_wheel_j",
         custom_attributes={
-            "joint_dof_mode": [JointMode.TARGET_POSITION],
+            "joint_dof_mode": [mode],
         },
     )
 
@@ -302,11 +314,11 @@ def create_helhest_model(
         parent_xform=wp.transform(HelhestConfig.REAR_WHEEL_POS, wp.quat_identity()),
         child_xform=wp.transform_identity(),
         axis=Y_AXIS,
-        target_ke=HelhestConfig.TARGET_KE,
-        target_kd=HelhestConfig.TARGET_KD,
+        target_ke=k_p,
+        target_kd=k_d,
         key="rear_wheel_j",
         custom_attributes={
-            "joint_dof_mode": [JointMode.TARGET_POSITION],
+            "joint_dof_mode": [mode],
         },
     )
 

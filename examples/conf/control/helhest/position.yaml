@@ -1,0 +1,4 @@
+# @package control
+mode: position
+k_p: 50.0
+k_d: 0.1

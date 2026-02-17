@@ -157,9 +157,6 @@ class SimulationHDF5Logger:
         self._nr_history_constr_force = _register_log(
             "_nr_history_constr_force", data._nr_history_constr_force
         )
-        self._nr_history_active_mask = _register_log(
-            "_nr_history_constr_active_mask", data._nr_history_constr_active_mask
-        )
         self._nr_history_res = _register_log("_nr_history_res", data._nr_history_res)
         self.nr_history_res_sq_norm = _register_log(
             "nr_history_res_sq_norm", data.nr_history_res_sq_norm
@@ -185,7 +182,6 @@ class SimulationHDF5Logger:
             self.ls_history_res_norm_sq = _register_log(
                 "ls_history_res_norm_sq", data.ls_history_res_norm_sq
             )
-            self.ls_res = _register_log("linesearch_res", data._linesearch_res)
             self.ls_history_minimal_index = _register_log(
                 "ls_history_minimal_index", data.ls_history_minimal_index
             )
