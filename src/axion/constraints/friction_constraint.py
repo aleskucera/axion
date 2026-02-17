@@ -17,29 +17,40 @@ def compute_friction_model(
     force_n_prev: wp.float32,
     dt: wp.float32,
     precond: wp.float32,
-):  # Returns (slip_velocity, slip_coupling_factor)
+):
     v_t_1 = wp.dot(J_t1_1, u_1) + wp.dot(J_t1_2, u_2)
     v_t_2 = wp.dot(J_t2_1, u_1) + wp.dot(J_t2_2, u_2)
     v_t = wp.vec2(v_t_1, v_t_2)
 
-    # eps = 1e-8
-    # v_t_norm = wp.sqrt(wp.dot(v_t, v_t) + eps)
-    #
-    # force_f_norm = wp.sqrt(wp.dot(force_f_prev, force_f_prev) + eps)
+    eps = 1e-8
+    v_t_norm = wp.sqrt(wp.dot(v_t, v_t) + eps)
 
-    v_t_norm = wp.length(v_t)
+    # 1. Capture Raw Norm (Represents the actual scale of forces in the system)
+    raw_f_norm = wp.length(force_f_prev)
 
-    force_f_norm = wp.length(force_f_prev)
+    # 2. Compute Clamped Norm (Represents the physical limit)
+    limit = mu * force_n_prev
+    clamped_f_norm = wp.min(raw_f_norm, limit)
+
+    # 3. GAP Calculation: ALWAYS use Clamped
+    #    This ensures gap >= 0, preventing the negative-sqrt singularity.
+    gap = limit - clamped_f_norm
 
     r = precond
-    gap = mu * force_n_prev - force_f_norm
     phi_f = scaled_fisher_burmeister(v_t_norm, gap, 1.0, r)
 
     denom_eps = 1e-6
-    denominator = r * force_f_norm + phi_f + denom_eps
+
+    # 4. DENOMINATOR Calculation: Use RAW Norm (The Fix)
+    #    We mix 'r * raw' (stability) with 'phi_f' (accuracy).
+    #    Even if limit -> 0, if raw -> 0.1 (overshoot), this keeps the denominator
+    #    large (~0.1), keeping 'w' small (~10) instead of exploding to 100,000.
+    denominator = r * raw_f_norm + phi_f + denom_eps
+
     numerator = v_t_norm - phi_f
 
     w = r * (numerator / denominator)
+
     w = wp.max(w, 0.0)
     w = wp.min(w, 1e5)
 
@@ -63,8 +74,6 @@ def compute_friction_local(
     I_inv_b_1: wp.mat33,
     m_inv_2: wp.float32,
     I_inv_b_2: wp.mat33,
-    # M_inv_1: SpatialInertia,
-    # M_inv_2: SpatialInertia,
     lambda_t1: float,
     lambda_t2: float,
     lambda_t1_prev: float,
@@ -125,6 +134,38 @@ def compute_friction_local(
     h_f_val_1 = v_t1 + w * lambda_t1
     h_f_val_2 = v_t2 + w * lambda_t2
     C_f_val = w / dt
+
+    # # --- DEBUG TRIPWIRE ---
+    # # If the residual is huge, print EXACTLY why.
+    # # We check if residual > 100.0 (arbitrary high threshold for a converged system)
+    # if wp.abs(h_f_val_1) > 100.0 or wp.abs(h_f_val_2) > 100.0:
+    #     wp.printf("!!! HIGH RESIDUAL !!!\n")
+    #     wp.printf("  h1=%.2f, h2=%.2f\n", h_f_val_1, h_f_val_2)
+    #     wp.printf(
+    #         "  Components: v1=%.4f, v2=%.4f, w=%.2f, lam1=%.4f, lam2=%.4f\n",
+    #         v_t1,
+    #         v_t2,
+    #         w,
+    #         lambda_t1,
+    #         lambda_t2,
+    #     )
+    #     wp.printf(
+    #         "  Prev State: N_prev=%.4f, mu=%.2f, lam_prev1=%.4f, lam_prev2=%.4f\n",
+    #         force_n_prev,
+    #         contact_friction_coeff,
+    #         lambda_t1_prev,
+    #         lambda_t2_prev,
+    #     )
+    #
+    #     # Check for the specific 'High w, small lambda' case
+    #     if w > 1000.0 and (wp.abs(lambda_t1) > 0.1 or wp.abs(lambda_t2) > 0.1):
+    #         wp.printf(
+    #             "  ANALYSIS: Stiff Constraint (high w) fighting moderate Force (lam). Solver divergence?\n"
+    #         )
+    #
+    #     # Check for velocity explosion
+    #     if wp.length(v_t) > 100.0:
+    #         wp.printf("  ANALYSIS: Velocity Explosion. Solver blew up?\n")
 
     # Return order: delta_h1, delta_h2, hf1, hf2, Jt1_1, Jt2_1, Jt1_2, Jt2_2, Cf
     return (delta_h_d_1, delta_h_d_2, h_f_val_1, h_f_val_2, J_t1_1, J_t2_1, J_t1_2, J_t2_2, C_f_val)

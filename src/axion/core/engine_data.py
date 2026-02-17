@@ -207,6 +207,7 @@ class EngineData:
                 device=device,
             )
 
+        self.nr_history_minimal_index = wp.zeros((dims.num_worlds,), dtype=wp.int32)
         # =========================================================================
         # LOGGING: History Group (Replaces manual kernel creation)
         # =========================================================================
@@ -249,6 +250,7 @@ class EngineData:
             self.ls_history_res_norm_sq = self.history.register(
                 "ls_res_norm", self.linesearch_res_norm_sq
             )
+            self.ls_history_res = self.history.register("ls_res", self._linesearch_res)
             self.ls_history_minimal_index = self.history.register(
                 "ls_min_index", self.linesearch_minimal_index
             )

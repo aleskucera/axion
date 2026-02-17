@@ -158,7 +158,7 @@ def _add_wheel(
             is_visible=False,
             collision_group=-1,
             mu=mu,
-            contact_margin=0.2,
+            contact_margin=0.4,
         ),
     )
     return wheel_link
@@ -181,7 +181,7 @@ def create_taros4_model(
 
     wheel_mesh_render = _load_wheel_mesh()
 
-    MU = 0.0
+    MU = 0.5
 
     # 1. Chassis
     chassis = _add_chassis(builder, xform, is_visible)

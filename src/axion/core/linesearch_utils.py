@@ -286,7 +286,7 @@ def compute_linesearch_batch_h(
     )
 
     # FIX: Find out why is this bad?
-    # data.linesearch_res.sync_to_float()
+    data.linesearch_res.sync_to_float()
 
 
 def select_minimal_residual_variables(
@@ -410,7 +410,7 @@ def perform_linesearch(
         select_minimal_residual_variables(data, config, dims)
     else:
         update_variables_without_linesearch(model, data, config, dims)
-        compute_residual(model, data, config, dims)
+    compute_residual(model, data, config, dims)
 
     # FIX: This causes following error
     # Warp CUDA error 700: an illegal memory access was encountered

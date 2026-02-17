@@ -40,7 +40,7 @@ class Simulator(InteractiveSimulator):
         )
 
     def build_model(self) -> newton.Model:
-        FRICTION = 0.5
+        FRICTION = 0.1
         RESTITUTION = 0.0
         DENSITY = 1500.0
         KE = 10000000.0

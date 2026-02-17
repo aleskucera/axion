@@ -7,12 +7,12 @@ import newton
 import numpy as np
 import openmesh
 import warp as wp
-from axion import InteractiveSimulator
 from axion import EngineConfig
 from axion import ExecutionConfig
+from axion import InteractiveSimulator
+from axion import LoggingConfig
 from axion import RenderingConfig
 from axion import SimulationConfig
-from axion import LoggingConfig
 from omegaconf import DictConfig
 
 try:
@@ -55,8 +55,8 @@ class TarosSurfaceSimulator(InteractiveSimulator):
 
     def _update_input(self):
         """Check keyboard input and update wheel velocities."""
-        base_speed = 10.0
-        turn_speed = 5.0
+        base_speed = 5.0
+        turn_speed = 2.0
 
         left_v = 0.0
         right_v = 0.0
