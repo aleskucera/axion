@@ -190,3 +190,6 @@ pyrightconfig.json
 
 outputs/
 *.ini
+
+# nn training statistics
+src/axion/neural_solver/train/trained_models/

@@ -5,7 +5,10 @@ description = "Add your description here"
 readme = "README.md"
 authors = [{ name = "Aleš Kučera", email = "kuceral4@fel.cvut.cz" }]
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "tensorboard",
+    "wandb>=0.25.0",
+]
 
 [project.optional-dependencies]
 sim = [

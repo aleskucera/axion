@@ -17,8 +17,8 @@ import sys, os
 base_dir = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '../'))
 sys.path.append(base_dir)
 
-from src.axion.neural_solver.algorithms.vanilla_trainer import VanillaTrainer
-from src.axion.neural_solver.utils.datasets import TrajectoryDataset
+from axion.neural_solver.algorithms.vanilla_trainer import VanillaTrainer
+from axion.neural_solver.utils.datasets import TrajectoryDataset
 
 class SequenceModelTrainer(VanillaTrainer):
     def __init__(

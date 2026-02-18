@@ -22,7 +22,7 @@ import torch
 from torch.utils.data import Dataset
 import numpy as np
 
-from utils.commons import DATASET_MODES
+from axion.neural_solver.utils.commons import DATASET_MODES
 
 class BatchTransitionDataset:
     def __init__(

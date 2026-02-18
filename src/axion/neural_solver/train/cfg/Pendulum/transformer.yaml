@@ -1,6 +1,6 @@
 env:
-  env_name: PendulumWithContact
-  num_envs: 512
+  env_name: Pendulum
+  num_envs: 2
   neural_integrator_cfg: 
     name: TransformerNeuralIntegrator
     states_frame: body
@@ -11,11 +11,11 @@ env:
   
 algorithm:
   name: SequenceModelTrainer
-  num_epochs: 1000
-  num_iters_per_epoch: 5000
+  num_epochs: 5
+  num_iters_per_epoch: 100
   sample_sequence_length: 10 # the length to sample sequence from dataset
   batch_size: 512
-  num_valid_batches: 100
+  num_valid_batches: 10
   truncate_grad: True
   grad_norm: 1.0
   optimizer:
@@ -24,27 +24,24 @@ algorithm:
     lr_schedule: linear
 
   dataset:
-    train_dataset_path: PATH/TO/TRAIN_DATASET.hdf5
+    train_dataset_path: src/axion/neural_solver/datasets/Pendulum/pendulumStatesOnly500TrainSeed0.hdf5
     valid_datasets: 
-      exp_trajectory: PATH/TO/VALID_DATASET_1.hdf5
-      fixed_ground_passive: PATH/TO/VALID_DATASET_2.hdf5
+      valid: src/axion/neural_solver/datasets/Pendulum/pendulumStatesOnly500ValidSeed1.hdf5
+      #exp_trajectory: PATH/TO/VALID_DATASET_1.hdf5
+      #fixed_ground_passive: PATH/TO/VALID_DATASET_2.hdf5
     max_capacity: 100000000
     num_data_workers: 4
   
   eval:
     mode: dataset
     rollout_horizon: 10
-    num_rollouts: 2048
-    dataset_path: PATH/TO/VALID_PASSIVE_DATASET.hdf5
+    num_rollouts: 32
+    dataset_path: src/axion/neural_solver/datasets/Pendulum/pendulumStatesOnly2kValidSeed1.hdf5
     passive: True
 
 inputs:
   low_dim: [
     states_embedding,
-    contact_normals,
-    contact_points_1,
-    contact_depths,
-    joint_acts,
     gravity_dir
   ]
   

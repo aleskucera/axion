@@ -25,17 +25,20 @@ import time
 from pathlib import Path
 from typing import Optional
 
-import warp as wp
 import torch
 import cv2
 import shutil
+import warp as wp
 
 base_dir = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "../"))
 sys.path.append(base_dir)
 
-from src.axion.neural_solver.utils import warp_utils
-from src.axion.neural_solver.utils.python_utils import print_ok
-from src.axion.neural_solver.envs.axionEnv import AxionEnv
+from axion.neural_solver.utils import warp_utils
+from axion.neural_solver.utils.python_utils import print_ok
+from axion.neural_solver.envs.axionEnv import AxionEnv
+from axion.neural_solver.integrators.newton_based_integrator_neural_transformer import (
+    NewtonBasedTransformerNeuralIntegrator,
+)
 
 
 class AxionEnvToTrajectorySamplerAdapter:
@@ -52,18 +55,23 @@ class AxionEnvToTrajectorySamplerAdapter:
         env_name: str,
         num_envs: int,
         warp_env_cfg=None,
+        neural_integrator_cfg=None,
+        neural_model=None,
+        default_env_mode: str = "ground-truth",
         device: str = "cuda:0",
         render: bool = False,
         custom_articulation_builder=None,
         **kwargs,
     ):
-        # Ignore legacy NeRD kwargs (neural_integrator_cfg, neural_model, default_env_mode, etc.)
+        # Handle dict-like arguments similar to the original NeuralEnvironment.
+        if neural_integrator_cfg is None:
+            neural_integrator_cfg = {}
         if warp_env_cfg is None:
             warp_env_cfg = {}
         if custom_articulation_builder is not None:
             warp_env_cfg = {**warp_env_cfg, "custom_articulation_builder": custom_articulation_builder}
 
-        # Use AxionEnv as backend, preserving the public API contract.
+        # Use AxionEnv as backend, preserving (most of) the public API contract.
         self.env = AxionEnv(
             env_name = env_name,
             num_worlds= num_envs,
@@ -71,21 +79,17 @@ class AxionEnvToTrajectorySamplerAdapter:
             requires_grad= False # Check if true
         )
 
-        # Dummy integrator only for wrap2PI and reset(); no neural model.
-        class _DummyIntegrator:
-            def __init__(self, model):
-                self.model = model
+        # Create Newton-based Transformer neural integrator.
+        self.integrator_neural = NewtonBasedTransformerNeuralIntegrator(
+            model=self.env.model,
+            neural_model=neural_model,
+            cfg=neural_integrator_cfg,
+            num_states_history=neural_integrator_cfg.get("num_states_history", 1),
+        )
 
-            def wrap2PI(self, states):
-                # No-op placeholder; angle wrapping can be added if needed.
-                return states
-
-            def reset(self):
-                return
-
-        self._integrator_dummy = _DummyIntegrator(model=self.env.model)
-
-        self.env_mode = "ground-truth"
+        # Default mode for step/reset API; we currently always step the ground-truth AxionEnv.
+        assert default_env_mode in ("ground-truth", "neural")
+        self.env_mode = default_env_mode
 
         # State buffers 
         self.states = torch.zeros(
@@ -98,7 +102,7 @@ class AxionEnvToTrajectorySamplerAdapter:
         )
         self.root_body_q = wp.to_torch(self.sim_states.body_q)[
             0 :: self.bodies_per_env, :
-        ].view(self.num_envs, 7)
+        ].view(self.num_envs, 7).to(self.torch_device)
 
         # Video export (used by trajectory sampler when export_video=True)
         self.export_video = False
@@ -114,19 +118,19 @@ class AxionEnvToTrajectorySamplerAdapter:
 
     @property
     def dof_q_per_env(self):
-        return self.env.dof_q_per_env
+        return self.env.dof_q_per_world
 
     @property
     def dof_qd_per_env(self):
-        return self.env.dof_qd_per_env
+        return self.env.dof_qd_per_world
 
     @property
     def state_dim(self):
-        return self.env.dof_q_per_env + self.env.dof_qd_per_env
+        return self.env.dof_q_per_world + self.env.dof_qd_per_world
 
     @property
     def bodies_per_env(self):
-        return self.env.bodies_per_env
+        return self.env.bodies_per_world
 
     @property
     def joint_act_dim(self):
@@ -139,6 +143,10 @@ class AxionEnvToTrajectorySamplerAdapter:
     @property
     def action_limits(self):
         return self.env.control_limits
+
+    @property
+    def joint_types(self):
+        return self.env.joint_types
 
     @property
     def device(self):
@@ -181,10 +189,14 @@ class AxionEnvToTrajectorySamplerAdapter:
     def set_env_mode(self, env_mode: str):
         assert env_mode in ("ground-truth", "neural")
         self.env_mode = env_mode
-        # We only ever run ground-truth; no integrator swap.
+        # For now, AxionEnv always runs ground-truth dynamics; env_mode is kept
+        # for API compatibility with trainers/evaluators.
 
     def set_eval_collisions(self, eval_collisions: bool):
         self.env.set_eval_collisions(eval_collisions)
+
+    def wrap2PI(self, states):
+        self.integrator_neural.wrap2PI(states)
 
     # ---- State sync  ----
 
@@ -196,7 +208,18 @@ class AxionEnvToTrajectorySamplerAdapter:
         else:
             self.states.copy_(states)
 
-        self._integrator_dummy.wrap2PI(self.states)
+        # Update cached root pose and keep integrator buffers in sync.
+        self.root_body_q.copy_(
+            wp.to_torch(self.sim_states.body_q)[0 :: self.bodies_per_env, :].view(
+                self.num_envs, 7
+            )
+        )
+
+        self.integrator_neural.states.copy_(self.states)
+        self.integrator_neural.root_body_q.copy_(self.root_body_q)
+        # Gravity dir is static and initialized in the integrator.
+        self.integrator_neural.wrap2PI(self.integrator_neural.states)
+        self.integrator_neural.append_current_state_to_history(joint_acts=self.joint_acts)
 
         if states is not None:
             warp_utils.assign_states_from_torch(self.env, self.states)
@@ -262,7 +285,7 @@ class AxionEnvToTrajectorySamplerAdapter:
         else:
             self.env.reset()
             self._update_states()
-        self._integrator_dummy.reset()
+        self.integrator_neural.reset()
 
     # ---- Video export (trajectory sampler can use these) ----
 

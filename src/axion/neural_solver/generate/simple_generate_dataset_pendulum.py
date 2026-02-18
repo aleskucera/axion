@@ -19,7 +19,7 @@ Generate dataset for Pendulum
 import sys
 import os
 
-# Project root (directory containing 'src') so that "from src.axion.neural_solver..." works
+# Project root (directory containing 'src') so that "from axion.neural_solver..." works
 # when run as: python src/axion/neural_solver/generate/generate_dataset_pendulum.py
 _script_dir = os.path.dirname(os.path.abspath(__file__))
 _project_root = os.path.abspath(os.path.join(_script_dir, "..", "..", "..", ".."))
@@ -32,10 +32,10 @@ _DEFAULT_DATASET_DIR = os.path.join(_project_root, "src/axion/neural_solver/data
 import os
 import argparse
 import h5py
-from src.axion.neural_solver.generate.simple_trajectory_sampler_pendulum import SimpleTrajectorySamplerPendulum
-from src.axion.neural_solver.utils.python_utils import set_random_seed
-from src.axion.neural_solver.envs.axionToTrajectorySampler import AxionEnvToTrajectorySamplerAdapter
-from src.axion.neural_solver.utils.commons import (
+from axion.neural_solver.generate.simple_trajectory_sampler_pendulum import SimpleTrajectorySamplerPendulum
+from axion.neural_solver.utils.python_utils import set_random_seed
+from axion.neural_solver.envs.axionToTrajectorySampler import AxionEnvToTrajectorySamplerAdapter
+from axion.neural_solver.utils.commons import (
     JOINT_Q_MIN,
     JOINT_Q_MAX,
     JOINT_QD_MIN,
@@ -110,38 +110,38 @@ def collect_dataset(
         name = 'states', 
         data = rollouts['states'].detach().cpu().numpy()
     )
-    data_grp.create_dataset(
-        name = 'contact_normals',
-        data = rollouts['contacts']['contact_normals'].detach().cpu().numpy()
-    )
-    data_grp.create_dataset(
-        name = 'contact_depths',
-        data = rollouts['contacts']['contact_depths'].detach().cpu().numpy()
-    )
-    data_grp.create_dataset(
-        name = 'contact_points_0',
-        data = rollouts['contacts']['contact_points_0'].detach().cpu().numpy()
-    )
-    data_grp.create_dataset(
-        name = 'contact_points_1',
-        data = rollouts['contacts']['contact_points_1'].detach().cpu().numpy()
-    )
-    data_grp.create_dataset(
-        name = 'contact_thicknesses',
-        data = rollouts['contacts']['contact_thicknesses'].detach().cpu().numpy()
-    )
-    data_grp.create_dataset(
-        name = 'joint_acts', 
-        data = rollouts['joint_acts'].detach().cpu().numpy()
-    )
+    # data_grp.create_dataset(
+    #     name = 'contact_normals',
+    #     data = rollouts['contacts']['contact_normals'].detach().cpu().numpy()
+    # )
+    # data_grp.create_dataset(
+    #     name = 'contact_depths',
+    #     data = rollouts['contacts']['contact_depths'].detach().cpu().numpy()
+    # )
+    # data_grp.create_dataset(
+    #     name = 'contact_points_0',
+    #     data = rollouts['contacts']['contact_points_0'].detach().cpu().numpy()
+    # )
+    # data_grp.create_dataset(
+    #     name = 'contact_points_1',
+    #     data = rollouts['contacts']['contact_points_1'].detach().cpu().numpy()
+    # )
+    # data_grp.create_dataset(
+    #     name = 'contact_thicknesses',
+    #     data = rollouts['contacts']['contact_thicknesses'].detach().cpu().numpy()
+    # )
+    # data_grp.create_dataset(
+    #     name = 'joint_acts', 
+    #     data = rollouts['joint_acts'].detach().cpu().numpy()
+    # )
     data_grp.create_dataset(
         name = 'next_states', 
         data = rollouts['next_states'].detach().cpu().numpy()
     )
     data_grp.attrs['state_dim'] = rollouts['states'].shape[-1]
-    data_grp.attrs['contact_prob'] = contact_prob
+    # data_grp.attrs['contact_prob'] = contact_prob
     data_grp.attrs['num_contacts_per_env'] = rollouts['contacts']['contact_depths'].shape[-1]
-    data_grp.attrs['joint_act_dim'] = rollouts['joint_acts'].shape[-1]
+    # data_grp.attrs['joint_act_dim'] = rollouts['joint_acts'].shape[-1]
     data_grp.attrs['next_state_dim'] = rollouts['next_states'].shape[-1]
     
     data_writer.flush()
@@ -155,8 +155,8 @@ if __name__ == '__main__':
                         help='Directory to store the generated datasets (default: <project_root>/datasets).')
     parser.add_argument('--env-name', 
                         type=str, 
-                        default='PendulumWithContact', 
-                        choices=['PendulumWithContact'],
+                        default='Pendulum', 
+                        choices=['Pendulum'],
                         help='Environment to generate the dataset.' )
     parser.add_argument('--num-transitions', 
                         type=int,

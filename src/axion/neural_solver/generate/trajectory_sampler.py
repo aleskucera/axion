@@ -23,8 +23,8 @@ from tqdm import tqdm, trange
 
 import warp as wp
 
-from src.axion.neural_solver.envs.axionToTrajectorySampler import AxionEnvToTrajectorySamplerAdapter
-from src.axion.neural_solver.generate.simulation_sampler import WarpSimDataGenerator, UniformSampler
+from axion.neural_solver.envs.axionToTrajectorySampler import AxionEnvToTrajectorySamplerAdapter
+from axion.neural_solver.generate.simulation_sampler import WarpSimDataGenerator, UniformSampler
 
 import torch
 
