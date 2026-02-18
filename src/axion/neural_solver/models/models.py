@@ -15,8 +15,8 @@
 
 import torch
 import torch.nn as nn
-from src.axion.neural_solver.models import MLPBase, LSTMBase, GRUBase
-from src.axion.neural_solver.models.model_transformer import GPT, GPTConfig
+from axion.neural_solver.models.base_models import MLPBase, LSTMBase, GRUBase
+from axion.neural_solver.models.model_transformer import GPT, GPTConfig
 
 class MLPDeterministic(nn.Module):
     def __init__(
@@ -96,9 +96,13 @@ class ModelMixedInput(nn.Module):
 
             self.is_transformer = True
             self.feature_dim = self.transformer_model.config.n_embd
+            self.is_rnn = False
+            self.rnn = None
         else:
             self.is_transformer = False
             self.transformer_model = None
+
+
 
         if self.model is None:
             self.model = MLPDeterministic(

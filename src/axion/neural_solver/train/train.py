@@ -23,12 +23,12 @@ import yaml
 import warp as wp
 wp.config.verify_cuda = True
 
-from src.axion.neural_solver.train.arguments import get_parser
-from src.axion.neural_solver.utils.python_utils import get_time_stamp, \
+from axion.neural_solver.train.arguments import get_parser
+from axion.neural_solver.utils.python_utils import get_time_stamp, \
     set_random_seed, solve_argv_conflict, handle_cfg_overrides
-from src.axion.neural_solver.algorithms.vanilla_trainer import VanillaTrainer
-from src.axion.neural_solver.algorithms.sequence_model_trainer import SequenceModelTrainer
-from src.axion.neural_solver.envs.axionToTrajectorySampler import AxionEnvToTrajectorySamplerAdapter
+from axion.neural_solver.algorithms.vanilla_trainer import VanillaTrainer
+from axion.neural_solver.algorithms.sequence_model_trainer import SequenceModelTrainer
+from axion.neural_solver.envs.axionToTrajectorySampler import AxionEnvToTrajectorySamplerAdapter
 
 def add_additional_params(parser):
     parser.add_argument(

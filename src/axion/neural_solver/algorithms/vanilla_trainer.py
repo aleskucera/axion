@@ -29,19 +29,19 @@ import yaml
 import numpy as np
 from tqdm import tqdm
 
-from src.axion.neural_solver.envs.axionToTrajectorySampler import AxionEnvToTrajectorySamplerAdapter
-from src.axion.neural_solver.models.models import ModelMixedInput
-from src.axion.neural_solver.utils.datasets import BatchTransitionDataset, collate_fn_BatchTransitionDataset
-from src.axion.neural_solver.utils.evaluator import NeuralSimEvaluator
-from src.axion.neural_solver.utils.python_utils import (
+from axion.neural_solver.envs.axionToTrajectorySampler import AxionEnvToTrajectorySamplerAdapter
+from axion.neural_solver.models.models import ModelMixedInput
+from axion.neural_solver.utils.datasets import BatchTransitionDataset, collate_fn_BatchTransitionDataset
+from axion.neural_solver.utils.evaluator import NeuralSimEvaluator
+from axion.neural_solver.utils.python_utils import (
     set_random_seed, 
     print_info, print_ok, print_white, print_warning,
     format_dict
 )
-from src.axion.neural_solver.utils.torch_utils import num_params_torch_model, grad_norm
-from src.axion.neural_solver.utils.running_mean_std import RunningMeanStd
-from src.axion.neural_solver.utils.time_report import TimeReport, TimeProfiler
-from src.axion.neural_solver.utils.logger import Logger
+from axion.neural_solver.utils.torch_utils import num_params_torch_model, grad_norm
+from axion.neural_solver.utils.running_mean_std import RunningMeanStd
+from axion.neural_solver.utils.time_report import TimeReport, TimeProfiler
+from axion.neural_solver.utils.logger import Logger
 
 class VanillaTrainer:
     def __init__(
@@ -285,10 +285,10 @@ class VanillaTrainer:
                 data[key] = data[key].to(self.device)
         
         # compute contact masks
-        data['contact_masks'] = self.neural_integrator.get_contact_masks(
-            data['contact_depths'],
-            data['contact_thicknesses']
-        )
+        # data['contact_masks'] = self.neural_integrator.get_contact_masks(
+        #     data['contact_depths'],
+        #     data['contact_thicknesses']
+        # )
         
         self.neural_integrator.process_neural_model_inputs(data)
 

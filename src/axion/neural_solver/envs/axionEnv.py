@@ -17,7 +17,7 @@ from axion.neural_solver.utils.warp_utils import device_to_torch
 from axion.neural_solver.envs.abstract_contact import AbstractContact
 
 PENDULUM_HEIGHT = 5.0
-NUM_CONTACTS_PER_ENV = 4 # hardcoded for double pendulum
+NUM_CONTACTS_PER_WORLD = 4 # hardcoded for double pendulum
 FRAME_DT = 0.01
 ENGINE_SUBSTEPS = 10
 ENGINE_DT = FRAME_DT/ENGINE_SUBSTEPS
@@ -88,12 +88,16 @@ class AxionEnv:
         )
 
         # number of DOF info
-        self.dof_q_per_env = int(self.model.joint_coord_count / self.model.num_worlds)  # 2 for planar double pendulum
-        self.dof_qd_per_env = int(self.model.joint_dof_count / self.model.num_worlds)   # 2 for planar double pendulum
-        self.bodies_per_env = int(self.model.body_count / self.model.num_worlds)
+        self.dof_q_per_world= int(self.model.joint_coord_count / self.model.num_worlds)  # 2 for planar double pendulum
+        self.dof_qd_per_world= int(self.model.joint_dof_count / self.model.num_worlds)   # 2 for planar double pendulum
+        self.bodies_per_world= int(self.model.body_count / self.model.num_worlds)
         
+        # joint type info
+        self.num_joints_per_world= int(self.model.joint_count / self.model.num_worlds)
+        self.joint_types = self.model.joint_type.numpy()[:self.num_joints_per_world]
+
         # control info
-        self.joint_act_dim = self.dof_q_per_env # 2 for planar double pendulum
+        self.joint_act_dim = self.dof_q_per_world# 2 for planar double pendulum
         self.control_dim = self.joint_act_dim
         self.control_limits = np.full((self.control_dim, 2), [-1.0, 1.0], dtype=np.float32)
         # Temporary joint_act buffer exposed to the adapter.
@@ -107,7 +111,7 @@ class AxionEnv:
         
         # contact info
         self.abstract_contacts = AbstractContact(
-            num_contacts_per_env = NUM_CONTACTS_PER_ENV ,
+            num_contacts_per_env= NUM_CONTACTS_PER_WORLD,
             num_envs = self.num_envs,
             model = self.model, 
             device = device_to_torch(self.model.device)
@@ -128,22 +132,6 @@ class AxionEnv:
         """
 
         self.state.clear_forces()
-
-        # for i in range(ENGINE_SUBSTEPS):
-        #     # Collision detection
-        #     if self.eval_collisions:
-        #         self.contacts = self.model.collide(self.state)
-        #     else:
-        #         raise NotImplementedError
-            
-        #     # Engine (integrator) step
-        #     self.engine.step(
-        #         state_in = self.state,
-        #         state_out = self.next_state,
-        #         control= self.control,
-        #         contacts=self.contacts, 
-        #         dt= ENGINE_DT
-        #     )
 
         if self.eval_collisions:
             self.contacts = self.model.collide(self.state)
