@@ -10,7 +10,6 @@ from axion.core.engine_dims import EngineDimensions
 from axion.core.linear_utils import compute_dbody_qd_from_dbody_lambda
 from axion.core.linear_utils import compute_linear_system
 from axion.core.linesearch_utils import perform_linesearch
-from axion.core.linesearch_utils import select_minimal_residual_variables
 from axion.core.logging_config import LoggingConfig
 from axion.core.model import AxionModel
 from axion.optim import JacobiPreconditioner
@@ -73,9 +72,21 @@ def copy_best_sample_kernel(
 
 
 @wp.kernel
+def copy_best_sample_kernel_1d(
+    x_buffer: wp.array(dtype=Any, ndim=2),
+    best_idx: wp.array(dtype=wp.int32),
+    # Outputs
+    x: wp.array(dtype=Any, ndim=1),
+):
+    world_idx = wp.tid()
+    x[world_idx] = x_buffer[best_idx[world_idx], world_idx]
+
+
+@wp.kernel
 def find_minimal_residual_index_kernel(
     batch_h_norm_sq: wp.array(dtype=wp.float32, ndim=2),
     iter_count: wp.array(dtype=wp.int32),
+    start_idx: wp.int32,
     # Outputs
     minimal_index: wp.array(dtype=wp.int32),
 ):
@@ -86,17 +97,14 @@ def find_minimal_residual_index_kernel(
         minimal_index[world_idx] = wp.int32(0)
         return
 
-    # We skip first 8 iterations if possible, as implied by the user's [8:] slice.
-    # This might be to avoid initial transients in the solver.
-    start_idx = 8
     if count <= start_idx:
-        # If we haven't reached the start_idx, just find the best among what we have.
-        start_idx = 0
+        # This means we exited early, so we take the value from the last iteration
+        minimal_index[world_idx] = count - wp.int32(1)
+        return
 
     min_idx = wp.int32(start_idx)
     min_value = batch_h_norm_sq[min_idx, world_idx]
 
-    # Iterate only over valid iterations that were actually captured
     for i in range(start_idx + 1, count):
         value = batch_h_norm_sq[i, world_idx]
         if value < min_value:
@@ -135,12 +143,12 @@ class AxionEngine(SolverBase):
         )
 
         self.data = EngineData(
-            self.axion_model,
-            self.dims,
-            self.config,
-            self.device,
-            # allocate_history=self.logging_config.enable_hdf5_logging,
-            allocate_history=True,
+            model=self.axion_model,
+            dims=self.dims,
+            config=self.config,
+            device=self.device,
+            alloc_history_arrays=self.logging_config.enable_hdf5_logging,
+            alloc_grad_arrays=self.config.differentiable_simulation,
         )
 
         self.A_op = SystemOperator(
@@ -171,7 +179,9 @@ class AxionEngine(SolverBase):
         self.timestep = wp.zeros(1, dtype=wp.int32, device=self.device)
 
     def _save_iter_to_history(self):
-        # We always want to copy these because they are used by HistoryGroup
+        if not self.logging_config.enable_hdf5_logging:
+            return
+
         wp.copy(dest=self.data.pcr_iter_count, src=self.cr_solver.iter_count)
         wp.copy(dest=self.data.pcr_final_res_norm_sq, src=self.cr_solver.r_sq)
         wp.copy(dest=self.data.pcr_res_norm_sq_history, src=self.cr_solver.history_r_sq)
@@ -220,6 +230,70 @@ class AxionEngine(SolverBase):
             outputs=[self.data.keep_running],
             device=self.device,
         )
+
+    def _restore_best_newton_candidate(self):
+        wp.launch(
+            kernel=find_minimal_residual_index_kernel,
+            dim=(self.dims.num_worlds),
+            inputs=[
+                self.data.candidates_res_norm_sq,
+                self.data.iter_count,
+                self.config.backtrack_min_iter,
+            ],
+            outputs=[
+                self.data.candidates_best_idx,
+            ],
+            device=self.device,
+        )
+        wp.launch(
+            kernel=copy_best_sample_kernel,
+            dim=(self.dims.num_worlds, self.dims.body_count),
+            inputs=[
+                self.data.candidates_body_pose,
+                self.data.candidates_best_idx,
+            ],
+            outputs=[
+                self.data.body_pose,
+            ],
+            device=self.device,
+        )
+        wp.launch(
+            kernel=copy_best_sample_kernel,
+            dim=(self.dims.num_worlds, self.dims.body_count),
+            inputs=[
+                self.data.candidates_body_vel,
+                self.data.candidates_best_idx,
+            ],
+            outputs=[
+                self.data.body_vel,
+            ],
+            device=self.device,
+        )
+        wp.launch(
+            kernel=copy_best_sample_kernel,
+            dim=(self.dims.num_worlds, self.dims.num_constraints),
+            inputs=[
+                self.data._candidates_constr_force,
+                self.data.candidates_best_idx,
+            ],
+            outputs=[
+                self.data._constr_force,
+            ],
+            device=self.device,
+        )
+        wp.launch(
+            kernel=copy_best_sample_kernel_1d,
+            dim=(self.dims.num_worlds),
+            inputs=[
+                self.data.candidates_res_norm_sq,
+                self.data.candidates_best_idx,
+            ],
+            outputs=[
+                self.data.res_norm_sq,
+            ],
+            device=self.device,
+        )
+        compute_residual(self.axion_model, self.data, self.config, self.dims)
 
     def step(
         self,
@@ -286,6 +360,7 @@ class AxionEngine(SolverBase):
             wp.copy(dest=self.data._constr_force_prev_iter, src=self.data._constr_force)
             perform_linesearch(self.axion_model, self.data, self.config, self.dims)
 
+            self.data.save_state_to_candidates()
             self._save_iter_to_history()
             self._check_convergence()
 
@@ -301,56 +376,7 @@ class AxionEngine(SolverBase):
                 if self.data.keep_running.numpy()[0] == 0:
                     break
 
-        wp.launch(
-            kernel=find_minimal_residual_index_kernel,
-            dim=(self.dims.num_worlds),
-            inputs=[
-                self.data.nr_history_res_sq_norm,
-                self.data.iter_count,
-            ],
-            outputs=[
-                self.data.nr_history_minimal_index,
-            ],
-            device=self.device,
-        )
-        wp.launch(
-            kernel=copy_best_sample_kernel,
-            dim=(self.dims.num_worlds, self.dims.body_count),
-            inputs=[
-                self.data.nr_history_body_pose,
-                self.data.nr_history_minimal_index,
-            ],
-            outputs=[
-                self.data.body_pose,
-            ],
-            device=self.device,
-        )
-        wp.launch(
-            kernel=copy_best_sample_kernel,
-            dim=(self.dims.num_worlds, self.dims.body_count),
-            inputs=[
-                self.data.nr_history_body_vel,
-                self.data.nr_history_minimal_index,
-            ],
-            outputs=[
-                self.data.body_vel,
-            ],
-            device=self.device,
-        )
-        wp.launch(
-            kernel=copy_best_sample_kernel,
-            dim=(self.dims.num_worlds, self.dims.num_constraints),
-            inputs=[
-                self.data._nr_history_constr_force,
-                self.data.nr_history_minimal_index,
-            ],
-            outputs=[
-                self.data._constr_force,
-            ],
-            device=self.device,
-        )
-        compute_residual(self.axion_model, self.data, self.config, self.dims)
-
+        self._restore_best_newton_candidate()
         if self.logger:
             self.logger.capture_step(self.timestep, self.data)
 
@@ -436,15 +462,15 @@ class AxionEngine(SolverBase):
 
         # Initialize with explicit part BEFORE backward
         # This ensures tape.backward accumulates (adds) the implicit part to the explicit part
-        wp.copy(dest=self.data.body_pose_prev.grad, src=self.data.body_pose_grad)
-        wp.copy(dest=self.data.body_vel_prev.grad, src=self.data.body_vel_grad)
+        # wp.copy(dest=self.data.body_pose_prev.grad, src=self.data.body_pose_grad)
+        # wp.copy(dest=self.data.body_vel_prev.grad, src=self.data.body_vel_grad)
 
         tape = wp.Tape()
         with tape:
             compute_residual(self.axion_model, self.data, self.config, self.dims)
 
         # This adds the implicit gradient (-w^T * dh/d_theta) to the arrays
-        tape.backward(grads={self.data._h: self.data._w})
+        tape.backward(grads={self.data._res: self.data._w})
 
     def save_logs(self):
         if self.logger:

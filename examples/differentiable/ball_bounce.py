@@ -207,7 +207,7 @@ class BallBounceOptimizer(DifferentiableSimulator):
             self.loss.zero_()
 
 
-@hydra.main(version_base=None, config_path=str(CONFIG_PATH), config_name="config")
+@hydra.main(version_base=None, config_path=str(CONFIG_PATH), config_name="config_diff")
 def main(cfg: DictConfig):
     sim_config: SimulationConfig = hydra.utils.instantiate(cfg.simulation)
     render_config: RenderingConfig = hydra.utils.instantiate(cfg.rendering)

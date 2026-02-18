@@ -9,7 +9,7 @@ class TrajectoryBuffer:
         self.dims = dims
         self.device = device
 
-        def _alloc(shape, dtype, requires_grad):
+        def _alloc(shape, dtype, requires_grad=False):
             return wp.zeros(shape, dtype=dtype, device=device, requires_grad=requires_grad)
 
         # =========================================================================
@@ -19,10 +19,10 @@ class TrajectoryBuffer:
         per_body_shape_larger = (num_steps + 1, dims.num_worlds, dims.body_count)
         per_body_shape = (num_steps, dims.num_worlds, dims.body_count)
 
-        self.body_q = _alloc(per_body_shape_larger, wp.transform, True)
-        self.body_u = _alloc(per_body_shape_larger, wp.spatial_vector, True)
+        self.body_pose = _alloc(per_body_shape_larger, wp.transform, True)
+        self.body_vel = _alloc(per_body_shape_larger, wp.spatial_vector, True)
         # Forces apply DURING the step -> Size N
-        self.body_f = _alloc(per_body_shape, wp.spatial_vector, True)
+        self.ext_force = _alloc(per_body_shape, wp.spatial_vector, True)
 
         per_joint_dof_shape = (num_steps, dims.num_worlds, dims.joint_dof_count)
 
@@ -35,10 +35,10 @@ class TrajectoryBuffer:
         per_constraint_shape = (num_steps, dims.num_worlds, dims.N_c)
         per_constraint_idx_shape = (num_steps, dims.num_worlds, dims.N_c, 2)
 
-        self.body_lambda = _alloc(per_constraint_shape, wp.float32)
-        self.body_lambda_prev = _alloc(per_constraint_shape, wp.float32)
-        self.constraint_active_mask = _alloc(per_constraint_shape, wp.float32)
-        self.constraint_body_idx = _alloc(per_constraint_idx_shape, wp.int32)
+        self.constr_force = _alloc(per_constraint_shape, wp.float32)
+        self.constr_force_prev_iter = _alloc(per_constraint_shape, wp.float32)
+        self.constr_active_mask = _alloc(per_constraint_shape, wp.float32)
+        self.constr_body_idx = _alloc(per_constraint_idx_shape, wp.int32)
 
         # =========================================================================
         # 3. Contact Manifold (Interval Data -> Size N)
@@ -62,12 +62,12 @@ class TrajectoryBuffer:
         self.contact_basis_t2_b = _alloc(per_contact_shape, wp.spatial_vector)
 
     def zero_grad(self):
-        if self.body_q.requires_grad:
-            self.body_q.grad.zero_()
-        if self.body_u.requires_grad:
-            self.body_u.grad.zero_()
-        if self.body_f.requires_grad:
-            self.body_f.grad.zero_()
+        if self.body_pose.requires_grad:
+            self.body_pose.grad.zero_()
+        if self.body_vel.requires_grad:
+            self.body_vel.grad.zero_()
+        if self.ext_force.requires_grad:
+            self.ext_force.grad.zero_()
         if self.joint_target_pos.requires_grad:
             self.joint_target_pos.grad.zero_()
         if self.joint_target_vel.requires_grad:
@@ -83,25 +83,25 @@ class TrajectoryBuffer:
 
         # 1. Handle Initial Conditions (Only on first step)
         if step_idx == 0:
-            wp.copy(self.body_q[0], data.body_q_prev)
-            wp.copy(self.body_u[0], data.body_u_prev)
+            wp.copy(self.body_pose[0], data.body_pose_prev)
+            wp.copy(self.body_vel[0], data.body_vel_prev)
 
         # 2. Body State (Result of step t goes to t+1)
-        wp.copy(self.body_q[step_idx + 1], data.body_q)
-        wp.copy(self.body_u[step_idx + 1], data.body_u)
+        wp.copy(self.body_pose[step_idx + 1], data.body_pose)
+        wp.copy(self.body_vel[step_idx + 1], data.body_vel)
 
         # 3. Interval Data (Forces applied during step t go to t)
-        wp.copy(self.body_f[step_idx], data.body_f)
+        wp.copy(self.ext_force[step_idx], data.ext_force)
 
         # --- Inputs ---
         wp.copy(self.joint_target_pos[step_idx], data.joint_target_pos)
         wp.copy(self.joint_target_vel[step_idx], data.joint_target_vel)
 
         # --- Lambdas ---
-        wp.copy(self.body_lambda[step_idx], data._body_lambda)
-        wp.copy(self.body_lambda_prev[step_idx], data._body_lambda_prev)
-        wp.copy(self.constraint_active_mask[step_idx], data._constraint_active_mask)
-        wp.copy(self.constraint_body_idx[step_idx], data._constraint_body_idx)
+        wp.copy(self.constr_force[step_idx], data._constr_force)
+        wp.copy(self.constr_force_prev_iter[step_idx], data._constr_force_prev_iter)
+        wp.copy(self.constr_active_mask[step_idx], data._constr_active_mask)
+        wp.copy(self.constr_body_idx[step_idx], data._constr_body_idx)
 
         # --- Contact Manifold ---
         wp.copy(self.contact_body_a[step_idx], data.contact_body_a)
@@ -127,26 +127,26 @@ class TrajectoryBuffer:
         Result State <- Index [step_idx + 1]
         """
         # --- Body State ---
-        wp.copy(data.body_q, self.body_q[step_idx + 1])  # Load Result
-        wp.copy(data.body_q_prev, self.body_q[step_idx])  # Load Start
+        wp.copy(data.body_pose, self.body_pose[step_idx + 1])  # Load Result
+        wp.copy(data.body_pose_prev, self.body_pose[step_idx])  # Load Start
 
-        wp.copy(data.body_u, self.body_u[step_idx + 1])
-        wp.copy(data.body_u_prev, self.body_u[step_idx])
+        wp.copy(data.body_vel, self.body_vel[step_idx + 1])
+        wp.copy(data.body_vel_prev, self.body_vel[step_idx])
 
-        wp.copy(data.body_q_grad, self.body_q.grad[step_idx + 1])
-        wp.copy(data.body_u_grad, self.body_u.grad[step_idx + 1])
+        wp.copy(data.body_pose_grad, self.body_pose.grad[step_idx + 1])
+        wp.copy(data.body_vel_grad, self.body_vel.grad[step_idx + 1])
 
-        wp.copy(data.body_f, self.body_f[step_idx])
+        wp.copy(data.ext_force, self.ext_force[step_idx])
 
         # --- Inputs ---
         wp.copy(data.joint_target_pos, self.joint_target_pos[step_idx])
         wp.copy(data.joint_target_vel, self.joint_target_vel[step_idx])
 
         # --- Lambdas ---
-        wp.copy(data._body_lambda, self.body_lambda[step_idx])
-        wp.copy(data._body_lambda_prev, self.body_lambda_prev[step_idx])
-        wp.copy(data._constraint_active_mask, self.constraint_active_mask[step_idx])
-        wp.copy(data._constraint_body_idx, self.constraint_body_idx[step_idx])
+        wp.copy(data._constr_force, self.constr_force[step_idx])
+        wp.copy(data._constr_force_prev_iter, self.constr_force_prev_iter[step_idx])
+        wp.copy(data._constr_active_mask, self.constr_active_mask[step_idx])
+        wp.copy(data._constr_body_idx, self.constr_body_idx[step_idx])
 
         # --- Contact Manifold ---
         wp.copy(data.contact_body_a, self.contact_body_a[step_idx])
@@ -172,11 +172,11 @@ class TrajectoryBuffer:
         # --- Body State ---
         # Note: We save the gradients w.r.t the INITIAL state of this step (q_prev)
         # into the buffer at step_idx (which corresponds to q at time T)
-        wp.copy(self.body_q.grad[step_idx], data.body_q_prev.grad)
-        wp.copy(self.body_u.grad[step_idx], data.body_u_prev.grad)
+        wp.copy(self.body_pose.grad[step_idx], data.body_pose_prev.grad)
+        wp.copy(self.body_vel.grad[step_idx], data.body_vel_prev.grad)
 
         # Forces and inputs are interval-based (index T)
-        wp.copy(self.body_f.grad[step_idx], data.body_f.grad)
+        wp.copy(self.ext_force.grad[step_idx], data.ext_force.grad)
 
         # --- Inputs ---
         wp.copy(self.joint_target_pos.grad[step_idx], data.joint_target_pos.grad)

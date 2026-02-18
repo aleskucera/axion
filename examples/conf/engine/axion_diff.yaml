@@ -22,4 +22,4 @@ contact_fb_beta: 1.0
 friction_fb_alpha: 1.0
 friction_fb_beta: 1.0
 max_contacts_per_world: 512
-differentiable_simulation: false
+differentiable_simulation: true 

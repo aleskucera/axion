@@ -62,14 +62,10 @@ class SimulationHDF5Logger:
         # 2. Constraints
         # =========================================================================
         self._constr_force = _register_log("_constr_force", data._constr_force)
-        self._constr_force_prev_iter = _register_log(
-            "_constr_force_prev_iter", data._constr_force_prev_iter
-        )
         self._constr_body_idx = _register_log("_constr_body_idx", data._constr_body_idx)
         self._constr_active_mask = _register_log("_constr_active_mask", data._constr_active_mask)
 
         self.constr_force = ConstraintView(self._constr_force, dims)
-        self.constr_force_prev_iter = ConstraintView(self._constr_force_prev_iter, dims)
         self.constr_body_idx = ConstraintView(self._constr_body_idx, dims, axis=-2)
         self.constr_active_mask = ConstraintView(self._constr_active_mask, dims)
 
@@ -117,7 +113,6 @@ class SimulationHDF5Logger:
         # =========================================================================
         # 5. NR Stats
         # =========================================================================
-        self.keep_running = _register_log("keep_running", data.keep_running)
         self.iter_count = _register_log("iter_count", data.iter_count)
         self.res_norm_sq = _register_log("res_norm_sq", data.res_norm_sq)
 
@@ -132,38 +127,21 @@ class SimulationHDF5Logger:
         #     self.body_pose_grad = _register_log("body_pose_grad", data.body_pose_grad)
         #     self.body_vel_grad = _register_log("body_vel_grad", data.body_vel_grad)
 
-        # # =========================================================================
-        # # 7. Linesearch (Working arrays)
-        # # =========================================================================
-        # if config.enable_linesearch:
-        #     self.linesearch_step_size = _register_log("linesearch_step_size", data.linesearch_step_size)
-        #     self.linesearch_body_pose = _register_log("linesearch_body_pose", data.linesearch_body_pose)
-        #     self.linesearch_body_vel = _register_log("linesearch_body_vel", data.linesearch_body_vel)
-        #     self._linesearch_constr_force = _register_log("_linesearch_constr_force", data._linesearch_constr_force)
-        #     self._linesearch_res = _register_log("_linesearch_res", data._linesearch_res)
-        #     self._linesearch_res_spatial = _register_log("_linesearch_res_spatial", data._linesearch_res_spatial)
-        #     self.linesearch_res_norm_sq = _register_log("linesearch_res_norm_sq", data.linesearch_res_norm_sq)
-        #     self.linesearch_minimal_index = _register_log("linesearch_minimal_index", data.linesearch_minimal_index)
-        #
-        #     self.linesearch_constr_force = ConstraintView(self._linesearch_constr_force, dims)
-        #     self.linesearch_res = SystemView(self._linesearch_res, dims, self._linesearch_res_spatial)
-
         # =========================================================================
         # 8. Detailed History (From EngineData HistoryGroup)
         # =========================================================================
-        # These are usually 3D or 4D arrays
-        self.nr_history_body_pose = _register_log("nr_history_body_pose", data.nr_history_body_pose)
-        self.nr_history_body_vel = _register_log("nr_history_body_vel", data.nr_history_body_vel)
-        self._nr_history_constr_force = _register_log(
-            "_nr_history_constr_force", data._nr_history_constr_force
+        self.candidates_body_pose = _register_log("candidates_body_pose", data.candidates_body_pose)
+        self.candidates_body_vel = _register_log("candidates_body_vel", data.candidates_body_vel)
+        self._candidates_constr_force = _register_log(
+            "_candidates_constr_force", data._candidates_constr_force
         )
-        self._nr_history_res = _register_log("_nr_history_res", data._nr_history_res)
-        self.nr_history_res_sq_norm = _register_log(
-            "nr_history_res_sq_norm", data.nr_history_res_sq_norm
+        self._candidates_res = _register_log("_candidates_res", data._candidates_res)
+        self.candidates_res_norm_sq = _register_log(
+            "candidates_res_norm_sq", data.candidates_res_norm_sq
         )
 
-        self.nr_history_constr_force = ConstraintView(self._nr_history_constr_force, dims)
-        self.nr_history_res = SystemView(self._nr_history_res, dims)
+        self.candidates_constr_force = ConstraintView(self._candidates_constr_force, dims)
+        self.candidates_res = SystemView(self._candidates_res, dims)
 
         self.pcr_history_iter_count = _register_log(
             "pcr_history_iter_count", data.pcr_history_iter_count
