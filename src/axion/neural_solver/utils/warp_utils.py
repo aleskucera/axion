@@ -72,8 +72,8 @@ def assign_states_from_torch(warp_env, torch_states):
         dim = torch_states.shape[0],
         inputs = [
             wp.from_torch(torch_states),
-            warp_env.dof_q_per_env,
-            warp_env.dof_qd_per_env
+            warp_env.dof_q_per_world,
+            warp_env.dof_qd_per_world
         ],
         outputs = [
             warp_env.state.joint_q,
@@ -90,8 +90,8 @@ def acquire_states_to_torch(warp_env, torch_states):
         inputs = [
             warp_env.state.joint_q,
             warp_env.state.joint_qd,
-            warp_env.dof_q_per_env,
-            warp_env.dof_qd_per_env
+            warp_env.dof_q_per_world,
+            warp_env.dof_qd_per_world
         ],
         outputs = [wp.from_torch(torch_states)],
         device = warp_env.device

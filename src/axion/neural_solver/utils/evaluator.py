@@ -23,21 +23,22 @@ import torch
 from torch.utils.data import default_collate
 import tqdm
 import warp as wp
+import newton
 
-from generate.trajectory_sampler import TrajectorySampler
-from envs.neural_environment import NeuralEnvironment
-from utils.commons import JOINT_Q_MIN, JOINT_Q_MAX, \
+from axion.neural_solver.generate.simple_trajectory_sampler_pendulum import SimpleTrajectorySamplerPendulum
+from axion.neural_solver.envs.axionToTrajectorySampler import AxionEnvToTrajectorySamplerAdapter
+from axion.neural_solver.utils.commons import JOINT_Q_MIN, JOINT_Q_MAX, \
     JOINT_QD_MIN, JOINT_QD_MAX, JOINT_ACT_SCALE
-from utils.datasets import TrajectoryDataset
-from utils.python_utils import print_warning
-from utils import torch_utils
+from axion.neural_solver.utils.datasets import TrajectoryDataset
+from axion.neural_solver.utils.python_utils import print_warning
+from axion.neural_solver.utils import torch_utils
 
 torch.set_printoptions(precision=6)
 
 class NeuralSimEvaluator:
     def __init__(
         self, 
-        neural_env: NeuralEnvironment,
+        neural_env: AxionEnvToTrajectorySamplerAdapter,
         hdf5_dataset_path = None,
         eval_horizon = 10,
         device = 'cuda:0'
@@ -105,7 +106,7 @@ class NeuralSimEvaluator:
         # generate ground-truth trajectories to evaluate
         # trajectories are in shape (T, B, state_dim/action_dim)
         if trajectory_source == "sampler":
-            trajectory_sampler = TrajectorySampler(
+            trajectory_sampler = SimpleTrajectorySamplerPendulum(
                 self.neural_env,
                 joint_q_min = JOINT_Q_MIN[robot_name],
                 joint_q_max = JOINT_Q_MAX[robot_name],
@@ -160,21 +161,23 @@ class NeuralSimEvaluator:
                     trajectories['actions'].transpose(0, 1).to(self.device)
                 )
             else:
-                if self.neural_env.action_dim == self.neural_env.joint_act_dim:
-                    trajectories['actions'] = (
-                        trajectories['joint_acts'] / (
-                            torch.tensor(
-                                self.neural_env.control_gains, 
-                                dtype=torch.float32
-                            ).view(
-                                1, 1, self.neural_env.action_dim
-                            )
-                        )[:, :, self.neural_env.controllable_dofs]
-                    ).transpose(0, 1).to(self.device)
-                else:
-                    trajectories['actions'] = torch.zeros(
-                        (self.eval_horizon, num_traj, self.neural_env.action_dim),
-                        device = self.device)
+                # if self.neural_env.action_dim == self.neural_env.joint_act_dim:
+                #     trajectories['actions'] = (
+                #         trajectories['joint_acts'] / (
+                #             torch.tensor(
+                #                 self.neural_env.control_gains, 
+                #                 dtype=torch.float32
+                #             ).view(
+                #                 1, 1, self.neural_env.action_dim
+                #             )
+                #         )[:, :, self.neural_env.controllable_dofs]
+                #     ).transpose(0, 1).to(self.device)
+                # else:
+
+                # Assume zero actions
+                trajectories['actions'] = torch.zeros(
+                    (self.eval_horizon, num_traj, self.neural_env.action_dim),
+                    device = self.device)
         else:
             raise NotImplementedError
         
@@ -208,7 +211,7 @@ class NeuralSimEvaluator:
         if measure_fps:
             self.neural_env.reset(initial_states[:num_envs])
             for _ in range(50):
-                self.neural_env.init_rnn(num_envs)
+                # self.neural_env.init_rnn(num_envs)
                 self.neural_env.step(
                     actions[0, :num_envs, :], 
                     env_mode = env_mode
@@ -223,7 +226,7 @@ class NeuralSimEvaluator:
             self.neural_env.reset(
                 initial_states[start_id: end_id]
             )
-            self.neural_env.init_rnn(num_envs)
+            # self.neural_env.init_rnn(num_envs)
                 
             for step in range(self.eval_horizon):  
                 if eval_mode == 'single-step':
@@ -280,7 +283,7 @@ class NeuralSimEvaluator:
         
         error_stats = {'overall': {}, 'step-wise': {}}
         # Compute base position and orientation error
-        if self.neural_env.joint_types[0] == wp.sim.JOINT_FREE:
+        if self.neural_env.joint_types[0] == newton.JointType.FREE:
             base_position_idx = [0, 1, 2]
             base_orientation_idx = [3, 4, 5, 6]
 

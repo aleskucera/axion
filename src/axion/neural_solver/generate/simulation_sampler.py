@@ -21,7 +21,7 @@ import numpy as np
 
 import torch
 
-from src.axion.neural_solver.envs.axionToTrajectorySampler import AxionEnvToTrajectorySamplerAdapter
+from axion.neural_solver.envs.axionToTrajectorySampler import AxionEnvToTrajectorySamplerAdapter
 
 '''
 Compute the contact point 1 from contact point 0, contact normal and contact depth.
