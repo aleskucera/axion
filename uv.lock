@@ -280,10 +280,6 @@ wheels = [
 name = "axion"
 version = "0.1.0"
 source = { editable = "." }
-dependencies = [
-    { name = "tensorboard" },
-    { name = "wandb" },
-]
 
 [package.optional-dependencies]
 brax = [
@@ -309,12 +305,14 @@ dev = [
     { name = "pytest" },
     { name = "scipy" },
     { name = "taichi" },
+    { name = "tensorboard" },
     { name = "torch", version = "2.9.1+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "extra == 'extra-6-newton-torch-cu12'" },
     { name = "torch", version = "2.11.0", source = { registry = "https://pypi.org/simple" }, marker = "(extra == 'extra-6-newton-torch-cu12' and extra == 'extra-6-newton-torch-cu13') or (extra != 'extra-6-newton-torch-cu12' and extra != 'extra-6-newton-torch-cu13')" },
     { name = "torch", version = "2.11.0+cu130", source = { registry = "https://download.pytorch.org/whl/cu130" }, marker = "extra == 'extra-6-newton-torch-cu13'" },
     { name = "tqdm" },
     { name = "trimesh" },
     { name = "usd-core" },
+    { name = "wandb" },
     { name = "warp-lang" },
 ]
 docs = [
@@ -344,12 +342,14 @@ sim = [
     { name = "pytest" },
     { name = "scipy" },
     { name = "taichi" },
+    { name = "tensorboard" },
     { name = "torch", version = "2.9.1+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "extra == 'extra-6-newton-torch-cu12'" },
     { name = "torch", version = "2.11.0", source = { registry = "https://pypi.org/simple" }, marker = "(extra == 'extra-6-newton-torch-cu12' and extra == 'extra-6-newton-torch-cu13') or (extra != 'extra-6-newton-torch-cu12' and extra != 'extra-6-newton-torch-cu13')" },
     { name = "torch", version = "2.11.0+cu130", source = { registry = "https://download.pytorch.org/whl/cu130" }, marker = "extra == 'extra-6-newton-torch-cu13'" },
     { name = "tqdm" },
     { name = "trimesh" },
     { name = "usd-core" },
+    { name = "wandb" },
     { name = "warp-lang" },
 ]
 
@@ -378,12 +378,12 @@ requires-dist = [
     { name = "pytest", marker = "extra == 'sim'", specifier = "==8.4.0" },
     { name = "scipy", marker = "extra == 'sim'", specifier = "==1.16.1" },
     { name = "taichi", marker = "extra == 'sim'", specifier = "==1.7.3" },
-    { name = "tensorboard" },
+    { name = "tensorboard", marker = "extra == 'sim'" },
     { name = "torch", marker = "extra == 'sim'", specifier = "==2.9.1+cu128", index = "https://download.pytorch.org/whl/cu128", conflict = { package = "axion", extra = "sim" } },
     { name = "tqdm", marker = "extra == 'sim'", specifier = "==4.67.1" },
     { name = "trimesh", marker = "extra == 'sim'", specifier = "==4.6.12" },
     { name = "usd-core", marker = "extra == 'sim'", specifier = "==25.5.1" },
-    { name = "wandb", specifier = ">=0.25.0" },
+    { name = "wandb", marker = "extra == 'sim'", specifier = ">=0.25.0" },
     { name = "warp-lang", marker = "extra == 'sim'", specifier = "==1.11.0", index = "https://pypi.nvidia.com/" },
 ]
 provides-extras = ["sim", "brax", "genesis", "nimble", "dev", "docs"]
