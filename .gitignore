@@ -202,3 +202,4 @@ examples/comparison_scalability/*/results/
 *.blend
 # nn training statistics
 src/axion/neural_solver/train/trained_models/
+wandb/

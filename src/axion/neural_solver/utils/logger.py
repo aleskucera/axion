@@ -13,39 +13,33 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from torch.utils.tensorboard import SummaryWriter
 import wandb
+
+project = "neural-solver-transformer"
+
 
 class Logger:
     def __init__(self):
-        self.tensorboard_writer = None
         self.wandb = None
         self.wandb_logs = {}
-    
-    def init_tensorboard(self, summary_log_dir):
-        self.tensorboard_writer = SummaryWriter(summary_log_dir)
-        
-    def init_wandb(self, wandb_project, wandb_name):
+
+    def init_wandb(self, wandb_project=project, wandb_name=None):
         self.wandb = wandb.init(
-            project = wandb_project,
-            name = wandb_name
+            project=wandb_project,
+            name=wandb_name
         )
-    
+
     def init_epoch(self, epoch):
         self.wandb_logs = {"step": epoch}
-        
+
     def add_scalar(self, name, value, step):
-        if self.tensorboard_writer:
-            self.tensorboard_writer.add_scalar(name, value, step)
         if self.wandb:
             self.wandb_logs[name] = value
-    
+
     def flush(self):
-        if self.tensorboard_writer:
-            self.tensorboard_writer.flush()
         if self.wandb:
             wandb.log(self.wandb_logs)
-    
+
     def finish(self):
         if self.wandb:
             wandb.finish()
