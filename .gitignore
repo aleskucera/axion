@@ -193,3 +193,4 @@ outputs/
 
 # nn training statistics
 src/axion/neural_solver/train/trained_models/
+wandb/

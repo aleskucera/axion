@@ -19,9 +19,11 @@ base_dir = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__
 sys.path.append(base_dir)
 
 import yaml
-
 import warp as wp
 wp.config.verify_cuda = True
+
+import wandb
+wandb.login()
 
 from axion.neural_solver.train.arguments import get_parser
 from axion.neural_solver.utils.python_utils import get_time_stamp, \

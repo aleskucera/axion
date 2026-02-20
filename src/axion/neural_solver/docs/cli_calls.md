@@ -10,7 +10,6 @@ python src/axion/neural_solver/generate/simple_generate_dataset_pendulum.py --en
 python src/axion/neural_solver/train/train.py --cfg src/axion/neural_solver/train/cfg/Pendulum/transformer.yaml --logdir src/axion/neural_solver/train/trained_models/ 
 ```
 
-### Visualize in tensorboard (example)
-```
-tensorboard --logdir src/axion/neural_solver/train/trained_models/02-18-2026-15-25-04
-```
+### Visualize training (wandb)
+View runs at [wandb.ai](https://wandb.ai) in your project (e.g. `neural-solver-transformer`). 
+Ensure `wandb.login()` runs before training (see `train.py`).
