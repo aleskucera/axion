@@ -26,7 +26,6 @@ from pathlib import Path
 from typing import Optional
 
 import torch
-import cv2
 import shutil
 import warp as wp
 
@@ -286,71 +285,6 @@ class AxionEnvToTrajectorySamplerAdapter:
             self.env.reset()
             self._update_states()
         self.integrator_neural.reset()
-
-    # ---- Video export (trajectory sampler can use these) ----
-
-    def start_video_export(self, video_export_filename: str):
-        self.export_video = True
-        self.video_export_filename = os.path.join("gifs", video_export_filename)
-        self.video_tmp_folder = os.path.join(
-            Path(video_export_filename).parent,
-            "tmp",
-        )
-        os.makedirs(self.video_tmp_folder, exist_ok=False)
-        self.video_frame_cnt = 0
-
-    def end_video_export(self):
-        self.export_video = False
-        frame_rate = round(1.0 / self.env.frame_dt)
-        images_path = os.path.join(self.video_tmp_folder, r"%d.png")
-
-        if not os.path.exists(os.path.dirname(self.video_export_filename)):
-            os.makedirs(os.path.dirname(self.video_export_filename), exist_ok=False)
-
-        os.system("ffmpeg -i {} -vf palettegen palette.png".format(images_path))
-        os.system(
-            "ffmpeg -framerate {} -i {} "
-            "-i palette.png -lavfi paletteuse {}".format(
-                frame_rate,
-                images_path,
-                self.video_export_filename,
-            )
-        )
-
-        os.remove("palette.png")
-        shutil.rmtree(self.video_tmp_folder)
-        print_ok("Export video to {}".format(self.video_export_filename))
-
-        self.video_export_filename = None
-        self.video_tmp_folder = None
-        self.video_frame_cnt = 0
-
-    def render(self):
-        self.env.render()
-        if self.export_video:
-            img = wp.zeros(
-                (
-                    self.env.renderer.screen_height,
-                    self.env.renderer.screen_width,
-                    3,
-                ),
-                dtype=wp.uint8,
-            )
-            self.env.renderer.get_pixels(
-                img,
-                split_up_tiles=False,
-                mode="rgb",
-                use_uint8=True,
-            )
-            cv2.imwrite(
-                os.path.join(
-                    self.video_tmp_folder,
-                    "{}.png".format(self.video_frame_cnt),
-                ),
-                img.numpy()[:, :, ::-1],
-            )
-            self.video_frame_cnt += 1
-        time.sleep(self.env.frame_dt)
 
     def close(self):
         self.env.close()

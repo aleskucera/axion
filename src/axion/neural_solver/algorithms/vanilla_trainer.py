@@ -143,16 +143,13 @@ class VanillaTrainer:
 
             self.model_log_dir = os.path.join(self.log_dir, 'nn')
             os.makedirs(self.model_log_dir, exist_ok = True)
-            
-            self.summary_log_dir = os.path.join(self.log_dir, 'summaries')
-            os.makedirs(self.summary_log_dir, exist_ok = True)
 
             # save config
             yaml.dump(cfg, open(os.path.join(self.log_dir, 'cfg.yaml'), 'w'))
 
             # create logger
             self.logger = Logger()
-            self.logger.init_tensorboard(self.summary_log_dir)
+            self.logger.init_wandb()
                 
             # other logging params
             self.save_interval = cli_cfg.get("save_interval", 50)
@@ -541,7 +538,7 @@ class VanillaTrainer:
                 if epoch > 0:
                     print_info("[Grad Info] {}".format(format_dict(grad_info, 3)))
                 
-                # Logging to tensorboard
+                # Logging to wandb
                 self.logger.add_scalar(
                     'params/lr/epoch', self.lr, epoch)
                     
