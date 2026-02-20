@@ -1,23 +1,20 @@
 from typing import Any
 
 import warp as wp
+from axion.constraints import batch_contact_residual_kernel
+from axion.constraints import batch_control_residual_kernel
 from axion.constraints import batch_friction_residual_kernel
-from axion.constraints import batch_positional_contact_residual_kernel
-from axion.constraints import batch_positional_joint_residual_kernel
+from axion.constraints import batch_joint_residual_kernel
 from axion.constraints import batch_unconstrained_dynamics_kernel
-from axion.constraints import batch_velocity_contact_residual_kernel
-from axion.constraints import batch_velocity_joint_residual_kernel
+from axion.constraints import fused_batch_contact_residual_kernel
+from axion.constraints import fused_batch_control_residual_kernel
 from axion.constraints import fused_batch_friction_residual_kernel
-from axion.constraints import fused_batch_positional_contact_residual_kernel
-from axion.constraints import fused_batch_positional_joint_residual_kernel
+from axion.constraints import fused_batch_joint_residual_kernel
 from axion.constraints import fused_batch_unconstrained_dynamics_kernel
-from axion.constraints import fused_batch_velocity_contact_residual_kernel
-from axion.constraints import fused_batch_velocity_joint_residual_kernel
-from axion.constraints.control_constraint import batch_control_constraint_residual_kernel
-from axion.constraints.control_constraint import fused_batch_control_constraint_residual_kernel
 from axion.math import integrate_batched_body_pose_kernel
 from axion.math import integrate_body_pose_kernel
 
+from .contacts import AxionContacts
 from .engine_config import EngineConfig
 from .engine_data import EngineData
 from .engine_dims import EngineDimensions
@@ -142,6 +139,7 @@ def compute_linesearch_batch_variables(
 
 def compute_linesearch_batch_h(
     model: AxionModel,
+    contacts: AxionContacts,
     data: EngineData,
     config: EngineConfig,
     dims: EngineDimensions,
@@ -166,7 +164,7 @@ def compute_linesearch_batch_h(
     )
 
     wp.launch(
-        kernel=fused_batch_positional_joint_residual_kernel,
+        kernel=fused_batch_joint_residual_kernel,
         dim=(dims.num_worlds, dims.joint_count),
         inputs=[
             data.linesearch_body_pose,
@@ -194,7 +192,7 @@ def compute_linesearch_batch_h(
 
     # Evaluate residual for control constraints
     wp.launch(
-        kernel=fused_batch_control_constraint_residual_kernel,
+        kernel=fused_batch_control_residual_kernel,
         dim=(dims.num_worlds, dims.joint_count),
         inputs=[
             data.linesearch_body_pose,
@@ -227,25 +225,25 @@ def compute_linesearch_batch_h(
 
     # Evaluate residual for normal contact constraints
     wp.launch(
-        kernel=fused_batch_positional_contact_residual_kernel,
+        kernel=fused_batch_contact_residual_kernel,
         dim=(dims.num_worlds, dims.contact_count),
         inputs=[
             data.linesearch_body_pose,
             data.linesearch_body_vel,
             data.body_vel_prev,
             data.linesearch_constr_force.n,
-            data.contact_body_a,
-            data.contact_body_b,
-            data.contact_point_a,
-            data.contact_point_b,
-            data.contact_thickness_a,
-            data.contact_thickness_b,
-            data.contact_dist,
-            data.contact_basis_n_a,
-            data.contact_basis_n_b,
-            data.constr_active_mask.n,
+            model.body_com,
             model.body_inv_mass,
             model.body_inv_inertia,
+            model.shape_body,
+            contacts.contact_count,
+            contacts.contact_shape0,
+            contacts.contact_shape1,
+            contacts.contact_point0,
+            contacts.contact_point1,
+            contacts.contact_thickness0,
+            contacts.contact_thickness1,
+            contacts.contact_normal,
             data.dt,
             dims.linesearch_step_count,
         ],
@@ -266,15 +264,19 @@ def compute_linesearch_batch_h(
             data.linesearch_constr_force.f,
             data.constr_force_prev_iter.f,
             data.constr_force_prev_iter.n,
-            data.contact_body_a,
-            data.contact_body_b,
-            data.contact_friction_coeff,
-            data.contact_basis_t1_a,
-            data.contact_basis_t2_a,
-            data.contact_basis_t1_b,
-            data.contact_basis_t2_b,
+            model.body_com,
             model.body_inv_mass,
             model.body_inv_inertia,
+            model.shape_body,
+            model.shape_material_mu,
+            contacts.contact_count,
+            contacts.contact_shape0,
+            contacts.contact_shape1,
+            contacts.contact_point0,
+            contacts.contact_point1,
+            contacts.contact_thickness0,
+            contacts.contact_thickness1,
+            contacts.contact_normal,
             data.dt,
             dims.linesearch_step_count,
         ],
@@ -388,43 +390,18 @@ def update_variables_without_linesearch(
     )
 
 
-@wp.kernel
-def simple_sq_norm_kernel(
-    val: wp.array(dtype=wp.float32, ndim=2), out_norm: wp.array(dtype=wp.float32, ndim=1)
-):
-    world_idx, i = wp.tid()
-    # Simple atomic add - perfectly safe, no alignment requirements
-    val_sq = val[world_idx, i] * val[world_idx, i]
-    wp.atomic_add(out_norm, world_idx, val_sq)
-
-
 def perform_linesearch(
     model: AxionModel,
+    contacts: AxionContacts,
     data: EngineData,
     config: EngineConfig,
     dims: EngineDimensions,
 ):
     if config.enable_linesearch:
         compute_linesearch_batch_variables(model, data, config, dims)
-        compute_linesearch_batch_h(model, data, config, dims)
+        compute_linesearch_batch_h(model, contacts, data, config, dims)
         select_minimal_residual_variables(data, config, dims)
     else:
         update_variables_without_linesearch(model, data, config, dims)
-    compute_residual(model, data, config, dims)
-
-    # FIX: This causes following error
-    # Warp CUDA error 700: an illegal memory access was encountered
-    # (in function wp_free_device_async, /builds/omniverse/warp/warp/native/warp.cu:812)
+    compute_residual(model, contacts, data, config, dims)
     data.tiled_sq_norm.compute(data.res.full, data.res_norm_sq)
-    # data.res_norm_sq.zero_()
-    # wp.launch(
-    #     kernel=simple_sq_norm_kernel,
-    #     dim=(dims.num_worlds, dims.num_constraints),
-    #     inputs=[
-    #         data._res,
-    #     ],
-    #     outputs=[
-    #         data.res_norm_sq,
-    #     ],
-    #     device=data.device,
-    # )

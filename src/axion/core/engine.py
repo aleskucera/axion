@@ -293,7 +293,7 @@ class AxionEngine(SolverBase):
             ],
             device=self.device,
         )
-        compute_residual(self.axion_model, self.data, self.config, self.dims)
+        # compute_residual(self.axion_model, self.data, self.config, self.dims)
 
     def step(
         self,
@@ -338,7 +338,9 @@ class AxionEngine(SolverBase):
         # =========================================================================
         def nr_loop():
             # Linearize
-            compute_linear_system(self.axion_model, self.data, self.config, self.dims)
+            compute_linear_system(
+                self.axion_model, self.axion_contacts, self.data, self.config, self.dims
+            )
             self._update_mass_matrix()
             self.preconditioner.update()
 
@@ -358,7 +360,9 @@ class AxionEngine(SolverBase):
 
             # Linesearch
             wp.copy(dest=self.data._constr_force_prev_iter, src=self.data._constr_force)
-            perform_linesearch(self.axion_model, self.data, self.config, self.dims)
+            perform_linesearch(
+                self.axion_model, self.axion_contacts, self.data, self.config, self.dims
+            )
 
             self.data.save_state_to_candidates()
             self._save_iter_to_history()
@@ -391,7 +395,9 @@ class AxionEngine(SolverBase):
         )
 
     def step_backward(self):
-        compute_linear_system(self.axion_model, self.data, self.config, self.dims)
+        compute_linear_system(
+            self.axion_model, self.axion_contacts, self.data, self.config, self.dims
+        )
 
         wp.launch(
             kernel=compute_body_adjoint_init_kernel,

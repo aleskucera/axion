@@ -1,6 +1,4 @@
 import warp as wp
-from axion.constraints import fill_contact_constraint_body_idx_kernel
-from axion.constraints import fill_friction_constraint_body_idx_kernel
 from axion.math import orthogonal_basis
 from newton import Contacts
 from newton import Model
@@ -264,72 +262,6 @@ class AxionContacts:
                 self.contact_shape1,
                 self.contact_thickness0,
                 self.contact_thickness1,
-            ],
-            device=self.device,
-        )
-
-        wp.launch(
-            kernel=contact_interaction_kernel,
-            dim=(axion_model.num_worlds, dims.contact_count),
-            inputs=[
-                data.body_pose,
-                axion_model.body_com,
-                axion_model.shape_body,
-                axion_model.shape_thickness,
-                axion_model.shape_material_mu,
-                axion_model.shape_material_restitution,
-                self.contact_count,
-                self.contact_point0,
-                self.contact_point1,
-                self.contact_normal,
-                self.contact_shape0,
-                self.contact_shape1,
-                self.contact_thickness0,
-                self.contact_thickness1,
-            ],
-            outputs=[
-                data.contact_body_a,
-                data.contact_body_b,
-                data.contact_point_a,
-                data.contact_point_b,
-                data.contact_thickness_a,
-                data.contact_thickness_b,
-                data.contact_dist,
-                data.contact_friction_coeff,
-                data.contact_restitution_coeff,
-                data.contact_basis_n_a,
-                data.contact_basis_t1_a,
-                data.contact_basis_t2_a,
-                data.contact_basis_n_b,
-                data.contact_basis_t1_b,
-                data.contact_basis_t2_b,
-                data.constr_active_mask.n,
-            ],
-            device=self.device,
-        )
-
-        wp.launch(
-            kernel=fill_contact_constraint_body_idx_kernel,
-            dim=(axion_model.num_worlds, dims.contact_count),
-            inputs=[
-                data.contact_body_a,
-                data.contact_body_b,
-            ],
-            outputs=[
-                data.constr_body_idx.n,
-            ],
-            device=self.device,
-        )
-
-        wp.launch(
-            kernel=fill_friction_constraint_body_idx_kernel,
-            dim=(axion_model.num_worlds, 2 * dims.contact_count),
-            inputs=[
-                data.contact_body_a,
-                data.contact_body_b,
-            ],
-            outputs=[
-                data.constr_body_idx.f,
             ],
             device=self.device,
         )

@@ -62,7 +62,6 @@ class AxionEngineConfig(EngineConfig):
     linear_atol: float = 1e-5
 
     joint_compliance: float = 1e-5
-    equality_compliance: float = 1e-8
     contact_compliance: float = 1e-6
     friction_compliance: float = 1e-6
 
@@ -168,7 +167,6 @@ class AxionEngineConfig(EngineConfig):
 
         # Validate physics params
         _validate_non_negative_float(self.joint_compliance, "joint_compliance")
-        _validate_non_negative_float(self.equality_compliance, "equality_compliance")
         _validate_non_negative_float(self.contact_compliance, "contact_compliance")
         _validate_non_negative_float(self.friction_compliance, "friction_compliance")
         _validate_non_negative_float(self.regularization, "regularization")

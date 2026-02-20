@@ -337,7 +337,7 @@ def control_constraint_kernel(
 
 
 @wp.kernel
-def control_constraint_residual_kernel(
+def control_residual_kernel(
     body_q: wp.array(dtype=wp.transform, ndim=2),
     body_u: wp.array(dtype=wp.spatial_vector, ndim=2),
     body_lambda_ctrl: wp.array(dtype=wp.float32, ndim=2),
@@ -437,7 +437,7 @@ def control_constraint_residual_kernel(
 
 
 @wp.kernel
-def batch_control_constraint_residual_kernel(
+def batch_control_residual_kernel(
     body_q: wp.array(dtype=wp.transform, ndim=3),
     body_u: wp.array(dtype=wp.spatial_vector, ndim=3),
     body_lambda_ctrl: wp.array(dtype=wp.float32, ndim=3),
@@ -539,7 +539,7 @@ def batch_control_constraint_residual_kernel(
 
 
 @wp.kernel
-def fused_batch_control_constraint_residual_kernel(
+def fused_batch_control_residual_kernel(
     body_q: wp.array(dtype=wp.transform, ndim=3),
     body_u: wp.array(dtype=wp.spatial_vector, ndim=3),
     body_lambda_ctrl: wp.array(dtype=wp.float32, ndim=3),

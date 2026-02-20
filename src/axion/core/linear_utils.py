@@ -1,12 +1,13 @@
 import warp as wp
+from axion.constraints import contact_constraint_kernel
+from axion.constraints import control_constraint_kernel
 from axion.constraints import friction_constraint_kernel
-from axion.constraints import positional_contact_constraint_kernel
-from axion.constraints import positional_joint_constraint_kernel
+from axion.constraints import joint_constraint_kernel
 from axion.constraints import unconstrained_dynamics_kernel
-from axion.constraints.control_constraint import control_constraint_kernel
 from axion.constraints.utils import compute_spatial_momentum
 from axion.constraints.utils import compute_world_inertia
 
+from .contacts import AxionContacts
 from .engine_config import EngineConfig
 from .engine_data import EngineData
 from .engine_dims import EngineDimensions
@@ -118,6 +119,7 @@ def compute_dbody_vel_kernel(
 
 def compute_linear_system(
     model: AxionModel,
+    contacts: AxionContacts,
     data: EngineData,
     config: EngineConfig,
     dims: EngineDimensions,
@@ -140,7 +142,7 @@ def compute_linear_system(
     )
 
     wp.launch(
-        kernel=positional_joint_constraint_kernel,
+        kernel=joint_constraint_kernel,
         dim=(dims.num_worlds, dims.joint_count),
         inputs=[
             data.body_pose,
@@ -204,28 +206,30 @@ def compute_linear_system(
     )
 
     wp.launch(
-        kernel=positional_contact_constraint_kernel,
+        kernel=contact_constraint_kernel,
         dim=(dims.num_worlds, dims.contact_count),
         inputs=[
             data.body_pose,
             data.body_vel,
             data.body_vel_prev,
             data.constr_force.n,
-            data.contact_body_a,
-            data.contact_body_b,
-            data.contact_point_a,
-            data.contact_point_b,
-            data.contact_thickness_a,
-            data.contact_thickness_b,
-            data.contact_dist,
-            data.contact_basis_n_a,
-            data.contact_basis_n_b,
-            data.constr_active_mask.n,
+            model.body_com,
             model.body_inv_mass,
             model.body_inv_inertia,
+            model.shape_body,
+            contacts.contact_count,
+            contacts.contact_shape0,
+            contacts.contact_shape1,
+            contacts.contact_point0,
+            contacts.contact_point1,
+            contacts.contact_thickness0,
+            contacts.contact_thickness1,
+            contacts.contact_normal,
             data.dt,
         ],
         outputs=[
+            data.constr_active_mask.n,
+            data.constr_body_idx.n,
             data.res.d_spatial,
             data.res.c.n,
             data.J_values.n,
@@ -243,19 +247,24 @@ def compute_linear_system(
             data.constr_force.f,
             data.constr_force_prev_iter.f,
             data.constr_force_prev_iter.n,
-            data.contact_body_a,
-            data.contact_body_b,
-            data.contact_friction_coeff,
-            data.contact_basis_t1_a,
-            data.contact_basis_t2_a,
-            data.contact_basis_t1_b,
-            data.contact_basis_t2_b,
+            model.body_com,
             model.body_inv_mass,
             model.body_inv_inertia,
+            model.shape_body,
+            model.shape_material_mu,
+            contacts.contact_count,
+            contacts.contact_shape0,
+            contacts.contact_shape1,
+            contacts.contact_point0,
+            contacts.contact_point1,
+            contacts.contact_thickness0,
+            contacts.contact_thickness1,
+            contacts.contact_normal,
             data.dt,
         ],
         outputs=[
             data.constr_active_mask.f,
+            data.constr_body_idx.f,
             data.res.d_spatial,
             data.res.c.f,
             data.J_values.f,

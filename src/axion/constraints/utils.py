@@ -76,41 +76,6 @@ def fill_joint_constraint_body_idx_kernel(
 
 
 @wp.kernel
-def fill_contact_constraint_body_idx_kernel(
-    contact_body_a: wp.array(dtype=wp.int32, ndim=2),
-    contact_body_b: wp.array(dtype=wp.int32, ndim=2),
-    contact_constraint_body_idx: wp.array(dtype=wp.int32, ndim=3),
-):
-    world_idx, contact_idx = wp.tid()
-
-    if world_idx >= contact_body_a.shape[0] or contact_idx >= contact_body_a.shape[1]:
-        return
-
-    contact_constraint_body_idx[world_idx, contact_idx, 0] = contact_body_a[world_idx, contact_idx]
-    contact_constraint_body_idx[world_idx, contact_idx, 1] = contact_body_b[world_idx, contact_idx]
-
-
-@wp.kernel
-def fill_friction_constraint_body_idx_kernel(
-    contact_body_a: wp.array(dtype=wp.int32, ndim=2),
-    contact_body_b: wp.array(dtype=wp.int32, ndim=2),
-    friction_constraint_body_idx: wp.array(dtype=wp.int32, ndim=3),
-):
-    world_idx, constraint_idx = wp.tid()
-    contact_idx = constraint_idx // 2
-
-    if world_idx >= contact_body_a.shape[0] or contact_idx >= contact_body_a.shape[1]:
-        return
-
-    friction_constraint_body_idx[world_idx, constraint_idx, 0] = contact_body_a[
-        world_idx, contact_idx
-    ]
-    friction_constraint_body_idx[world_idx, constraint_idx, 1] = contact_body_b[
-        world_idx, contact_idx
-    ]
-
-
-@wp.kernel
 def fill_control_constraint_body_idx_kernel(
     joint_parent: wp.array(dtype=wp.int32, ndim=2),
     joint_child: wp.array(dtype=wp.int32, ndim=2),
@@ -180,36 +145,3 @@ def fill_joint_constraint_active_mask_kernel(
         offset = start_offset + k
         if offset < joint_constraint_active_mask.shape[1]:
             joint_constraint_active_mask[world_idx, offset] = val
-
-
-@wp.kernel
-def fill_contact_constraint_active_mask_kernel(
-    contact_dist: wp.array(dtype=wp.float32, ndim=2),
-    contact_constraint_active_mask: wp.array(dtype=wp.float32, ndim=2),
-):
-    world_idx, contact_idx = wp.tid()
-
-    if world_idx >= contact_dist.shape[0] or contact_idx >= contact_dist.shape[1]:
-        return
-
-    if contact_dist[world_idx, contact_idx] > 0.0:
-        contact_constraint_active_mask[world_idx, contact_idx] = 1.0
-    else:
-        contact_constraint_active_mask[world_idx, contact_idx] = 0.0
-
-
-@wp.kernel
-def fill_friction_constraint_active_mask_kernel(
-    contact_dist: wp.array(dtype=wp.float32, ndim=2),
-    friction_constraint_active_mask: wp.array(dtype=wp.float32, ndim=2),
-):
-    world_idx, constraint_idx = wp.tid()
-    contact_idx = constraint_idx // 2
-
-    if world_idx >= contact_dist.shape[0] or contact_idx >= contact_dist.shape[1]:
-        return
-
-    if contact_dist[world_idx, contact_idx] > 0.0:
-        friction_constraint_active_mask[world_idx, constraint_idx] = 1.0
-    else:
-        friction_constraint_active_mask[world_idx, constraint_idx] = 0.0

@@ -1,17 +1,20 @@
 import warp as wp
-from axion.constraints.control_constraint import control_constraint_residual_kernel
-from axion.constraints.dynamics_constraint import unconstrained_dynamics_kernel
-from axion.constraints.friction_constraint import friction_residual_kernel
-from axion.constraints.positional_contact_constraint import positional_contact_residual_kernel
-from axion.constraints.positional_joint_constraint import positional_joint_residual_kernel
+from axion.constraints import contact_residual_kernel
+from axion.constraints import control_residual_kernel
+from axion.constraints import friction_residual_kernel
+from axion.constraints import joint_residual_kernel
+from axion.constraints import unconstrained_dynamics_kernel
 from axion.core.engine_config import EngineConfig
 from axion.core.engine_data import EngineData
 from axion.core.engine_dims import EngineDimensions
 from axion.core.model import AxionModel
 
+from .contacts import AxionContacts
+
 
 def compute_residual(
     model: AxionModel,
+    contacts: AxionContacts,
     data: EngineData,
     config: EngineConfig,
     dims: EngineDimensions,
@@ -34,7 +37,7 @@ def compute_residual(
     )
 
     wp.launch(
-        kernel=positional_joint_residual_kernel,
+        kernel=joint_residual_kernel,
         dim=(dims.num_worlds, dims.joint_count),
         inputs=[
             data.body_pose,
@@ -61,7 +64,7 @@ def compute_residual(
     )
 
     wp.launch(
-        kernel=control_constraint_residual_kernel,
+        kernel=control_residual_kernel,
         dim=(dims.num_worlds, dims.joint_count),
         inputs=[
             data.body_pose,
@@ -92,25 +95,25 @@ def compute_residual(
     )
 
     wp.launch(
-        kernel=positional_contact_residual_kernel,
+        kernel=contact_residual_kernel,
         dim=(dims.num_worlds, dims.contact_count),
         inputs=[
             data.body_pose,
             data.body_vel,
             data.body_vel_prev,
             data.constr_force.n,
-            data.contact_body_a,
-            data.contact_body_b,
-            data.contact_point_a,
-            data.contact_point_b,
-            data.contact_thickness_a,
-            data.contact_thickness_b,
-            data.contact_dist,
-            data.contact_basis_n_a,
-            data.contact_basis_n_b,
-            data.constr_active_mask.n,
+            model.body_com,
             model.body_inv_mass,
             model.body_inv_inertia,
+            model.shape_body,
+            contacts.contact_count,
+            contacts.contact_shape0,
+            contacts.contact_shape1,
+            contacts.contact_point0,
+            contacts.contact_point1,
+            contacts.contact_thickness0,
+            contacts.contact_thickness1,
+            contacts.contact_normal,
             data.dt,
         ],
         outputs=[
@@ -129,15 +132,19 @@ def compute_residual(
             data.constr_force.f,
             data.constr_force_prev_iter.f,
             data.constr_force_prev_iter.n,
-            data.contact_body_a,
-            data.contact_body_b,
-            data.contact_friction_coeff,
-            data.contact_basis_t1_a,
-            data.contact_basis_t2_a,
-            data.contact_basis_t1_b,
-            data.contact_basis_t2_b,
+            model.body_com,
             model.body_inv_mass,
             model.body_inv_inertia,
+            model.shape_body,
+            model.shape_material_mu,
+            contacts.contact_count,
+            contacts.contact_shape0,
+            contacts.contact_shape1,
+            contacts.contact_point0,
+            contacts.contact_point1,
+            contacts.contact_thickness0,
+            contacts.contact_thickness1,
+            contacts.contact_normal,
             data.dt,
         ],
         outputs=[
