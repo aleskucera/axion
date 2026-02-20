@@ -5,10 +5,6 @@ description = "Add your description here"
 readme = "README.md"
 authors = [{ name = "Aleš Kučera", email = "kuceral4@fel.cvut.cz" }]
 requires-python = ">=3.12"
-dependencies = [
-    "tensorboard",
-    "wandb>=0.25.0",
-]
 
 [project.optional-dependencies]
 sim = [
@@ -23,10 +19,12 @@ sim = [
   "pytest>=8.4.0",
   "scipy>=1.16.1",
   "taichi>=1.7.3",
+  "tensorboard",
   "torch>=2.7.1",
   "tqdm>=4.67.1",
   "trimesh>=4.6.12",
   "usd-core>=25.5.1",
+  "wandb>=0.25.0",
   "warp-lang>=1.7.1",
 ]
 dev = [
