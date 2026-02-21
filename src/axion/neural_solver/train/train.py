@@ -13,7 +13,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import sys, os
+import argparse
+import sys
+import os
 
 base_dir = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
 sys.path.append(base_dir)
@@ -23,118 +25,77 @@ import warp as wp
 wp.config.verify_cuda = True
 
 import wandb
-wandb.login()
 
-from axion.neural_solver.train.arguments import get_parser
-from axion.neural_solver.utils.python_utils import get_time_stamp, \
-    set_random_seed, solve_argv_conflict, handle_cfg_overrides
-from axion.neural_solver.algorithms.vanilla_trainer import VanillaTrainer
+from axion.neural_solver.utils.python_utils import get_time_stamp, set_random_seed
 from axion.neural_solver.algorithms.sequence_model_trainer import SequenceModelTrainer
 from axion.neural_solver.envs.axionToTrajectorySampler import AxionEnvToTrajectorySamplerAdapter
 
-def add_additional_params(parser):
-    parser.add_argument(
-        '--cfg-overrides', default="", type=str)
-    return parser
+
+def _parse_args():
+    p = argparse.ArgumentParser(description='Train transformer from YAML config.')
+    p.add_argument('--cfg', required=True, help='Path to config YAML')
+    p.add_argument('--logdir', required=True, help='Directory for logs and checkpoints')
+    p.add_argument('--test', action='store_true', help='Run evaluation instead of training')
+    p.add_argument('--checkpoint', default=None, help='Checkpoint to restore')
+    p.add_argument('--no-time-stamp', action='store_true', help='No timestamp subfolder under logdir')
+    p.add_argument('--device', default='cuda:0', help='Device (e.g. cuda:0)')
+    return p.parse_args()
+
 
 if __name__ == '__main__':
-    args_list = ['--cfg', './cfg/Ant/transformer.yaml',
-                 '--logdir', '../../data/trained_models/Ant/test/']
+    # Initiate weights and biases logging
+    wandb.login()
 
-    solve_argv_conflict(args_list)
+    args = _parse_args()
 
-    parser = get_parser()
-
-    parser = add_additional_params(parser)
-
-    args = parser.parse_args(args_list + sys.argv[1:])
-
-    # load config
+    # Read train/cfg/Pendulum/transformer.yaml for example
     with open(args.cfg, 'r') as f:
-        cfg = yaml.load(f, Loader = yaml.SafeLoader)
+        cfg = yaml.load(f, Loader=yaml.SafeLoader)
 
-    # handle parser overrides
-    handle_cfg_overrides(args.cfg_overrides, cfg)
+    # Require transformer config
+    assert 'transformer' in cfg['network'], "Only transformer model is supported; config must define network.transformer"
+    neural_integrator_name = cfg['env']['neural_integrator_cfg']['name']
+    assert neural_integrator_name == 'TransformerNeuralIntegrator', (
+        "Only TransformerNeuralIntegrator is supported. Got: " + neural_integrator_name
+    )
+    assert (
+        cfg['env']['neural_integrator_cfg'].get('num_states_history') ==
+        cfg['algorithm']['sample_sequence_length']
+    ), (
+        "'num_states_history' must equal 'sample_sequence_length' for the transformer."
+    )
 
     if not args.no_time_stamp:
-        time_stamp = get_time_stamp()
-        args.logdir = os.path.join(args.logdir, time_stamp)
-        
-    # cfg parameter overwrite
-    if args.num_envs is not None:
-        cfg['env']['num_envs'] = args.num_envs
+        args.logdir = os.path.join(args.logdir, get_time_stamp())
 
-    cfg['env']['render'] = args.render
-    
-    if args.seed is None:
-        if cfg['algorithm'].get('seed', None) is not None:
-            args.seed = cfg['algorithm']['seed']
-        else:
-            args.seed = 0
-
-    cfg['algorithm']['seed'] = args.seed
-    set_random_seed(args.seed)
+    seed = cfg['algorithm'].get('seed', 0)
+    set_random_seed(seed)
+    cfg['algorithm']['seed'] = seed
 
     args.train = not args.test
 
-    # create cli sub-config in cfg
-    vargs = vars(args)
-    cfg["cli"] = {}
-    for key in vargs.keys():
-        cfg["cli"][key] = vargs[key]
-    cfg["cli"]['train'] = args.train
-    # delete parameters that are already in cfg to avoid ambiguity
-    del cfg["cli"]["num_envs"] 
-    del cfg["cli"]["seed"]
+    cfg['cli'] = {
+        'logdir': args.logdir,
+        'train': args.train,
+        'render': cfg['env'].get('render', False),
+        'save_interval': cfg['algorithm'].get('save_interval', 50),
+        'log_interval': cfg['algorithm'].get('log_interval', 1),
+        'eval_interval': cfg['algorithm'].get('eval_interval', 1),
+        'skip_check_log_override': False,
+    }
 
-    """ Create env """
-    neural_integrator_name = cfg['env']['neural_integrator_cfg']['name']
-    
-    neural_env = AxionEnvToTrajectorySamplerAdapter(**cfg['env'], device = args.device)
+    neural_env = AxionEnvToTrajectorySamplerAdapter(**cfg['env'], device=args.device)
 
-    """ Create algorithm """
-    algorithm_name = cfg['algorithm'].get('name', 'VanillaTrainer')
-    if algorithm_name == 'VanillaTrainer':
-        assert neural_integrator_name == 'NeuralIntegrator'
-        algo = VanillaTrainer(
-            neural_env=neural_env,
-            model_checkpoint_path=args.checkpoint,
-            cfg=cfg,
-            device=args.device
-        )
-    elif algorithm_name == 'SequenceModelTrainer':
-        # some sanity check for the consistency of config file
-        if 'transformer' in cfg['network']:
-            assert neural_integrator_name == 'TransformerNeuralIntegrator'
-            assert (
-                cfg['env']['neural_integrator_cfg'].get('num_states_history') ==
-                cfg['algorithm']['sample_sequence_length']
-            ), (
-                "'num_states_history' needs to be the same as " 
-                "'sample_sequence_length' in the train config for Transformer."
-            )
-        elif 'rnn' in cfg['network']:
-            assert neural_integrator_name == 'RNNNeuralIntegrator'
-            assert (
-                cfg['env']['neural_integrator_cfg'].get('reset_seq_length', 1) ==
-                cfg['algorithm']['sample_sequence_length']
-            ), (
-                "'reset_seq_length' needs to be the same as "
-                "'sample_sequence_length' in the train config for RNN."
-            )
-        else:
-            raise NotImplementedError
-        
-        algo = SequenceModelTrainer(
-            neural_env=neural_env,
-            model_checkpoint_path=args.checkpoint,
-            cfg=cfg,
-            device=args.device
-        )
-    else:
-        raise NotImplementedError(f'Algorithm {algorithm_name} not recognized')
-    
+    algo = SequenceModelTrainer(
+        neural_env=neural_env,
+        model_checkpoint_path=args.checkpoint,
+        cfg=cfg,
+        device=args.device
+    )
+
     if args.train:
+        print("Begin torch module training")
         algo.train()
     else:
+        print("Begin torch module testing")
         algo.test()
