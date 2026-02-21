@@ -188,34 +188,34 @@ class AxionEngine(SolverBase):
 
         self.data.save_iter_to_history()
 
-    def _update_mass_matrix(self):
-        wp.launch(
-            kernel=world_spatial_inertia_kernel,
-            dim=(self.axion_model.num_worlds, self.axion_model.body_count),
-            inputs=[
-                self.data.body_pose,
-                self.axion_model.body_mass,
-                self.axion_model.body_inertia,
-            ],
-            outputs=[
-                self.data.world_M,
-            ],
-            device=self.device,
-        )
-
-        wp.launch(
-            kernel=world_spatial_inertia_kernel,
-            dim=(self.axion_model.num_worlds, self.axion_model.body_count),
-            inputs=[
-                self.data.body_pose,
-                self.axion_model.body_inv_mass,
-                self.axion_model.body_inv_inertia,
-            ],
-            outputs=[
-                self.data.world_M_inv,
-            ],
-            device=self.device,
-        )
+    # def _update_mass_matrix(self):
+    #     wp.launch(
+    #         kernel=world_spatial_inertia_kernel,
+    #         dim=(self.axion_model.num_worlds, self.axion_model.body_count),
+    #         inputs=[
+    #             self.data.body_pose,
+    #             self.axion_model.body_mass,
+    #             self.axion_model.body_inertia,
+    #         ],
+    #         outputs=[
+    #             self.data.world_M,
+    #         ],
+    #         device=self.device,
+    #     )
+    #
+    #     wp.launch(
+    #         kernel=world_spatial_inertia_kernel,
+    #         dim=(self.axion_model.num_worlds, self.axion_model.body_count),
+    #         inputs=[
+    #             self.data.body_pose,
+    #             self.axion_model.body_inv_mass,
+    #             self.axion_model.body_inv_inertia,
+    #         ],
+    #         outputs=[
+    #             self.data.world_M_inv,
+    #         ],
+    #         device=self.device,
+    #     )
 
     def _check_convergence(self):
         wp.launch(
@@ -341,7 +341,6 @@ class AxionEngine(SolverBase):
             compute_linear_system(
                 self.axion_model, self.axion_contacts, self.data, self.config, self.dims
             )
-            self._update_mass_matrix()
             self.preconditioner.update()
 
             # Linear Solve

@@ -117,6 +117,26 @@ def compute_dbody_vel_kernel(
     )
 
 
+@wp.kernel
+def compute_world_inv_inertia_kernel(
+    body_pose: wp.array(dtype=wp.transform, ndim=2),
+    body_I_inv: wp.array(dtype=wp.mat33, ndim=2),
+    # Outputs
+    world_I_inv: wp.array(dtype=wp.mat33, ndim=2),
+):
+    world_idx, body_idx = wp.tid()
+
+    # Boundary check (if needed, depending on how you launch)
+    if body_idx >= body_pose.shape[1]:
+        return
+
+    pose = body_pose[world_idx, body_idx]
+    I_inv_b = body_I_inv[world_idx, body_idx]
+
+    # compute_world_inertia expects (transform, mat33) and returns mat33
+    world_I_inv[world_idx, body_idx] = compute_world_inertia(pose, I_inv_b)
+
+
 def compute_linear_system(
     model: AxionModel,
     contacts: AxionContacts,
@@ -124,6 +144,20 @@ def compute_linear_system(
     config: EngineConfig,
     dims: EngineDimensions,
 ):
+
+    wp.launch(
+        kernel=compute_world_inv_inertia_kernel,
+        dim=(model.num_worlds, model.body_count),
+        inputs=[
+            data.body_pose,
+            model.body_inv_inertia,
+        ],
+        outputs=[
+            data.world_inv_inertia,
+        ],
+        device=data.device,
+    )
+
     wp.launch(
         kernel=unconstrained_dynamics_kernel,
         dim=(dims.N_w, dims.N_b),

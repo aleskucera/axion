@@ -2,14 +2,14 @@
 Jacobi preconditioner for the system matrix A = J M⁻¹ Jᵀ + C.
 """
 import warp as wp
-from axion.types import SpatialInertia
-from axion.types import to_spatial_momentum
+from axion.math import compute_spatial_momentum
 from warp.optim.linear import LinearOperator
 
 
 @wp.kernel
 def compute_inv_diag_kernel(
-    body_M_inv: wp.array(dtype=SpatialInertia, ndim=2),
+    body_inv_mass: wp.array(dtype=wp.float32, ndim=2),
+    world_inv_inertia: wp.array(dtype=wp.mat33, ndim=2),
     J_values: wp.array(dtype=wp.spatial_vector, ndim=3),
     C_values: wp.array(dtype=wp.float32, ndim=2),
     constraint_body_idx: wp.array(dtype=wp.int32, ndim=3),
@@ -33,13 +33,15 @@ def compute_inv_diag_kernel(
 
     result = 0.0
     if body_1 >= 0:
-        M_inv_1 = body_M_inv[world_idx, body_1]
+        m_inv_1 = body_inv_mass[world_idx, body_1]
+        I_inv_1 = world_inv_inertia[world_idx, body_1]
         J_1 = J_values[world_idx, constraint_idx, 0]
-        result += wp.dot(J_1, to_spatial_momentum(M_inv_1, J_1))
+        result += wp.dot(J_1, compute_spatial_momentum(m_inv_1, I_inv_1, J_1))
     if body_2 >= 0:
-        M_inv_2 = body_M_inv[world_idx, body_2]
+        m_inv_2 = body_inv_mass[world_idx, body_2]
+        I_inv_2 = world_inv_inertia[world_idx, body_2]
         J_2 = J_values[world_idx, constraint_idx, 1]
-        result += wp.dot(J_2, to_spatial_momentum(M_inv_2, J_2))
+        result += wp.dot(J_2, compute_spatial_momentum(m_inv_2, I_inv_2, J_2))
 
     # Add diagonal compliance term C[i,i]
     diag_A = result + C_values[world_idx, constraint_idx] + regularization
@@ -110,7 +112,8 @@ class JacobiPreconditioner(LinearOperator):
             kernel=compute_inv_diag_kernel,
             dim=(self.engine.dims.num_worlds, self.engine.dims.num_constraints),
             inputs=[
-                self.engine.data.world_M_inv,
+                self.engine.axion_model.body_inv_mass,
+                self.engine.data.world_inv_inertia,
                 self.engine.data.J_values.full,
                 self.engine.data.C_values.full,
                 self.engine.data.constr_body_idx.full,

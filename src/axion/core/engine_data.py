@@ -97,24 +97,6 @@ class EngineData:
         self.constr_body_idx = ConstraintView(self._constr_body_idx, dims, axis=-2)
         self.constr_active_mask = ConstraintView(self._constr_active_mask, dims)
 
-        # # Contact information --- Will be deleted
-        # self.contact_body_a = _alloc((dims.contact_count,), wp.int32)
-        # self.contact_body_b = _alloc((dims.contact_count,), wp.int32)
-        # self.contact_point_a = _alloc((dims.contact_count,), wp.vec3)
-        # self.contact_point_b = _alloc((dims.contact_count,), wp.vec3)
-        # self.contact_thickness_a = _alloc((dims.contact_count,), wp.float32)
-        # self.contact_thickness_b = _alloc((dims.contact_count,), wp.float32)
-        # self.contact_dist = _alloc((dims.contact_count,), wp.float32)
-        # self.contact_friction_coeff = _alloc((dims.contact_count,), wp.float32)
-        # self.contact_restitution_coeff = _alloc((dims.contact_count,), wp.float32)
-        # self.contact_basis_n_a = _alloc((dims.contact_count,), wp.spatial_vector)
-        # self.contact_basis_t1_a = _alloc((dims.contact_count,), wp.spatial_vector)
-        # self.contact_basis_t2_a = _alloc((dims.contact_count,), wp.spatial_vector)
-        # self.contact_basis_n_b = _alloc((dims.contact_count,), wp.spatial_vector)
-        # self.contact_basis_t1_b = _alloc((dims.contact_count,), wp.spatial_vector)
-        # self.contact_basis_t2_b = _alloc((dims.contact_count,), wp.spatial_vector)
-        # # --- End of deletion
-
         # =========================================================================
         # Linear System Arrays
         # =========================================================================
@@ -125,8 +107,9 @@ class EngineData:
         self.res = SystemView(self._res, dims, self._res_spatial)
 
         # Efficiently stored values of sparse system matrix
-        self.world_M = _alloc((dims.body_count,), SpatialInertia)
-        self.world_M_inv = _alloc((dims.body_count,), SpatialInertia)
+        self.world_inv_inertia = _alloc((dims.body_count,), wp.mat33)
+        # self.world_M = _alloc((dims.body_count,), SpatialInertia)
+        # self.world_M_inv = _alloc((dims.body_count,), SpatialInertia)
         self._J_values = _alloc((dims.num_constraints, 2), wp.spatial_vector)
         self._C_values = _alloc((dims.num_constraints,), wp.float32)
 
