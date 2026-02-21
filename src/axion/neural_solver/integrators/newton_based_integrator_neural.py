@@ -49,7 +49,7 @@ class NewtonIntegratorCfg:
 
 class NewtonBasedNeuralIntegrator:
     """
-    Minimal integrator-like object expected by VanillaTrainer / SequenceModelTrainer.
+    Minimal integrator-like object expected by SequenceModelTrainer.
 
     It assumes the generalized state layout:
         states = [q(0:dof_q), qd(0:dof_qd)]
