@@ -93,13 +93,13 @@ def compute_friction_core(
     p1_local: wp.vec3,
     thickness0: float,
     thickness1: float,
-    pose0: wp.transform,
     vel0: wp.spatial_vector,
+    pose0_prev: wp.transform,
     m_inv0: float,
     I_inv0: wp.mat33,
     com0: wp.vec3,
-    pose1: wp.transform,
     vel1: wp.spatial_vector,
+    pose1_prev: wp.transform,
     m_inv1: float,
     I_inv1: wp.mat33,
     com1: wp.vec3,
@@ -117,10 +117,10 @@ def compute_friction_core(
     J_t2_0 = wp.spatial_vector()
 
     if body0 >= 0:
-        p0_world = wp.transform_point(pose0, p0_local)
-        p0_adj = p0_world - (thickness0 * n)
-        com0_world = wp.transform_point(pose0, com0)
-        r0 = p0_adj - com0_world
+        p0_world_prev = wp.transform_point(pose0_prev, p0_local)
+        p0_adj_prev = p0_world_prev - (thickness0 * n)
+        com0_world_prev = wp.transform_point(pose0_prev, com0)
+        r0 = p0_adj_prev - com0_world_prev
         J_t1_0 = wp.spatial_vector(t1, wp.cross(r0, t1))
         J_t2_0 = wp.spatial_vector(t2, wp.cross(r0, t2))
 
@@ -128,18 +128,18 @@ def compute_friction_core(
     J_t2_1 = wp.spatial_vector()
 
     if body1 >= 0:
-        p1_world = wp.transform_point(pose1, p1_local)
-        p1_adj = p1_world + (thickness1 * n)
-        com1_world = wp.transform_point(pose1, com1)
-        r1 = p1_adj - com1_world
+        p1_world_prev = wp.transform_point(pose1_prev, p1_local)
+        p1_adj_prev = p1_world_prev + (thickness1 * n)
+        com1_world_prev = wp.transform_point(pose1_prev, com1)
+        r1 = p1_adj_prev - com1_world_prev
         J_t1_1 = wp.spatial_vector(-t1, -wp.cross(r1, t1))
         J_t2_1 = wp.spatial_vector(-t2, -wp.cross(r1, t2))
 
     w_t1 = compute_effective_mass(
-        pose0, pose1, J_t1_0, J_t1_1, m_inv0, I_inv0, m_inv1, I_inv1, body0, body1
+        pose0_prev, pose1_prev, J_t1_0, J_t1_1, m_inv0, I_inv0, m_inv1, I_inv1, body0, body1
     )
     w_t2 = compute_effective_mass(
-        pose0, pose1, J_t2_0, J_t2_1, m_inv0, I_inv0, m_inv1, I_inv1, body0, body1
+        pose0_prev, pose1_prev, J_t2_0, J_t2_1, m_inv0, I_inv0, m_inv1, I_inv1, body0, body1
     )
 
     effective_mass = (w_t1 + w_t2) * 0.5
@@ -167,8 +167,8 @@ def compute_friction_core(
 @wp.kernel
 def friction_residual_kernel(
     # State variables
-    body_pose: wp.array(dtype=wp.transform, ndim=2),
     body_vel: wp.array(dtype=wp.spatial_vector, ndim=2),
+    body_pose_prev: wp.array(dtype=wp.transform, ndim=2),
     constr_force: wp.array(dtype=wp.float32, ndim=2),
     constr_force_prev: wp.array(dtype=wp.float32, ndim=2),
     constr_force_n_prev: wp.array(dtype=wp.float32, ndim=2),
@@ -195,21 +195,24 @@ def friction_residual_kernel(
     res_f: wp.array(dtype=wp.float32, ndim=2),
 ):
     world_idx, contact_idx = wp.tid()
+    constr_idx0 = 2 * contact_idx
+    constr_idx1 = 2 * contact_idx + 1
 
     if contact_idx >= contact_count[world_idx]:
+        res_f[world_idx, constr_idx0] = 0.0
+        res_f[world_idx, constr_idx1] = 0.0
         return
 
     shape0 = contact_shape0[world_idx, contact_idx]
     shape1 = contact_shape1[world_idx, contact_idx]
 
     if shape0 == shape1:
+        res_f[world_idx, constr_idx0] = 0.0
+        res_f[world_idx, constr_idx1] = 0.0
         return
 
     mu = (shape_material_mu[world_idx, shape0] + shape_material_mu[world_idx, shape1]) * 0.5
     force_n_prev = constr_force_n_prev[world_idx, contact_idx]
-
-    constr_idx0 = 2 * contact_idx
-    constr_idx1 = 2 * contact_idx + 1
 
     # EARLY EXIT: Save memory bandwidth
     if mu * force_n_prev <= 1e-6:
@@ -221,30 +224,30 @@ def friction_residual_kernel(
     n = contact_normal[world_idx, contact_idx]
     t1, t2 = orthogonal_basis(n)
 
-    pose0, vel0, m_inv0, I_inv0, com0 = (
-        wp.transform_identity(),
+    vel0, pose0_prev, m_inv0, I_inv0, com0 = (
         wp.spatial_vector(),
+        wp.transform_identity(),
         0.0,
         wp.mat33(0.0),
         wp.vec3(),
     )
     if body0 >= 0:
-        pose0 = body_pose[world_idx, body0]
         vel0 = body_vel[world_idx, body0]
+        pose0_prev = body_pose_prev[world_idx, body0]
         m_inv0 = body_m_inv[world_idx, body0]
         I_inv0 = body_I_inv[world_idx, body0]
         com0 = body_com[world_idx, body0]
 
-    pose1, vel1, m_inv1, I_inv1, com1 = (
-        wp.transform_identity(),
+    vel1, pose1_prev, m_inv1, I_inv1, com1 = (
         wp.spatial_vector(),
+        wp.transform_identity(),
         0.0,
         wp.mat33(0.0),
         wp.vec3(),
     )
     if body1 >= 0:
-        pose1 = body_pose[world_idx, body1]
         vel1 = body_vel[world_idx, body1]
+        pose1_prev = body_pose_prev[world_idx, body1]
         m_inv1 = body_m_inv[world_idx, body1]
         I_inv1 = body_I_inv[world_idx, body1]
         com1 = body_com[world_idx, body1]
@@ -270,13 +273,13 @@ def friction_residual_kernel(
         p1,
         thickness0,
         thickness1,
-        pose0,
         vel0,
+        pose0_prev,
         m_inv0,
         I_inv0,
         com0,
-        pose1,
         vel1,
+        pose1_prev,
         m_inv1,
         I_inv1,
         com1,
@@ -300,8 +303,8 @@ def friction_residual_kernel(
 @wp.kernel
 def friction_constraint_kernel(
     # State variables
-    body_pose: wp.array(dtype=wp.transform, ndim=2),
     body_vel: wp.array(dtype=wp.spatial_vector, ndim=2),
+    body_pose_prev: wp.array(dtype=wp.transform, ndim=2),
     constr_force: wp.array(dtype=wp.float32, ndim=2),
     constr_force_prev: wp.array(dtype=wp.float32, ndim=2),
     constr_force_n_prev: wp.array(dtype=wp.float32, ndim=2),
@@ -333,20 +336,48 @@ def friction_constraint_kernel(
 ):
     world_idx, contact_idx = wp.tid()
 
+    constr_idx0 = 2 * contact_idx
+    constr_idx1 = 2 * contact_idx + 1
+
     if contact_idx >= contact_count[world_idx]:
+        constr_active_mask[world_idx, constr_idx0] = 0.0
+        constr_active_mask[world_idx, constr_idx1] = 0.0
+        constr_force[world_idx, constr_idx0] = 0.0
+        constr_force[world_idx, constr_idx1] = 0.0
+        res_f[world_idx, constr_idx0] = 0.0
+        res_f[world_idx, constr_idx1] = 0.0
+
+        J_hat_f_values[world_idx, constr_idx0, 0] = wp.spatial_vector()
+        J_hat_f_values[world_idx, constr_idx1, 0] = wp.spatial_vector()
+        J_hat_f_values[world_idx, constr_idx0, 1] = wp.spatial_vector()
+        J_hat_f_values[world_idx, constr_idx1, 1] = wp.spatial_vector()
+
+        C_f_values[world_idx, constr_idx0] = 0.0
+        C_f_values[world_idx, constr_idx1] = 0.0
         return
 
     shape0 = contact_shape0[world_idx, contact_idx]
     shape1 = contact_shape1[world_idx, contact_idx]
 
     if shape0 == shape1:
+        constr_active_mask[world_idx, constr_idx0] = 0.0
+        constr_active_mask[world_idx, constr_idx1] = 0.0
+        constr_force[world_idx, constr_idx0] = 0.0
+        constr_force[world_idx, constr_idx1] = 0.0
+        res_f[world_idx, constr_idx0] = 0.0
+        res_f[world_idx, constr_idx1] = 0.0
+
+        J_hat_f_values[world_idx, constr_idx0, 0] = wp.spatial_vector()
+        J_hat_f_values[world_idx, constr_idx1, 0] = wp.spatial_vector()
+        J_hat_f_values[world_idx, constr_idx0, 1] = wp.spatial_vector()
+        J_hat_f_values[world_idx, constr_idx1, 1] = wp.spatial_vector()
+
+        C_f_values[world_idx, constr_idx0] = 0.0
+        C_f_values[world_idx, constr_idx1] = 0.0
         return
 
     mu = (shape_material_mu[world_idx, shape0] + shape_material_mu[world_idx, shape1]) * 0.5
     force_n_prev = constr_force_n_prev[world_idx, contact_idx]
-
-    constr_idx0 = 2 * contact_idx
-    constr_idx1 = 2 * contact_idx + 1
 
     if mu * force_n_prev <= 1e-6:
         constr_active_mask[world_idx, constr_idx0] = 0.0
@@ -378,30 +409,30 @@ def friction_constraint_kernel(
     n = contact_normal[world_idx, contact_idx]
     t1, t2 = orthogonal_basis(n)
 
-    pose0, vel0, m_inv0, I_inv0, com0 = (
-        wp.transform_identity(),
+    vel0, pose0_prev, m_inv0, I_inv0, com0 = (
         wp.spatial_vector(),
+        wp.transform_identity(),
         0.0,
         wp.mat33(0.0),
         wp.vec3(),
     )
     if body0 >= 0:
-        pose0 = body_pose[world_idx, body0]
         vel0 = body_vel[world_idx, body0]
+        pose0_prev = body_pose_prev[world_idx, body0]
         m_inv0 = body_m_inv[world_idx, body0]
         I_inv0 = body_I_inv[world_idx, body0]
         com0 = body_com[world_idx, body0]
 
-    pose1, vel1, m_inv1, I_inv1, com1 = (
-        wp.transform_identity(),
+    vel1, pose1_prev, m_inv1, I_inv1, com1 = (
         wp.spatial_vector(),
+        wp.transform_identity(),
         0.0,
         wp.mat33(0.0),
         wp.vec3(),
     )
     if body1 >= 0:
-        pose1 = body_pose[world_idx, body1]
         vel1 = body_vel[world_idx, body1]
+        pose1_prev = body_pose_prev[world_idx, body1]
         m_inv1 = body_m_inv[world_idx, body1]
         I_inv1 = body_I_inv[world_idx, body1]
         com1 = body_com[world_idx, body1]
@@ -427,13 +458,13 @@ def friction_constraint_kernel(
         p1,
         thickness0,
         thickness1,
-        pose0,
         vel0,
+        pose0_prev,
         m_inv0,
         I_inv0,
         com0,
-        pose1,
         vel1,
+        pose1_prev,
         m_inv1,
         I_inv1,
         com1,
@@ -470,8 +501,8 @@ def friction_constraint_kernel(
 @wp.kernel
 def batch_friction_residual_kernel(
     # State variables (3D)
-    body_pose: wp.array(dtype=wp.transform, ndim=3),
     body_vel: wp.array(dtype=wp.spatial_vector, ndim=3),
+    body_pose_prev: wp.array(dtype=wp.transform, ndim=2),
     constr_force: wp.array(dtype=wp.float32, ndim=3),
     constr_force_prev: wp.array(dtype=wp.float32, ndim=2),  # Prev step remains 2D
     constr_force_n_prev: wp.array(dtype=wp.float32, ndim=2),
@@ -523,30 +554,30 @@ def batch_friction_residual_kernel(
     n = contact_normal[world_idx, contact_idx]
     t1, t2 = orthogonal_basis(n)
 
-    pose0, vel0, m_inv0, I_inv0, com0 = (
-        wp.transform_identity(),
+    vel0, pose0_prev, m_inv0, I_inv0, com0 = (
         wp.spatial_vector(),
+        wp.transform_identity(),
         0.0,
         wp.mat33(0.0),
         wp.vec3(),
     )
     if body0 >= 0:
-        pose0 = body_pose[batch_idx, world_idx, body0]
         vel0 = body_vel[batch_idx, world_idx, body0]
+        pose0_prev = body_pose_prev[world_idx, body0]
         m_inv0 = body_m_inv[world_idx, body0]
         I_inv0 = body_I_inv[world_idx, body0]
         com0 = body_com[world_idx, body0]
 
-    pose1, vel1, m_inv1, I_inv1, com1 = (
-        wp.transform_identity(),
+    vel1, pose1_prev, m_inv1, I_inv1, com1 = (
         wp.spatial_vector(),
+        wp.transform_identity(),
         0.0,
         wp.mat33(0.0),
         wp.vec3(),
     )
     if body1 >= 0:
-        pose1 = body_pose[batch_idx, world_idx, body1]
         vel1 = body_vel[batch_idx, world_idx, body1]
+        pose1_prev = body_pose_prev[world_idx, body1]
         m_inv1 = body_m_inv[world_idx, body1]
         I_inv1 = body_I_inv[world_idx, body1]
         com1 = body_com[world_idx, body1]
@@ -572,13 +603,13 @@ def batch_friction_residual_kernel(
         p1,
         thickness0,
         thickness1,
-        pose0,
         vel0,
+        pose0_prev,
         m_inv0,
         I_inv0,
         com0,
-        pose1,
         vel1,
+        pose1_prev,
         m_inv1,
         I_inv1,
         com1,
@@ -602,8 +633,8 @@ def batch_friction_residual_kernel(
 @wp.kernel
 def fused_batch_friction_residual_kernel(
     # State variables (3D)
-    body_pose: wp.array(dtype=wp.transform, ndim=3),
     body_vel: wp.array(dtype=wp.spatial_vector, ndim=3),
+    body_pose_prev: wp.array(dtype=wp.transform, ndim=2),
     constr_force: wp.array(dtype=wp.float32, ndim=3),
     constr_force_prev: wp.array(dtype=wp.float32, ndim=2),
     constr_force_n_prev: wp.array(dtype=wp.float32, ndim=2),
@@ -664,30 +695,32 @@ def fused_batch_friction_residual_kernel(
     thickness1 = contact_thickness1[world_idx, contact_idx]
 
     m_inv0, I_inv0, com0 = 0.0, wp.mat33(0.0), wp.vec3()
+    pose0_prev = wp.transform_identity()
     if body0 >= 0:
         m_inv0 = body_m_inv[world_idx, body0]
         I_inv0 = body_I_inv[world_idx, body0]
         com0 = body_com[world_idx, body0]
+        pose0_prev = body_pose_prev[world_idx, body0]
 
     m_inv1, I_inv1, com1 = 0.0, wp.mat33(0.0), wp.vec3()
+    pose1_prev = wp.transform_identity()
     if body1 >= 0:
         m_inv1 = body_m_inv[world_idx, body1]
         I_inv1 = body_I_inv[world_idx, body1]
         com1 = body_com[world_idx, body1]
+        pose1_prev = body_pose_prev[world_idx, body1]
 
     lam_t1_p = constr_force_prev[world_idx, constr_idx0]
     lam_t2_p = constr_force_prev[world_idx, constr_idx1]
 
     # --- Iterate through batches utilizing the preloaded memory ---
     for b in range(num_batches):
-        pose0, vel0 = wp.transform_identity(), wp.spatial_vector()
+        vel0 = wp.spatial_vector()
         if body0 >= 0:
-            pose0 = body_pose[b, world_idx, body0]
             vel0 = body_vel[b, world_idx, body0]
 
-        pose1, vel1 = wp.transform_identity(), wp.spatial_vector()
+        vel1 = wp.spatial_vector()
         if body1 >= 0:
-            pose1 = body_pose[b, world_idx, body1]
             vel1 = body_vel[b, world_idx, body1]
 
         lam_t1 = constr_force[b, world_idx, constr_idx0]
@@ -705,13 +738,13 @@ def fused_batch_friction_residual_kernel(
                 p1,
                 thickness0,
                 thickness1,
-                pose0,
                 vel0,
+                pose0_prev,
                 m_inv0,
                 I_inv0,
                 com0,
-                pose1,
                 vel1,
+                pose1_prev,
                 m_inv1,
                 I_inv1,
                 com1,

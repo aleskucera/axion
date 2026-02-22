@@ -49,6 +49,8 @@ def compute_contact_core(
     m_inv1: float,
     I_inv1: wp.mat33,
     com1: wp.vec3,
+    pose0_prev: wp.transform,
+    pose1_prev: wp.transform,
     f_n: float,
     dt: float,
 ):
@@ -56,24 +58,29 @@ def compute_contact_core(
     Computes all Jacobians and contact residuals dynamically.
     Array-agnostic, supporting both standard and batched execution.
     """
-    # ALWAYS compute adjusted points (crucial for signed_distance of static bodies!)
+    # Jacobian calculation is based on PREVIOUS poses
+    p0_world_prev = wp.transform_point(pose0_prev, p0_local)
+    p0_adj_prev = p0_world_prev - (thickness0 * n)
+    p1_world_prev = wp.transform_point(pose1_prev, p1_local)
+    p1_adj_prev = p1_world_prev + (thickness1 * n)
+
+    # Penetration depth is based on CURRENT poses
     p0_world = wp.transform_point(pose0, p0_local)
     p0_adj = p0_world - (thickness0 * n)
-
     p1_world = wp.transform_point(pose1, p1_local)
     p1_adj = p1_world + (thickness1 * n)
 
     # Compute Jacobians ONLY for dynamic bodies
     J0 = wp.spatial_vector()
     if body0 >= 0:
-        com0_world = wp.transform_point(pose0, com0)
-        lever0 = p0_adj - com0_world
+        com0_world_prev = wp.transform_point(pose0_prev, com0)
+        lever0 = p0_adj_prev - com0_world_prev
         J0 = wp.spatial_vector(n, wp.cross(lever0, n))
 
     J1 = wp.spatial_vector()
     if body1 >= 0:
-        com1_world = wp.transform_point(pose1, com1)
-        lever1 = p1_adj - com1_world
+        com1_world_prev = wp.transform_point(pose1_prev, com1)
+        lever1 = p1_adj_prev - com1_world_prev
         J1 = wp.spatial_vector(-n, wp.cross(lever1, -n))
 
     # --- 1. Compute Signed Distance ---
@@ -81,7 +88,7 @@ def compute_contact_core(
 
     # --- 2. Compute Effective Mass ---
     effective_mass = compute_effective_mass(
-        pose0, pose1, J0, J1, m_inv0, I_inv0, m_inv1, I_inv1, body0, body1
+        pose0_prev, pose1_prev, J0, J1, m_inv0, I_inv0, m_inv1, I_inv1, body0, body1
     )
     precond = wp.pow(dt, 2.0) * effective_mass
 
@@ -111,6 +118,7 @@ def contact_residual_kernel(
     body_pose: wp.array(dtype=wp.transform, ndim=2),
     body_vel: wp.array(dtype=wp.spatial_vector, ndim=2),
     body_vel_prev: wp.array(dtype=wp.spatial_vector, ndim=2),
+    body_pose_prev: wp.array(dtype=wp.transform, ndim=2),
     constr_force: wp.array(dtype=wp.float32, ndim=2),
     # Body properties
     body_com: wp.array(dtype=wp.vec3, ndim=2),
@@ -136,12 +144,14 @@ def contact_residual_kernel(
     world_idx, contact_idx = wp.tid()
 
     if contact_idx >= contact_count[world_idx]:
+        res_n[world_idx, contact_idx] = 0.0
         return
 
     shape0 = contact_shape0[world_idx, contact_idx]
     shape1 = contact_shape1[world_idx, contact_idx]
 
     if shape0 == shape1:
+        res_n[world_idx, contact_idx] = 0.0
         return
 
     body0, body1 = resolve_body_indices(world_idx, shape0, shape1, shape_body)
@@ -149,18 +159,22 @@ def contact_residual_kernel(
     f_n = constr_force[world_idx, contact_idx]
 
     pose0, m_inv0, I_inv0, com0 = wp.transform_identity(), 0.0, wp.mat33(0.0), wp.vec3()
+    pose0_prev = wp.transform_identity()
     if body0 >= 0:
         pose0 = body_pose[world_idx, body0]
         m_inv0 = body_m_inv[world_idx, body0]
         I_inv0 = body_I_inv[world_idx, body0]
         com0 = body_com[world_idx, body0]
+        pose0_prev = body_pose_prev[world_idx, body0]
 
     pose1, m_inv1, I_inv1, com1 = wp.transform_identity(), 0.0, wp.mat33(0.0), wp.vec3()
+    pose1_prev = wp.transform_identity()
     if body1 >= 0:
         pose1 = body_pose[world_idx, body1]
         m_inv1 = body_m_inv[world_idx, body1]
         I_inv1 = body_I_inv[world_idx, body1]
         com1 = body_com[world_idx, body1]
+        pose1_prev = body_pose_prev[world_idx, body1]
 
     p0 = contact_point0[world_idx, contact_idx]
     p1 = contact_point1[world_idx, contact_idx]
@@ -183,6 +197,8 @@ def contact_residual_kernel(
         m_inv1,
         I_inv1,
         com1,
+        pose0_prev,
+        pose1_prev,
         f_n,
         dt,
     )
@@ -201,6 +217,7 @@ def contact_constraint_kernel(
     body_pose: wp.array(dtype=wp.transform, ndim=2),
     body_vel: wp.array(dtype=wp.spatial_vector, ndim=2),
     body_vel_prev: wp.array(dtype=wp.spatial_vector, ndim=2),
+    body_pose_prev: wp.array(dtype=wp.transform, ndim=2),
     constr_force: wp.array(dtype=wp.float32, ndim=2),
     # Body properties
     body_com: wp.array(dtype=wp.vec3, ndim=2),
@@ -230,6 +247,12 @@ def contact_constraint_kernel(
     world_idx, contact_idx = wp.tid()
 
     if contact_idx >= contact_count[world_idx]:
+        constr_active_mask[world_idx, contact_idx] = 0.0
+        constr_force[world_idx, contact_idx] = 0.0
+        res_n[world_idx, contact_idx] = 0.0
+        J_hat_n_values[world_idx, contact_idx, 0] = wp.spatial_vector()
+        J_hat_n_values[world_idx, contact_idx, 1] = wp.spatial_vector()
+        C_n_values[world_idx, contact_idx] = 0.0
         return
 
     shape0 = contact_shape0[world_idx, contact_idx]
@@ -249,18 +272,22 @@ def contact_constraint_kernel(
     f_n = constr_force[world_idx, contact_idx]
 
     pose0, m_inv0, I_inv0, com0 = wp.transform_identity(), 0.0, wp.mat33(0.0), wp.vec3()
+    pose0_prev = wp.transform_identity()
     if body0 >= 0:
         pose0 = body_pose[world_idx, body0]
         m_inv0 = body_m_inv[world_idx, body0]
         I_inv0 = body_I_inv[world_idx, body0]
         com0 = body_com[world_idx, body0]
+        pose0_prev = body_pose_prev[world_idx, body0]
 
     pose1, m_inv1, I_inv1, com1 = wp.transform_identity(), 0.0, wp.mat33(0.0), wp.vec3()
+    pose1_prev = wp.transform_identity()
     if body1 >= 0:
         pose1 = body_pose[world_idx, body1]
         m_inv1 = body_m_inv[world_idx, body1]
         I_inv1 = body_I_inv[world_idx, body1]
         com1 = body_com[world_idx, body1]
+        pose1_prev = body_pose_prev[world_idx, body1]
 
     p0 = contact_point0[world_idx, contact_idx]
     p1 = contact_point1[world_idx, contact_idx]
@@ -283,6 +310,8 @@ def contact_constraint_kernel(
         m_inv1,
         I_inv1,
         com1,
+        pose0_prev,
+        pose1_prev,
         f_n,
         dt,
     )
@@ -313,6 +342,7 @@ def batch_contact_residual_kernel(
     body_pose: wp.array(dtype=wp.transform, ndim=3),
     body_vel: wp.array(dtype=wp.spatial_vector, ndim=3),
     body_vel_prev: wp.array(dtype=wp.spatial_vector, ndim=2),
+    body_pose_prev: wp.array(dtype=wp.transform, ndim=2),
     constr_force: wp.array(dtype=wp.float32, ndim=3),
     # Body properties
     body_com: wp.array(dtype=wp.vec3, ndim=2),
@@ -351,18 +381,22 @@ def batch_contact_residual_kernel(
     f_n = constr_force[batch_idx, world_idx, contact_idx]
 
     pose0, m_inv0, I_inv0, com0 = wp.transform_identity(), 0.0, wp.mat33(0.0), wp.vec3()
+    pose0_prev = wp.transform_identity()
     if body0 >= 0:
         pose0 = body_pose[batch_idx, world_idx, body0]
         m_inv0 = body_m_inv[world_idx, body0]
         I_inv0 = body_I_inv[world_idx, body0]
         com0 = body_com[world_idx, body0]
+        pose0_prev = body_pose_prev[world_idx, body0]
 
     pose1, m_inv1, I_inv1, com1 = wp.transform_identity(), 0.0, wp.mat33(0.0), wp.vec3()
+    pose1_prev = wp.transform_identity()
     if body1 >= 0:
         pose1 = body_pose[batch_idx, world_idx, body1]
         m_inv1 = body_m_inv[world_idx, body1]
         I_inv1 = body_I_inv[world_idx, body1]
         com1 = body_com[world_idx, body1]
+        pose1_prev = body_pose_prev[world_idx, body1]
 
     p0 = contact_point0[world_idx, contact_idx]
     p1 = contact_point1[world_idx, contact_idx]
@@ -385,6 +419,8 @@ def batch_contact_residual_kernel(
         m_inv1,
         I_inv1,
         com1,
+        pose0_prev,
+        pose1_prev,
         f_n,
         dt,
     )
@@ -403,6 +439,7 @@ def fused_batch_contact_residual_kernel(
     body_pose: wp.array(dtype=wp.transform, ndim=3),
     body_vel: wp.array(dtype=wp.spatial_vector, ndim=3),
     body_vel_prev: wp.array(dtype=wp.spatial_vector, ndim=2),
+    body_pose_prev: wp.array(dtype=wp.transform, ndim=2),
     constr_force: wp.array(dtype=wp.float32, ndim=3),
     # Body properties
     body_com: wp.array(dtype=wp.vec3, ndim=2),
@@ -446,16 +483,20 @@ def fused_batch_contact_residual_kernel(
     thickness1 = contact_thickness1[world_idx, contact_idx]
 
     m_inv0, I_inv0, com0 = 0.0, wp.mat33(0.0), wp.vec3()
+    pose0_prev = wp.transform_identity()
     if body0 >= 0:
         m_inv0 = body_m_inv[world_idx, body0]
         I_inv0 = body_I_inv[world_idx, body0]
         com0 = body_com[world_idx, body0]
+        pose0_prev = body_pose_prev[world_idx, body0]
 
     m_inv1, I_inv1, com1 = 0.0, wp.mat33(0.0), wp.vec3()
+    pose1_prev = wp.transform_identity()
     if body1 >= 0:
         m_inv1 = body_m_inv[world_idx, body1]
         I_inv1 = body_I_inv[world_idx, body1]
         com1 = body_com[world_idx, body1]
+        pose1_prev = body_pose_prev[world_idx, body1]
 
     # --- Iterate through batches utilizing the preloaded memory ---
     for b in range(num_batches):
@@ -485,6 +526,8 @@ def fused_batch_contact_residual_kernel(
             m_inv1,
             I_inv1,
             com1,
+            pose0_prev,
+            pose1_prev,
             f_n,
             dt,
         )

@@ -101,6 +101,7 @@ def compute_residual(
             data.body_pose,
             data.body_vel,
             data.body_vel_prev,
+            data.body_pose_prev,
             data.constr_force.n,
             model.body_com,
             model.body_inv_mass,
@@ -127,8 +128,8 @@ def compute_residual(
         kernel=friction_residual_kernel,
         dim=(dims.num_worlds, dims.contact_count),
         inputs=[
-            data.body_pose,
             data.body_vel,
+            data.body_pose_prev,
             data.constr_force.f,
             data.constr_force_prev_iter.f,
             data.constr_force_prev_iter.n,
