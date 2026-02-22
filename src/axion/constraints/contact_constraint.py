@@ -368,12 +368,14 @@ def batch_contact_residual_kernel(
     batch_idx, world_idx, contact_idx = wp.tid()
 
     if contact_idx >= contact_count[world_idx]:
+        res_n[batch_idx, world_idx, contact_idx] = 0.0
         return
 
     shape0 = contact_shape0[world_idx, contact_idx]
     shape1 = contact_shape1[world_idx, contact_idx]
 
     if shape0 == shape1:
+        res_n[batch_idx, world_idx, contact_idx] = 0.0
         return
 
     body0, body1 = resolve_body_indices(world_idx, shape0, shape1, shape_body)
@@ -466,12 +468,16 @@ def fused_batch_contact_residual_kernel(
     world_idx, contact_idx = wp.tid()
 
     if contact_idx >= contact_count[world_idx]:
+        for b in range(num_batches):
+            res_n[b, world_idx, contact_idx] = 0.0
         return
 
     shape0 = contact_shape0[world_idx, contact_idx]
     shape1 = contact_shape1[world_idx, contact_idx]
 
     if shape0 == shape1:
+        for b in range(num_batches):
+            res_n[b, world_idx, contact_idx] = 0.0
         return
 
     body0, body1 = resolve_body_indices(world_idx, shape0, shape1, shape_body)

@@ -205,7 +205,12 @@ class HelhestControlSimulator(InteractiveSimulator):
 
     def build_model(self) -> newton.Model:
         # --- 1. Ground ---
-        ground_cfg = newton.ModelBuilder.ShapeConfig(mu=1.0)
+        ground_cfg = newton.ModelBuilder.ShapeConfig(
+            mu=1.0,
+            ke=50.0,
+            kd=50.0,
+            kf=50.0,
+        )
         self.builder.add_ground_plane(cfg=ground_cfg)
 
         # Obstacle 1: Stairs (Stepped boxes)

@@ -1,11 +1,8 @@
-from typing import Any
-
 import numpy as np
 import warp as wp
 from axion.constraints import fill_control_constraint_body_idx_kernel
 from axion.constraints import fill_joint_constraint_body_idx_kernel
 from axion.tiled import TiledSqNorm
-from axion.types.spatial_inertia import SpatialInertia
 
 from .data_views import ConstraintView
 from .data_views import SystemView
@@ -200,6 +197,8 @@ class EngineData:
         self.candidates_body_vel = self.candidates.register("body_vel", self.body_vel)
         self._candidates_constr_force = self.candidates.register("constr_force", self._constr_force)
         self.candidates_constr_force = ConstraintView(self._candidates_constr_force, dims)
+        self._candidates_res = self.candidates.register("candidates_res", self._res)
+        self.candidates_res = SystemView(self._candidates_res, dims)
         self.candidates_res_norm_sq = self.candidates.register(
             "candidates_res_norm_sq", self.res_norm_sq
         )
@@ -213,9 +212,6 @@ class EngineData:
             self.history = HistoryGroup(
                 capacity=config.max_newton_iters, index_array=self.iter_count, device=device
             )
-
-            self._candidates_res = self.history.register("candidates_res", self._res)
-            self.candidates_res = SystemView(self._candidates_res, dims)
 
             # 2. PCR History (Snapshots of the inner solver state)
             with wp.ScopedDevice(device):
@@ -243,7 +239,6 @@ class EngineData:
                 self.ls_history_res_norm_sq = self.history.register(
                     "ls_res_norm", self.linesearch_res_norm_sq
                 )
-                self.ls_history_res = self.history.register("ls_res", self._linesearch_res)
                 self.ls_history_minimal_index = self.history.register(
                     "ls_min_index", self.linesearch_minimal_index
                 )

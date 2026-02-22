@@ -7,12 +7,12 @@ import newton
 import numpy as np
 import openmesh
 import warp as wp
-from axion import InteractiveSimulator
 from axion import EngineConfig
 from axion import ExecutionConfig
+from axion import InteractiveSimulator
+from axion import LoggingConfig
 from axion import RenderingConfig
 from axion import SimulationConfig
-from axion import LoggingConfig
 from omegaconf import DictConfig
 
 try:
@@ -162,7 +162,9 @@ class HelhestSurfaceSimulator(InteractiveSimulator):
                     self.target_velocities,
                     self.clock.dt,
                     self.joint_target,
-                    6, 7, 8,
+                    6,
+                    7,
+                    8,
                 ],
                 device=self.model.device,
             )
@@ -201,7 +203,13 @@ class HelhestSurfaceSimulator(InteractiveSimulator):
             body=-1,
             mesh=surface_mesh,
             cfg=newton.ModelBuilder.ShapeConfig(
-                density=0.0, has_shape_collision=True, mu=1.0, contact_margin=0.3
+                density=0.0,
+                has_shape_collision=True,
+                mu=1.0,
+                contact_margin=0.3,
+                ke=150.0,
+                kd=150.0,
+                kf=500.0,
             ),
         )
 

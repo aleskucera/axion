@@ -16,7 +16,6 @@ from axion.optim import JacobiPreconditioner
 from axion.optim import PCRSolver
 from axion.optim import SystemLinearData
 from axion.optim import SystemOperator
-from axion.types import world_spatial_inertia_kernel
 from newton import Contacts
 from newton import Control
 from newton import Model
@@ -188,35 +187,6 @@ class AxionEngine(SolverBase):
 
         self.data.save_iter_to_history()
 
-    # def _update_mass_matrix(self):
-    #     wp.launch(
-    #         kernel=world_spatial_inertia_kernel,
-    #         dim=(self.axion_model.num_worlds, self.axion_model.body_count),
-    #         inputs=[
-    #             self.data.body_pose,
-    #             self.axion_model.body_mass,
-    #             self.axion_model.body_inertia,
-    #         ],
-    #         outputs=[
-    #             self.data.world_M,
-    #         ],
-    #         device=self.device,
-    #     )
-    #
-    #     wp.launch(
-    #         kernel=world_spatial_inertia_kernel,
-    #         dim=(self.axion_model.num_worlds, self.axion_model.body_count),
-    #         inputs=[
-    #             self.data.body_pose,
-    #             self.axion_model.body_inv_mass,
-    #             self.axion_model.body_inv_inertia,
-    #         ],
-    #         outputs=[
-    #             self.data.world_M_inv,
-    #         ],
-    #         device=self.device,
-    #     )
-
     def _check_convergence(self):
         wp.launch(
             kernel=_check_newton_convergence,
@@ -245,6 +215,7 @@ class AxionEngine(SolverBase):
             ],
             device=self.device,
         )
+
         wp.launch(
             kernel=copy_best_sample_kernel,
             dim=(self.dims.num_worlds, self.dims.body_count),
@@ -257,6 +228,7 @@ class AxionEngine(SolverBase):
             ],
             device=self.device,
         )
+
         wp.launch(
             kernel=copy_best_sample_kernel,
             dim=(self.dims.num_worlds, self.dims.body_count),
@@ -269,6 +241,7 @@ class AxionEngine(SolverBase):
             ],
             device=self.device,
         )
+
         wp.launch(
             kernel=copy_best_sample_kernel,
             dim=(self.dims.num_worlds, self.dims.num_constraints),
@@ -281,6 +254,20 @@ class AxionEngine(SolverBase):
             ],
             device=self.device,
         )
+
+        wp.launch(
+            kernel=copy_best_sample_kernel,
+            dim=(self.dims.num_worlds, self.dims.num_constraints),
+            inputs=[
+                self.data._candidates_res,
+                self.data.candidates_best_idx,
+            ],
+            outputs=[
+                self.data._res,
+            ],
+            device=self.device,
+        )
+
         wp.launch(
             kernel=copy_best_sample_kernel_1d,
             dim=(self.dims.num_worlds),

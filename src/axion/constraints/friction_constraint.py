@@ -530,20 +530,24 @@ def batch_friction_residual_kernel(
 ):
     batch_idx, world_idx, contact_idx = wp.tid()
 
+    constr_idx0 = 2 * contact_idx
+    constr_idx1 = 2 * contact_idx + 1
+
     if contact_idx >= contact_count[world_idx]:
+        res_f[batch_idx, world_idx, constr_idx0] = 0.0
+        res_f[batch_idx, world_idx, constr_idx1] = 0.0
         return
 
     shape0 = contact_shape0[world_idx, contact_idx]
     shape1 = contact_shape1[world_idx, contact_idx]
 
     if shape0 == shape1:
+        res_f[batch_idx, world_idx, constr_idx0] = 0.0
+        res_f[batch_idx, world_idx, constr_idx1] = 0.0
         return
 
     mu = (shape_material_mu[world_idx, shape0] + shape_material_mu[world_idx, shape1]) * 0.5
     force_n_prev = constr_force_n_prev[world_idx, contact_idx]
-
-    constr_idx0 = 2 * contact_idx
-    constr_idx1 = 2 * contact_idx + 1
 
     if mu * force_n_prev <= 1e-6:
         res_f[batch_idx, world_idx, constr_idx0] = 0.0
@@ -663,21 +667,27 @@ def fused_batch_friction_residual_kernel(
 ):
     world_idx, contact_idx = wp.tid()
 
+    constr_idx0 = 2 * contact_idx
+    constr_idx1 = 2 * contact_idx + 1
+
     if contact_idx >= contact_count[world_idx]:
+        for b in range(num_batches):
+            res_f[b, world_idx, constr_idx0] = 0.0
+            res_f[b, world_idx, constr_idx1] = 0.0
         return
 
     shape0 = contact_shape0[world_idx, contact_idx]
     shape1 = contact_shape1[world_idx, contact_idx]
 
     if shape0 == shape1:
+        for b in range(num_batches):
+            res_f[b, world_idx, constr_idx0] = 0.0
+            res_f[b, world_idx, constr_idx1] = 0.0
         return
 
     # Load shared contact and mass parameters exactly ONCE
     mu = (shape_material_mu[world_idx, shape0] + shape_material_mu[world_idx, shape1]) * 0.5
     force_n_prev = constr_force_n_prev[world_idx, contact_idx]
-
-    constr_idx0 = 2 * contact_idx
-    constr_idx1 = 2 * contact_idx + 1
 
     if mu * force_n_prev <= 1e-6:
         for b in range(num_batches):
