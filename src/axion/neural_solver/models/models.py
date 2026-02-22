@@ -15,7 +15,7 @@
 
 import torch
 import torch.nn as nn
-from axion.neural_solver.models.base_models import MLPBase, LSTMBase, GRUBase
+from axion.neural_solver.models.base_models import MLPBase
 from axion.neural_solver.models.model_transformer import GPT, GPTConfig
 
 class MLPDeterministic(nn.Module):
@@ -99,10 +99,7 @@ class ModelMixedInput(nn.Module):
             self.is_rnn = False
             self.rnn = None
         else:
-            self.is_transformer = False
-            self.transformer_model = None
-
-
+            NotImplementedError
 
         if self.model is None:
             self.model = MLPDeterministic(
