@@ -14,11 +14,11 @@ python src/axion/neural_solver/train/train.py --cfg src/axion/neural_solver/trai
 
 The script:
 - creates `AxionEnvToTrajectorySamplerAdapter()` neural_env
-- creates `SequenceModelTrainer()` and hands the Axion adapter to it
-
-## Transformer model definition: `models/model_transformer.py`
-
-TO-DO
+- creates `algo = SequenceModelTrainer()` and hands the Axion adapter to it
+- finally, runs:
+```
+algo.train()
+```
 
 ## Trainer file: `algorithms/sequence_model_trainer.py`
 Purpose: 
@@ -51,3 +51,50 @@ Calls either `train(...)` or `eval(...)`.
 
 - **`save_model(...)`**<br>
 
+
+## ModelMixedInput definition: `models/models.py`
+This script contains the definition of the `ModelMixedInput` torch module. It is a **sequence-to-output** model that encodes mixed inputs (= low dimensional states) with per-input MLP encoders into a single feature vector per timestep.
+
+custom MLP encoders ---> GPT ---> MLP head
+
+Top-down architecture overview:
+```
+class ModelMixedInput
+ - input encoders (MLPBase object from models/base_models.py)
+ - transformer (GPT object from models/model_transformer.py)
+ - MLPDeterministic 
+
+class MLPDeterministic:
+..
+```
+
+## Transformer model definition: `models/model_transformer.py`
+
+This file includes the architecture of a transformer model, adapted from GPT-2/nanoGPT. It has ~2.7 M trainable parameters.
+
+Top-down architecture overview:
+```
+class GPT:
+ - Linear layer
+ - Embedding layer
+ - Dropout layer
+ - list of 'Block' modules
+ - LayerNorm (class)
+ - Linear layer - head
+
+class Block:
+ - LayerNorm
+ - CasualSelfAttention (class)
+ - LayerNorm 
+ - MLP (class)
+
+class LayerNorm:
+...
+
+class MLP:
+...
+
+class CasualSelfAttention:
+...
+
+```
