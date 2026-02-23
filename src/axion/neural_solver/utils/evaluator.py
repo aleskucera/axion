@@ -202,7 +202,7 @@ class NeuralSimEvaluator:
         rollout_states[0, ...].copy_(initial_states)
         
         if env_mode == "neural":
-            self.neural_env.integrator_neural.neural_model.eval()
+            self.neural_env.utils_provider.neural_model.eval()
 
         self.neural_env.set_env_mode(env_mode)
 

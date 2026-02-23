@@ -1,9 +1,8 @@
 """
-Newton/Axion-friendly stateful integrator.
+Stateful neural model utilities provider.
 
-This mirrors the structure of StatefulNeuralIntegrator from the original
-Warp-based code, but builds on top of NewtonBasedNeuralIntegrator and
-keeps a short history of state-like inputs in a deque.
+Builds on top of NeuralModelUtilsProvider and keeps a short history
+of state-like inputs in a deque for sequence models.
 """
 
 from __future__ import annotations
@@ -13,14 +12,14 @@ from typing import Dict, Optional
 
 import torch
 
-from axion.neural_solver.integrators.newton_based_integrator_neural import (
-    NewtonBasedNeuralIntegrator,
+from axion.neural_solver.neural_model_utils_providers.neural_model_utils_provider import (
+    NeuralModelUtilsProvider,
 )
 
 
-class NewtonBasedStatefulNeuralIntegrator(NewtonBasedNeuralIntegrator):
+class StatefulNeuralModelUtilsProvider(NeuralModelUtilsProvider):
     """
-    Stateful version of the Newton-based integrator.
+    Stateful version of the neural model utilities provider.
 
     It maintains a fixed-length history of model-input dicts (1 per step), to be
     used by sequence models (RNNs, transformers, etc.).
