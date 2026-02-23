@@ -198,6 +198,7 @@ class AxionModelBuilder(newton.ModelBuilder):
         self,
         num_worlds: int,
         gravity: float = -9.81,
+        device=None,
         requires_grad: bool = False,
         global_builder: "newton.ModelBuilder | None" = None,
         **kwargs,
@@ -205,7 +206,7 @@ class AxionModelBuilder(newton.ModelBuilder):
         """
         Creates a new newton.ModelBuilder, replicates the content of this builder into it
         for the specified number of worlds, and finalizes it to return the Model.
-
+    
         If ``global_builder`` is provided, its contents are added once with
         ``shape_world = -1`` (Newton's "global" sentinel) before replication, so the
         resulting Model contains a single instance of those shapes that collides

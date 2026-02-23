@@ -13,3 +13,10 @@ python src/axion/neural_solver/train/train.py --cfg src/axion/neural_solver/trai
 ### Visualize training (wandb)
 View runs at [wandb.ai](https://wandb.ai) in your project (e.g. `neural-solver-transformer`). 
 Ensure `wandb.login()` runs before training (see `train.py`).
+
+## Misc
+
+### Copy from remote to loca
+```
+scp mestemar@dasenka:/local/mestemar/axion/src/axion/neural_solver/datasets/Pendulum/pendulumTrainStatesOnly100kenvs100Seed0.hdf5 ~/Downloads/
+```
