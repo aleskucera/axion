@@ -2,9 +2,9 @@
 # SPDX-License-Identifier: Apache-2.0
 
 """
-Newton/Axion-friendly "neural integrator" interface used by trainers.
+Neural model utilities provider used by trainers.
 
-This is NOT a Warp Sim Integrator. It is a lightweight adapter that:
+A lightweight adapter that:
 - defines the state layout (q, qd) and wrapping for angular coordinates
 - prepares model inputs as a dict of (B, T, dim) tensors
 - converts between (states, next_states) and model prediction targets
@@ -41,15 +41,15 @@ def _wrap_to_pi_(angles: torch.Tensor) -> torch.Tensor:
 
 
 @dataclass
-class NewtonIntegratorCfg:
+class NeuralModelUtilsProviderCfg:
     prediction_type: str = "relative"  # "relative" or "absolute"
     states_embedding_type: Optional[str] = "identical"  # None/"identical"
     angular_q_indices: Optional[Sequence[int]] = None  # indices in q to wrap; default: all q
 
 
-class NewtonBasedNeuralIntegrator:
+class NeuralModelUtilsProvider:
     """
-    Minimal integrator-like object expected by SequenceModelTrainer.
+    Provides neural-model utilities expected by SequenceModelTrainer.
 
     It assumes the generalized state layout:
         states = [q(0:dof_q), qd(0:dof_qd)]
@@ -69,11 +69,15 @@ class NewtonBasedNeuralIntegrator:
     ):
         self.model = model
 
-        # Device handling: model.device is a wp.Device; trainers mostly want torch.device strings.
-        model_wp_device = getattr(model, "device", None)
-        self.torch_device = wp.device_to_torch(model_wp_device) if model_wp_device is not None else (
-            torch.device(device) if device is not None else torch.device("cpu")
-        )
+        # Device handling: prefer explicit device (e.g. from CLI --device) so all torch tensors
+        # stay on the same device; fall back to model's warp device converted to torch.
+        if device is not None:
+            self.torch_device = torch.device(device) if isinstance(device, str) else device
+        else:
+            model_wp_device = getattr(model, "device", None)
+            self.torch_device = (
+                wp.device_to_torch(model_wp_device) if model_wp_device is not None else torch.device("cpu")
+            )
 
         if cfg is not None:
             prediction_type = cfg.get("prediction_type", prediction_type)
@@ -84,7 +88,7 @@ class NewtonBasedNeuralIntegrator:
             raise ValueError(f"prediction_type must be 'relative' or 'absolute', got {prediction_type!r}")
         if states_embedding_type not in (None, "identical"):
             raise ValueError(
-                "For the Newton-based minimal integrator, states_embedding_type must be None or 'identical'. "
+                "states_embedding_type must be None or 'identical'. "
                 f"Got {states_embedding_type!r}"
             )
 
@@ -92,7 +96,7 @@ class NewtonBasedNeuralIntegrator:
         self.states_embedding_type = states_embedding_type
 
         # Infer dimensions from Newton model (replicated worlds).
-        # AxionEnv exposes dof_q_per_env/dof_qd_per_env similarly; we keep it integrator-local.
+        # AxionEnv exposes dof_q_per_env/dof_qd_per_env similarly; we keep it provider-local.
         num_worlds = int(getattr(model, "num_worlds", 1))
         self.num_envs = num_worlds
 
@@ -100,7 +104,7 @@ class NewtonBasedNeuralIntegrator:
         joint_dof_count = int(getattr(model, "joint_dof_count", 0))
         if joint_coord_count <= 0 or joint_dof_count <= 0:
             raise ValueError(
-                "NewtonBasedNeuralIntegrator expected a Newton/Axion model with "
+                "NeuralModelUtilsProvider expected a Newton/Axion model with "
                 f"joint_coord_count/joint_dof_count, got {joint_coord_count}/{joint_dof_count}."
             )
 
@@ -129,7 +133,7 @@ class NewtonBasedNeuralIntegrator:
         self.neural_model = None
         self.set_neural_model(neural_model)
 
-        # Simple counter for compatibility with the original integrator interface.
+        # Simple counter for compatibility with the original interface.
         self._simulation_step = 0
 
     # ---- Trainer-facing API -------------------------------------------------

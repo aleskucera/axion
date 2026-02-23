@@ -16,7 +16,6 @@
 """
 Minimal environment wrapper for dataset generation only.
 Wraps the Warp simulation and exposes the API required by the trajectory sampler.
-No neural integrator or RL-related logic.
 """
 
 import sys
@@ -35,8 +34,8 @@ sys.path.append(base_dir)
 from axion.neural_solver.utils import warp_utils
 from axion.neural_solver.utils.python_utils import print_ok
 from axion.neural_solver.envs.axionEnv import AxionEnv
-from axion.neural_solver.integrators.newton_based_integrator_neural_transformer import (
-    NewtonBasedTransformerNeuralIntegrator,
+from axion.neural_solver.neural_model_utils_providers.transformer_neural_utils_provider import (
+    TransformerNeuralModelUtilsProvider,
 )
 
 
@@ -45,8 +44,8 @@ class AxionEnvToTrajectorySamplerAdapter:
     Minimal simulation wrapper for trajectory sampling and dataset generation.
     Exposes only: reset, step, step_with_joint_act, states, root_body_q,
     abstract_contacts, model, and the properties used by TrajectorySampler and
-    WarpSimDataGenerator. Uses a dummy NeuralIntegrator only for angle wrapping
-    (wrap2PI) and reset() no-op.
+    WarpSimDataGenerator. Uses a TransformerNeuralModelUtilsProvider for angle
+    wrapping (wrap2PI), state history management, and model input assembly.
     """
 
     def __init__(
@@ -54,7 +53,7 @@ class AxionEnvToTrajectorySamplerAdapter:
         env_name: str,
         num_envs: int,
         warp_env_cfg=None,
-        neural_integrator_cfg=None,
+        utils_provider_cfg=None,
         neural_model=None,
         default_env_mode: str = "ground-truth",
         device: str = "cuda:0",
@@ -63,8 +62,8 @@ class AxionEnvToTrajectorySamplerAdapter:
         **kwargs,
     ):
         # Handle dict-like arguments similar to the original NeuralEnvironment.
-        if neural_integrator_cfg is None:
-            neural_integrator_cfg = {}
+        if utils_provider_cfg is None:
+            utils_provider_cfg = {}
         if warp_env_cfg is None:
             warp_env_cfg = {}
         if custom_articulation_builder is not None:
@@ -78,12 +77,12 @@ class AxionEnvToTrajectorySamplerAdapter:
             requires_grad= False # Check if true
         )
 
-        # Create Newton-based Transformer neural integrator.
-        self.integrator_neural = NewtonBasedTransformerNeuralIntegrator(
+        self.utils_provider = TransformerNeuralModelUtilsProvider(
             model=self.env.model,
             neural_model=neural_model,
-            cfg=neural_integrator_cfg,
-            num_states_history=neural_integrator_cfg.get("num_states_history", 1),
+            cfg=utils_provider_cfg,
+            num_states_history=utils_provider_cfg.get("num_states_history", 1),
+            device=device,
         )
 
         # Default mode for step/reset API; we currently always step the ground-truth AxionEnv.
@@ -195,7 +194,7 @@ class AxionEnvToTrajectorySamplerAdapter:
         self.env.set_eval_collisions(eval_collisions)
 
     def wrap2PI(self, states):
-        self.integrator_neural.wrap2PI(states)
+        self.utils_provider.wrap2PI(states)
 
     # ---- State sync  ----
 
@@ -207,18 +206,18 @@ class AxionEnvToTrajectorySamplerAdapter:
         else:
             self.states.copy_(states)
 
-        # Update cached root pose and keep integrator buffers in sync.
+        # Update cached root pose and keep utils_provider buffers in sync.
         self.root_body_q.copy_(
             wp.to_torch(self.sim_states.body_q)[0 :: self.bodies_per_env, :].view(
                 self.num_envs, 7
             )
         )
 
-        self.integrator_neural.states.copy_(self.states)
-        self.integrator_neural.root_body_q.copy_(self.root_body_q)
-        # Gravity dir is static and initialized in the integrator.
-        self.integrator_neural.wrap2PI(self.integrator_neural.states)
-        self.integrator_neural.append_current_state_to_history(joint_acts=self.joint_acts)
+        self.utils_provider.states.copy_(self.states)
+        self.utils_provider.root_body_q.copy_(self.root_body_q)
+        # Gravity dir is static and initialized in the utils_provider.
+        self.utils_provider.wrap2PI(self.utils_provider.states)
+        self.utils_provider.append_current_state_to_history(joint_acts=self.joint_acts)
 
         if states is not None:
             warp_utils.assign_states_from_torch(self.env, self.states)
@@ -284,7 +283,7 @@ class AxionEnvToTrajectorySamplerAdapter:
         else:
             self.env.reset()
             self._update_states()
-        self.integrator_neural.reset()
+        self.utils_provider.reset()
 
     def close(self):
         self.env.close()

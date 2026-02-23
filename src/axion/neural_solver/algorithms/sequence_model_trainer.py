@@ -63,10 +63,10 @@ class SequenceModelTrainer:
         self.rng = np.random.default_rng(seed = self.seed)
 
         self.neural_env = neural_env
-        self.neural_integrator = neural_env.integrator_neural
+        self.utils_provider = neural_env.utils_provider
 
         # check if gravity_dir_body is included in input if using body frame
-        if cfg['env']['neural_integrator_cfg']['states_frame'] == 'body':
+        if cfg['env']['utils_provider_cfg']['states_frame'] == 'body':
             if 'gravity_dir' not in cfg['inputs']['low_dim']:
                 cfg['inputs']['low_dim'].append('gravity_dir')
                 print_warning("gravity_dir not included in low_dim inputs, "
@@ -74,10 +74,10 @@ class SequenceModelTrainer:
 
         # create neural sim model
         if model_checkpoint_path is None:
-            input_sample = self.neural_integrator.get_neural_model_inputs()
+            input_sample = self.utils_provider.get_neural_model_inputs()
             self.neural_model = ModelMixedInput(
                 input_sample = input_sample,
-                output_dim = self.neural_integrator.prediction_dim,
+                output_dim = self.utils_provider.prediction_dim,
                 input_cfg = cfg['inputs'],
                 network_cfg = cfg['network'],
                 device = self.device
@@ -90,7 +90,7 @@ class SequenceModelTrainer:
         print('Model = \n', self.neural_model)
         print('# Model Parameters = ', num_params_torch_model(self.neural_model))
 
-        self.neural_integrator.set_neural_model(self.neural_model)
+        self.utils_provider.set_neural_model(self.neural_model)
 
         """ General parameters """
         self.batch_size = int(algo_cfg['batch_size'])
@@ -267,15 +267,15 @@ class SequenceModelTrainer:
                 data[key] = data[key].to(self.device)
         
         # compute contact masks
-        # data['contact_masks'] = self.neural_integrator.get_contact_masks(
+        # data['contact_masks'] = self.utils_provider.get_contact_masks(
         #     data['contact_depths'],
         #     data['contact_thicknesses']
         # )
         
-        self.neural_integrator.process_neural_model_inputs(data)
+        self.utils_provider.process_neural_model_inputs(data)
 
         # calculate prediction target from neural env
-        data['target'] = self.neural_integrator.convert_next_states_to_prediction(
+        data['target'] = self.utils_provider.convert_next_states_to_prediction(
                             states = data['states'], 
                             next_states = data['next_states'],
                             dt = self.neural_env.frame_dt
@@ -306,11 +306,11 @@ class SequenceModelTrainer:
 
         # Compute reported error statistics defined on next states
         with torch.no_grad():
-            predicted_next_states = self.neural_integrator.convert_prediction_to_next_states(
+            predicted_next_states = self.utils_provider.convert_prediction_to_next_states(
                 states = data['states'],
                 prediction = prediction
             )
-            self.neural_integrator.wrap2PI(predicted_next_states)
+            self.utils_provider.wrap2PI(predicted_next_states)
             loss_itemized = {}
             for i in range(predicted_next_states.shape[-1]):
                 loss_itemized[f'state_{i}'] = ((
@@ -322,13 +322,13 @@ class SequenceModelTrainer:
                     data['next_states']
                 )
             loss_itemized['q_error_norm'] = torch.norm(
-                predicted_next_states[..., :self.neural_integrator.dof_q_per_env] \
-                - data['next_states'][..., :self.neural_integrator.dof_q_per_env],
+                predicted_next_states[..., :self.utils_provider.dof_q_per_env] \
+                - data['next_states'][..., :self.utils_provider.dof_q_per_env],
                 dim = -1
             ).mean()
             loss_itemized['qd_error_norm'] = torch.norm(
-                predicted_next_states[..., self.neural_integrator.dof_q_per_env:] \
-                - data['next_states'][..., self.neural_integrator.dof_q_per_env:],
+                predicted_next_states[..., self.utils_provider.dof_q_per_env:] \
+                - data['next_states'][..., self.utils_provider.dof_q_per_env:],
                 dim = -1
             ).mean()
 
@@ -392,7 +392,7 @@ class SequenceModelTrainer:
                                     self.grad_norm
                                 )
                                 grad_norm_after_clip = grad_norm(
-                                    self.neural_integrator.neural_model.parameters()
+                                    self.utils_provider.neural_model.parameters()
                                 ) 
                                 grad_info['grad_norm_after_clip'] += grad_norm_after_clip
 
