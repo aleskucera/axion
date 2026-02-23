@@ -69,11 +69,15 @@ class AxionEnvToTrajectorySamplerAdapter:
         if custom_articulation_builder is not None:
             warp_env_cfg = {**warp_env_cfg, "custom_articulation_builder": custom_articulation_builder}
 
+        # Resolve device so warp env and all state buffers use the requested device.
+        warp_device = wp.get_device(device) if isinstance(device, str) else device
+        device_str = str(device) if isinstance(device, str) else str(wp.device_to_torch(warp_device))
+
         # Use AxionEnv as backend, preserving (most of) the public API contract.
         self.env = AxionEnv(
             env_name = env_name,
             num_worlds= num_envs,
-            device = device,
+            device = warp_device,
             requires_grad= False # Check if true
         )
 
@@ -82,7 +86,7 @@ class AxionEnvToTrajectorySamplerAdapter:
             neural_model=neural_model,
             cfg=utils_provider_cfg,
             num_states_history=utils_provider_cfg.get("num_states_history", 1),
-            device=device,
+            device=device_str,
         )
 
         # Default mode for step/reset API; we currently always step the ground-truth AxionEnv.
@@ -235,6 +239,7 @@ class AxionEnvToTrajectorySamplerAdapter:
         self.set_env_mode(env_mode)
 
         if self.action_dim > 0:
+            actions = actions.to(self.torch_device)
             self.env.assign_control(
                 wp.from_torch(actions),
                 self.env.control,
@@ -261,7 +266,8 @@ class AxionEnvToTrajectorySamplerAdapter:
         self.set_env_mode(env_mode)
 
         if self.joint_act_dim > 0:
-            self.env.joint_act.assign(wp.array(joint_acts.view(-1)))
+            joint_acts = joint_acts.to(self.torch_device)
+            self.env.joint_act.assign(wp.from_torch(joint_acts.reshape(-1)))
             self.joint_acts.copy_(
                 wp.to_torch(self.env.control.joint_act).view(
                     self.num_envs,
@@ -276,9 +282,7 @@ class AxionEnvToTrajectorySamplerAdapter:
     def reset(self, initial_states: Optional[torch.Tensor] = None):
         if initial_states is not None:
             assert initial_states.shape[0] == self.num_envs
-            assert initial_states.device == self.torch_device or str(
-                initial_states.device
-            ) == str(self.torch_device)
+            initial_states = initial_states.to(self.torch_device)
             self._update_states(initial_states)
         else:
             self.env.reset()

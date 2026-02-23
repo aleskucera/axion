@@ -172,6 +172,7 @@ class AxionModelBuilder(newton.ModelBuilder):
         self,
         num_worlds: int,
         gravity: float = -9.81,
+        device=None,
         requires_grad: bool = False,
         **kwargs,
     ) -> newton.Model:
@@ -179,8 +180,14 @@ class AxionModelBuilder(newton.ModelBuilder):
         Creates a new newton.ModelBuilder, replicates the content of this builder into it
         for the specified number of worlds, and finalizes it to return the Model.
         """
-        final_builder = newton.ModelBuilder(gravity=gravity)
+        # Important: `newton.ModelBuilder.finalize()` takes `device` as an argument.
+        # Merely setting an attribute named `device` on the builder does not affect
+        # where the model arrays are allocated. Without forwarding `device` here,
+        # replicated models will silently allocate on Warp's current default device
+        # (commonly `cuda:0`), causing runtime device-mismatch errors when users
+        # request `cuda:1`, `cpu`, etc.
+        final_builder = AxionModelBuilder(gravity=gravity)
         for k, v in kwargs.items():
             setattr(final_builder, k, v)
         final_builder.replicate(self, num_worlds=num_worlds)
-        return final_builder.finalize(requires_grad=requires_grad)
+        return final_builder.finalize(device=device, requires_grad=requires_grad)

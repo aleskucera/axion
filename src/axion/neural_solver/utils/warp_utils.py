@@ -67,6 +67,8 @@ def _assign_joint_acts_from_actions(
 
 def assign_states_from_torch(warp_env, torch_states):
     assert torch_states.shape[0] <= warp_env.num_envs
+    target_torch_device = wp.device_to_torch(warp_env.device)
+    torch_states = torch_states.to(target_torch_device)
     wp.launch(
         _assign_states,
         dim = torch_states.shape[0],

@@ -84,6 +84,7 @@ if __name__ == '__main__':
         'skip_check_log_override': False,
     }
 
+    print(f"Device = {args.device}")
     neural_env = AxionEnvToTrajectorySamplerAdapter(**cfg['env'], device=args.device)
 
     algo = SequenceModelTrainer(

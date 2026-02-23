@@ -227,8 +227,7 @@ class ModelMixedInput(nn.Module):
             encoder.to(device)
         if self.transformer_model is not None:
             self.transformer_model.to(device)
-        if self.rnn is not None:
-            self.rnn.to(device)
+
         self.model.to(device)
         if self.input_rms is not None:
             for k in self.input_rms:

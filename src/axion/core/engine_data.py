@@ -462,7 +462,9 @@ class EngineData:
             closest_idx = np.argmin(np.abs(ls_steps_np - 1.0))
             ls_steps_np[closest_idx] = 1.0
 
-            linesearch_steps = wp.from_numpy(ls_steps_np, dtype=wp.float32)
+            # Must live on the engine/model device; otherwise kernels launched on e.g.
+            # `cuda:1` will fail with mixed-device arguments.
+            linesearch_steps = wp.array(ls_steps_np, dtype=wp.float32, device=device)
 
             linesearch_batch_body_u = _zeros((step_count, dims.N_w, dims.N_b), wp.spatial_vector)
             linesearch_batch_body_q = _zeros((step_count, dims.N_w, dims.N_b), wp.transform)
