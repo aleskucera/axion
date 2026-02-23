@@ -64,7 +64,7 @@ def collect_dataset(
     env = AxionEnvToTrajectorySamplerAdapter(
         env_name = env_name,
         num_envs = num_envs,
-        neural_integrator_cfg = {},
+        utils_provider_cfg = {},
         neural_model = None,
         default_env_mode = "ground-truth",
         warp_env_cfg = {

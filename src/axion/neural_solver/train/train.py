@@ -54,12 +54,12 @@ if __name__ == '__main__':
 
     # Require transformer config
     assert 'transformer' in cfg['network'], "Only transformer model is supported; config must define network.transformer"
-    neural_integrator_name = cfg['env']['neural_integrator_cfg']['name']
-    assert neural_integrator_name == 'TransformerNeuralIntegrator', (
-        "Only TransformerNeuralIntegrator is supported. Got: " + neural_integrator_name
+    utils_provider_name = cfg['env']['utils_provider_cfg']['name']
+    assert utils_provider_name == 'TransformerNeuralModelUtilsProvider', (
+        "Only TransformerNeuralModelUtilsProvider is supported. Got: " + utils_provider_name
     )
     assert (
-        cfg['env']['neural_integrator_cfg'].get('num_states_history') ==
+        cfg['env']['utils_provider_cfg'].get('num_states_history') ==
         cfg['algorithm']['sample_sequence_length']
     ), (
         "'num_states_history' must equal 'sample_sequence_length' for the transformer."

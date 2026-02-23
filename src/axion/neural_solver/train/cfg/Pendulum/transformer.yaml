@@ -1,8 +1,8 @@
 env:
   env_name: Pendulum
   num_envs: 2
-  neural_integrator_cfg: 
-    name: TransformerNeuralIntegrator
+  utils_provider_cfg: 
+    name: TransformerNeuralModelUtilsProvider
     states_frame: body
     anchor_frame_step: every
     states_embedding_type: identical

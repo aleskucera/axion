@@ -222,11 +222,19 @@ class ModelMixedInput(nn.Module):
         return output
         
     def to(self, device):
+        self.device = device
         for (_, encoder) in self.encoders.items():
             encoder.to(device)
+        if self.transformer_model is not None:
+            self.transformer_model.to(device)
         if self.rnn is not None:
             self.rnn.to(device)
         self.model.to(device)
+        if self.input_rms is not None:
+            for k in self.input_rms:
+                self.input_rms[k] = self.input_rms[k].to(device)
+        if self.output_rms is not None:
+            self.output_rms = self.output_rms.to(device)
         
     def reset(self, batch_size):
         self.init_rnn(batch_size)

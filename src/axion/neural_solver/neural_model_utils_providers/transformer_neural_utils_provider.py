@@ -1,8 +1,7 @@
 """
-Newton/Axion-friendly transformer integrator.
+Transformer-oriented neural model utilities provider.
 
-This mirrors TransformerNeuralIntegrator from the original Warp-based code,
-but is built on top of NewtonBasedStatefulNeuralIntegrator and prepares
+Builds on top of StatefulNeuralModelUtilsProvider and prepares
 sequence inputs suitable for transformer models.
 """
 
@@ -13,14 +12,14 @@ from typing import Dict
 
 import torch
 
-from axion.neural_solver.integrators.newton_based_integrator_neural_stateful import (
-    NewtonBasedStatefulNeuralIntegrator,
+from axion.neural_solver.neural_model_utils_providers.stateful_neural_model_utils_provider import (
+    StatefulNeuralModelUtilsProvider,
 )
 
 
-class NewtonBasedTransformerNeuralIntegrator(NewtonBasedStatefulNeuralIntegrator):
+class TransformerNeuralModelUtilsProvider(StatefulNeuralModelUtilsProvider):
     """
-    Transformer-oriented stateful integrator for Newton/Axion environments.
+    Transformer-oriented neural model utilities provider.
 
     It keeps a rolling history of state snapshots and produces (B, T, dim)
     tensors without flattening the time dimension, which matches what the
