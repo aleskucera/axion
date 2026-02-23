@@ -36,7 +36,7 @@ def _compute_linesearch_step_size_array(config: EngineConfig) -> wp.array:
     closest_idx = np.argmin(np.abs(ls_steps_np - 1.0))
     ls_steps_np[closest_idx] = 1.0
 
-    return wp.from_numpy(ls_steps_np, dtype=wp.float32)
+    return wp.from_numpy(ls_steps_np, dtype=wp.float32, device=device)
 
 
 class EngineData:
