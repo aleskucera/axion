@@ -12,7 +12,7 @@ env:
 algorithm:
   name: SequenceModelTrainer
   num_epochs: 50
-  num_iters_per_epoch: 200
+  num_iters_per_epoch: 2500
   sample_sequence_length: 10 # the length to sample sequence from dataset
   batch_size: 512
   num_valid_batches: 100
