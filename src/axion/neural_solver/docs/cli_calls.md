@@ -14,9 +14,16 @@ python src/axion/neural_solver/train/train.py --cfg src/axion/neural_solver/trai
 View runs at [wandb.ai](https://wandb.ai) in your project (e.g. `neural-solver-transformer`). 
 Ensure `wandb.login()` runs before training (see `train.py`).
 
+## Testing
+Test a neural module that has already undergone training:
+```
+python src/axion/neural_solver/train/train.py --cfg train/cfg/Pendulum/transformer.yaml --test --checkpoint src/axion/neural_solver/train/trained_models/02-22-2026-16-45-54/nn/best_eval_model.pt --no-time-stamp --logdir ./eval_logs
+```
+
 ## Misc
 
-### Copy from remote to loca
+### Copy from remote to local
 ```
 scp mestemar@dasenka:/local/mestemar/axion/src/axion/neural_solver/datasets/Pendulum/pendulumTrainStatesOnly100kenvs100Seed0.hdf5 ~/Downloads/
 ```
+

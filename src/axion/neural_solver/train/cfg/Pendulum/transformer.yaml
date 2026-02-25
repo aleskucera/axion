@@ -24,9 +24,9 @@ algorithm:
     lr_schedule: linear
 
   dataset:
-    train_dataset_path: src/axion/neural_solver/datasets/Pendulum/pendulumTrainStatesOnly100kEnvs100Seed0.hdf5 # src/axion/neural_solver/datasets/Pendulum/pendulumTrainStatesOnly5kEnvs4Seed0.hdf5
+    train_dataset_path: src/axion/neural_solver/datasets/Pendulum/pendulumValidStatesOnly10kSeed1.hdf5 # src/axion/neural_solver/datasets/Pendulum/pendulumTrainStatesOnly5kEnvs4Seed0.hdf5
     valid_datasets: 
-      valid: src/axion/neural_solver/datasets/Pendulum/pendulumValidStatesOnly5096Envs100Seed1.hdf5 #src/axion/neural_solver/datasets/Pendulum/pendulumValidStatesOnly1kEnvs4Seed1.hdf5 
+      valid: src/axion/neural_solver/datasets/Pendulum/pendulumValidStatesOnly10kSeed1.hdf5 #src/axion/neural_solver/datasets/Pendulum/pendulumValidStatesOnly1kEnvs4Seed1.hdf5 
       #exp_trajectory: PATH/TO/VALID_DATASET_1.hdf5
       #fixed_ground_passive: PATH/TO/VALID_DATASET_2.hdf5
     max_capacity: 100000000
@@ -36,7 +36,7 @@ algorithm:
     mode: dataset
     rollout_horizon: 10
     num_rollouts: 2048
-    dataset_path: src/axion/neural_solver/datasets/Pendulum/pendulumValidStatesOnly5096Envs100Seed1.hdf5 #src/axion/neural_solver/datasets/Pendulum/pendulumValidStatesOnly1kEnvs4Seed1.hdf5 
+    dataset_path: src/axion/neural_solver/datasets/Pendulum/pendulumValidStatesOnly10kSeed1.hdf5 #src/axion/neural_solver/datasets/Pendulum/pendulumValidStatesOnly1kEnvs4Seed1.hdf5 
     passive: True
 
 inputs:
