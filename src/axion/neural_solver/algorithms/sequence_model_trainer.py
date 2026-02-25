@@ -83,7 +83,7 @@ class SequenceModelTrainer:
                 device = self.device
             )
         else:
-            checkpoint = torch.load(model_checkpoint_path, map_location=self.device)
+            checkpoint = torch.load(model_checkpoint_path, map_location=self.device, weights_only= False)
             self.neural_model = checkpoint[0]
             self.neural_model.to(self.device)
         
@@ -682,8 +682,7 @@ class SequenceModelTrainer:
                             dataloader = valid_loaders[valid_dataset_name],
                             dataloader_iter = valid_loader_iters[valid_dataset_name], 
                             num_batches = num_valid_batches,
-                            shuffle = False,
-                            info = valid_dataset_name)
+                            shuffle = False)
             print_info("Valid dataset [{}]: loss = {:.8f}, itemized = {}".format(
                 valid_dataset_name, 
                 avg_valid_losses[valid_dataset_name],
@@ -693,14 +692,13 @@ class SequenceModelTrainer:
         # Rollout Eval
         print('Evaluating')
         num_eval_rollouts = self.num_eval_rollouts
-        eval_error, _ = self.evaluator.evaluate_action_mode(
+        eval_error, _, error_stats = self.evaluator.evaluate_action_mode(
             num_traj = num_eval_rollouts,
             eval_mode = 'rollout',
             env_mode = 'neural',
             trajectory_source = self.eval_mode,
             render = self.eval_render,
-            passive = self.eval_passive,
-            silent = True
+            passive = self.eval_passive
         )
         
         # Logging

@@ -14,8 +14,9 @@
 # limitations under the License.
 
 """
-Minimal environment wrapper for dataset generation only.
-Wraps the Warp simulation and exposes the API required by the trajectory sampler.
+Environment wrapper that supports both ground-truth and neural model stepping.
+Wraps the Axion simulation and exposes the API required by the trajectory sampler,
+trainer, and evaluator.
 """
 
 import sys
@@ -41,11 +42,13 @@ from axion.neural_solver.neural_model_utils_providers.transformer_neural_utils_p
 
 class AxionEnvToTrajectorySamplerAdapter:
     """
-    Minimal simulation wrapper for trajectory sampling and dataset generation.
-    Exposes only: reset, step, step_with_joint_act, states, root_body_q,
-    abstract_contacts, model, and the properties used by TrajectorySampler and
-    WarpSimDataGenerator. Uses a TransformerNeuralModelUtilsProvider for angle
-    wrapping (wrap2PI), state history management, and model input assembly.
+    Simulation wrapper that supports both ground-truth (Axion engine) and neural
+    model stepping.
+
+    In ``ground-truth`` mode, ``step`` runs the Axion physics engine.
+    In ``neural`` mode, ``step`` assembles model inputs from the state history,
+    runs the neural model forward pass, and converts the prediction to next
+    states -- matching the original ``NeuralEnvironment`` behaviour.
     """
 
     def __init__(
@@ -89,7 +92,6 @@ class AxionEnvToTrajectorySamplerAdapter:
             device=device_str,
         )
 
-        # Default mode for step/reset API; we currently always step the ground-truth AxionEnv.
         assert default_env_mode in ("ground-truth", "neural")
         self.env_mode = default_env_mode
 
@@ -191,8 +193,6 @@ class AxionEnvToTrajectorySamplerAdapter:
     def set_env_mode(self, env_mode: str):
         assert env_mode in ("ground-truth", "neural")
         self.env_mode = env_mode
-        # For now, AxionEnv always runs ground-truth dynamics; env_mode is kept
-        # for API compatibility with trainers/evaluators.
 
     def set_eval_collisions(self, eval_collisions: bool):
         self.env.set_eval_collisions(eval_collisions)
@@ -209,8 +209,10 @@ class AxionEnvToTrajectorySamplerAdapter:
             warp_utils.acquire_states_to_torch(self.env, self.states)
         else:
             self.states.copy_(states)
+            warp_utils.assign_states_from_torch(self.env, self.states)
+            warp_utils.eval_fk(self.env.model, self.env.state)
 
-        # Update cached root pose and keep utils_provider buffers in sync.
+        # body_q is now up-to-date in both paths; read root pose.
         self.root_body_q.copy_(
             wp.to_torch(self.sim_states.body_q)[0 :: self.bodies_per_env, :].view(
                 self.num_envs, 7
@@ -219,13 +221,43 @@ class AxionEnvToTrajectorySamplerAdapter:
 
         self.utils_provider.states.copy_(self.states)
         self.utils_provider.root_body_q.copy_(self.root_body_q)
-        # Gravity dir is static and initialized in the utils_provider.
         self.utils_provider.wrap2PI(self.utils_provider.states)
         self.utils_provider.append_current_state_to_history(joint_acts=self.joint_acts)
 
-        if states is not None:
-            warp_utils.assign_states_from_torch(self.env, self.states)
-            warp_utils.eval_fk(self.env.model, self.env.state)
+    # ---- Neural model step  ----
+
+    @torch.no_grad()
+    def _step_neural(self) -> torch.Tensor:
+        """Step using the neural model instead of ground-truth physics.
+
+        Reads state history from the utils_provider, runs a forward pass through
+        the neural model, converts the prediction to next states, and syncs the
+        result back into the warp simulation and state history.
+        """
+        neural_model = self.utils_provider.neural_model
+        assert neural_model is not None, (
+            "Neural model must be set before stepping in neural mode. "
+            "Call utils_provider.set_neural_model() first."
+        )
+
+        model_inputs = self.utils_provider.get_neural_model_inputs()
+        prediction = neural_model(model_inputs)
+
+        # The transformer produces predictions for every timestep in the
+        # history sequence (B, T, prediction_dim). We only need the last
+        # timestep's prediction to advance the simulation by one step.
+        current_states = self.states.unsqueeze(1)  # (B, 1, state_dim)
+        if prediction.ndim == 3:
+            prediction = prediction[:, -1:, :]
+
+        next_states = self.utils_provider.convert_prediction_to_next_states(
+            states=current_states,
+            prediction=prediction,
+            dt=self.frame_dt,
+        ).squeeze(1)  # back to (B, state_dim)
+
+        self._update_states(next_states)
+        return self.states
 
     # ---- Step and reset (trajectory sampler uses these) ----
 
@@ -252,9 +284,12 @@ class AxionEnvToTrajectorySamplerAdapter:
                 )
             )
 
-        self.env.update()
-        self._update_states()
-        return self.states
+        if env_mode == "neural":
+            return self._step_neural()
+        else:
+            self.env.update()
+            self._update_states()
+            return self.states
 
     def step_with_joint_act(
         self,
@@ -275,11 +310,17 @@ class AxionEnvToTrajectorySamplerAdapter:
                 )
             )
 
-        self.env.update()
-        self._update_states()
-        return self.states
+        if env_mode == "neural":
+            return self._step_neural()
+        else:
+            self.env.update()
+            self._update_states()
+            return self.states
 
     def reset(self, initial_states: Optional[torch.Tensor] = None):
+        # Clear history first so the initial state persists as the first entry.
+        self.utils_provider.reset()
+
         if initial_states is not None:
             assert initial_states.shape[0] == self.num_envs
             initial_states = initial_states.to(self.torch_device)
@@ -287,7 +328,6 @@ class AxionEnvToTrajectorySamplerAdapter:
         else:
             self.env.reset()
             self._update_states()
-        self.utils_provider.reset()
 
     def close(self):
         self.env.close()
