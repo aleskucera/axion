@@ -9,13 +9,20 @@ import torch
 import numpy as np
 from typing import Dict, Optional
 from collections import deque
-
-from src.axion.neural_solver.standalone.neural_predictor_helpers import (
-    wrap2PI,
-    convert_prediction_to_next_states_orientation_dofs,
-    convert_prediction_to_next_states_regular_dofs
-)
-from src.axion.neural_solver.utils import torch_utils
+try:
+    from src.axion.neural_solver.standalone.neural_predictor_helpers import (
+        wrap2PI,
+        convert_prediction_to_next_states_orientation_dofs,
+        convert_prediction_to_next_states_regular_dofs
+    )
+    from src.axion.neural_solver.utils import torch_utils
+except ModuleNotFoundError:
+    from axion.neural_solver.standalone.neural_predictor_helpers import (
+        wrap2PI,
+        convert_prediction_to_next_states_orientation_dofs,
+        convert_prediction_to_next_states_regular_dofs
+    )
+    from axion.neural_solver.utils import torch_utils
 
 from newton import JointType
 JOINT_FREE = JointType.FREE
@@ -131,7 +138,7 @@ class NeuralPredictor:
         dt: Optional[float] = None
     ) -> Dict[str, torch.Tensor]:
         """
-        Process model inputs: coordinate frame conversion, state embedding, contact masking.
+        Process model inputs: coordinate frame conversion, state embedding.
         """
         
         # Reset model_inputs dict
@@ -203,10 +210,12 @@ class NeuralPredictor:
         next_states = self._convert_prediction_to_next_states(cur_states, prediction)
         
         # Convert back to world frame if needed
-        next_states = self.convert_states_back_to_world(
-            self.nn_model_inputs["root_body_q"],
-            next_states
-        )
+        print("After _convert_prediction_to_next_states", next_states)
+        # next_states = self._convert_states_back_to_world(
+        #     self.nn_model_inputs["root_body_q"],
+        #     next_states
+        # )
+        # print("After _convert_states_back_to_world", next_states)
         
         # Wrap continuous DOFs
         wrap2PI(next_states, self.is_continuous_dof)
@@ -297,7 +306,7 @@ class NeuralPredictor:
 
         return next_states
 
-    def convert_states_back_to_world(self, root_body_q, states):
+    def _convert_states_back_to_world(self, root_body_q, states):
         """
         Convert states from body frame back to world frame.
 

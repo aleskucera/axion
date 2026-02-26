@@ -9,12 +9,16 @@ from typing import Callable
 from typing import Dict
 from typing import List
 from typing import Optional
+from typing import Union
 
 import numpy as np
 import warp as wp
 from axion.core.logging_config import LoggingConfig
 from axion.logging import HDF5Logger
 from axion.logging import NullLogger
+
+# Type alias for loggers that can be passed to engines (e.g. NeuralEngine)
+EngineLogger = Union[HDF5Logger, NullLogger]
 
 
 class EngineMode(Enum):

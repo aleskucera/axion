@@ -7,6 +7,8 @@ from .engine_config import FeatherstoneEngineConfig
 from .engine_config import MuJoCoEngineConfig
 from .engine_config import SemiImplicitEngineConfig
 from .engine_config import XPBDEngineConfig
+from .engine_config import NeuralEngineConfig
+from .joint_types import JointMode
 from .logging_config import LoggingConfig
 from .types import JointMode
 
@@ -19,6 +21,7 @@ __all__ = [
     "MuJoCoEngineConfig",
     "SemiImplicitEngineConfig",
     "XPBDEngineConfig",
+    "NeuralEngineConfig",
     "JointMode",
     "LoggingConfig",
     "JointMode",
