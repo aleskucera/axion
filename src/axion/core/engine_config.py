@@ -276,3 +276,40 @@ class SemiImplicitEngineConfig(EngineConfig):
         from newton.solvers import SolverSemiImplicit
 
         return SolverSemiImplicit
+
+
+@dataclass(frozen=True)
+class NeuralEngineConfig(EngineConfig):
+    """
+    Configuration for the NeuralEngine solver (neural-network-based physics).
+    """
+
+    def _get_solver_class(self):
+        from axion.core.neural_engine import NeuralEngine
+
+        return NeuralEngine
+
+    def create_engine(
+        self,
+        model: Any,
+        init_state_fn: Optional[Callable] = None,
+        logging_config: Optional[Any] = None,
+    ) -> Any:
+        from axion.logging import HDF5Logger
+        from axion.logging import NullLogger
+
+        from axion.core.neural_engine import NeuralEngine
+
+        if logging_config is not None and getattr(
+            logging_config, "enable_hdf5_logging", False
+        ):
+            logger = HDF5Logger(filepath=logging_config.hdf5_log_file)
+            logger.open()
+        else:
+            logger = NullLogger()
+
+        return NeuralEngine(
+            model=model,
+            logger=logger,
+            config=self,
+        )

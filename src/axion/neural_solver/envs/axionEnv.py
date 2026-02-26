@@ -1,22 +1,15 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Any, Optional
-
 import numpy as np
 import warp as wp
 import newton
 
-from axion.core.contacts import AxionContacts
-from axion import JointMode
+from examples.double_pendulum.pendulum_articulation_definition import build_pendulum_model
 from axion.core.engine import AxionEngine
 from axion.core.engine_config import AxionEngineConfig
-from axion.core.model_builder import AxionModelBuilder
-
 from axion.neural_solver.utils.warp_utils import device_to_torch
 from axion.neural_solver.envs.abstract_contact import AbstractContact
 
-PENDULUM_HEIGHT = 5.0
 NUM_CONTACTS_PER_WORLD = 4 # hardcoded for double pendulum
 FRAME_DT = 0.01
 ENGINE_SUBSTEPS = 10
@@ -44,7 +37,7 @@ class AxionEnv:
         
         # model (robot model built by AxionModelBuilder):
         if self.env_name in ("PendulumWithContact", "Pendulum", "pendulum"):
-            self.model = self._build_pendulum_model(self.num_worlds, self.device, self.requires_grad)
+            self.model = build_pendulum_model(self.num_worlds, self.device, self.requires_grad)
         else:
             raise NotImplementedError
         
@@ -176,89 +169,6 @@ class AxionEnv:
         return
 
     # "Private" methods:
-
-    def _build_pendulum_model(
-        self,
-        num_worlds: int,
-        device: wp.Device,
-        requires_grad: bool = False,
-    ) -> newton.Model:
-        """Build the same 2-link revolute pendulum as examples/pendulum_AxionEngine.py,
-        replicated for num_worlds."""
-        builder = AxionModelBuilder()
-
-        chain_width = 1.5
-        shape_ke = 1.0e4
-        shape_kd = 1.0e3
-        shape_kf = 1.0e4
-        hx = chain_width * 0.5
-
-        link_config = newton.ModelBuilder.ShapeConfig(
-            density=500.0, ke=shape_ke, kd=shape_kd, kf=shape_kf
-        )
-        capsule_xform = wp.transform(
-            p=wp.vec3(0.0, 0.0, 0.0),
-            q=wp.quat_from_axis_angle(wp.vec3(0.0, 1.0, 0.0), -wp.pi / 2),
-        )
-
-        link_0 = builder.add_link(armature=0.1)
-        builder.add_shape_capsule(
-            link_0,
-            xform=capsule_xform,
-            radius=0.1,
-            half_height=chain_width * 0.5,
-            cfg=link_config,
-        )
-
-        link_1 = builder.add_link(armature=0.1)
-        builder.add_shape_capsule(
-            link_1,
-            xform=capsule_xform,
-            radius=0.1,
-            half_height=chain_width * 0.5,
-            cfg=link_config,
-        )
-
-        j0 = builder.add_joint_revolute(
-            parent=-1,
-            child=link_0,
-            axis=wp.vec3(0.0, 1.0, 0.0),
-            parent_xform=wp.transform(
-                p=wp.vec3(0.0, 0.0, PENDULUM_HEIGHT), q=wp.quat_identity()
-            ),
-            child_xform=wp.transform(p=wp.vec3(-hx, 0.0, 0.0), q=wp.quat_identity()),
-            target_ke=1000.0,
-            target_kd=50.0,
-            custom_attributes={
-                #"joint_target_ki": [0.5],
-                "joint_dof_mode": [JointMode.NONE],
-            },
-        )
-        j1 = builder.add_joint_revolute(
-            parent=link_0,
-            child=link_1,
-            axis=wp.vec3(0.0, 1.0, 0.0),
-            parent_xform=wp.transform(p=wp.vec3(hx, 0.0, 0.0), q=wp.quat_identity()),
-            child_xform=wp.transform(p=wp.vec3(-hx, 0.0, 0.0), q=wp.quat_identity()),
-            target_ke=500.0,
-            target_kd=5.0,
-            custom_attributes={
-                #"joint_target_ki": [0.5],
-                "joint_dof_mode": [JointMode.NONE],
-            },
-            armature=0.1,
-        )
-
-        builder.add_articulation([j0, j1], key="pendulum")
-        builder.add_ground_plane()
-
-        return builder.finalize_replicated(
-            num_worlds=num_worlds,
-            gravity=-9.81,
-            device=device,
-            requires_grad=requires_grad,
-        )
-
     def _engine_init_state_fn(
         self,
         state: newton.State,

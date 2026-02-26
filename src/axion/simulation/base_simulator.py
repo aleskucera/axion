@@ -131,6 +131,8 @@ class BaseSimulator(ABC):
 
         # Compute simulation step
         # Note: We use the effective timestep calculated by the clock
+        # newton.eval_ik(self.model, self.current_state, self.current_state.joint_q, self.current_state.joint_qd)
+        # print("State in - joint_q, joint_qd:",  self.current_state.joint_q, self.current_state.joint_qd)
         self.solver.step(
             state_in=self.current_state,
             state_out=self.next_state,
