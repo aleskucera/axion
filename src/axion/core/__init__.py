@@ -18,6 +18,8 @@ from .engine_config import XPBDEngineConfig
 from .logging_config import AdjointLoggingConfig
 from .logging_config import DatasetLoggingConfig
 from .logging_config import HDF5LoggingConfig
+from .engine_config import NeuralEngineConfig
+from .joint_types import JointMode
 from .logging_config import LoggingConfig
 from .types import JointMode
 
@@ -38,6 +40,7 @@ __all__ = [
     "MuJoCoEngineConfig",
     "SemiImplicitEngineConfig",
     "XPBDEngineConfig",
+    "NeuralEngineConfig",
     "JointMode",
     "LoggingConfig",
     "HDF5LoggingConfig",

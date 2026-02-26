@@ -1,7 +1,10 @@
 
 import numpy as np
 import torch
-from src.axion.neural_solver.utils import torch_utils
+try:
+    from src.axion.neural_solver.utils import torch_utils
+except ModuleNotFoundError:
+    from axion.neural_solver.utils import torch_utils
 
 def wrap2PI(states, is_continuous_dof):
     """
