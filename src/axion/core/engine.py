@@ -1,17 +1,7 @@
-from typing import Any
 from typing import Callable
 from typing import Optional
 
 import warp as wp
-from axion.core.contacts import AxionContacts
-from axion.core.engine_config import AxionEngineConfig
-from axion.core.engine_data import EngineData
-from axion.core.engine_dims import EngineDimensions
-from axion.core.linear_utils import compute_dbody_qd_from_dbody_lambda
-from axion.core.linear_utils import compute_linear_system
-from axion.core.linesearch_utils import perform_linesearch
-from axion.core.logging_config import LoggingConfig
-from axion.core.model import AxionModel
 from axion.optim import JacobiPreconditioner
 from axion.optim import PCRSolver
 from axion.optim import SystemLinearData
@@ -25,8 +15,19 @@ from newton.solvers import SolverBase
 from .adjoint_utils import compute_adjoint_rhs_kernel
 from .adjoint_utils import compute_body_adjoint_init_kernel
 from .adjoint_utils import subtract_constraint_feedback_kernel
+from .backtracking_utils import perform_backtracking
+from .contacts import AxionContacts
+from .engine_config import AxionEngineConfig
+from .engine_data import EngineData
+from .engine_dims import EngineDimensions
+from .linear_utils import compute_dbody_qd_from_dbody_lambda
+from .linear_utils import compute_linear_system
+from .linesearch_utils import perform_linesearch
+from .logging_config import LoggingConfig
+from .model import AxionModel
 from .residual_utils import compute_residual
 from .sim_logger import SimulationHDF5Logger
+from .update_utils import apply_stardard_newton_step
 
 
 @wp.kernel
@@ -57,60 +58,6 @@ def _check_newton_convergence(
 @wp.kernel
 def increment_timestep_kernel(step_count: wp.array(dtype=int)):
     step_count[0] = step_count[0] + 1
-
-
-@wp.kernel
-def copy_best_sample_kernel(
-    x_buffer: wp.array(dtype=Any, ndim=3),
-    best_idx: wp.array(dtype=wp.int32),
-    # Outputs
-    x: wp.array(dtype=Any, ndim=2),
-):
-    world_idx, x_idx = wp.tid()
-    x[world_idx, x_idx] = x_buffer[best_idx[world_idx], world_idx, x_idx]
-
-
-@wp.kernel
-def copy_best_sample_kernel_1d(
-    x_buffer: wp.array(dtype=Any, ndim=2),
-    best_idx: wp.array(dtype=wp.int32),
-    # Outputs
-    x: wp.array(dtype=Any, ndim=1),
-):
-    world_idx = wp.tid()
-    x[world_idx] = x_buffer[best_idx[world_idx], world_idx]
-
-
-@wp.kernel
-def find_minimal_residual_index_kernel(
-    batch_h_norm_sq: wp.array(dtype=wp.float32, ndim=2),
-    iter_count: wp.array(dtype=wp.int32),
-    start_idx: wp.int32,
-    # Outputs
-    minimal_index: wp.array(dtype=wp.int32),
-):
-    world_idx = wp.tid()
-    count = iter_count[0]
-
-    if count <= 0:
-        minimal_index[world_idx] = wp.int32(0)
-        return
-
-    if count <= start_idx:
-        # This means we exited early, so we take the value from the last iteration
-        minimal_index[world_idx] = count - wp.int32(1)
-        return
-
-    min_idx = wp.int32(start_idx)
-    min_value = batch_h_norm_sq[min_idx, world_idx]
-
-    for i in range(start_idx + 1, count):
-        value = batch_h_norm_sq[i, world_idx]
-        if value < min_value:
-            min_idx = wp.int32(i)
-            min_value = value
-
-    minimal_index[world_idx] = min_idx
 
 
 class AxionEngine(SolverBase):
@@ -201,87 +148,6 @@ class AxionEngine(SolverBase):
             device=self.device,
         )
 
-    def _restore_best_newton_candidate(self):
-        wp.launch(
-            kernel=find_minimal_residual_index_kernel,
-            dim=(self.dims.num_worlds),
-            inputs=[
-                self.data.candidates_res_norm_sq,
-                self.data.iter_count,
-                self.config.backtrack_min_iter,
-            ],
-            outputs=[
-                self.data.candidates_best_idx,
-            ],
-            device=self.device,
-        )
-
-        wp.launch(
-            kernel=copy_best_sample_kernel,
-            dim=(self.dims.num_worlds, self.dims.body_count),
-            inputs=[
-                self.data.candidates_body_pose,
-                self.data.candidates_best_idx,
-            ],
-            outputs=[
-                self.data.body_pose,
-            ],
-            device=self.device,
-        )
-
-        wp.launch(
-            kernel=copy_best_sample_kernel,
-            dim=(self.dims.num_worlds, self.dims.body_count),
-            inputs=[
-                self.data.candidates_body_vel,
-                self.data.candidates_best_idx,
-            ],
-            outputs=[
-                self.data.body_vel,
-            ],
-            device=self.device,
-        )
-
-        wp.launch(
-            kernel=copy_best_sample_kernel,
-            dim=(self.dims.num_worlds, self.dims.num_constraints),
-            inputs=[
-                self.data._candidates_constr_force,
-                self.data.candidates_best_idx,
-            ],
-            outputs=[
-                self.data._constr_force,
-            ],
-            device=self.device,
-        )
-
-        wp.launch(
-            kernel=copy_best_sample_kernel,
-            dim=(self.dims.num_worlds, self.dims.num_constraints),
-            inputs=[
-                self.data._candidates_res,
-                self.data.candidates_best_idx,
-            ],
-            outputs=[
-                self.data._res,
-            ],
-            device=self.device,
-        )
-
-        wp.launch(
-            kernel=copy_best_sample_kernel_1d,
-            dim=(self.dims.num_worlds),
-            inputs=[
-                self.data.candidates_res_norm_sq,
-                self.data.candidates_best_idx,
-            ],
-            outputs=[
-                self.data.res_norm_sq,
-            ],
-            device=self.device,
-        )
-        # compute_residual(self.axion_model, self.data, self.config, self.dims)
-
     def step(
         self,
         state_in: State,
@@ -344,11 +210,18 @@ class AxionEngine(SolverBase):
             )
             compute_dbody_qd_from_dbody_lambda(self.axion_model, self.data, self.config, self.dims)
 
-            # Linesearch
             wp.copy(dest=self.data._constr_force_prev_iter, src=self.data._constr_force)
-            perform_linesearch(
-                self.axion_model, self.axion_contacts, self.data, self.config, self.dims
-            )
+
+            if self.config.enable_linesearch:
+                perform_linesearch(
+                    self.axion_model, self.axion_contacts, self.data, self.config, self.dims
+                )
+            else:
+                apply_stardard_newton_step(self.axion_model, self.data, self.dims)
+                compute_residual(
+                    self.axion_model, self.axion_contacts, self.data, self.config, self.dims
+                )
+                self.data.tiled_sq_norm.compute(self.data.res.full, self.data.res_norm_sq)
 
             self.data.save_state_to_candidates()
             self._save_iter_to_history()
@@ -366,7 +239,7 @@ class AxionEngine(SolverBase):
                 if self.data.keep_running.numpy()[0] == 0:
                     break
 
-        self._restore_best_newton_candidate()
+        perform_backtracking(self.axion_model, self.data, self.config, self.dims)
         if self.logger:
             self.logger.capture_step(self.timestep, self.data)
 

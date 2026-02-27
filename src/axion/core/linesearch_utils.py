@@ -12,14 +12,15 @@ from axion.constraints import fused_batch_friction_residual_kernel
 from axion.constraints import fused_batch_joint_residual_kernel
 from axion.constraints import fused_batch_unconstrained_dynamics_kernel
 from axion.math import integrate_batched_body_pose_kernel
-from axion.math import integrate_body_pose_kernel
 
 from .contacts import AxionContacts
 from .engine_config import EngineConfig
 from .engine_data import EngineData
 from .engine_dims import EngineDimensions
 from .model import AxionModel
-from .residual_utils import compute_residual
+from .reduction_kernels import batched_argmin_kernel
+from .reduction_kernels import gather_1d_kernel
+from .reduction_kernels import gather_2d_kernel
 
 
 @wp.kernel
@@ -36,55 +37,12 @@ def linesearch_spread_kernel(
     linesearch_x[batch_idx, world_idx, x_idx] = spread_x
 
 
-@wp.kernel
-def copy_best_sample_kernel(
-    linesearch_x: wp.array(dtype=Any, ndim=3),
-    best_idx: wp.array(dtype=wp.int32),
-    # Outputs
-    x: wp.array(dtype=Any, ndim=2),
-):
-    world_idx, x_idx = wp.tid()
-    x[world_idx, x_idx] = linesearch_x[best_idx[world_idx], world_idx, x_idx]
-
-
-@wp.kernel
-def update_without_linesearch(
-    dx: wp.array(dtype=Any, ndim=2),
-    # Outputs
-    x: wp.array(dtype=Any, ndim=2),
-):
-    world_idx, x_idx = wp.tid()
-
-    x[world_idx, x_idx] = x[world_idx, x_idx] + dx[world_idx, x_idx]
-
-
-@wp.kernel
-def find_minimal_residual_index_kernel(
-    batch_h_norm_sq: wp.array(dtype=wp.float32, ndim=2),
-    # Outputs
-    minimal_index: wp.array(dtype=wp.int32),
-):
-    world_idx = wp.tid()
-
-    min_idx = wp.int32(0)
-    min_value = batch_h_norm_sq[0, world_idx]
-
-    # Iterate over batch dimension (dim 0)
-    for i in range(1, batch_h_norm_sq.shape[0]):
-        value = batch_h_norm_sq[i, world_idx]
-        if value < min_value:
-            min_idx = wp.int32(i)
-            min_value = value
-    minimal_index[world_idx] = min_idx
-
-
-def compute_linesearch_batch_variables(
+def _linesearch_spread(
     model: AxionModel,
     data: EngineData,
     config: EngineConfig,
     dims: EngineDimensions,
 ):
-    # 1. Compute candidates for body_velocities
     wp.launch(
         kernel=linesearch_spread_kernel,
         dim=(
@@ -101,7 +59,6 @@ def compute_linesearch_batch_variables(
         device=data.device,
     )
 
-    # 2. Compute candidates for body poses (integration)
     wp.launch(
         kernel=integrate_batched_body_pose_kernel,
         dim=(
@@ -119,7 +76,6 @@ def compute_linesearch_batch_variables(
         device=data.device,
     )
 
-    # 3. Compute candidates for constraint forces
     wp.launch(
         kernel=linesearch_spread_kernel,
         dim=(
@@ -137,14 +93,13 @@ def compute_linesearch_batch_variables(
     )
 
 
-def compute_linesearch_batch_h(
+def _compute_batched_residual(
     model: AxionModel,
     contacts: AxionContacts,
     data: EngineData,
     config: EngineConfig,
     dims: EngineDimensions,
 ):
-    # Evaluate residual for unconstrained dynamics
     wp.launch(
         kernel=fused_batch_unconstrained_dynamics_kernel,
         dim=(dims.num_worlds, dims.body_count),
@@ -190,7 +145,6 @@ def compute_linesearch_batch_h(
         device=data.device,
     )
 
-    # Evaluate residual for control constraints
     wp.launch(
         kernel=fused_batch_control_residual_kernel,
         dim=(dims.num_worlds, dims.joint_count),
@@ -223,7 +177,6 @@ def compute_linesearch_batch_h(
         device=data.device,
     )
 
-    # Evaluate residual for normal contact constraints
     wp.launch(
         kernel=fused_batch_contact_residual_kernel,
         dim=(dims.num_worlds, dims.contact_count),
@@ -255,7 +208,6 @@ def compute_linesearch_batch_h(
         device=data.device,
     )
 
-    # Evaluate residual for friction constraints
     wp.launch(
         kernel=fused_batch_friction_residual_kernel,
         dim=(dims.num_worlds, dims.contact_count),
@@ -292,26 +244,23 @@ def compute_linesearch_batch_h(
     data.linesearch_res.sync_to_float()
 
 
-def select_minimal_residual_variables(
+def _linesearch_gather(
     data: EngineData,
     config: EngineConfig,
     dims: EngineDimensions,
 ):
-    # Compute norm squared for each batch using TiledSqNorm
     data.linesearch_tiled_res_sq_norm.compute(data.linesearch_res.full, data.linesearch_res_norm_sq)
 
-    # Find the index with minimal residual norm (per world)
     wp.launch(
-        kernel=find_minimal_residual_index_kernel,
+        kernel=batched_argmin_kernel,
         dim=dims.num_worlds,
         inputs=[data.linesearch_res_norm_sq],
         outputs=[data.linesearch_minimal_index],
         device=data.device,
     )
 
-    # Copy the minimal residual state variables back
     wp.launch(
-        kernel=copy_best_sample_kernel,
+        kernel=gather_2d_kernel,
         dim=(dims.num_worlds, dims.body_count),
         inputs=[
             data.linesearch_body_vel,
@@ -322,7 +271,7 @@ def select_minimal_residual_variables(
     )
 
     wp.launch(
-        kernel=copy_best_sample_kernel,
+        kernel=gather_2d_kernel,
         dim=(dims.num_worlds, dims.body_count),
         inputs=[
             data.linesearch_body_pose,
@@ -333,7 +282,7 @@ def select_minimal_residual_variables(
     )
 
     wp.launch(
-        kernel=copy_best_sample_kernel,
+        kernel=gather_2d_kernel,
         dim=(dims.num_worlds, dims.num_constraints),
         inputs=[
             data.linesearch_constr_force.full,
@@ -344,7 +293,7 @@ def select_minimal_residual_variables(
     )
 
     wp.launch(
-        kernel=copy_best_sample_kernel,
+        kernel=gather_2d_kernel,
         dim=(dims.num_worlds, dims.N_u + dims.num_constraints),
         inputs=[
             data.linesearch_res.full,
@@ -354,39 +303,14 @@ def select_minimal_residual_variables(
         device=data.device,
     )
 
-
-def update_variables_without_linesearch(
-    model: AxionModel,
-    data: EngineData,
-    config: EngineConfig,
-    dims: EngineDimensions,
-):
     wp.launch(
-        kernel=update_without_linesearch,
-        dim=(dims.num_worlds, dims.body_count),
-        inputs=[data.dbody_vel],
-        outputs=[data.body_vel],
-        device=data.device,
-    )
-
-    wp.launch(
-        kernel=integrate_body_pose_kernel,
-        dim=(dims.num_worlds, dims.body_count),
+        kernel=gather_1d_kernel,
+        dim=(dims.num_worlds),
         inputs=[
-            data.body_vel,
-            data.body_pose_prev,
-            model.body_com,
-            data.dt,
+            data.linesearch_res_norm_sq,
+            data.linesearch_minimal_index,
         ],
-        outputs=[data.body_pose],
-        device=data.device,
-    )
-
-    wp.launch(
-        kernel=update_without_linesearch,
-        dim=(dims.num_worlds, dims.num_constraints),
-        inputs=[data.dconstr_force.full],
-        outputs=[data.constr_force.full],
+        outputs=[data.res_norm_sq],
         device=data.device,
     )
 
@@ -398,11 +322,6 @@ def perform_linesearch(
     config: EngineConfig,
     dims: EngineDimensions,
 ):
-    if config.enable_linesearch:
-        compute_linesearch_batch_variables(model, data, config, dims)
-        compute_linesearch_batch_h(model, contacts, data, config, dims)
-        select_minimal_residual_variables(data, config, dims)
-    else:
-        update_variables_without_linesearch(model, data, config, dims)
-    compute_residual(model, contacts, data, config, dims)
-    data.tiled_sq_norm.compute(data.res.full, data.res_norm_sq)
+    _linesearch_spread(model, data, config, dims)
+    _compute_batched_residual(model, contacts, data, config, dims)
+    _linesearch_gather(data, config, dims)

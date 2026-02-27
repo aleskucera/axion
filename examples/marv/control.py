@@ -66,8 +66,8 @@ class MarvControlSimulator(InteractiveSimulator):
 
     def _update_input(self):
         # Constants
-        MAX_SPEED = 60.0  # Mujoco 600
-        TURN_SPEED = 50.0  # Mujoco 500
+        MAX_SPEED = 600.0  # Mujoco 600
+        TURN_SPEED = 500.0  # Mujoco 500
         FLIPPER_SPEED = 0.1
 
         # Reset drive speeds

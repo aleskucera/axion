@@ -17,14 +17,14 @@ class HelhestConfig:
 
     # Chassis
     CHASSIS_SIZE = [0.26, 0.6, 0.18]
-    CHASSIS_MASS = 19.0
+    CHASSIS_MASS = 85.0
     CHASSIS_OFFSET = wp.vec3(-0.047, 0.0, 0.0)
     CHASSIS_I = wp.mat33(0.6213, 0.0, 0.0, 0.0, 0.1583, 0.0, 0.0, 0.0, 0.6770)
 
     # Wheels
     WHEEL_RADIUS = 0.36
     WHEEL_WIDTH = 0.11
-    WHEEL_MASS = 2.0
+    WHEEL_MASS = 5.5
     WHEEL_I = wp.mat33(0.20045, 0.0, 0.0, 0.0, 0.20045, 0.0, 0.0, 0.0, 0.3888)
     WHEEL_ROT = wp.quat_from_axis_angle(wp.vec3(1.0, 0.0, 0.0), wp.pi / 2.0)
 
