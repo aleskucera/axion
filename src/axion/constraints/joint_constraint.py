@@ -60,7 +60,7 @@ def submit_row(
 
 
 @wp.kernel
-def positional_joint_constraint_kernel(
+def joint_constraint_kernel(
     # State
     body_q: wp.array(dtype=wp.transform, ndim=2),
     body_lambda_j: wp.array(dtype=wp.float32, ndim=2),
@@ -163,7 +163,7 @@ def positional_joint_constraint_kernel(
 
 
 @wp.kernel
-def positional_joint_residual_kernel(
+def joint_residual_kernel(
     # State
     body_q: wp.array(dtype=wp.transform, ndim=2),
     body_lambda_j: wp.array(dtype=wp.float32, ndim=2),
@@ -255,7 +255,7 @@ def positional_joint_residual_kernel(
 
 
 @wp.kernel
-def batch_positional_joint_residual_kernel(
+def batch_joint_residual_kernel(
     # State (Batched)
     body_q: wp.array(dtype=wp.transform, ndim=3),
     body_lambda_j: wp.array(dtype=wp.float32, ndim=3),
@@ -337,7 +337,7 @@ def batch_positional_joint_residual_kernel(
 
 
 @wp.kernel
-def fused_batch_positional_joint_residual_kernel(
+def fused_batch_joint_residual_kernel(
     # State (Batched)
     body_q: wp.array(dtype=wp.transform, ndim=3),
     body_lambda_j: wp.array(dtype=wp.float32, ndim=3),

@@ -363,7 +363,7 @@ class MarvTrackedSimulator(InteractiveSimulator):
 
         # Add Ground
         ground_cfg = newton.ModelBuilder.ShapeConfig(
-            contact_margin=0.05, ke=1.0e4, kd=1.0e3, kf=1.0e3, mu=1.0, restitution=0.0
+            contact_margin=0.2, ke=1.0e4, kd=1.0e3, kf=1.0e3, mu=0.4, restitution=0.0
         )
         self.builder.add_ground_plane(cfg=ground_cfg)
 

@@ -68,20 +68,12 @@ class BaseSimulator(ABC):
 
     @property
     def use_cuda_graph(self) -> bool:
-        if (
-            isinstance(self.engine_config, AxionEngineConfig)
-            and self.logging_config.enable_hdf5_logging
-        ):
-            return False
+        # if (
+        #     isinstance(self.engine_config, AxionEngineConfig)
+        #     and self.logging_config.enable_hdf5_logging
+        # ):
+        #     return False
         return self.execution_config.use_cuda_graph and wp.get_device().is_cuda
-
-    # @property
-    # def use_cuda_graph(self):
-    #     return (
-    #         self.execution_config.use_cuda_graph
-    #         and wp.get_device().is_cuda
-    #         and not self.logging_config.enable_hdf5_logging
-    #     )
 
     @abstractmethod
     def build_model(self) -> Model:
@@ -108,7 +100,9 @@ class BaseSimulator(ABC):
         """
         Initialization hook for Axion engine.
         """
-        self.solver.integrate_bodies(self.model, current_state, next_state, dt)
+        wp.copy(dest=next_state.body_q, src=current_state.body_q)
+        wp.copy(dest=next_state.body_qd, src=current_state.body_qd)
+        # self.solver.integrate_bodies(self.model, current_state, next_state, dt)
 
     def _copy_state(self, dest: newton.State, src: newton.State):
         """Copies the physics state data from src to dest."""

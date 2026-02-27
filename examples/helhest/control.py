@@ -65,6 +65,20 @@ def integrate_wheel_position_kernel(
     joint_target_pos[rear_idx] = new_ang_rear
 
 
+@wp.kernel
+def apply_wheel_velocity_kernel(
+    target_velocities: wp.array(dtype=wp.float32),
+    joint_target_vel: wp.array(dtype=wp.float32),
+    left_idx: int,
+    right_idx: int,
+    rear_idx: int,
+):
+    # Write command velocities to the global array at specified indices
+    joint_target_vel[left_idx] = target_velocities[0]
+    joint_target_vel[right_idx] = target_velocities[1]
+    joint_target_vel[rear_idx] = target_velocities[2]
+
+
 class HelhestControlSimulator(InteractiveSimulator):
     def __init__(
         self,
@@ -73,7 +87,15 @@ class HelhestControlSimulator(InteractiveSimulator):
         exec_config: ExecutionConfig,
         engine_config: EngineConfig,
         logging_config: LoggingConfig,
+        control_mode: str = "position",
+        k_p: float = 50.0,
+        k_d: float = 0.1,
+        friction: float = 0.7,
     ):
+        self.control_mode = control_mode
+        self.k_p = k_p
+        self.k_d = k_d
+        self.friction = friction
         self.left_indices_cpu = []
         self.right_indices_cpu = []
         super().__init__(
@@ -100,8 +122,8 @@ class HelhestControlSimulator(InteractiveSimulator):
 
     def _update_input(self):
         """Check keyboard input and update wheel velocities."""
-        base_speed = 6.0
-        turn_speed = 2.0
+        base_speed = 7.0
+        turn_speed = 3.0
 
         left_v = 0.0
         right_v = 0.0
@@ -144,29 +166,51 @@ class HelhestControlSimulator(InteractiveSimulator):
 
     @override
     def control_policy(self, current_state: newton.State):
-        # INTEGRATE: Convert Velocity -> Position
-        # Indices in Helhest model: 6=Left, 7=Right, 8=Rear
-        wp.launch(
-            kernel=integrate_wheel_position_kernel,
-            dim=1,
-            inputs=[
-                self.wheel_angles,  # State (read/write)
-                self.target_velocities,  # Input (from keyboard)
-                self.clock.dt,  # dt
-                self.joint_target_buffer,  # Output
-                6,
-                7,
-                8,  # Indices
-            ],
-            device=self.model.device,
-        )
+        if self.control_mode == "velocity":
+            # Buffer for the full joint array
+            wp.launch(
+                kernel=apply_wheel_velocity_kernel,
+                dim=1,
+                inputs=[
+                    self.target_velocities,
+                    self.joint_target_buffer,
+                    6,
+                    7,
+                    8,
+                ],
+                device=self.model.device,
+            )
 
-        # Apply to Position Control Target
-        wp.copy(self.control.joint_target_pos, self.joint_target_buffer)
+            wp.copy(self.control.joint_target_vel, self.joint_target_buffer)
+        else:
+            # INTEGRATE: Convert Velocity -> Position
+            # Indices in Helhest model: 6=Left, 7=Right, 8=Rear
+            wp.launch(
+                kernel=integrate_wheel_position_kernel,
+                dim=1,
+                inputs=[
+                    self.wheel_angles,  # State (read/write)
+                    self.target_velocities,  # Input (from keyboard)
+                    self.clock.dt,  # dt
+                    self.joint_target_buffer,  # Output
+                    6,
+                    7,
+                    8,  # Indices
+                ],
+                device=self.model.device,
+            )
+
+            # Apply to Position Control Target
+            wp.copy(self.control.joint_target_pos, self.joint_target_buffer)
 
     def build_model(self) -> newton.Model:
         # --- 1. Ground ---
-        ground_cfg = newton.ModelBuilder.ShapeConfig(mu=1.0)
+        ground_cfg = newton.ModelBuilder.ShapeConfig(
+            mu=1.0,
+            ke=50.0,
+            kd=50.0,
+            kf=50.0,
+        )
         self.builder.add_ground_plane(cfg=ground_cfg)
 
         # Obstacle 1: Stairs (Stepped boxes)
@@ -238,7 +282,13 @@ class HelhestControlSimulator(InteractiveSimulator):
         robot_z = 0.5  # Slightly above ground
 
         create_helhest_model(
-            self.builder, xform=wp.transform((robot_x, robot_y, robot_z), wp.quat_identity())
+            self.builder,
+            xform=wp.transform((robot_x, robot_y, robot_z), wp.quat_identity()),
+            control_mode=self.control_mode,
+            k_p=self.k_p,
+            k_d=self.k_d,
+            friction_left_right=self.friction,
+            friction_rear=self.friction * 0.5,  # Keep rear wheel slippery
         )
 
         return self.builder.finalize_replicated(num_worlds=self.simulation_config.num_worlds)
@@ -261,6 +311,10 @@ def helhest_control_example(cfg: DictConfig):
         exec_config,
         engine_config,
         logging_config,
+        control_mode=cfg.control.mode,
+        k_p=cfg.control.k_p,
+        k_d=cfg.control.k_d,
+        friction=cfg.friction_coeff,
     )
     simulator.run()
 

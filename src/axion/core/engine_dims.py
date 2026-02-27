@@ -39,7 +39,7 @@ class EngineDimensions:
     @cached_property
     def N_j(self) -> int:
         return self.joint_constraint_count
-        
+
     @cached_property
     def N_ctrl(self) -> int:
         return self.control_constraint_count
@@ -51,6 +51,10 @@ class EngineDimensions:
     @cached_property
     def N_f(self) -> int:
         return 2 * self.contact_count
+
+    @cached_property
+    def num_constraints(self) -> int:
+        return self.joint_constraint_count + self.control_constraint_count + 3 * self.contact_count
 
     @cached_property
     def N_c(self) -> int:
@@ -65,7 +69,7 @@ class EngineDimensions:
     def offset_j(self) -> int:
         """Start offset of joint constraints block."""
         return 0
-        
+
     @cached_property
     def offset_ctrl(self) -> int:
         """Start offset of control constraints block."""
@@ -86,7 +90,7 @@ class EngineDimensions:
     def slice_j(self) -> slice:
         """Returns a slice object for the joint-constraint block."""
         return slice(self.offset_j, self.offset_ctrl)
-        
+
     @cached_property
     def slice_ctrl(self) -> slice:
         """Returns a slice object for the control-constraint block."""

@@ -9,9 +9,9 @@ from axion import EngineConfig
 from axion import ExecutionConfig
 from axion import InteractiveSimulator
 from axion import JointMode
+from axion import LoggingConfig
 from axion import RenderingConfig
 from axion import SimulationConfig
-from axion import LoggingConfig
 from omegaconf import DictConfig
 
 os.environ["PYOPENGL_PLATFORM"] = "glx"
@@ -61,7 +61,7 @@ class Simulator(InteractiveSimulator):
         wp.launch(
             compute_control,
             dim=1,
-            inputs=[self.effective_timestep, self.time],
+            inputs=[self.clock.dt, self.time],
             outputs=[self.control.joint_target_pos],
         )
 

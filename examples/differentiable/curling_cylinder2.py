@@ -156,8 +156,8 @@ class CurlingOptimizer(DifferentiableSimulator):
             kernel=loss_kernel,
             dim=1,
             inputs=[
-                self.trajectory.body_q,
-                self.trajectory.body_u,
+                self.trajectory.body_pose,
+                self.trajectory.body_vel,
                 self.target_pos,
             ],
             outputs=[
@@ -171,7 +171,7 @@ class CurlingOptimizer(DifferentiableSimulator):
             kernel=update_kernel,
             dim=1,
             inputs=[
-                self.trajectory.body_u.grad[0],
+                self.trajectory.body_vel.grad[0],
                 self.learning_rate,
             ],
             outputs=[

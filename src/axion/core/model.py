@@ -1,3 +1,4 @@
+import numpy as np
 import warp as wp
 from newton import Model
 
@@ -102,11 +103,101 @@ def batch_shape_body_kernel(
         batched_shape_body[world_idx, slot] = body_idx
 
 
+def compute_joint_constraint_offsets(joint_types: wp.array):
+    """
+    joint_types: numpy array of shape (num_worlds, num_joints)
+    """
+
+    constraint_count_map = np.array(
+        [
+            5,  # PRISMATIC = 0
+            5,  # REVOLUTE  = 1
+            3,  # BALL      = 2
+            6,  # FIXED     = 3
+            0,  # FREE      = 4
+            1,  # DISTANCE  = 5
+            6,  # D6        = 6
+            0,  # CABLE     = 7
+        ],
+        dtype=np.int32,
+    )
+
+    joint_types_np = joint_types.numpy()  # (num_worlds, num_joints)
+    # Map joint types → constraint counts
+    constraint_counts = constraint_count_map[joint_types_np]  # (num_worlds, num_joints)
+
+    # Total constraints for each batch
+    total_constraints = constraint_counts.sum(axis=1)  # (num_worlds,)
+
+    # Compute offsets per batch
+    # For each batch: offsets[i, :] = cumsum(counts[i, :]) - counts[i, 0]
+    constraint_offsets = np.zeros_like(constraint_counts)  # (num_worlds, num_joints)
+    constraint_offsets[:, 1:] = np.cumsum(constraint_counts[:, :-1], axis=1)
+
+    # Convert to wp.array (must flatten or provide device explicitly)
+    constraint_offsets_wp = wp.array(
+        constraint_offsets,
+        dtype=wp.int32,
+        device=joint_types.device,
+    )
+
+    return constraint_offsets_wp, total_constraints[0]
+
+
+@wp.kernel
+def count_control_constraints_kernel(
+    joint_type: wp.array(dtype=wp.int32, ndim=2),
+    joint_dof_mode: wp.array(dtype=wp.int32, ndim=2),
+    joint_qd_start: wp.array(dtype=wp.int32, ndim=2),
+    counts: wp.array(dtype=wp.int32, ndim=2),
+):
+    world_idx, joint_idx = wp.tid()
+    j_type = joint_type[world_idx, joint_idx]
+    count = 0
+    if j_type == 1 or j_type == 0:
+        qd_start = joint_qd_start[world_idx, joint_idx]
+        mode = joint_dof_mode[world_idx, qd_start]
+        if mode != 0:
+            count = 1
+    counts[world_idx, joint_idx] = count
+
+
+def compute_control_constraint_offsets(
+    joint_type: wp.array,
+    joint_dof_mode: wp.array,
+    joint_qd_start: wp.array,
+):
+    num_worlds = joint_type.shape[0]
+    num_joints = joint_type.shape[1]
+    counts = wp.zeros((num_worlds, num_joints), dtype=wp.int32, device=joint_type.device)
+
+    wp.launch(
+        kernel=count_control_constraints_kernel,
+        dim=(num_worlds, num_joints),
+        inputs=[joint_type, joint_dof_mode, joint_qd_start],
+        outputs=[counts],
+        device=joint_type.device,
+    )
+
+    counts_np = counts.numpy()
+
+    offsets_np = np.zeros_like(counts_np)
+    row_counts = counts_np[0]
+    row_offsets = np.cumsum(np.concatenate(([0], row_counts[:-1])))
+    total = np.sum(row_counts)
+    offsets_np[:] = row_offsets
+    offsets = wp.from_numpy(offsets_np, dtype=wp.int32, device=joint_type.device)
+
+    return offsets, int(total)
+
+
 class AxionModel:
     def __init__(self, model: Model) -> None:
         self.model = model
         self.device = model.device
         self.num_worlds = model.num_worlds
+
+        self.g_accel = model.gravity
 
         self.body_count = model.body_count // model.num_worlds
         self.shape_count = model.shape_count // model.num_worlds
@@ -200,4 +291,18 @@ class AxionModel:
                 self.shape_body,
             ],
             device=self.device,
+        )
+
+        self.joint_constraint_offsets, self.num_joint_constraints = (
+            compute_joint_constraint_offsets(
+                self.joint_type,
+            )
+        )
+
+        self.control_constraint_offsets, self.num_control_constraints = (
+            compute_control_constraint_offsets(
+                self.joint_type,
+                self.joint_dof_mode,
+                self.joint_qd_start,
+            )
         )

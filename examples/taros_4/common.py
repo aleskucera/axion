@@ -158,7 +158,7 @@ def _add_wheel(
             is_visible=False,
             collision_group=-1,
             mu=mu,
-            contact_margin=0.2,
+            contact_margin=0.4,
         ),
     )
     return wheel_link
@@ -168,6 +168,10 @@ def create_taros4_model(
     builder: newton.ModelBuilder,
     xform: wp.transform = wp.transform_identity(),
     is_visible: bool = True,
+    control_mode: str = "velocity",
+    k_p: float = 1000.0,
+    k_d: float = 0.0,
+    friction: float = 0.5,
 ):
     """
     Creates a Taros-4 robot model using physical parameters from the URDF
@@ -177,11 +181,13 @@ def create_taros4_model(
         builder: The model builder to add the robot to.
         xform: The world transform of the robot base.
         is_visible: Whether to enable visual shapes.
+        control_mode: Actuation mode, either "velocity" or "position".
+        k_p: Proportional gain (target_ke).
+        k_d: Derivative gain (target_kd).
+        friction: Friction coefficient for the wheels.
     """
 
     wheel_mesh_render = _load_wheel_mesh()
-
-    MU = 0.0
 
     # 1. Chassis
     chassis = _add_chassis(builder, xform, is_visible)
@@ -193,7 +199,7 @@ def create_taros4_model(
         xform,
         "front_left_wheel",
         Taros4Config.FRONT_LEFT_WHEEL_POS,
-        MU,
+        friction,
         wheel_mesh_render,
         is_visible,
         mesh_rotation=Taros4Config.WHEEL_MESH_ROT_LEFT,
@@ -203,7 +209,7 @@ def create_taros4_model(
         xform,
         "front_right_wheel",
         Taros4Config.FRONT_RIGHT_WHEEL_POS,
-        MU,
+        friction,
         wheel_mesh_render,
         is_visible,
         mesh_rotation=Taros4Config.WHEEL_MESH_ROT_RIGHT,
@@ -213,7 +219,7 @@ def create_taros4_model(
         xform,
         "rear_left_wheel",
         Taros4Config.REAR_LEFT_WHEEL_POS,
-        MU,
+        friction,
         wheel_mesh_render,
         is_visible,
         mesh_rotation=Taros4Config.WHEEL_MESH_ROT_LEFT,
@@ -223,7 +229,7 @@ def create_taros4_model(
         xform,
         "rear_right_wheel",
         Taros4Config.REAR_RIGHT_WHEEL_POS,
-        MU,
+        friction,
         wheel_mesh_render,
         is_visible,
         mesh_rotation=Taros4Config.WHEEL_MESH_ROT_RIGHT,
@@ -232,17 +238,19 @@ def create_taros4_model(
     # 3. Wheel Joints
     Y_AXIS = (0.0, 1.0, 0.0)
 
+    mode = JointMode.TARGET_VELOCITY if control_mode == "velocity" else JointMode.TARGET_POSITION
+
     j_front_left = builder.add_joint_revolute(
         parent=chassis,
         child=front_left_wheel,
         parent_xform=wp.transform(Taros4Config.FRONT_LEFT_WHEEL_POS, wp.quat_identity()),
         child_xform=wp.transform_identity(),
         axis=Y_AXIS,
-        target_ke=Taros4Config.TARGET_KE,
-        target_kd=Taros4Config.TARGET_KD,
+        target_ke=k_p,
+        target_kd=k_d,
         key="front_left_wheel_j",
         custom_attributes={
-            "joint_dof_mode": [JointMode.TARGET_VELOCITY],
+            "joint_dof_mode": [mode],
         },
     )
 
@@ -252,11 +260,11 @@ def create_taros4_model(
         parent_xform=wp.transform(Taros4Config.FRONT_RIGHT_WHEEL_POS, wp.quat_identity()),
         child_xform=wp.transform_identity(),
         axis=Y_AXIS,
-        target_ke=Taros4Config.TARGET_KE,
-        target_kd=Taros4Config.TARGET_KD,
+        target_ke=k_p,
+        target_kd=k_d,
         key="front_right_wheel_j",
         custom_attributes={
-            "joint_dof_mode": [JointMode.TARGET_VELOCITY],
+            "joint_dof_mode": [mode],
         },
     )
 
@@ -266,11 +274,11 @@ def create_taros4_model(
         parent_xform=wp.transform(Taros4Config.REAR_LEFT_WHEEL_POS, wp.quat_identity()),
         child_xform=wp.transform_identity(),
         axis=Y_AXIS,
-        target_ke=Taros4Config.TARGET_KE,
-        target_kd=Taros4Config.TARGET_KD,
+        target_ke=k_p,
+        target_kd=k_d,
         key="rear_left_wheel_j",
         custom_attributes={
-            "joint_dof_mode": [JointMode.TARGET_VELOCITY],
+            "joint_dof_mode": [mode],
         },
     )
 
@@ -280,13 +288,21 @@ def create_taros4_model(
         parent_xform=wp.transform(Taros4Config.REAR_RIGHT_WHEEL_POS, wp.quat_identity()),
         child_xform=wp.transform_identity(),
         axis=Y_AXIS,
-        target_ke=Taros4Config.TARGET_KE,
-        target_kd=Taros4Config.TARGET_KD,
+        target_ke=k_p,
+        target_kd=k_d,
         key="rear_right_wheel_j",
         custom_attributes={
-            "joint_dof_mode": [JointMode.TARGET_VELOCITY],
+            "joint_dof_mode": [mode],
         },
     )
+
+    # 4. Articulation
+    builder.add_articulation(
+        [j_base, j_front_left, j_front_right, j_rear_left, j_rear_right],
+        key="taros-4",
+    )
+
+    return chassis, [front_left_wheel, front_right_wheel, rear_left_wheel, rear_right_wheel]
 
     # 4. Articulation
     builder.add_articulation(

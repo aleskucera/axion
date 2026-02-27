@@ -137,7 +137,7 @@ class DifferentiableSimulator(BaseSimulator, ABC):
 
     def _forward_backward(self):
         if isinstance(self.engine_config, AxionEngineConfig):
-            self._axion_forward_backward_implicit()
+            self._axion_forward_backward_explicit()
         elif isinstance(self.engine_config, SemiImplicitEngineConfig):
             self._newton_forward_backward()
         else:

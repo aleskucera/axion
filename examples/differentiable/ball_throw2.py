@@ -136,7 +136,7 @@ class BallThrowOptimizerImplicit(DifferentiableSimulator):
             kernel=loss_kernel,
             dim=1,
             inputs=[
-                self.trajectory.body_q,
+                self.trajectory.body_pose,
                 self.target_pos,
             ],
             outputs=[
@@ -150,11 +150,11 @@ class BallThrowOptimizerImplicit(DifferentiableSimulator):
             kernel=update_kernel,
             dim=1,
             inputs=[
-                self.trajectory.body_u.grad[0], # Initial velocity gradient from trajectory
+                self.trajectory.body_vel.grad[0],  # Initial velocity gradient from trajectory
                 self.learning_rate,
             ],
             outputs=[
-                self.states[0].body_qd, # Update initial state for next episode
+                self.states[0].body_qd,  # Update initial state for next episode
             ],
         )
 
@@ -197,19 +197,21 @@ class BallThrowOptimizerImplicit(DifferentiableSimulator):
         for i in range(iterations):
             # diff_step uses _axion_forward_backward_implicit for AxionEngine
             self.diff_step()
-            
+
             curr_loss = self.loss.numpy()[0]
             vel = self.states[0].body_qd.numpy()[0][3:6]
-            print(f"Iter {i}: Loss={curr_loss:.4f} | Init Linear Vel=({vel[0]:.2f}, {vel[1]:.2f}, {vel[2]:.2f})")
-            
+            print(
+                f"Iter {i}: Loss={curr_loss:.4f} | Init Linear Vel=({vel[0]:.2f}, {vel[1]:.2f}, {vel[2]:.2f})"
+            )
+
             self.render(i)
             self.update()
-            
+
             self.tape.zero()
             self.loss.zero_()
 
 
-@hydra.main(version_base=None, config_path=str(CONFIG_PATH), config_name="config")
+@hydra.main(version_base=None, config_path=str(CONFIG_PATH), config_name="config_diff")
 def main(cfg: DictConfig):
     sim_config: SimulationConfig = hydra.utils.instantiate(cfg.simulation)
     render_config: RenderingConfig = hydra.utils.instantiate(cfg.rendering)

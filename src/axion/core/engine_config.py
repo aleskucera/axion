@@ -51,20 +51,17 @@ class AxionEngineConfig(EngineConfig):
     max_newton_iters: int = 8
     max_linear_iters: int = 16
 
+    backtrack_min_iter: int = 5
+
     newton_mode: str = "convergence"  # "convergence" / "fixed"
     linear_mode: str = "convergence"  # "convergence" / "fixed"
 
-    newton_tol: float = 1e-2
     newton_atol: float = 5e-2
 
     linear_tol: float = 1e-5
     linear_atol: float = 1e-5
 
-    joint_stabilization_factor: float = 0.01
-    contact_stabilization_factor: float = 0.02
-
     joint_compliance: float = 1e-5
-    equality_compliance: float = 1e-8
     contact_compliance: float = 1e-6
     friction_compliance: float = 1e-6
 
@@ -93,7 +90,6 @@ class AxionEngineConfig(EngineConfig):
 
     # --- Differentiable Simulation ---
     differentiable_simulation: bool = False
-    max_trajectory_steps: int = 0
 
     # --- Logging & Profiling (MOVED HERE from Base Class) ---
     enable_timing: bool = False
@@ -103,6 +99,12 @@ class AxionEngineConfig(EngineConfig):
     log_dynamics_state: bool = True
     log_linear_system_data: bool = True
     log_constraint_data: bool = True
+
+    @property
+    def num_linesearch_steps(self):
+        num_steps = self.linesearch_conservative_step_count
+        num_steps += self.linesearch_optimistic_step_count
+        return num_steps
 
     def create_engine(
         self,
@@ -143,6 +145,11 @@ class AxionEngineConfig(EngineConfig):
         _validate_positive_int(self.max_newton_iters, "max_newton_iters")
         _validate_positive_int(self.max_linear_iters, "max_linear_iters")
 
+        if self.backtrack_min_iter >= self.max_newton_iters:
+            raise ValueError(
+                f"backtrack_min_iter mush be smaller than max_newton_iters, got {self.backtrack_min_iter} and {self.max_newton_iters}"
+            )
+
         # Validate modes
         if self.newton_mode not in ("convergence", "fixed"):
             raise ValueError(
@@ -154,18 +161,12 @@ class AxionEngineConfig(EngineConfig):
             )
 
         # Validate tolerances
-        _validate_non_negative_float(self.newton_tol, "newton_tol")
         _validate_non_negative_float(self.newton_atol, "newton_atol")
         _validate_non_negative_float(self.linear_tol, "linear_tol")
         _validate_non_negative_float(self.linear_atol, "linear_atol")
 
         # Validate physics params
-        _validate_non_negative_float(self.joint_stabilization_factor, "joint_stabilization_factor")
-        _validate_non_negative_float(
-            self.contact_stabilization_factor, "contact_stabilization_factor"
-        )
         _validate_non_negative_float(self.joint_compliance, "joint_compliance")
-        _validate_non_negative_float(self.equality_compliance, "equality_compliance")
         _validate_non_negative_float(self.contact_compliance, "contact_compliance")
         _validate_non_negative_float(self.friction_compliance, "friction_compliance")
         _validate_non_negative_float(self.regularization, "regularization")
@@ -197,9 +198,6 @@ class AxionEngineConfig(EngineConfig):
                 )
 
         _validate_positive_int(self.max_contacts_per_world, "max_contacts_per_world")
-
-        if self.differentiable_simulation:
-            _validate_positive_int(self.max_trajectory_steps, "max_trajectory_steps", min_value=1)
 
 
 @dataclass(frozen=True)

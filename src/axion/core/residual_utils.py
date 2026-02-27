@@ -1,66 +1,47 @@
 import warp as wp
-from axion.constraints.control_constraint import control_constraint_residual_kernel
-from axion.constraints.dynamics_constraint import unconstrained_dynamics_kernel
-from axion.constraints.friction_constraint import friction_residual_kernel
-from axion.constraints.positional_contact_constraint import positional_contact_residual_kernel
-from axion.constraints.positional_joint_constraint import positional_joint_residual_kernel
-from axion.constraints.velocity_contact_constraint import velocity_contact_residual_kernel
-from axion.constraints.velocity_joint_constraint import velocity_joint_residual_kernel
+from axion.constraints import contact_residual_kernel
+from axion.constraints import control_residual_kernel
+from axion.constraints import friction_residual_kernel
+from axion.constraints import joint_residual_kernel
+from axion.constraints import unconstrained_dynamics_kernel
 from axion.core.engine_config import EngineConfig
 from axion.core.engine_data import EngineData
 from axion.core.engine_dims import EngineDimensions
 from axion.core.model import AxionModel
 
+from .contacts import AxionContacts
+
 
 def compute_residual(
     model: AxionModel,
+    contacts: AxionContacts,
     data: EngineData,
     config: EngineConfig,
     dims: EngineDimensions,
 ):
-    """
-    Computes the full system residual vector (R) for the current state.
-
-    This function populates:
-      - data.h.d_spatial: The dynamics residual (including constraint forces).
-      - data.h.c.*: The constraint violation residuals (Joints, Control, Contacts, Friction).
-    """
-    device = data.device
-
-    # Zero out all residual buffers before accumulation
-    data.h.zero_()
-
-    # -------------------------------------------------------------------------
-    # 1. Unconstrained Dynamics
-    # -------------------------------------------------------------------------
-    # Computes: h_d = M(u - u_prev) - (f_ext + f_g + f_gyro) * dt
     wp.launch(
         kernel=unconstrained_dynamics_kernel,
-        dim=(dims.N_w, dims.N_b),
+        dim=(dims.num_worlds, dims.body_count),
         inputs=[
-            data.body_q,
-            data.body_u,
-            data.body_u_prev,
-            data.body_f,
+            data.body_pose,
+            data.body_vel,
+            data.body_vel_prev,
+            data.ext_force,
             model.body_mass,
             model.body_inertia,
             data.dt,
-            data.g_accel,
+            model.g_accel,
         ],
-        outputs=[data.h.d_spatial],
-        device=device,
+        outputs=[data.res.d_spatial],
+        device=data.device,
     )
 
-    # -------------------------------------------------------------------------
-    # 2. Joint Constraints
-    # -------------------------------------------------------------------------
-    # Adds -J^T * lambda * dt to h_d AND computes constraint violation h_c.j
     wp.launch(
-        kernel=positional_joint_residual_kernel,
-        dim=(dims.N_w, dims.joint_count),
+        kernel=joint_residual_kernel,
+        dim=(dims.num_worlds, dims.joint_count),
         inputs=[
-            data.body_q,
-            data.body_lambda.j,
+            data.body_pose,
+            data.constr_force.j,
             model.body_com,
             model.joint_type,
             model.joint_parent,
@@ -70,28 +51,25 @@ def compute_residual(
             model.joint_axis,
             model.joint_qd_start,
             model.joint_enabled,
-            data.joint_constraint_offsets,
+            model.joint_constraint_offsets,
             model.joint_compliance,
             data.dt,
             config.joint_compliance,
         ],
         outputs=[
-            data.h.d_spatial,
-            data.h.c.j,
+            data.res.d_spatial,
+            data.res.c.j,
         ],
-        device=device,
+        device=data.device,
     )
 
-    # -------------------------------------------------------------------------
-    # 3. Control Constraints
-    # -------------------------------------------------------------------------
     wp.launch(
-        kernel=control_constraint_residual_kernel,
-        dim=(dims.N_w, dims.joint_count),
+        kernel=control_residual_kernel,
+        dim=(dims.num_worlds, dims.joint_count),
         inputs=[
-            data.body_q,
-            data.body_u,
-            data.body_lambda.ctrl,
+            data.body_pose,
+            data.body_vel,
+            data.constr_force.ctrl,
             model.body_com,
             model.joint_type,
             model.joint_parent,
@@ -102,7 +80,7 @@ def compute_residual(
             model.joint_qd_start,
             model.joint_enabled,
             model.joint_dof_mode,
-            data.control_constraint_offsets,
+            model.control_constraint_offsets,
             data.joint_target_pos,
             data.joint_target_vel,
             model.joint_target_ke,
@@ -110,77 +88,71 @@ def compute_residual(
             data.dt,
         ],
         outputs=[
-            data.h.d_spatial,
-            data.h.c.ctrl,
+            data.res.d_spatial,
+            data.res.c.ctrl,
         ],
-        device=device,
+        device=data.device,
     )
 
-    # -------------------------------------------------------------------------
-    # 4. Contact Constraints
-    # -------------------------------------------------------------------------
     wp.launch(
-        kernel=positional_contact_residual_kernel,
-        dim=(dims.N_w, dims.N_n),
+        kernel=contact_residual_kernel,
+        dim=(dims.num_worlds, dims.contact_count),
         inputs=[
-            data.body_q,
-            data.body_u,
-            data.body_u_prev,
-            data.body_lambda.n,
-            # Expanded contact_interaction struct:
-            data.contact_body_a,
-            data.contact_body_b,
-            data.contact_point_a,
-            data.contact_point_b,
-            data.contact_thickness_a,
-            data.contact_thickness_b,
-            data.contact_dist,
-            data.contact_basis_n_a,
-            data.contact_basis_n_b,
-            data.constraint_active_mask.n,
-            # End contact data
+            data.body_pose,
+            data.body_vel,
+            data.body_vel_prev,
+            data.body_pose_prev,
+            data.constr_force.n,
+            model.body_com,
             model.body_inv_mass,
             model.body_inv_inertia,
+            model.shape_body,
+            contacts.contact_count,
+            contacts.contact_shape0,
+            contacts.contact_shape1,
+            contacts.contact_point0,
+            contacts.contact_point1,
+            contacts.contact_thickness0,
+            contacts.contact_thickness1,
+            contacts.contact_normal,
             data.dt,
         ],
         outputs=[
-            data.h.d_spatial,
-            data.h.c.n,
+            data.res.d_spatial,
+            data.res.c.n,
         ],
-        device=device,
+        device=data.device,
     )
 
-    # -------------------------------------------------------------------------
-    # 5. Friction Constraints
-    # -------------------------------------------------------------------------
     wp.launch(
         kernel=friction_residual_kernel,
-        dim=(dims.N_w, dims.N_n),
+        dim=(dims.num_worlds, dims.contact_count),
         inputs=[
-            data.body_q,
-            data.body_u,
-            data.body_lambda.f,
-            data.body_lambda_prev.f,
-            data.body_lambda_prev.n,
-            data.s_n_prev,
-            # Expanded contact_interaction struct:
-            data.contact_body_a,
-            data.contact_body_b,
-            data.contact_friction_coeff,
-            data.contact_basis_t1_a,
-            data.contact_basis_t2_a,
-            data.contact_basis_t1_b,
-            data.contact_basis_t2_b,
-            # End contact data
+            data.body_vel,
+            data.body_pose_prev,
+            data.constr_force.f,
+            data.constr_force_prev_iter.f,
+            data.constr_force_prev_iter.n,
+            model.body_com,
             model.body_inv_mass,
             model.body_inv_inertia,
+            model.shape_body,
+            model.shape_material_mu,
+            contacts.contact_count,
+            contacts.contact_shape0,
+            contacts.contact_shape1,
+            contacts.contact_point0,
+            contacts.contact_point1,
+            contacts.contact_thickness0,
+            contacts.contact_thickness1,
+            contacts.contact_normal,
             data.dt,
         ],
         outputs=[
-            data.h.d_spatial,
-            data.h.c.f,
+            data.res.d_spatial,
+            data.res.c.f,
         ],
-        device=device,
+        device=data.device,
     )
 
-    data.h.sync_to_float()
+    data.res.sync_to_float()

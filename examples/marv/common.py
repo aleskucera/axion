@@ -53,8 +53,8 @@ class MarvConfig:
     # Control Gains
     FLIPPER_KP = 1000.0
     FLIPPER_KD = 500.0  # Estimated damping
-    WHEEL_KV = 1.0  # Velocity gain, mujoco 90
-    WHEEL_KP = 6.0  # Position gain, mujoco 600
+    WHEEL_KV = 90.0  # Velocity gain, mujoco 90
+    WHEEL_KP = 600.0  # Position gain, mujoco 600
 
 
 def _add_chassis(builder: newton.ModelBuilder, xform: wp.transform, is_visible: bool) -> int:

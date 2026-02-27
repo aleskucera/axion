@@ -1,8 +1,7 @@
 from dataclasses import dataclass
 
 import warp as wp
-from axion.types import SpatialInertia
-from axion.types import to_spatial_momentum
+from axion.math import compute_spatial_momentum
 from warp.optim.linear import LinearOperator
 
 
@@ -15,7 +14,9 @@ class SystemLinearData:
     constraint_body_idx: wp.array
     constraint_active_mask: wp.array
     C_values: wp.array
-    M_inv: wp.array
+
+    body_inv_mass: wp.array
+    world_inv_inertia: wp.array
 
     @classmethod
     def from_engine(cls, engine):
@@ -24,10 +25,11 @@ class SystemLinearData:
             N_c=engine.dims.N_c,
             N_b=engine.dims.N_b,
             J_values=engine.data.J_values.full,
-            constraint_body_idx=engine.data.constraint_body_idx.full,
-            constraint_active_mask=engine.data.constraint_active_mask.full,
+            constraint_body_idx=engine.data.constr_body_idx.full,
+            constraint_active_mask=engine.data.constr_active_mask.full,
             C_values=engine.data.C_values.full,
-            M_inv=engine.data.world_M_inv,
+            body_inv_mass=engine.axion_model.body_inv_mass,
+            world_inv_inertia=engine.data.world_inv_inertia,
         )
 
 
@@ -37,7 +39,8 @@ def kernel_invM_Jt_matvec_direct(
     J_values: wp.array(dtype=wp.spatial_vector, ndim=3),
     constraint_body_idx: wp.array(dtype=wp.int32, ndim=3),
     constraint_active_mask: wp.array(dtype=wp.float32, ndim=2),
-    M_inv: wp.array(dtype=SpatialInertia, ndim=2),
+    body_inv_mass: wp.array(dtype=wp.float32, ndim=2),
+    world_inv_inertia: wp.array(dtype=wp.mat33, ndim=2),
     # Output: Direct accumulation into body velocity vector
     out_dyn_vec: wp.array(dtype=wp.spatial_vector, ndim=2),
 ):
@@ -61,14 +64,16 @@ def kernel_invM_Jt_matvec_direct(
     # fits in L1 cache, making these atomics extremely fast.
     if body_1 >= 0:
         jt_x_1 = x_i * J_1
-        m_inv_1 = M_inv[world_idx, body_1]
-        delta_v_1 = to_spatial_momentum(m_inv_1, jt_x_1)
+        m_inv_1 = body_inv_mass[world_idx, body_1]
+        I_inv_1 = world_inv_inertia[world_idx, body_1]
+        delta_v_1 = compute_spatial_momentum(m_inv_1, I_inv_1, jt_x_1)
         wp.atomic_add(out_dyn_vec, world_idx, body_1, delta_v_1)
 
     if body_2 >= 0:
         jt_x_2 = x_i * J_2
-        m_inv_2 = M_inv[world_idx, body_2]
-        delta_v_2 = to_spatial_momentum(m_inv_2, jt_x_2)
+        m_inv_2 = body_inv_mass[world_idx, body_2]
+        I_inv_2 = world_inv_inertia[world_idx, body_2]
+        delta_v_2 = compute_spatial_momentum(m_inv_2, I_inv_2, jt_x_2)
         wp.atomic_add(out_dyn_vec, world_idx, body_2, delta_v_2)
 
 
@@ -124,7 +129,7 @@ class SystemOperator(LinearOperator):
         self,
         data: SystemLinearData,
         device: wp.context.Device,
-        regularization: float = 1e-5,
+        regularization: float = 1e-6,
     ):
         super().__init__(
             shape=(data.N_w, data.N_c, data.N_c),
@@ -135,8 +140,6 @@ class SystemOperator(LinearOperator):
         self.data = data
         self.regularization = regularization
 
-        # Minimal temporary buffer: (N_w, N_b)
-        # For 1000 worlds * 10 bodies, this is only ~320KB.
         self._tmp_dyn_vec = wp.zeros((data.N_w, data.N_b), dtype=wp.spatial_vector, device=device)
 
     def matvec(self, x, y, z, alpha, beta):
@@ -153,7 +156,8 @@ class SystemOperator(LinearOperator):
                 self.data.J_values,
                 self.data.constraint_body_idx,
                 self.data.constraint_active_mask,
-                self.data.M_inv,
+                self.data.body_inv_mass,
+                self.data.world_inv_inertia,
             ],
             outputs=[self._tmp_dyn_vec],
             device=self.device,

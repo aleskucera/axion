@@ -151,8 +151,8 @@ class MarvConfig:
     TRACK_DIST = 0.29
 
     # Track Elements
-    TRACK_NUM_ELEMENTS = 9
-    TRACK_ELEM_RADIUS = 0.04
+    TRACK_NUM_ELEMENTS = 12
+    TRACK_ELEM_RADIUS = 0.03
     TRACK_ELEM_WIDTH = 0.1  # Width of the track pad
 
     # Control Gains
@@ -251,7 +251,7 @@ def _create_tracked_flipper_leg(
     )
 
     box_shape = newton.ModelBuilder.ShapeConfig(
-        is_visible=True, density=1000.0, mu=1.0, contact_margin=0.1
+        is_visible=True, density=1000.0, mu=0.3, contact_margin=0.2
     )
 
     # We need to pass the parent_world_xform of the FLIPPER LINK, not the chassis.

@@ -4,17 +4,22 @@ import pathlib
 import hydra
 import newton
 import warp as wp
-from axion import InteractiveSimulator
 from axion import EngineConfig
 from axion import ExecutionConfig
+from axion import InteractiveSimulator
+from axion import LoggingConfig
 from axion import RenderingConfig
 from axion import SimulationConfig
-from axion import LoggingConfig
 from omegaconf import DictConfig
 
 os.environ["PYOPENGL_PLATFORM"] = "glx"
 
 CONFIG_PATH = pathlib.Path(__file__).parent.joinpath("conf")
+# wp.config.print_launches = True
+# wp.config.verbose = True
+# wp.config.verbose_warnings = True
+# wp.config.mode = "debug"
+# wp.config.verify_cuda = True
 
 
 class Simulator(InteractiveSimulator):
@@ -35,7 +40,7 @@ class Simulator(InteractiveSimulator):
         )
 
     def build_model(self) -> newton.Model:
-        FRICTION = 0.5
+        FRICTION = 0.1
         RESTITUTION = 0.0
         DENSITY = 1500.0
         KE = 10000000.0

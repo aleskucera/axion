@@ -31,6 +31,24 @@ def _cast_float_to_spatial_2d(
 
 
 @wp.kernel
+def _cast_float_to_spatial_3d(
+    src: wp.array(dtype=float, ndim=3),
+    dst: wp.array(dtype=wp.spatial_vector, ndim=3),
+):
+    # i: step index, j: world index, k: body index
+    i, j, k = wp.tid()
+    offset = k * 6
+    dst[i, j, k] = wp.spatial_vector(
+        src[i, j, offset + 0],
+        src[i, j, offset + 1],
+        src[i, j, offset + 2],
+        src[i, j, offset + 3],
+        src[i, j, offset + 4],
+        src[i, j, offset + 5],
+    )
+
+
+@wp.kernel
 def _cast_spatial_to_float_2d(
     src: wp.array(dtype=wp.spatial_vector, ndim=2),
     dst: wp.array(dtype=float, ndim=2),
@@ -44,6 +62,22 @@ def _cast_spatial_to_float_2d(
     dst[i, offset + 3] = vec[3]
     dst[i, offset + 4] = vec[4]
     dst[i, offset + 5] = vec[5]
+
+
+@wp.kernel
+def _cast_spatial_to_float_3d(
+    src: wp.array(dtype=wp.spatial_vector, ndim=3),
+    dst: wp.array(dtype=float, ndim=3),
+):
+    i, j, k = wp.tid()
+    vec = src[i, j, k]
+    offset = k * 6
+    dst[i, j, offset + 0] = vec[0]
+    dst[i, j, offset + 1] = vec[1]
+    dst[i, j, offset + 2] = vec[2]
+    dst[i, j, offset + 3] = vec[3]
+    dst[i, j, offset + 4] = vec[4]
+    dst[i, j, offset + 5] = vec[5]
 
 
 @dataclass(frozen=True)
@@ -128,8 +162,15 @@ class SystemView(Generic[T]):
     def sync_to_float(self):
         """Copies data from the spatial buffer to the main float array."""
         if self._d_spatial is not None:
+            if self._d_spatial.ndim == 2:
+                kernel = _cast_spatial_to_float_2d
+            elif self._d_spatial.ndim == 3:
+                kernel = _cast_spatial_to_float_3d
+            else:
+                raise ValueError(f"Unsupported spatial buffer dimensionality: {self._d_spatial.ndim}")
+
             wp.launch(
-                kernel=_cast_spatial_to_float_2d,
+                kernel=kernel,
                 dim=self._d_spatial.shape,
                 inputs=[self._d_spatial, self.d],
                 device=self.data.device,
@@ -138,8 +179,15 @@ class SystemView(Generic[T]):
     def sync_to_spatial(self):
         """Copies data from the main float array to the spatial buffer."""
         if self._d_spatial is not None:
+            if self._d_spatial.ndim == 2:
+                kernel = _cast_float_to_spatial_2d
+            elif self._d_spatial.ndim == 3:
+                kernel = _cast_float_to_spatial_3d
+            else:
+                raise ValueError(f"Unsupported spatial buffer dimensionality: {self._d_spatial.ndim}")
+
             wp.launch(
-                kernel=_cast_float_to_spatial_2d,
+                kernel=kernel,
                 dim=self._d_spatial.shape,
                 inputs=[self.d, self._d_spatial],
                 device=self.data.device,

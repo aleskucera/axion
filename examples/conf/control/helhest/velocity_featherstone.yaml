@@ -1,0 +1,4 @@
+# @package control
+mode: velocity
+k_p: 0.0
+k_d: 100.0

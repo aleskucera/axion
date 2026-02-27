@@ -1,6 +1,6 @@
 import warp as wp
 from axion.constraints.joint_kinematics import compute_joint_transforms
-from axion.core.joint_types import JointMode
+from axion.core.types import JointMode
 
 
 # --- 1. KINEMATICS ---
@@ -337,7 +337,7 @@ def control_constraint_kernel(
 
 
 @wp.kernel
-def control_constraint_residual_kernel(
+def control_residual_kernel(
     body_q: wp.array(dtype=wp.transform, ndim=2),
     body_u: wp.array(dtype=wp.spatial_vector, ndim=2),
     body_lambda_ctrl: wp.array(dtype=wp.float32, ndim=2),
@@ -437,7 +437,7 @@ def control_constraint_residual_kernel(
 
 
 @wp.kernel
-def batch_control_constraint_residual_kernel(
+def batch_control_residual_kernel(
     body_q: wp.array(dtype=wp.transform, ndim=3),
     body_u: wp.array(dtype=wp.spatial_vector, ndim=3),
     body_lambda_ctrl: wp.array(dtype=wp.float32, ndim=3),
@@ -539,7 +539,7 @@ def batch_control_constraint_residual_kernel(
 
 
 @wp.kernel
-def fused_batch_control_constraint_residual_kernel(
+def fused_batch_control_residual_kernel(
     body_q: wp.array(dtype=wp.transform, ndim=3),
     body_u: wp.array(dtype=wp.spatial_vector, ndim=3),
     body_lambda_ctrl: wp.array(dtype=wp.float32, ndim=3),
@@ -646,54 +646,6 @@ def fused_batch_control_constraint_residual_kernel(
         wp.atomic_add(h_d, b, world_idx, c_idx, f_hdc)
 
         h_ctrl[b, world_idx, ctrl_offset] = f_hctrl
-
-
-@wp.kernel
-def count_control_constraints_kernel(
-    joint_type: wp.array(dtype=wp.int32, ndim=2),
-    joint_dof_mode: wp.array(dtype=wp.int32, ndim=2),
-    joint_qd_start: wp.array(dtype=wp.int32, ndim=2),
-    counts: wp.array(dtype=wp.int32, ndim=2),
-):
-    world_idx, joint_idx = wp.tid()
-    j_type = joint_type[world_idx, joint_idx]
-    count = 0
-    if j_type == 1 or j_type == 0:
-        qd_start = joint_qd_start[world_idx, joint_idx]
-        mode = joint_dof_mode[world_idx, qd_start]
-        if mode != 0:
-            count = 1
-    counts[world_idx, joint_idx] = count
-
-
-def compute_control_constraint_offsets_batched(
-    joint_type: wp.array,
-    joint_dof_mode: wp.array,
-    joint_qd_start: wp.array,
-):
-    num_worlds = joint_type.shape[0]
-    num_joints = joint_type.shape[1]
-    counts = wp.zeros((num_worlds, num_joints), dtype=wp.int32, device=joint_type.device)
-
-    wp.launch(
-        kernel=count_control_constraints_kernel,
-        dim=(num_worlds, num_joints),
-        inputs=[joint_type, joint_dof_mode, joint_qd_start],
-        outputs=[counts],
-        device=joint_type.device,
-    )
-
-    counts_np = counts.numpy()
-    import numpy as np
-
-    offsets_np = np.zeros_like(counts_np)
-    row_counts = counts_np[0]
-    row_offsets = np.cumsum(np.concatenate(([0], row_counts[:-1])))
-    total = np.sum(row_counts)
-    offsets_np[:] = row_offsets
-    offsets = wp.from_numpy(offsets_np, dtype=wp.int32, device=joint_type.device)
-
-    return offsets, int(total)
 
 
 @wp.kernel
