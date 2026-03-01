@@ -298,8 +298,5 @@ class NeuralModelUtilsProvider:
         l = 1   # TODO: get from model
         m = 1   # TODO: get from model
         g = 9.81
-        E_tot = (
-            0.5 * m * g * l * (-3 * torch.cos(q0) - torch.cos(q1))
-            + (1.0 / 6.0) * m * l ** 2 * (q1_dot ** 2 + 4 * q0_dot ** 2 + 3 * q0_dot * q1_dot * torch.cos(q0 - q1))
-        )
+        E_tot = 0.5*m*g*l*(-3*torch.cos(q0) - torch.cos(q1)) + (1/6)*m*l**2*(q1_dot**2 + 4*q0_dot**2 + 3*q0_dot*q1_dot*torch.cos(q0 - q1))
         return E_tot 
