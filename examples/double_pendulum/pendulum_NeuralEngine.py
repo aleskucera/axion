@@ -40,7 +40,9 @@ class Simulator(InteractiveSimulator):
 
     @override
     def control_policy(self, state: newton.State):
-        wp.copy(self.control.joint_f, wp.array([0.0, 800.0], dtype=wp.float32))
+        # TODO: add later if needed 
+        #wp.copy(self.control.joint_f, wp.array([0.0, 800.0], dtype=wp.float32))
+        pass
 
     @override
     def _render(self, segment_num: int):

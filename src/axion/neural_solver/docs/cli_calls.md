@@ -17,7 +17,7 @@ Ensure `wandb.login()` runs before training (see `train.py`).
 ## Testing
 Test a neural module that has already undergone training:
 ```
-python src/axion/neural_solver/train/train.py --cfg train/cfg/Pendulum/transformer.yaml --test --checkpoint src/axion/neural_solver/train/trained_models/02-22-2026-16-45-54/nn/best_eval_model.pt --no-time-stamp --logdir ./eval_logs
+python src/axion/neural_solver/train/train.py --cfg src/axion/neural_solver/train/cfg/Pendulum/transformer.yaml --test --checkpoint src/axion/neural_solver/train/trained_models/03-01-2026-10-46-58/nn/final_model.pt --no-time-stamp --logdir ./eval_logs
 ```
 
 Run a cli testing script that loads the model.pt into NeuralPredictor class and steps it:

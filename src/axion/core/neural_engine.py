@@ -24,11 +24,29 @@ import sys
 from axion.neural_solver.standalone.neural_predictor import NeuralPredictor
 from axion.nn_prediction import models, utils
 
+# Allow pickled checkpoints that reference classes under "models.*" and "utils.*"
+# (saved when the trainer was run with a different sys.path) to load correctly.
 sys.modules['models'] = models
 sys.modules['utils'] = utils
+# import axion.neural_solver.models.models as _ns_models_models
+# import axion.neural_solver.models.base_models as _ns_models_base_models
+# import axion.neural_solver.models.model_transformer as _ns_models_model_transformer
+# import axion.neural_solver.models.model_utils as _ns_models_model_utils
+# sys.modules['models.models'] = _ns_models_models
+# sys.modules['models.base_models'] = _ns_models_base_models
+# sys.modules['models.model_transformer'] = _ns_models_model_transformer
+# sys.modules['models.model_utils'] = _ns_models_model_utils
+# import axion.neural_solver.utils.running_mean_std as _ns_utils_running_mean_std
+# import axion.neural_solver.utils.commons as _ns_utils_commons
+# import axion.neural_solver.utils.torch_utils as _ns_utils_torch_utils
+# import axion.neural_solver.utils.warp_utils as _ns_utils_warp_utils
+# sys.modules['utils.running_mean_std'] = _ns_utils_running_mean_std
+# sys.modules['utils.commons'] = _ns_utils_commons
+# sys.modules['utils.torch_utils'] = _ns_utils_torch_utils
+# sys.modules['utils.warp_utils'] = _ns_utils_warp_utils
 
-NN_BASE_PATH = Path.cwd() /"src"/"axion"/"neural_solver"/"train"/"trained_models"/"02-25-2026-13-07-56"
-NN_PENDULUM_PT_PATH = NN_BASE_PATH/"nn"/"best_eval_model.pt"
+NN_BASE_PATH = Path.cwd() /"src"/"axion"/"neural_solver"/"train"/"trained_models"/"03-01-2026-10-46-58"
+NN_PENDULUM_PT_PATH = NN_BASE_PATH/"nn"/"final_model.pt"
 NN_PENDULUM_CFG_PATH = NN_BASE_PATH/"cfg.yaml"
  
 class NeuralEngine(SolverBase):
@@ -106,7 +124,7 @@ class NeuralEngine(SolverBase):
 
         # NeRD was learned in an environment where Y axis was the up axis
         self.gravity_vector = torch.zeros((self.num_models, 3), device= str(self.device))
-        self.gravity_vector[:, 1] = -1.0  # Gravity in negative Y direction
+        self.gravity_vector[:, self.model.up_axis] = -1.0 # copy the gravity dir from model (should be along Z) 
 
         # Infer root joint height from model (world-space position of joint with parent=-1)
         # Used for root_body_q position so it matches the pendulum height (e.g. PENDULUM_HEIGHT)

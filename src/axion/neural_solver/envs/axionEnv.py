@@ -1,8 +1,17 @@
 from __future__ import annotations
 
+import os
+import sys
+
 import numpy as np
 import warp as wp
 import newton
+
+# Repo root so that "from examples.*" works when run from any entry point (train.py, generate script, etc.)
+_env_dir = os.path.dirname(os.path.abspath(__file__))
+_repo_root = os.path.abspath(os.path.join(_env_dir, "..", "..", "..", ".."))
+if _repo_root not in sys.path:
+    sys.path.insert(0, _repo_root)
 
 from examples.double_pendulum.pendulum_articulation_definition import build_pendulum_model
 from axion.core.engine import AxionEngine
