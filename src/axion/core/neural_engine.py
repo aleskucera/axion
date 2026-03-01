@@ -45,7 +45,7 @@ sys.modules['utils'] = utils
 # sys.modules['utils.torch_utils'] = _ns_utils_torch_utils
 # sys.modules['utils.warp_utils'] = _ns_utils_warp_utils
 
-NN_BASE_PATH = Path.cwd() /"src"/"axion"/"neural_solver"/"train"/"trained_models"/"03-01-2026-10-46-58"
+NN_BASE_PATH = Path.cwd() /"src"/"axion"/"neural_solver"/"train"/"trained_models"/"03-01-2026-10-46-58" #"03-01-2026-20-48-21"
 NN_PENDULUM_PT_PATH = NN_BASE_PATH/"nn"/"final_model.pt"
 NN_PENDULUM_CFG_PATH = NN_BASE_PATH/"cfg.yaml"
  

@@ -43,7 +43,23 @@ class InteractiveSimulator(BaseSimulator, ABC):
         )
 
         self.viewer.set_model(self.model)
-        self.viewer.set_world_offsets((20.0, 20.0, 0.0))
+        world_offsets = getattr(
+            self.rendering_config, "world_offsets", None
+        ) or (20.0, 20.0, 0.0)
+        self.viewer.set_world_offsets(world_offsets)
+
+        # Optional initial camera position and heading (GL viewer only)
+        if isinstance(self.viewer, newton.viewer.ViewerGL):
+            r = self.rendering_config
+            if getattr(r, "camera_pos", None) is not None:
+                pos = wp.vec3(*r.camera_pos)
+                pitch = getattr(r, "camera_pitch", None)
+                yaw = getattr(r, "camera_yaw", None)
+                if pitch is None:
+                    pitch = 0.0
+                if yaw is None:
+                    yaw = -180.0
+                self.viewer.set_camera(pos, float(pitch), float(yaw))
 
         # CUDA Graph Storage
         self.cuda_graph: Optional[wp.Graph] = None
