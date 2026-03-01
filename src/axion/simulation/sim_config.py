@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from enum import Enum
 from typing import Literal
+from typing import Optional
 
 import newton
 
@@ -29,6 +30,12 @@ class RenderingConfig:
     usd_file: str | None = "sim.usd"
     usd_scaling: float | None = 100.0
     start_paused: bool = True
+    # GL viewer: where the scene is placed (spawn location). Default (20, 20, 0) if None.
+    world_offsets: Optional[tuple[float, float, float]] = None
+    # GL viewer: initial camera position (x, y, z) and heading (pitch, yaw in degrees). If None, viewer defaults are used.
+    camera_pos: Optional[tuple[float, float, float]] = None
+    camera_pitch: Optional[float] = None
+    camera_yaw: Optional[float] = None
 
     def create_viewer(self, model: newton.Model, num_segments: int | None):
         """
