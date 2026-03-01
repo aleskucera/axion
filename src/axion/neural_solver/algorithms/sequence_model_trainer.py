@@ -285,9 +285,6 @@ class SequenceModelTrainer:
 
     def compute_loss(self, data, train):
 
-        if self.neural_model.is_rnn:
-            self.neural_model.init_rnn(self.batch_size)
-
         prediction_target = data['target']
         prediction = self.neural_model(data)
         
@@ -304,33 +301,41 @@ class SequenceModelTrainer:
             prediction_target * loss_weights
         )
 
-        # Compute reported error statistics defined on next states
+        # predicted_next_states: (B, T, state_dim) — needed with grad for energy loss
+        predicted_next_states = self.utils_provider.convert_prediction_to_next_states(
+            states=data['states'],
+            prediction=prediction
+        )
+        self.utils_provider.wrap2PI(predicted_next_states)
+
+        # Energy loss: per-sample energies (B, T), then MSE over batch and time
+        E_next_states_gt = self.utils_provider.calculate_total_energy(data['next_states'])
+        E_next_states_predicted = self.utils_provider.calculate_total_energy(predicted_next_states)
+        loss_energy = torch.nn.MSELoss()(E_next_states_predicted, E_next_states_gt)
+        loss = loss + loss_energy
+
+        # Reported error statistics (no grad)
         with torch.no_grad():
-            predicted_next_states = self.utils_provider.convert_prediction_to_next_states(
-                states = data['states'],
-                prediction = prediction
-            )
-            self.utils_provider.wrap2PI(predicted_next_states)
             loss_itemized = {}
             for i in range(predicted_next_states.shape[-1]):
                 loss_itemized[f'state_{i}'] = ((
                     predicted_next_states[..., i] - data['next_states'][..., i]
                 ) ** 2).mean()
-            loss_itemized['state_MSE'] = \
-                torch.nn.MSELoss()(
-                    predicted_next_states,
-                    data['next_states']
-                )
+            loss_itemized['state_MSE'] = torch.nn.MSELoss()(
+                predicted_next_states,
+                data['next_states']
+            )
             loss_itemized['q_error_norm'] = torch.norm(
-                predicted_next_states[..., :self.utils_provider.dof_q_per_env] \
+                predicted_next_states[..., :self.utils_provider.dof_q_per_env]
                 - data['next_states'][..., :self.utils_provider.dof_q_per_env],
-                dim = -1
+                dim=-1
             ).mean()
             loss_itemized['qd_error_norm'] = torch.norm(
-                predicted_next_states[..., self.utils_provider.dof_q_per_env:] \
+                predicted_next_states[..., self.utils_provider.dof_q_per_env:]
                 - data['next_states'][..., self.utils_provider.dof_q_per_env:],
-                dim = -1
+                dim=-1
             ).mean()
+            loss_itemized['energy_MSE'] = loss_energy.detach()
 
         return loss, loss_itemized
         

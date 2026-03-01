@@ -283,3 +283,23 @@ class NeuralModelUtilsProvider:
         self.wrap2PI(next_states)
         return next_states
 
+    #---robot-model-specific-methods------------------------------
+    def calculate_total_energy(self, state_min_coords: torch.Tensor) -> torch.Tensor:
+        """
+        Calculate total energy (kinetic + potential) per sample.
+
+        state_min_coords: (..., state_dim) with state_dim >= 4, layout [q0, q1, q0_dot, q1_dot].
+        Returns: (...,) same shape as input without the last dimension (one energy per sample).
+        """
+        q0 = state_min_coords[..., 0] - math.pi / 2   # angle from world Z axis
+        q1 = q0 + state_min_coords[..., 1]            # absolute position
+        q0_dot = state_min_coords[..., 2]
+        q1_dot = q0_dot + state_min_coords[..., 3]   # absolute velocity
+        l = 1   # TODO: get from model
+        m = 1   # TODO: get from model
+        g = 9.81
+        E_tot = (
+            0.5 * m * g * l * (-3 * torch.cos(q0) - torch.cos(q1))
+            + (1.0 / 6.0) * m * l ** 2 * (q1_dot ** 2 + 4 * q0_dot ** 2 + 3 * q0_dot * q1_dot * torch.cos(q0 - q1))
+        )
+        return E_tot 

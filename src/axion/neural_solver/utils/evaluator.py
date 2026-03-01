@@ -211,7 +211,6 @@ class NeuralSimEvaluator:
         if measure_fps:
             self.neural_env.reset(initial_states[:num_envs])
             for _ in range(50):
-                # self.neural_env.init_rnn(num_envs)
                 self.neural_env.step(
                     actions[0, :num_envs, :], 
                     env_mode = env_mode
@@ -226,7 +225,6 @@ class NeuralSimEvaluator:
             self.neural_env.reset(
                 initial_states[start_id: end_id]
             )
-            # self.neural_env.init_rnn(num_envs)
                 
             for step in range(self.eval_horizon):  
                 if eval_mode == 'single-step':
