@@ -196,7 +196,7 @@ def basic_pendulum_example(cfg: DictConfig):
 
     # Custom initial conditions: (q0, q1, qd0, qd1)
     # Set to None to start from the default rest position.
-    INITIAL_STATE = (-4.684e-1, 2.077, -2.048, 4.629)  # e.g. (0.5, -0.3, 1.0, -2.0)
+    INITIAL_STATE = (0,0,0,0)  # e.g. (0.5, -0.3, 1.0, -2.0)
 
     simulator = Simulator(
         sim_config=sim_config,

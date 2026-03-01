@@ -8,6 +8,7 @@ from typing import Optional
 
 import newton
 import warp as wp
+#import torch
 from axion.core.engine_config import AxionEngineConfig
 from axion.core.engine_config import EngineConfig
 from axion.core.logging_config import LoggingConfig
@@ -132,6 +133,17 @@ class BaseSimulator(ABC):
         # Compute simulation step
         # Note: We use the effective timestep calculated by the clock
         # newton.eval_ik(self.model, self.current_state, self.current_state.joint_q, self.current_state.joint_qd)
+        # state_min_coords = torch.cat( (wp.to_torch(self.current_state.joint_q), wp.to_torch(self.current_state.joint_qd)))
+        # q0, q1, q0_dot, q1_dot = state_min_coords
+        # q0 = q0 - torch.pi/2    # measure as angle from world Z axis  (absolute position)
+        # q1 = q0 + q1            # absolute position
+        # q1_dot = q0_dot + q1_dot# absolute velocity
+        # l = 1
+        # m = 1
+        # g = 9.81
+        # E_tot = 0.5*m*g*l*(-3*torch.cos(q0) - torch.cos(q1)) + (1/6)*m*l**2*(q1_dot**2 + 4*q0_dot**2 + 3*q0_dot*q1_dot*torch.cos(q0 - q1)) 
+        # print(f"Total energy: {E_tot}")
+
         # print("State in - joint_q, joint_qd:",  self.current_state.joint_q, self.current_state.joint_qd)
         self.solver.step(
             state_in=self.current_state,

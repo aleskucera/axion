@@ -11,10 +11,10 @@ env:
   
 algorithm:
   name: SequenceModelTrainer
-  num_epochs: 50
-  num_iters_per_epoch: 2500
+  num_epochs: 5
+  num_iters_per_epoch: 976
   sample_sequence_length: 10 # the length to sample sequence from dataset
-  batch_size: 512
+  batch_size: 1024
   num_valid_batches: 100
   truncate_grad: True
   grad_norm: 1.0
@@ -24,9 +24,9 @@ algorithm:
     lr_schedule: linear
 
   dataset:
-    train_dataset_path: src/axion/neural_solver/datasets/Pendulum/pendulumValidStatesOnly10kSeed1.hdf5 # src/axion/neural_solver/datasets/Pendulum/pendulumTrainStatesOnly5kEnvs4Seed0.hdf5
+    train_dataset_path: src/axion/neural_solver/datasets/Pendulum/pendulumStatesOnlyTrain1Mlen2000envs250seed0.hdf5 # src/axion/neural_solver/datasets/Pendulum/pendulumTrainStatesOnly5kEnvs4Seed0.hdf5
     valid_datasets: 
-      valid: src/axion/neural_solver/datasets/Pendulum/pendulumValidStatesOnly10kSeed1.hdf5 #src/axion/neural_solver/datasets/Pendulum/pendulumValidStatesOnly1kEnvs4Seed1.hdf5 
+      valid: src/axion/neural_solver/datasets/Pendulum/pendulumLongTrajectories.hdf5 #src/axion/neural_solver/datasets/Pendulum/pendulumValidStatesOnly1kEnvs4Seed1.hdf5 
       #exp_trajectory: PATH/TO/VALID_DATASET_1.hdf5
       #fixed_ground_passive: PATH/TO/VALID_DATASET_2.hdf5
     max_capacity: 100000000
@@ -35,8 +35,8 @@ algorithm:
   eval:
     mode: dataset
     rollout_horizon: 10
-    num_rollouts: 2048
-    dataset_path: src/axion/neural_solver/datasets/Pendulum/pendulumValidStatesOnly10kSeed1.hdf5 #src/axion/neural_solver/datasets/Pendulum/pendulumValidStatesOnly1kEnvs4Seed1.hdf5 
+    num_rollouts: 16384
+    dataset_path: src/axion/neural_solver/datasets/Pendulum/pendulumLongTrajectories.hdf5 #src/axion/neural_solver/datasets/Pendulum/pendulumValidStatesOnly1kEnvs4Seed1.hdf5 
     passive: True
 
 inputs:
