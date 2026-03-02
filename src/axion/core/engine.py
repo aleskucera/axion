@@ -17,6 +17,7 @@ from .adjoint_utils import compute_body_adjoint_init_kernel
 from .adjoint_utils import subtract_constraint_feedback_kernel
 from .backtracking_utils import perform_backtracking
 from .contacts import AxionContacts
+from .dataset_logger import DatasetHDF5Logger
 from .engine_config import AxionEngineConfig
 from .engine_data import EngineData
 from .engine_dims import EngineDimensions
@@ -122,6 +123,17 @@ class AxionEngine(SolverBase):
                 device=self.device,
             )
 
+        if self.logging_config.enable_dataset_logging:
+            self.dataset_logger = DatasetHDF5Logger(
+                num_steps=self.logging_config.dataset_simulation_steps,
+                model=self.axion_model,
+                data=self.data,
+                contacts=self.axion_contacts,
+                config=self.config,
+                dims=self.dims,
+                device=self.device,
+            )
+
         self.timestep = wp.zeros(1, dtype=wp.int32, device=self.device)
 
     def _save_iter_to_history(self):
@@ -147,6 +159,9 @@ class AxionEngine(SolverBase):
             outputs=[self.data.keep_running],
             device=self.device,
         )
+
+    def reset_timestep_counter(self):
+        self.timestep.zero_()
 
     def step(
         self,
@@ -242,6 +257,8 @@ class AxionEngine(SolverBase):
         perform_backtracking(self.axion_model, self.data, self.config, self.dims)
         if self.logger:
             self.logger.capture_step(self.timestep, self.data)
+        if self.dataset_logger:
+            self.dataset_logger.capture_step(self.timestep, self.data)
 
         # =========================================================================
         # Copy the computed state into the output state
@@ -340,3 +357,5 @@ class AxionEngine(SolverBase):
     def save_logs(self):
         if self.logger:
             self.logger.save_to_hdf5(self.logging_config.hdf5_log_file)
+        if self.dataset_logger:
+            self.dataset_logger.save_to_hdf5(self.logging_config.dataset_log_file)

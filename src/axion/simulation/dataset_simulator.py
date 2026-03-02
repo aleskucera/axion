@@ -1,4 +1,6 @@
 from abc import ABC
+from enum import auto
+from enum import Enum
 from typing import Optional
 
 import newton
@@ -14,7 +16,13 @@ from .base_simulator import RenderingConfig
 from .base_simulator import SimulationConfig
 
 
-class InteractiveSimulator(BaseSimulator, ABC):
+class StartupState(Enum):
+    PRE_RESOLVE = auto()
+    POST_RESOLVE = auto()
+    RUNNING = auto()
+
+
+class DatasetSimulator(BaseSimulator, ABC):
     """
     Simulator designed for real-time visualization and interactive sessions.
     Supports GL/USD rendering, FPS synchronization, and CUDA graphs.
@@ -47,23 +55,56 @@ class InteractiveSimulator(BaseSimulator, ABC):
         # CUDA Graph Storage
         self.cuda_graph: Optional[wp.Graph] = None
 
+        self._startup_state = StartupState.PRE_RESOLVE
+        if self.rendering_config.start_paused and isinstance(self.viewer, newton.viewer.ViewerGL):
+            self.viewer._paused = True
+        else:
+            self._startup_state = StartupState.RUNNING
+
+    def _resolve_constraints(self):
+        print("Resolving constraints...")
+
+        for i in range(10):
+            self.contacts = self.model.collide(self.current_state)
+            self.solver.step(
+                state_in=self.current_state,
+                state_out=self.next_state,
+                control=self.control,
+                contacts=self.contacts,
+                dt=self.clock.dt,
+            )
+
+            # Copy only positions
+            wp.copy(self.current_state.body_q, self.next_state.body_q)
+            wp.copy(self.next_state.body_qd, self.current_state.body_qd)
+
     def run(self):
         """Main entry point to start the simulation."""
+
         pbar = tqdm(
             total=self.num_segments,
             desc="Simulating",
         )
 
-        if self.rendering_config.start_paused and isinstance(self.viewer, newton.viewer.ViewerGL):
-            self.viewer._paused = True
-
         try:
             segment_num = 0
             while self.viewer.is_running():
                 if not self.viewer.is_paused():
-                    self._run_simulation_segment(segment_num)
-                    segment_num += 1
-                    pbar.update(1)
+                    if self._startup_state == StartupState.PRE_RESOLVE:
+                        self._resolve_constraints()
+                        self._startup_state = StartupState.POST_RESOLVE
+                        self.viewer._paused = True  # Pause again to show post-resolve state.
+                    elif self._startup_state == StartupState.POST_RESOLVE:
+                        self._startup_state = StartupState.RUNNING
+                        # Fall through to the simulation run.
+                        self._run_simulation_segment(segment_num)
+                        segment_num += 1
+                        pbar.update(1)
+                    elif self._startup_state == StartupState.RUNNING:
+                        self._run_simulation_segment(segment_num)
+                        segment_num += 1
+                        pbar.update(1)
+
                 self._render(segment_num)
 
                 if self.rendering_config.vis_type == "gl":
