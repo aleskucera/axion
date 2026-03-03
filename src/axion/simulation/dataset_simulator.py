@@ -17,7 +17,46 @@ from .base_simulator import SimulationConfig
 
 
 @wp.kernel
-def randomize_velocities_kernel(
+def random_poses_kernel(
+    body_q: wp.array(dtype=wp.transform),
+    pos_bound_min: wp.vec3,
+    pos_bound_max: wp.vec3,
+    seed: int,
+):
+    tid = wp.tid()
+    state = wp.rand_init(seed, tid)
+
+    # 1. Extract the current transform
+    tf = body_q[tid]
+    pos = wp.transform_get_translation(tf)
+    rot = wp.transform_get_rotation(tf)
+
+    # 2. Generate random positional offsets per axis
+    dx = wp.randf(state) * (pos_bound_max[0] - pos_bound_min[0]) + pos_bound_min[0]
+    dy = wp.randf(state) * (pos_bound_max[1] - pos_bound_min[1]) + pos_bound_min[1]
+    dz = wp.randf(state) * (pos_bound_max[2] - pos_bound_min[2]) + pos_bound_min[2]
+    new_pos = pos + wp.vec3(dx, dy, dz)
+
+    # 3. Generate a completely random rotation
+    # Create a random normalized axis
+    axis_x = wp.randf(state) * 2.0 - 1.0
+    axis_y = wp.randf(state) * 2.0 - 1.0
+    axis_z = wp.randf(state) * 2.0 - 1.0
+    axis = wp.normalize(wp.vec3(axis_x, axis_y, axis_z))
+
+    # Random angle between 0 and 2π (approx 6.28318)
+    angle = wp.randf(state) * 6.28318530718
+    noise_rot = wp.quat_from_axis_angle(axis, angle)
+
+    # Apply the random rotation to the existing one
+    new_rot = noise_rot * rot
+
+    # 4. Save the new transform back to state
+    body_q[tid] = wp.transform(new_pos, new_rot)
+
+
+@wp.kernel
+def random_velocities_kernel(
     body_qd: wp.array(dtype=wp.spatial_vector),
     lin_bound_min: float,
     lin_bound_max: float,
@@ -97,9 +136,11 @@ class DatasetSimulator(BaseSimulator, ABC):
         else:
             self._startup_state = StartupState.RUNNING
 
+        self.pos_min = wp.vec3(-5.0, -5.0, 0.0)
+        self.pos_max = wp.vec3(5.0, 5.0, 2.0)
+
     def _resolve_constraints(self):
         print("Resolving constraints...")
-
         for i in range(10):
             self.contacts = self.model.collide(self.current_state)
             self.solver.step(
@@ -117,7 +158,7 @@ class DatasetSimulator(BaseSimulator, ABC):
             # wp.copy(self.next_state.body_qd, self.current_state.body_qd)
 
         wp.launch(
-            kernel=randomize_velocities_kernel,
+            kernel=random_velocities_kernel,
             dim=self.current_state.body_qd.shape[0],
             inputs=[
                 self.current_state.body_qd,
@@ -138,6 +179,17 @@ class DatasetSimulator(BaseSimulator, ABC):
             desc="Simulating",
         )
 
+        wp.launch(
+            kernel=random_poses_kernel,
+            dim=self.current_state.body_q.shape[0],
+            inputs=[
+                self.current_state.body_q,
+                self.pos_min,
+                self.pos_max,
+                self.seed,
+            ],
+            device=self.model.device,
+        )
         try:
             segment_num = 0
             while self.viewer.is_running():
@@ -145,7 +197,7 @@ class DatasetSimulator(BaseSimulator, ABC):
                     if self._startup_state == StartupState.PRE_RESOLVE:
                         self._resolve_constraints()
                         self._startup_state = StartupState.POST_RESOLVE
-                        self.viewer._paused = True  # Pause again to show post-resolve state.
+                        self.viewer._paused = True
                     elif self._startup_state == StartupState.POST_RESOLVE:
                         self._startup_state = StartupState.RUNNING
                         # Fall through to the simulation run.
