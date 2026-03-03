@@ -1,5 +1,6 @@
 import os
 import pathlib
+import random
 
 import hydra
 import newton
@@ -27,6 +28,9 @@ class RandomSimulator(DatasetSimulator):
         engine_config: EngineConfig,
         logging_config: LoggingConfig,
     ):
+        self.lin_min, self.lin_max = -10.0, 10.0
+        self.ang_min, self.ang_max = -3.14, 3.14
+        self.seed = 42
         super().__init__(
             sim_config,
             render_config,
@@ -40,14 +44,15 @@ class RandomSimulator(DatasetSimulator):
         self.builder.add_ground_plane()
 
         # 2. Initialize SceneGenerator with our builder
-        gen = SceneGenerator(self.builder, seed=42)
+        gen = SceneGenerator(self.builder, seed=self.seed)
 
-        for i in range(25):
-            gen.generate_random_object(
-                pos_bounds=((-5, -5, 0), (5, 5, 5)),
-                mass_bounds=(0.3, 10.0),
-                size_bounds=(0.2, 1.2),
-            )
+        gen.generate_chaotic_tree(
+            num_objects=10,
+            pos_bounds=((-2, -2, 2), (2, 2, 6)),  # Confined spawning box floating in the air
+            mass_bounds=(0.5, 5.0),
+            size_bounds=(0.2, 0.6),
+            joint_types=["ball", "revolute"],
+        )
 
         return self.builder.finalize_replicated(num_worlds=self.simulation_config.num_worlds)
 

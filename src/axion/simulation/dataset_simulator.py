@@ -16,6 +16,42 @@ from .base_simulator import RenderingConfig
 from .base_simulator import SimulationConfig
 
 
+@wp.kernel
+def randomize_velocities_kernel(
+    body_qd: wp.array(dtype=wp.spatial_vector),
+    lin_bound_min: float,
+    lin_bound_max: float,
+    ang_bound_min: float,
+    ang_bound_max: float,
+    seed: int,
+):
+    tid = wp.tid()
+    state = wp.rand_init(seed, tid)
+
+    # Generate random angular velocity (wx, wy, wz)
+    wx = wp.randf(state) * (ang_bound_max - ang_bound_min) + ang_bound_min
+    wy = wp.randf(state) * (ang_bound_max - ang_bound_min) + ang_bound_min
+    wz = wp.randf(state) * (ang_bound_max - ang_bound_min) + ang_bound_min
+
+    # Generate random linear velocity (vx, vy, vz)
+    vx = wp.randf(state) * (lin_bound_max - lin_bound_min) + lin_bound_min
+    vy = wp.randf(state) * (lin_bound_max - lin_bound_min) + lin_bound_min
+    vz = wp.randf(state) * (lin_bound_max - lin_bound_min) + lin_bound_min
+
+    rand_vel = wp.spatial_vector(wx, wy, wz, vx, vy, vz)
+
+    # Forcefully overwrite both state arrays
+    body_qd[tid] = rand_vel
+
+
+@wp.kernel
+def sync_prev_poses_kernel(
+    pose: wp.array(dtype=wp.transform), pose_prev: wp.array(dtype=wp.transform)
+):
+    tid = wp.tid()
+    pose_prev[tid] = pose[tid]
+
+
 class StartupState(Enum):
     PRE_RESOLVE = auto()
     POST_RESOLVE = auto()
@@ -76,7 +112,23 @@ class DatasetSimulator(BaseSimulator, ABC):
 
             # Copy only positions
             wp.copy(self.current_state.body_q, self.next_state.body_q)
-            wp.copy(self.next_state.body_qd, self.current_state.body_qd)
+            self.current_state.body_qd.zero_()
+            # self.next_state.body_qd.zero_()
+            # wp.copy(self.next_state.body_qd, self.current_state.body_qd)
+
+        wp.launch(
+            kernel=randomize_velocities_kernel,
+            dim=self.current_state.body_qd.shape[0],
+            inputs=[
+                self.current_state.body_qd,
+                self.lin_min,
+                self.lin_max,
+                self.ang_min,
+                self.ang_max,
+                self.seed,
+            ],
+            device=self.model.device,
+        )
 
     def run(self):
         """Main entry point to start the simulation."""
@@ -120,23 +172,6 @@ class DatasetSimulator(BaseSimulator, ABC):
                 self.viewer.close()
                 print(f"Rendering complete. Output saved to {self.rendering_config.usd_file}")
 
-    def run_visualization(self):
-        """Runs the visualization loop without advancing the physics simulation."""
-        if not isinstance(self.viewer, newton.viewer.ViewerGL):
-            print(
-                "Error: run_visualization() only supports ViewerGL. Please set rendering.vis_type='gl'."
-            )
-            return
-
-        print("Starting visualization mode (Physics paused)...")
-        self.contacts = self.model.collide(self.current_state)
-
-        while self.viewer.is_running():
-            self.viewer.begin_frame(0.0)
-            self.viewer.log_state(self.current_state)
-            self.viewer.log_contacts(self.contacts, self.current_state)
-            self.viewer.end_frame()
-
     def _render(self, segment_num: int):
         sim_time = segment_num * self.steps_per_segment * self.clock.dt
         self.viewer.begin_frame(sim_time)
@@ -155,17 +190,11 @@ class DatasetSimulator(BaseSimulator, ABC):
         for step in range(n_steps):
             self._single_physics_step(step)
 
-        # if isinstance(self.solver, AxionEngine):
-        #     self.solver.events.record_timings()
-
     def _run_segment_with_graph(self, segment_num: int):
         if self.cuda_graph is None:
             self._capture_cuda_graphs()
 
         wp.capture_launch(self.cuda_graph)
-
-        # if isinstance(self.solver, AxionEngine):
-        #     self.solver.events.record_timings()
 
     def _capture_cuda_graphs(self):
         n_steps = self.steps_per_segment

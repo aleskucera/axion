@@ -123,6 +123,7 @@ class AxionEngine(SolverBase):
                 device=self.device,
             )
 
+        self.dataset_logger = None
         if self.logging_config.enable_dataset_logging:
             self.dataset_logger = DatasetHDF5Logger(
                 num_steps=self.logging_config.dataset_simulation_steps,
