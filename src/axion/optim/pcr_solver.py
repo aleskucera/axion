@@ -82,49 +82,39 @@ def _log_history_kernel(
 
 
 @wp.kernel
-def _check_convergence_kernel(
+def _check_residuals_kernel(
     r_sq: wp.array(dtype=wp.float32),
     b_sq: wp.array(dtype=wp.float32),
     tol_sq: float,
     atol_sq: float,
-    iter_count: wp.array(dtype=int),
-    max_iters: int,
     keep_running: wp.array(dtype=int),
 ):
-    # Logic: If max_iters reached -> stop.
-    # If any residual > tolerance -> keep_running = 1.
-
-    tid = wp.tid()
-
-    # Single thread manages iteration count to avoid races
-    if tid == 0:
-        current_iter = iter_count[0] + 1
-        iter_count[0] = current_iter
-        if current_iter >= max_iters:
-            keep_running[0] = 0
-            return
-
-    # Early exit if max iters reached
-    if iter_count[0] >= max_iters:
-        return
-
-    # Check residuals per world
     row = wp.tid()
     if row >= r_sq.shape[0]:
         return
 
-    val_r_sq = r_sq[row]
-    val_b_sq = b_sq[row]
-
     # Effective tolerance: max(atol^2, tol^2 * |b|^2)
-    rel_term = val_b_sq * tol_sq
     target = atol_sq
+    rel_term = b_sq[row] * tol_sq
     if rel_term > target:
         target = rel_term
 
     # If ANY world is not converged, we must continue
-    if val_r_sq > target:
+    if r_sq[row] > target:
         keep_running[0] = 1
+
+
+@wp.kernel
+def _update_iter_kernel(
+    iter_count: wp.array(dtype=int),
+    max_iters: int,
+    keep_running: wp.array(dtype=int),
+):
+    # Launched with dim=1
+    current_iter = iter_count[0] + 1
+    iter_count[0] = current_iter
+    if current_iter >= max_iters:
+        keep_running[0] = 0
 
 
 class PCRSolver:
@@ -276,20 +266,20 @@ class PCRSolver:
             # 8. Convergence Check
             self.tiled_dot.compute(self.r, self.r, self.r_sq)
 
-            # (Reuse your convergence kernel here)
+            # Check residuals across all worlds
             wp.launch(
-                kernel=_check_convergence_kernel,  # Assumes this is defined as in previous message
+                kernel=_check_residuals_kernel,
                 dim=(self.batch_dim),
                 device=self.device,
-                inputs=[
-                    self.r_sq,
-                    self.b_sq,
-                    tol_sq,
-                    atol_sq,
-                    self.iter_count,
-                    iters,
-                    self.keep_running,
-                ],
+                inputs=[self.r_sq, self.b_sq, tol_sq, atol_sq, self.keep_running],
+            )
+
+            # Safely manage iter count with exactly 1 thread
+            wp.launch(
+                kernel=_update_iter_kernel,
+                dim=1,
+                device=self.device,
+                inputs=[self.iter_count, iters, self.keep_running],
             )
 
             # 9. Logging (Optional, inside graph)

@@ -4,12 +4,12 @@ import pathlib
 import hydra
 import newton
 import warp as wp
-from axion import InteractiveSimulator
 from axion import EngineConfig
 from axion import ExecutionConfig
+from axion import InteractiveSimulator
+from axion import LoggingConfig
 from axion import RenderingConfig
 from axion import SimulationConfig
-from axion import LoggingConfig
 from omegaconf import DictConfig
 
 os.environ["PYOPENGL_PLATFORM"] = "glx"
@@ -35,7 +35,7 @@ class Simulator(InteractiveSimulator):
         )
 
     def build_model(self) -> newton.Model:
-        FRICTION = 0.4
+        FRICTION = 0.0
         RESTITUTION = 0.0
         DENSITY = 1000.0
         KE = 200.0

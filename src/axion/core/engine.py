@@ -32,28 +32,31 @@ from .update_utils import apply_stardard_newton_step
 
 
 @wp.kernel
-def _check_newton_convergence(
+def _check_newton_residuals_kernel(
     h_norm_sq: wp.array(dtype=float),
     atol_sq: float,
+    keep_running: wp.array(dtype=int),
+):
+    tid = wp.tid()
+    # Check if the residual for this specific world exceeds the tolerance
+    if tid < h_norm_sq.shape[0]:
+        if h_norm_sq[tid] > atol_sq:
+            keep_running[0] = 1
+
+
+@wp.kernel
+def _update_newton_iter_kernel(
     iter_count: wp.array(dtype=int),
     max_iters: int,
     keep_running: wp.array(dtype=int),
 ):
-    tid = wp.tid()
-    if tid == 0:
-        current_iter = iter_count[0] + 1
-        iter_count[0] = current_iter
-        if current_iter >= max_iters:
-            keep_running[0] = 0
-            return
+    # This kernel is explicitly launched with dim=1
+    current_iter = iter_count[0] + 1
+    iter_count[0] = current_iter
 
-    current_iter = iter_count[0]
+    # Force stop if we hit max iterations, overriding any residual checks
     if current_iter >= max_iters:
-        return
-
-    if tid < h_norm_sq.shape[0]:
-        if h_norm_sq[tid] > atol_sq:
-            keep_running[0] = 1
+        keep_running[0] = 0
 
 
 @wp.kernel
@@ -148,16 +151,27 @@ class AxionEngine(SolverBase):
         self.data.save_iter_to_history()
 
     def _check_convergence(self):
+        # 1. Check residuals across all worlds (Sets keep_running = 1 if not converged)
         wp.launch(
-            kernel=_check_newton_convergence,
+            kernel=_check_newton_residuals_kernel,
             dim=(self.dims.num_worlds,),
             inputs=[
                 self.data.res_norm_sq,
                 self.config.newton_atol**2,
+                self.data.keep_running,
+            ],
+            device=self.device,
+        )
+
+        # 2. Safely manage iter count with exactly 1 thread (Sets keep_running = 0 if max iters reached)
+        wp.launch(
+            kernel=_update_newton_iter_kernel,
+            dim=(1,),
+            inputs=[
                 self.data.iter_count,
                 self.config.max_newton_iters,
+                self.data.keep_running,
             ],
-            outputs=[self.data.keep_running],
             device=self.device,
         )
 
@@ -206,6 +220,7 @@ class AxionEngine(SolverBase):
         # Solve non-linear system with Newton-Raphson (NR) method
         # =========================================================================
         def nr_loop():
+            self.data.keep_running.zero_()
             # Linearize
             compute_linear_system(
                 self.axion_model, self.axion_contacts, self.data, self.config, self.dims
