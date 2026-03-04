@@ -29,7 +29,7 @@ import yaml
 import numpy as np
 from tqdm import tqdm
 
-from axion.neural_solver.envs.axionToTrajectorySampler import AxionEnvToTrajectorySamplerAdapter
+from axion.neural_solver.envs.nn_training_interface import NnTrainingInterface
 from axion.neural_solver.models.models import ModelMixedInput
 from axion.neural_solver.utils.datasets import TrajectoryDataset
 from axion.neural_solver.utils.evaluator import NeuralSimEvaluator
@@ -46,7 +46,7 @@ from axion.neural_solver.utils.logger import Logger
 class SequenceModelTrainer:
     def __init__(
         self, 
-        neural_env: AxionEnvToTrajectorySamplerAdapter, 
+        neural_env: NnTrainingInterface, 
         cfg: dict, 
         model_checkpoint_path: Optional[str] = None, 
         device = 'cuda:0'
