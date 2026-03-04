@@ -28,10 +28,12 @@ class RandomSimulator(DatasetSimulator):
         engine_config: EngineConfig,
         logging_config: LoggingConfig,
     ):
-        self.pos_min = wp.vec3(-5.0, -5.0, 0.0)
-        self.pos_max = wp.vec3(5.0, 5.0, 2.0)
+        self.pos_min = wp.vec3(-1.0, -1.0, 0.0)
+        self.pos_max = wp.vec3(1.0, 1.0, 3.0)
         self.lin_vel_min, self.lin_vel_max = -5.0, 5.0
         self.ang_vel_min, self.ang_vel_max = -3.14, 3.14
+        self.joint_target_lower_bound = -10.0
+        self.joint_target_upper_bound = 10.0
         self.seed = 42
 
         super().__init__(
@@ -51,9 +53,9 @@ class RandomSimulator(DatasetSimulator):
 
         for i in range(15):  # Pause again to show post-resolve state.
             gen.generate_random_object(
-                pos_bounds=((-5, -5, 0), (5, 5, 5)),
+                pos_bounds=((-1, -1, 0), (1, 1, 3)),
                 mass_bounds=(0.3, 10.0),
-                size_bounds=(0.2, 1.2),
+                size_bounds=(0.1, 0.3),
             )
 
         return self.builder.finalize_replicated(num_worlds=self.simulation_config.num_worlds)
