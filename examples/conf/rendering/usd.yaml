@@ -3,3 +3,5 @@ _target_: axion.RenderingConfig
 vis_type: "usd"
 target_fps: 30
 usd_file: "${project_name}.usd"
+world_offset_x: 20.0
+world_offset_y: 20.0

@@ -28,8 +28,11 @@ class RandomSimulator(DatasetSimulator):
         engine_config: EngineConfig,
         logging_config: LoggingConfig,
     ):
-        self.lin_min, self.lin_max = -10.0, 10.0
-        self.ang_min, self.ang_max = -3.14, 3.14
+
+        self.pos_min = wp.vec3(-2.0, -2.0, 1.0)
+        self.pos_max = wp.vec3(2.0, 2.0, 5.0)
+        self.lin_vel_min, self.lin_vel_max = -5.0, 5.0
+        self.ang_vel_min, self.ang_vel_max = -3.14, 3.14
         self.seed = 42
         super().__init__(
             sim_config,
@@ -48,7 +51,7 @@ class RandomSimulator(DatasetSimulator):
 
         gen.generate_chaotic_tree(
             num_objects=10,
-            pos_bounds=((-2, -2, 2), (2, 2, 6)),  # Confined spawning box floating in the air
+            pos_bounds=((-2, -2, 1), (2, 2, 5)),  # Confined spawning box floating in the air
             mass_bounds=(0.5, 5.0),
             size_bounds=(0.2, 0.6),
             joint_types=["ball", "revolute"],

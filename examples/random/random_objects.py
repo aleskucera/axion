@@ -28,8 +28,10 @@ class RandomSimulator(DatasetSimulator):
         engine_config: EngineConfig,
         logging_config: LoggingConfig,
     ):
-        self.lin_min, self.lin_max = -5.0, 5.0
-        self.ang_min, self.ang_max = -3.14, 3.14
+        self.pos_min = wp.vec3(-5.0, -5.0, 0.0)
+        self.pos_max = wp.vec3(5.0, 5.0, 2.0)
+        self.lin_vel_min, self.lin_vel_max = -5.0, 5.0
+        self.ang_vel_min, self.ang_vel_max = -3.14, 3.14
         self.seed = 42
 
         super().__init__(
@@ -47,7 +49,7 @@ class RandomSimulator(DatasetSimulator):
         # 2. Initialize SceneGenerator with our builder
         gen = SceneGenerator(self.builder, seed=self.seed)
 
-        for i in range(15):
+        for i in range(15):  # Pause again to show post-resolve state.
             gen.generate_random_object(
                 pos_bounds=((-5, -5, 0), (5, 5, 5)),
                 mass_bounds=(0.3, 10.0),

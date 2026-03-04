@@ -3,3 +3,5 @@ _target_: axion.RenderingConfig
 vis_type: "gl"
 target_fps: 20
 usd_file: null
+world_offset_x: 5.0
+world_offset_y: 5.0

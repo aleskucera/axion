@@ -8,6 +8,7 @@ import warp as wp
 from axion.core.engine import AxionEngine
 from axion.core.engine_config import EngineConfig
 from axion.core.logging_config import LoggingConfig
+from axion.core.types import JointMode
 from tqdm import tqdm
 
 from .base_simulator import BaseSimulator
@@ -17,42 +18,80 @@ from .base_simulator import SimulationConfig
 
 
 @wp.kernel
-def random_poses_kernel(
-    body_q: wp.array(dtype=wp.transform),
+def random_coords_kernel(
+    joint_q: wp.array(dtype=wp.float32),
+    joint_type: wp.array(dtype=wp.int32),
+    joint_q_start: wp.array(dtype=wp.int32),
+    joint_limit_lower: wp.array(dtype=wp.float32),
+    joint_limit_upper: wp.array(dtype=wp.float32),
     pos_bound_min: wp.vec3,
     pos_bound_max: wp.vec3,
     seed: int,
 ):
-    tid = wp.tid()
-    state = wp.rand_init(seed, tid)
+    joint_idx = wp.tid()
+    state = wp.rand_init(seed, joint_idx)
 
-    # 1. Extract the current transform
-    tf = body_q[tid]
-    pos = wp.transform_get_translation(tf)
-    rot = wp.transform_get_rotation(tf)
+    j_type = joint_type[joint_idx]
+    j_q_start = joint_q_start[joint_idx]
 
-    # 2. Generate random positional offsets per axis
-    dx = wp.randf(state) * (pos_bound_max[0] - pos_bound_min[0]) + pos_bound_min[0]
-    dy = wp.randf(state) * (pos_bound_max[1] - pos_bound_min[1]) + pos_bound_min[1]
-    dz = wp.randf(state) * (pos_bound_max[2] - pos_bound_min[2]) + pos_bound_min[2]
-    new_pos = pos + wp.vec3(dx, dy, dz)
+    # Get the DOF index to look up limits
+    j_q_start = joint_q_start[joint_idx]
 
-    # 3. Generate a completely random rotation
-    # Create a random normalized axis
-    axis_x = wp.randf(state) * 2.0 - 1.0
-    axis_y = wp.randf(state) * 2.0 - 1.0
-    axis_z = wp.randf(state) * 2.0 - 1.0
-    axis = wp.normalize(wp.vec3(axis_x, axis_y, axis_z))
+    if j_type == 0:  # Prismatic (1 DOF)
+        lower = joint_limit_lower[j_q_start]
+        upper = joint_limit_upper[j_q_start]
+        joint_q[j_q_start] = wp.randf(state) * (upper - lower) + lower
+        return
 
-    # Random angle between 0 and 2π (approx 6.28318)
-    angle = wp.randf(state) * 6.28318530718
-    noise_rot = wp.quat_from_axis_angle(axis, angle)
+    elif j_type == 1:  # Revolute (1 DOF)
+        lower = joint_limit_lower[j_q_start]
+        upper = joint_limit_upper[j_q_start]
+        joint_q[j_q_start] = wp.randf(state) * (upper - lower) + lower
+        return
 
-    # Apply the random rotation to the existing one
-    new_rot = noise_rot * rot
+    elif j_type == 2:  # Ball
+        axis_x = wp.randf(state) * 2.0 - 1.0
+        axis_y = wp.randf(state) * 2.0 - 1.0
+        axis_z = wp.randf(state) * 2.0 - 1.0
+        axis = wp.normalize(wp.vec3(axis_x, axis_y, axis_z))
+        angle = wp.randf(state) * 6.28318530718
+        rot = wp.quat_from_axis_angle(axis, angle)
 
-    # 4. Save the new transform back to state
-    body_q[tid] = wp.transform(new_pos, new_rot)
+        # 3. Save Rotation
+        joint_q[j_q_start + 0] = rot[0]
+        joint_q[j_q_start + 1] = rot[1]
+        joint_q[j_q_start + 2] = rot[2]
+        joint_q[j_q_start + 3] = rot[3]
+        return
+
+    elif j_type == 3:  # Fixed
+        return
+
+    elif j_type == 4:  # Free (6 DOF, 7 floats)
+        # 1. Randomize Translation
+        joint_q[j_q_start + 0] = (
+            wp.randf(state) * (pos_bound_max[0] - pos_bound_min[0]) + pos_bound_min[0]
+        )
+        joint_q[j_q_start + 1] = (
+            wp.randf(state) * (pos_bound_max[1] - pos_bound_min[1]) + pos_bound_min[1]
+        )
+        joint_q[j_q_start + 2] = (
+            wp.randf(state) * (pos_bound_max[2] - pos_bound_min[2]) + pos_bound_min[2]
+        )
+
+        # 2. Randomize Rotation
+        axis_x = wp.randf(state) * 2.0 - 1.0
+        axis_y = wp.randf(state) * 2.0 - 1.0
+        axis_z = wp.randf(state) * 2.0 - 1.0
+        axis = wp.normalize(wp.vec3(axis_x, axis_y, axis_z))
+        angle = wp.randf(state) * 6.28318530718
+        rot = wp.quat_from_axis_angle(axis, angle)
+
+        # 3. Save Rotation
+        joint_q[j_q_start + 3] = rot[0]
+        joint_q[j_q_start + 4] = rot[1]
+        joint_q[j_q_start + 5] = rot[2]
+        joint_q[j_q_start + 6] = rot[3]
 
 
 @wp.kernel
@@ -81,6 +120,60 @@ def random_velocities_kernel(
 
     # Forcefully overwrite both state arrays
     body_qd[tid] = rand_vel
+
+
+@wp.kernel
+def advance_step_kernel(step_buffer: wp.array(dtype=wp.int32)):
+    # Safely increment the global step counter on the GPU
+    step_buffer[0] = step_buffer[0] + 1
+
+
+@wp.kernel
+def random_joint_target_kernel(
+    joint_target: wp.array(dtype=wp.float32),
+    joint_type: wp.array(dtype=wp.int32),
+    joint_dof_mode: wp.array(dtype=wp.int32),
+    joint_qd_start: wp.array(dtype=wp.int32),
+    target_lower_bound: wp.float32,
+    target_upper_bound: wp.float32,
+    seed: int,
+    step_buffer: wp.array(dtype=wp.int32),
+):
+    joint_idx = wp.tid()
+    step = step_buffer[0]  # <--- READ THE CURRENT STEP
+
+    # Offset the random seed by the step counter so it's fresh every time
+    state = wp.rand_init(seed, joint_idx + step * 65536)
+
+    j_type = joint_type[joint_idx]
+    j_qd_start = joint_qd_start[joint_idx]
+
+    if j_type == 0:  # Prismatic (1 DOF)
+        j_mode = joint_dof_mode[j_qd_start]
+        if j_mode == JointMode.NONE:
+            return
+        joint_target[j_qd_start] = (
+            wp.randf(state) * (target_upper_bound - target_lower_bound) + target_lower_bound
+        )
+        return
+
+    elif j_type == 1:  # Revolute (1 DOF)
+        j_mode = joint_dof_mode[j_qd_start]
+        if j_mode == JointMode.NONE:
+            return
+        joint_target[j_qd_start] = (
+            wp.randf(state) * (target_upper_bound - target_lower_bound) + target_lower_bound
+        )
+        return
+
+    elif j_type == 2:  # Ball
+        return
+
+    elif j_type == 3:  # Fixed
+        return
+
+    elif j_type == 4:  # Free (6 DOF, 7 floats)
+        return
 
 
 @wp.kernel
@@ -125,19 +218,22 @@ class DatasetSimulator(BaseSimulator, ABC):
         )
 
         self.viewer.set_model(self.model)
-        self.viewer.set_world_offsets((20.0, 20.0, 0.0))
+        self.viewer.set_world_offsets(
+            (
+                self.rendering_config.world_offset_x,
+                self.rendering_config.world_offset_y,
+                0.0,
+            )
+        )
 
         # CUDA Graph Storage
         self.cuda_graph: Optional[wp.Graph] = None
-
+        self.global_step_buffer = wp.zeros(1, dtype=wp.int32, device=self.model.device)
         self._startup_state = StartupState.PRE_RESOLVE
         if self.rendering_config.start_paused and isinstance(self.viewer, newton.viewer.ViewerGL):
             self.viewer._paused = True
         else:
             self._startup_state = StartupState.RUNNING
-
-        self.pos_min = wp.vec3(-5.0, -5.0, 0.0)
-        self.pos_max = wp.vec3(5.0, 5.0, 2.0)
 
     def _resolve_constraints(self):
         print("Resolving constraints...")
@@ -157,16 +253,32 @@ class DatasetSimulator(BaseSimulator, ABC):
             # self.next_state.body_qd.zero_()
             # wp.copy(self.next_state.body_qd, self.current_state.body_qd)
 
+    def control_policy(self, current_state: newton.State):
+        """
+        Implements the control policy for the simulation.
+        This method may be optionally overridden by any subclass.
+        """
+        # 1. Increment the GPU step counter
         wp.launch(
-            kernel=random_velocities_kernel,
-            dim=self.current_state.body_qd.shape[0],
+            kernel=advance_step_kernel,
+            dim=1,
+            inputs=[self.global_step_buffer],
+            device=self.model.device,
+        )
+
+        # 2. Generate random targets using the new step counter
+        wp.launch(
+            kernel=random_joint_target_kernel,
+            dim=self.model.joint_count,
             inputs=[
-                self.current_state.body_qd,
-                self.lin_min,
-                self.lin_max,
-                self.ang_min,
-                self.ang_max,
+                self.control.joint_target_vel,
+                self.model.joint_type,
+                self.model.joint_dof_mode,
+                self.model.joint_qd_start,
+                self.joint_target_lower_bound,
+                self.joint_target_upper_bound,
                 self.seed,
+                self.global_step_buffer,
             ],
             device=self.model.device,
         )
@@ -180,15 +292,22 @@ class DatasetSimulator(BaseSimulator, ABC):
         )
 
         wp.launch(
-            kernel=random_poses_kernel,
-            dim=self.current_state.body_q.shape[0],
+            kernel=random_coords_kernel,
+            dim=self.model.joint_count,
             inputs=[
-                self.current_state.body_q,
+                self.current_state.joint_q,
+                self.model.joint_type,
+                self.model.joint_q_start,
+                self.model.joint_limit_lower,
+                self.model.joint_limit_upper,
                 self.pos_min,
                 self.pos_max,
                 self.seed,
             ],
             device=self.model.device,
+        )
+        newton.eval_fk(
+            self.model, self.current_state.joint_q, self.current_state.joint_qd, self.current_state
         )
         try:
             segment_num = 0

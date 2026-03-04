@@ -29,6 +29,8 @@ class RenderingConfig:
     usd_file: str | None = "sim.usd"
     usd_scaling: float | None = 100.0
     start_paused: bool = True
+    world_offset_x: float = 20.0
+    world_offset_y: float = 20.0
 
     def create_viewer(self, model: newton.Model, num_segments: int | None):
         """
