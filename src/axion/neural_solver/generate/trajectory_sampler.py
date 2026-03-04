@@ -23,7 +23,7 @@ from tqdm import tqdm, trange
 
 import warp as wp
 
-from axion.neural_solver.envs.axionToTrajectorySampler import AxionEnvToTrajectorySamplerAdapter
+from axion.neural_solver.envs.nn_training_interface import NnTrainingInterface
 from axion.neural_solver.generate.simulation_sampler import WarpSimDataGenerator, UniformSampler
 
 import torch
@@ -38,7 +38,7 @@ class TrajectorySampler(WarpSimDataGenerator):
 
     def __init__(
         self,
-        env: AxionEnvToTrajectorySamplerAdapter,
+        env: NnTrainingInterface,
         joint_q_min: Union[float, np.ndarray],
         joint_q_max: Union[float, np.ndarray],
         joint_qd_min: Union[float, np.ndarray],

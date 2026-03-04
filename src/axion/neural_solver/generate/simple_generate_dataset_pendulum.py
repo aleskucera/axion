@@ -34,7 +34,7 @@ import argparse
 import h5py
 from axion.neural_solver.generate.simple_trajectory_sampler_pendulum import SimpleTrajectorySamplerPendulum
 from axion.neural_solver.utils.python_utils import set_random_seed
-from axion.neural_solver.envs.axionToTrajectorySampler import AxionEnvToTrajectorySamplerAdapter
+from axion.neural_solver.envs.nn_training_interface import NnTrainingInterface
 from axion.neural_solver.utils.commons import (
     JOINT_Q_MIN,
     JOINT_Q_MAX,
@@ -61,7 +61,7 @@ def collect_dataset(
     data_grp.attrs['env'] = env_name
     data_grp.attrs['mode'] = "trajectory"
     
-    env = AxionEnvToTrajectorySamplerAdapter(
+    env = NnTrainingInterface(
         env_name = env_name,
         num_envs = num_envs,
         utils_provider_cfg = {},

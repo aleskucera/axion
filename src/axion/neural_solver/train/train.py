@@ -28,7 +28,7 @@ import wandb
 
 from axion.neural_solver.utils.python_utils import get_time_stamp, set_random_seed
 from axion.neural_solver.algorithms.sequence_model_trainer import SequenceModelTrainer
-from axion.neural_solver.envs.axionToTrajectorySampler import AxionEnvToTrajectorySamplerAdapter
+from axion.neural_solver.envs.nn_training_interface import NnTrainingInterface
 
 
 def _parse_args():
@@ -85,7 +85,7 @@ if __name__ == '__main__':
     }
 
     print(f"Device = {args.device}")
-    neural_env = AxionEnvToTrajectorySamplerAdapter(**cfg['env'], device=args.device)
+    neural_env = NnTrainingInterface(**cfg['env'], device=args.device)
 
     algo = SequenceModelTrainer(
         neural_env=neural_env,

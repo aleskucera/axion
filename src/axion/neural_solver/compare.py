@@ -53,16 +53,16 @@ DATASET_PATH = (
 )
 ENGINE_LOG_PATH = _REPO_ROOT / "data" / "logs" / "pendulum_AxionEngine.h5"
 
-# Physics constants matching AxionEnv / pendulum_AxionEngine.py
+# Physics constants matching AxionEngineWrapper / pendulum_AxionEngine.py
 PENDULUM_HEIGHT = 5.0
 FRAME_DT = 0.1  # seconds per logged step (both sources)
 
 # ---------------------------------------------------------------------------
-# 1. Build the same pendulum model used by AxionEnv
+# 1. Build the same pendulum model used by AxionEngineWrapper
 # ---------------------------------------------------------------------------
 
 def build_pendulum_model(device: str = "cpu") -> newton.Model:
-    """Construct the 2-link revolute pendulum identical to AxionEnv."""
+    """Construct the 2-link revolute pendulum identical to AxionEngineWrapper."""
     builder = AxionModelBuilder()
 
     chain_width = 1.5

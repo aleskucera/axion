@@ -34,13 +34,13 @@ sys.path.append(base_dir)
 
 from axion.neural_solver.utils import warp_utils
 from axion.neural_solver.utils.python_utils import print_ok
-from axion.neural_solver.envs.axionEnv import AxionEnv
+from axion.neural_solver.envs.axion_engine_wrapper import AxionEngineWrapper
 from axion.neural_solver.neural_model_utils_providers.transformer_neural_utils_provider_new import (
     TransformerNeuralModelUtilsProvider,
 )
 
 
-class AxionEnvToTrajectorySamplerAdapter:
+class NnTrainingInterface:
     """
     Simulation wrapper that supports both ground-truth (Axion engine) and neural
     model stepping.
@@ -76,8 +76,8 @@ class AxionEnvToTrajectorySamplerAdapter:
         warp_device = wp.get_device(device) if isinstance(device, str) else device
         device_str = str(device) if isinstance(device, str) else str(wp.device_to_torch(warp_device))
 
-        # Use AxionEnv as backend, preserving (most of) the public API contract.
-        self.env = AxionEnv(
+        # Use AxionEngineWrapper as backend, preserving (most of) the public API contract.
+        self.simulator_wrapper = AxionEngineWrapper(
             env_name = env_name,
             num_worlds= num_envs,
             device = warp_device,
@@ -85,7 +85,7 @@ class AxionEnvToTrajectorySamplerAdapter:
         )
 
         self.utils_provider = TransformerNeuralModelUtilsProvider(
-            robot_model=self.env.model,
+            robot_model=self.simulator_wrapper.model,
             neural_model=neural_model,
             cfg=utils_provider_cfg,
             num_states_history=utils_provider_cfg.get("num_states_history", 1),
@@ -108,85 +108,79 @@ class AxionEnvToTrajectorySamplerAdapter:
             0 :: self.bodies_per_env, :
         ].view(self.num_envs, 7).to(self.torch_device)
 
-        # Video export (used by trajectory sampler when export_video=True)
-        self.export_video = False
-        self.video_export_filename = None
-        self.video_tmp_folder = None
-        self.video_frame_cnt = 0
-
     # ---- Properties used by trajectory sampler and simulation sampler ----
 
     @property
     def num_envs(self):
-        return self.env.num_envs
+        return self.simulator_wrapper.num_envs
 
     @property
     def dof_q_per_env(self):
-        return self.env.dof_q_per_world
+        return self.simulator_wrapper.dof_q_per_world
 
     @property
     def dof_qd_per_env(self):
-        return self.env.dof_qd_per_world
+        return self.simulator_wrapper.dof_qd_per_world
 
     @property
     def state_dim(self):
-        return self.env.dof_q_per_world + self.env.dof_qd_per_world
+        return self.simulator_wrapper.dof_q_per_world + self.simulator_wrapper.dof_qd_per_world
 
     @property
     def bodies_per_env(self):
-        return self.env.bodies_per_world
+        return self.simulator_wrapper.bodies_per_world
 
     @property
     def joint_act_dim(self):
-        return self.env.joint_act_dim
+        return self.simulator_wrapper.joint_act_dim
 
     @property
     def action_dim(self):
-        return self.env.control_dim
+        return self.simulator_wrapper.control_dim
 
     @property
     def action_limits(self):
-        return self.env.control_limits
+        return self.simulator_wrapper.control_limits
 
     @property
     def joint_types(self):
-        return self.env.joint_types
+        return self.simulator_wrapper.joint_types
 
     @property
     def device(self):
-        return self.env.device
+        return self.simulator_wrapper.device
 
     @property
     def torch_device(self):
-        return wp.device_to_torch(self.env.device)
+        return wp.device_to_torch(self.simulator_wrapper.device)
 
     @property
     def robot_name(self):
-        return self.env.robot_name
+        return self.simulator_wrapper.robot_name
 
     @property
     def abstract_contacts(self):
-        return self.env.abstract_contacts
+        return self.simulator_wrapper.abstract_contacts
 
     @property
     def sim_states(self):
-        return self.env.state
+        return self.simulator_wrapper.state
 
     @property
     def model(self):
-        return self.env.model
+        return self.simulator_wrapper.model
 
     @property
     def eval_collisions(self):
-        return self.env.eval_collisions
+        return self.simulator_wrapper.eval_collisions
 
     @property
     def num_contacts_per_env(self):
-        return self.env.abstract_contacts.num_contacts_per_env
+        return self.simulator_wrapper.abstract_contacts.num_contacts_per_env
 
     @property
     def frame_dt(self):
-        return self.env.frame_dt
+        return self.simulator_wrapper.frame_dt
 
     # ---- Mode and collisions (trajectory sampler sets these) ----
 
@@ -195,7 +189,7 @@ class AxionEnvToTrajectorySamplerAdapter:
         self.env_mode = env_mode
 
     def set_eval_collisions(self, eval_collisions: bool):
-        self.env.set_eval_collisions(eval_collisions)
+        self.simulator_wrapper.set_eval_collisions(eval_collisions)
 
     def wrap2PI(self, states):
         self.utils_provider.wrap2PI(states)
@@ -204,13 +198,13 @@ class AxionEnvToTrajectorySamplerAdapter:
 
     def _update_states(self, states: Optional[torch.Tensor] = None):
         if states is None:
-            if not getattr(self.env, "uses_generalized_coordinates", True):
-                warp_utils.eval_ik(self.env.model, self.env.state)
-            warp_utils.acquire_states_to_torch(self.env, self.states)
+            if not getattr(self.simulator_wrapper, "uses_generalized_coordinates", True):
+                warp_utils.eval_ik(self.simulator_wrapper.model, self.simulator_wrapper.state)
+            warp_utils.acquire_states_to_torch(self.simulator_wrapper, self.states)
         else:
             self.states.copy_(states)
-            warp_utils.assign_states_from_torch(self.env, self.states)
-            warp_utils.eval_fk(self.env.model, self.env.state)
+            warp_utils.assign_states_from_torch(self.simulator_wrapper, self.states)
+            warp_utils.eval_fk(self.simulator_wrapper.model, self.simulator_wrapper.state)
 
         # body_q is now up-to-date in both paths; read root pose.
         self.root_body_q.copy_(
@@ -259,7 +253,7 @@ class AxionEnvToTrajectorySamplerAdapter:
         self._update_states(next_states)
         return self.states
 
-    # ---- Step and reset (trajectory sampler uses these) ----
+    # ---- Step, con reset (trajectory sampler uses these) ----
 
     def step(
         self,
@@ -272,13 +266,13 @@ class AxionEnvToTrajectorySamplerAdapter:
 
         if self.action_dim > 0:
             actions = actions.to(self.torch_device)
-            self.env.assign_control(
+            self.simulator_wrapper.assign_control(
                 wp.from_torch(actions),
-                self.env.control,
-                self.env.state,
+                self.simulator_wrapper.control,
+                self.simulator_wrapper.state,
             )
             self.joint_acts.copy_(
-                wp.to_torch(self.env.control.joint_act).view(
+                wp.to_torch(self.simulator_wrapper.control.joint_act).view(
                     self.num_envs,
                     self.joint_act_dim,
                 )
@@ -287,7 +281,7 @@ class AxionEnvToTrajectorySamplerAdapter:
         if env_mode == "neural":
             return self._step_neural()
         else:
-            self.env.update()
+            self.simulator_wrapper.update()
             self._update_states()
             return self.states
 
@@ -302,9 +296,9 @@ class AxionEnvToTrajectorySamplerAdapter:
 
         if self.joint_act_dim > 0:
             joint_acts = joint_acts.to(self.torch_device)
-            self.env.joint_act.assign(wp.from_torch(joint_acts.reshape(-1)))
+            self.simulator_wrapper.joint_act.assign(wp.from_torch(joint_acts.reshape(-1)))
             self.joint_acts.copy_(
-                wp.to_torch(self.env.control.joint_act).view(
+                wp.to_torch(self.simulator_wrapper.control.joint_act).view(
                     self.num_envs,
                     self.joint_act_dim,
                 )
@@ -313,9 +307,17 @@ class AxionEnvToTrajectorySamplerAdapter:
         if env_mode == "neural":
             return self._step_neural()
         else:
-            self.env.update()
+            self.simulator_wrapper.update()
             self._update_states()
             return self.states
+
+    def convert_newton_contacts_to_contacts_for_nn_model(self):
+        """
+        Converts self.contacts from Axion to Contact data form suitable for
+        NN module training. 
+        """
+        #TODO: call a standalone method from self.utils_provider here to do it
+        # returned processed
 
     def reset(self, initial_states: Optional[torch.Tensor] = None):
         # Clear history first so the initial state persists as the first entry.
@@ -326,8 +328,8 @@ class AxionEnvToTrajectorySamplerAdapter:
             initial_states = initial_states.to(self.torch_device)
             self._update_states(initial_states)
         else:
-            self.env.reset()
+            self.simulator_wrapper.reset()
             self._update_states()
 
     def close(self):
-        self.env.close()
+        self.simulator_wrapper.close()

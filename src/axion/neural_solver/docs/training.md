@@ -15,7 +15,7 @@ python src/axion/neural_solver/train/train.py --cfg src/axion/neural_solver/trai
 ```
 
 The script:
-- creates `AxionEnvToTrajectorySamplerAdapter()` neural_env
+- creates `NnTrainingInterface()` neural_env
 - creates `algo = SequenceModelTrainer()` and hands the Axion adapter to it
 - finally, runs:
 ```

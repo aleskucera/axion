@@ -23,7 +23,7 @@ from tqdm import trange
 
 import warp as wp
 
-from axion.neural_solver.envs.axionToTrajectorySampler import AxionEnvToTrajectorySamplerAdapter
+from axion.neural_solver.envs.nn_training_interface import NnTrainingInterface
 from axion.neural_solver.generate.simulation_sampler import UniformSampler
 from axion.neural_solver.generate.trajectory_sampler import TrajectorySampler
 
@@ -41,7 +41,7 @@ class SimpleTrajectorySamplerPendulum(TrajectorySampler):
 
     def __init__(
         self,
-        env: AxionEnvToTrajectorySamplerAdapter,
+        env: NnTrainingInterface,
         joint_q_min: Union[float, np.ndarray],
         joint_q_max: Union[float, np.ndarray],
         joint_qd_min: Union[float, np.ndarray],
@@ -68,6 +68,9 @@ class SimpleTrajectorySamplerPendulum(TrajectorySampler):
         export_video: bool = False,
         export_video_path: str = None
     ) -> List[Dict]:
+        """
+        States only
+        """
 
         rollout_batches = {
             'gravity_dir': [],
@@ -212,6 +215,201 @@ class SimpleTrajectorySamplerPendulum(TrajectorySampler):
                         env_mode = 'ground-truth'
                     )
                 )
+
+            # print(contact_depths.min())
+            # save to trajectories
+            rollout_batches['gravity_dir'].append(gravity_dir.clone())
+            rollout_batches['root_body_q'].append(root_body_q.clone())
+            rollout_batches['states'].append(states.clone())
+            rollout_batches['contacts']['contact_normals'].append(contact_normals.clone())
+            rollout_batches['contacts']['contact_depths'].append(contact_depths.clone())
+            rollout_batches['contacts']['contact_points_0'].append(contact_points_0.clone())
+            rollout_batches['contacts']['contact_points_1'].append(contact_points_1.clone())
+            rollout_batches['contacts']['contact_thicknesses'].append(contact_thicknesses.clone())
+            rollout_batches['joint_acts'].append(joint_acts.clone())
+            rollout_batches['next_states'].append(next_states.clone())
+
+        print(f'\n\nTotal number of transitions generated: {rounds * self.num_envs * trajectory_length}')
+
+        # merge rollout batches
+        rollouts = {}
+        for key in rollout_batches:
+            if isinstance(rollout_batches[key], dict):
+                rollouts[key] = {}
+                for sub_key in rollout_batches[key]:
+                    rollouts[key][sub_key] = torch.cat(rollout_batches[key][sub_key], dim = 1)
+            else:
+                rollouts[key] = torch.cat(rollout_batches[key], dim = 1)
+
+        print('[DEBUG] sum(next_states) = ', rollouts['next_states'].sum())
+        
+        self.env.set_eval_collisions(_eval_collisions)
+        
+        if export_video:
+            self.env.end_video_export()
+
+        return rollouts
+
+
+    def sample_trajectories(
+        self, 
+        num_transitions: int, 
+        trajectory_length: int, 
+        passive: bool = False,
+        render: bool = False,
+        export_video: bool = False,
+        export_video_path: str = None
+    ) -> List[Dict]:
+        """
+        States + Contact data
+        """
+
+        rollout_batches = {
+            'gravity_dir': [],
+            'root_body_q': [],
+            'states': [],
+            'contacts': {
+                'contact_normals': [],
+                'contact_depths': [],
+                'contact_points_0': [],
+                'contact_points_1': [],
+                'contact_thicknesses': []
+            },
+            'joint_acts': [],
+            'next_states': []
+        }
+        
+        progress = trange(
+            0, num_transitions, 
+            self.num_envs * trajectory_length, 
+            desc="Sampling state transitions"
+        )
+        
+        # allocate round-wise buffers
+        initial_states = torch.empty(
+            self.num_envs,
+            self.state_dim,
+            dtype=torch.float32,
+            device=self.torch_device)
+        states = torch.empty(
+            trajectory_length, 
+            self.num_envs,
+            self.state_dim,
+            dtype=torch.float32,
+            device=self.torch_device)
+        next_states = torch.empty(
+            trajectory_length, 
+            self.num_envs,
+            self.state_dim,
+            dtype=torch.float32,
+            device=self.torch_device)
+        joint_acts = torch.empty(
+            trajectory_length, 
+            self.num_envs,
+            self.joint_act_dim,
+            dtype=torch.float32,
+            device=self.torch_device)
+        root_body_q = torch.empty(
+            trajectory_length,
+            self.num_envs,
+            7,
+            dtype=torch.float32,
+            device=self.torch_device)
+        gravity_dir = torch.empty(
+            trajectory_length, 
+            self.num_envs,
+            3,
+            dtype=torch.float32,
+            device=self.torch_device)
+        gravity_dir[:, :, self.env.model.up_axis] = -1.0
+
+        num_contacts_per_env = self.env.abstract_contacts.num_contacts_per_env
+        
+        contact_normals = torch.empty(
+            trajectory_length,
+            self.num_envs,
+            num_contacts_per_env,
+            3,
+            dtype=torch.float32,
+            device=self.torch_device
+        )
+        
+        contact_depths = torch.empty(
+            trajectory_length,
+            self.num_envs,
+            num_contacts_per_env,
+            dtype=torch.float32,
+            device=self.torch_device
+        )
+        contact_points_0 = torch.empty(
+            trajectory_length, 
+            self.num_envs,
+            num_contacts_per_env,
+            3,
+            dtype=torch.float32,
+            device=self.torch_device
+        )
+        contact_points_1 = torch.empty(
+            trajectory_length, 
+            self.num_envs,
+            num_contacts_per_env,
+            3,
+            dtype=torch.float32,
+            device=self.torch_device
+        )
+        contact_thicknesses = torch.empty(
+            trajectory_length,
+            self.num_envs,
+            num_contacts_per_env,
+            dtype=torch.float32,
+            device=self.torch_device
+        )
+
+
+        self.env.set_env_mode('ground-truth')
+        
+        _eval_collisions = self.env.eval_collisions
+        self.env.set_eval_collisions(True)
+
+        if export_video:
+            self.env.start_video_export(export_video_path)
+
+        rounds = 0
+        for _ in progress:
+            rounds += 1
+
+            # generate random initial states and joint_acts
+            self.sampler.sample(
+                batch_size = self.num_envs, 
+                low = self.states_min,
+                high = self.states_max,
+                data = initial_states)
+            self.sampler.sample(
+                batch_size = self.num_envs * trajectory_length, 
+                low = -self.joint_act_scale,
+                high = self.joint_act_scale,
+                data = joint_acts.view(-1, self.joint_act_dim)
+            )
+            
+            if passive:
+                joint_acts *= 0.
+
+            # set initial states
+            self.env.reset(initial_states = initial_states)
+
+            for step in range(trajectory_length):
+                
+                root_body_q[step, :, :].copy_(self.env.root_body_q)
+                states[step, :, :].copy_(self.env.states)
+                next_states[step, :, :].copy_(
+                    self.env.step_with_joint_act(
+                        joint_acts[step, :, :],
+                        env_mode = 'ground-truth'
+                    )
+                )
+                # TODO: Pass the processed contacts here\
+                # self.env.convert_newton_contacts_to_contacts_for_nn_model()
+                # contact_normals[step, :, :].copy_ 
 
             # print(contact_depths.min())
             # save to trajectories

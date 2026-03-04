@@ -1,5 +1,5 @@
 ## Model definition
-[axionEnv.py]('src/axion/neural_solver/envs/axionEnv.py')
+[AxionEngineWrapper.py]('src/axion/neural_solver/envs/AxionEngineWrapper.py')
 
 ## Generalized coordinates
 convention: [q0, q1, q0_dot, q1_dot]
