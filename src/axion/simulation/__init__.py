@@ -1,4 +1,5 @@
 from .base_simulator import BaseSimulator
+from .dataset_simulator import DatasetSimulator
 from .differentiable_simulator import DifferentiableSimulator
 from .interactive_simulator import InteractiveSimulator
 from .sim_config import ExecutionConfig

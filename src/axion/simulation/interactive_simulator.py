@@ -4,7 +4,6 @@ from typing import Optional
 import newton
 import warp as wp
 from axion.core.engine import AxionEngine
-from axion.core.engine_config import AxionEngineConfig
 from axion.core.engine_config import EngineConfig
 from axion.core.logging_config import LoggingConfig
 from tqdm import tqdm

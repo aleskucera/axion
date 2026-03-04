@@ -10,3 +10,6 @@ class LoggingConfig:
     log_dynamics_state: bool = True
     log_linear_system_data: bool = True
     log_constraint_data: bool = True
+    enable_dataset_logging: bool = False
+    dataset_log_file: str = "dataset.h5"
+    dataset_simulation_steps: int = 300
