@@ -35,7 +35,7 @@ sys.path.append(base_dir)
 from axion.neural_solver.utils import warp_utils
 from axion.neural_solver.utils.python_utils import print_ok
 from axion.neural_solver.envs.axionEnv import AxionEnv
-from axion.neural_solver.neural_model_utils_providers.transformer_neural_utils_provider import (
+from axion.neural_solver.neural_model_utils_providers.transformer_neural_utils_provider_new import (
     TransformerNeuralModelUtilsProvider,
 )
 
@@ -85,7 +85,7 @@ class AxionEnvToTrajectorySamplerAdapter:
         )
 
         self.utils_provider = TransformerNeuralModelUtilsProvider(
-            model=self.env.model,
+            robot_model=self.env.model,
             neural_model=neural_model,
             cfg=utils_provider_cfg,
             num_states_history=utils_provider_cfg.get("num_states_history", 1),
