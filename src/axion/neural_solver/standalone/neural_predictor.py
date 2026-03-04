@@ -13,14 +13,19 @@ try:
     from src.axion.neural_solver.standalone.neural_predictor_helpers import (
         wrap2PI,
         convert_prediction_to_next_states_orientation_dofs,
-        convert_prediction_to_next_states_regular_dofs
+        convert_prediction_to_next_states_regular_dofs,
+        get_contact_masks,
+        convert_coordinate_frame
     )
     from src.axion.neural_solver.utils import torch_utils
 except ModuleNotFoundError:
     from axion.neural_solver.standalone.neural_predictor_helpers import (
         wrap2PI,
         convert_prediction_to_next_states_orientation_dofs,
-        convert_prediction_to_next_states_regular_dofs
+        convert_prediction_to_next_states_regular_dofs,
+        get_contact_masks,
+        convert_coordinate_frame,
+        
     )
     from axion.neural_solver.utils import torch_utils
 
@@ -149,6 +154,8 @@ class NeuralPredictor:
         root_body_q = root_body_q.to(self.device)
         gravity_dir = gravity_dir.to(self.device)
 
+        # TODO: get contact mask
+
         # Add current state to history BEFORE prediction
         history_entry = {
             "root_body_q": root_body_q.clone(),
@@ -162,6 +169,8 @@ class NeuralPredictor:
             stacked = torch.stack([entry[key] for entry in self.states_history], dim=1)
             self.nn_model_inputs[key] = stacked  # (num_envs, T, dim)
         
+        # TODO: call convert_coordinate_frame (but rethink if states really need to be converted)
+
         # Wrap continuous DOFs
         # Reshape states to (num_envs * T, state_dim) for wrapping
         B, T, D = self.nn_model_inputs["states"].shape
@@ -173,6 +182,8 @@ class NeuralPredictor:
         states_embedding = self._embed_states(self.nn_model_inputs["states"])
         self.nn_model_inputs["states_embedding"] = states_embedding
         
+        # TODO: call _apply_contact_mask()
+
         return self.nn_model_inputs
     
     def predict(self) -> torch.Tensor:
@@ -359,4 +370,35 @@ class NeuralPredictor:
         else:
             raise NotImplementedError
 
-    
+    def _apply_contact_mask(self,):
+        """
+        Once self.model_inputs are assembled (TO-DO), apply the contact mask 
+        """        
+        contact_masks = self.nn_model_inputs["contact_masks"]  # (num_envs, T, num_contacts)
+        for key in self.nn_model_inputs.keys():
+            if key.startswith('contact_') and key != 'contact_masks':
+                # Reshape to (num_envs, T, num_contacts, dim_per_contact)
+                if key in ['contact_depths', 'contact_thicknesses']:
+                    dim_per_contact = 1
+                    original_shape = self.nn_model_inputs[key].shape
+                    reshaped = self.nn_model_inputs[key].view(
+                        original_shape[0], original_shape[1], self.num_contacts_per_env, dim_per_contact
+                    )
+                    masked = torch.where(
+                        contact_masks.unsqueeze(-1) < 1e-5,
+                        0.,
+                        reshaped
+                    )
+                    self.nn_model_inputs[key] = masked.view(original_shape)
+                else:  # contact_normals, contact_points_0, contact_points_1
+                    dim_per_contact = 3
+                    original_shape = self.nn_model_inputs[key].shape
+                    reshaped = self.nn_model_inputs[key].view(
+                        original_shape[0], original_shape[1], self.num_contacts_per_env, dim_per_contact
+                    )
+                    masked = torch.where(
+                        contact_masks.unsqueeze(-1) < 1e-5,
+                        0.,
+                        reshaped
+                    )
+                    self.nn_model_inputs[key] = masked.view(original_shape)
