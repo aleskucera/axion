@@ -13,6 +13,17 @@ from typing import Dict, Optional, Sequence
 
 import torch
 import warp as wp
+import newton
+
+from axion.types import reorder_ground_contacts_kernel, contact_penetration_depth_kernel
+from axion.neural_solver.standalone.neural_predictor_helpers import (
+    get_contact_masks,
+    convert_contacts_w2b,
+    convert_contacts_w2b_batched,
+    apply_contact_mask,
+)
+
+PENDULUM_MAX_NUM_CONTACTS_PER_ROBOT_MODEL = 4
 
 def _ensure_bt(x: torch.Tensor) -> torch.Tensor:
     """Ensure tensor is (B, T, D). Accepts (B, D) or (B, T, D)."""
@@ -88,7 +99,7 @@ class TransformerNeuralModelUtilsProvider:
         self.states_embedding_type = states_embedding_type
 
         num_worlds = int(getattr(self.robot_model, "num_worlds", 1))
-        self.num_envs = num_worlds
+        self.num_worlds = num_worlds
 
         joint_coord_count = int(getattr(self.robot_model, "joint_coord_count", 0))
         joint_dof_count = int(getattr(self.robot_model, "joint_dof_count", 0))
@@ -98,8 +109,8 @@ class TransformerNeuralModelUtilsProvider:
                 f"joint_coord_count/joint_dof_count, got {joint_coord_count}/{joint_dof_count}."
             )
 
-        self.dof_q_per_env = joint_coord_count // self.num_envs
-        self.dof_qd_per_env = joint_dof_count // self.num_envs
+        self.dof_q_per_env = joint_coord_count // self.num_worlds
+        self.dof_qd_per_env = joint_dof_count // self.num_worlds
         self.state_dim = self.dof_q_per_env + self.dof_qd_per_env
 
         self.prediction_dim = self.state_dim
@@ -110,12 +121,12 @@ class TransformerNeuralModelUtilsProvider:
         else:
             self.angular_q_indices = torch.tensor(list(angular_q_indices), dtype=torch.long, device="cpu")
 
-        self.root_body_q = torch.zeros((self.num_envs, 7), device=self.torch_device, dtype=torch.float32)
-        self.gravity_dir = torch.zeros((self.num_envs, 3), device=self.torch_device, dtype=torch.float32)
+        self.root_body_q = torch.zeros((self.num_worlds, 7), device=self.torch_device, dtype=torch.float32)
+        self.gravity_dir = torch.zeros((self.num_worlds, 3), device=self.torch_device, dtype=torch.float32)
         up_axis = int(getattr(self.robot_model, "up_axis", 2))
         if 0 <= up_axis < 3:
             self.gravity_dir[:, up_axis] = -1.0
-        self.states = torch.zeros((self.num_envs, self.state_dim), device=self.torch_device, dtype=torch.float32)
+        self.states = torch.zeros((self.num_worlds, self.state_dim), device=self.torch_device, dtype=torch.float32)
 
         self.neural_model = None
         self.set_neural_model(neural_model)
@@ -181,15 +192,124 @@ class TransformerNeuralModelUtilsProvider:
         _wrap_to_pi_(q_sel)
         q.index_copy_(-1, self.angular_q_indices.to(q.device), q_sel)
 
-    def get_contact_masks(self, contact_depths, contact_thicknesses):
+    def convert_newton_contacts_to_contacts_for_nn_model(self,
+        state_in: newton.State,
+        newton_contacts: newton.Contacts, 
+        ):
         """
-        Present for trainer compatibility. For states-only datasets, contacts are absent.
+        1.  Reorder the contacts from newton such that points_0 are always on the robot body and
+            points_1 are the corresponding points on the external object (the contact plane)
+        2.  Calculate penetration depth (used for contact masking later)
+        3.  Convert the contact data to torch tensors.
+        4.  Calculate the contact mask (mask that defines active contacts)
+        5.  Convert points_1 and contact normals to the body frame (robot body frame)
+        6.  Apply the contact mask
+        """
+        # Reorder contacts from Newton such that points_0 are on body and points_1 are ground
+        max_num_contacts_per_robot_model = PENDULUM_MAX_NUM_CONTACTS_PER_ROBOT_MODEL 
+        shape = (self.num_worlds, max_num_contacts_per_robot_model)
+        device = str(self.torch_device)
+        reordered_point0 = wp.zeros(shape, dtype=wp.vec3, device=device)
+        reordered_point1 = wp.zeros(shape, dtype=wp.vec3, device=device)
+        reordered_normal = wp.zeros(shape, dtype=wp.vec3, device=device)
+        reordered_thickness0 = wp.zeros(shape, dtype=wp.float32, device=device)
+        reordered_thickness1 = wp.zeros(shape, dtype=wp.float32, device=device)
+        reordered_body_shape = wp.full(shape, -1, dtype=wp.int32, device=device)
+        body_contact_count = wp.zeros(self.robot_model.body_count, dtype=wp.int32, device=device)
+        if len(self.robot_model.shape_body.shape) == 1:
+            shape_body_2d = self.robot_model.shape_body.reshape((1, -1))  # (shape_count,) -> (1, shape_count)
+        else:
+            shape_body_2d = self.robot_model.shape_body
+        wp.launch(
+            kernel=reorder_ground_contacts_kernel,
+            dim=(self.num_worlds, max_num_contacts_per_robot_model),
+            inputs=[
+                newton_contacts.rigid_contact_count,
+                newton_contacts.rigid_contact_shape0,
+                newton_contacts.rigid_contact_shape1,
+                newton_contacts.rigid_contact_point0,
+                newton_contacts.rigid_contact_point1,
+                newton_contacts.rigid_contact_normal,
+                newton_contacts.rigid_contact_thickness0,
+                newton_contacts.rigid_contact_thickness1,
+                shape_body_2d,
+                body_contact_count,
+            ],
+            outputs=[
+                reordered_point0,  # Always body
+                reordered_point1,  # Always ground
+                reordered_normal,
+                reordered_thickness0,  # Always body
+                reordered_thickness1,  # Always ground
+                reordered_body_shape,  # Body shape index for each contact
+            ],
+            device=str(self.torch_device)
+        )
 
-        If contact tensors are provided, returns an "all true" mask of appropriate shape.
-        """
-        if contact_depths is None:
-            return None
-        return torch.ones_like(contact_depths, dtype=torch.bool, device=contact_depths.device)
+        # Calculate Penetration depth using reordered contact data
+        contact_depths_wp_array = wp.zeros((self.num_worlds, max_num_contacts_per_robot_model), dtype=wp.float32, device=str(self.torch_device))
+        if len(state_in.body_q.shape) == 1:
+            body_q_2d = state_in.body_q.reshape((1, -1))    # (body_count,) -> (1, body_count)
+        else:
+            body_q_2d = state_in.body_q
+
+        wp.launch(
+            kernel=contact_penetration_depth_kernel,
+            dim=(self.num_worlds, max_num_contacts_per_robot_model),
+            inputs=[
+                body_q_2d,
+                shape_body_2d,
+                reordered_point0,  # Body points (reordered)
+                reordered_point1,  # Ground points (reordered)
+                reordered_normal,  # Normal from body to ground (reordered)
+                reordered_thickness0,  # Body thickness (reordered)
+                reordered_thickness1,  # Ground thickness (reordered)
+                reordered_body_shape,  # Body shape indices
+            ],
+            outputs=[
+                contact_depths_wp_array
+            ],
+            device=str(self.torch_device)
+        )
+
+        # Convert to torch — shapes: (num_worlds, num_contacts, 3) for vec3,
+        # (num_worlds, num_contacts) for scalars.
+        contact_depths = wp.to_torch(contact_depths_wp_array)
+        contact_normals = wp.to_torch(reordered_normal)
+        contact_thickness = wp.to_torch(reordered_thickness0)  # Body thickness
+        contact_points_0 = wp.to_torch(reordered_point0) # Body points  
+        contact_points_1 = wp.to_torch(reordered_point1)  # Ground points
+        contacts = {
+            "contact_normals": contact_normals,
+            "contact_depths": contact_depths,
+            "contact_thicknesses": contact_thickness,
+            "contact_points_0": contact_points_0,
+            "contact_points_1": contact_points_1
+        }
+
+        contact_masks = get_contact_masks(
+            contacts['contact_depths'],
+            contacts['contact_thicknesses']
+        )
+
+        # Extract root body pose per world: (num_worlds, 7)
+        body_q_torch = wp.to_torch(body_q_2d)   # (num_worlds, bodies_per_world, 7)
+        root_body_q = body_q_torch[:, 0, :]      # (num_worlds, 7)
+
+        # Convert contact points_1 and normals from world to body frame
+        contact_points_1_body, contact_normals_body = convert_contacts_w2b_batched(
+            root_body_q,
+            contact_points_1,
+            contact_normals,
+            translation_only=False,
+        )
+        contacts["contact_points_1"] = contact_points_1_body
+        contacts["contact_normals"] = contact_normals_body
+
+        # Zero out inactive contacts
+        apply_contact_mask(contacts, contact_masks)
+
+        return contacts # processed contacts: converted to body reference frame and masked
 
     def process_neural_model_inputs(self, model_inputs: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
         """

@@ -317,19 +317,24 @@ class NnTrainingInterface:
         NN module training. 
         """
         #TODO: call a standalone method from self.utils_provider here to do it
-        # returned processed
+        return self.utils_provider.convert_newton_contacts_to_contacts_for_nn_model(
+            self.simulator_wrapper.state,
+            self.simulator_wrapper.contacts
+        )
 
-    def reset(self, initial_states: Optional[torch.Tensor] = None):
+    def reset(self, initial_states: torch.Tensor, plane_normals: Optional[torch.tensor] = None):
         # Clear history first so the initial state persists as the first entry.
         self.utils_provider.reset()
 
-        if initial_states is not None:
-            assert initial_states.shape[0] == self.num_envs
-            initial_states = initial_states.to(self.torch_device)
-            self._update_states(initial_states)
-        else:
-            self.simulator_wrapper.reset()
-            self._update_states()
+        assert initial_states.shape[0] == self.num_envs
+
+        # Reset the internal scene representation
+        if plane_normals is not None:
+            self.simulator_wrapper.reset_scene(plane_normals)
+
+        # Reset states
+        initial_states = initial_states.to(self.torch_device)
+        self._update_states(initial_states)
 
     def close(self):
         self.simulator_wrapper.close()
