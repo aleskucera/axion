@@ -1,10 +1,7 @@
 import os
 import sys
 
-import os
-import sys
-
-import numpy as np
+import torch
 import warp as wp
 import newton
 
@@ -97,12 +94,18 @@ class AxionEngineWrapper:
         
         # joint type info
         self.num_joints_per_world= int(self.model.joint_count / self.model.num_worlds)
-        self.joint_types = self.model.joint_type.numpy()[:self.num_joints_per_world]
+        self._torch_device = device_to_torch(self.model.device)
+        self.joint_types = wp.to_torch(self.model.joint_type).to(
+            self._torch_device
+        )[:self.num_joints_per_world]
 
         # control info
         self.joint_act_dim = self.dof_q_per_world# 2 for planar double pendulum
         self.control_dim = self.joint_act_dim
-        self.control_limits = np.full((self.control_dim, 2), [-1.0, 1.0], dtype=np.float32)
+        self.control_limits = torch.full(
+            (self.control_dim, 2), [-1.0, 1.0],
+            dtype=torch.float32, device=self._torch_device
+        )
         # Temporary joint_act buffer exposed to the adapter.
         self.joint_act = wp.zeros(
             self.model.joint_dof_count,
@@ -120,6 +123,26 @@ class AxionEngineWrapper:
             device = device_to_torch(self.model.device)
         )
         self.eval_collisions: bool = True   # ?
+
+        # We group all static planes by shape_world and take the *last* plane
+        # in each world (the one added after add_ground_plane in the source
+        # builder) as the tilted plane.
+        shape_types = wp.to_torch(self.model.shape_type).to(self._torch_device)
+        shape_body = wp.to_torch(self.model.shape_body).to(self._torch_device)
+        shape_world = wp.to_torch(self.model.shape_world).to(self._torch_device)
+
+        is_static_plane = ((shape_types == int(newton.GeoType.PLANE)) & (shape_body == -1))
+        plane_indices = torch.where(is_static_plane)[0]
+
+        tilted_indices = []
+        for w in range(self.num_worlds):
+            world_planes = plane_indices[shape_world[plane_indices] == w]
+            assert world_planes.numel() >= 2, (
+                f"Expected at least 2 plane shapes in world {w}, found {world_planes.numel()}"
+            )
+            tilted_indices.append(world_planes[-1].item())
+
+        self._tilted_plane_shape_indices = torch.tensor(tilted_indices, dtype=torch.long, device=self._torch_device)
 
         # misc
         self.frame_dt = FRAME_DT
@@ -173,6 +196,41 @@ class AxionEngineWrapper:
         self.state.joint_q.zero_()
         self.state.joint_qd.zero_()
         newton.eval_fk(self.model, self.state.joint_q, self.state.joint_qd, self.state)
+
+    def reset_scene(self, plane_normals: torch.Tensor):
+        """
+        Update every world's tilted-plane normal.
+        The gravity-perpendicular ground plane is left unchanged.
+        Only the second ("tilted") plane in each world is rotated so that its
+        collision normal matches the corresponding row of *plane_normals*.
+        Args:
+            plane_normals: (num_worlds, 3) tensor of unit normals, one per world.
+        """
+        assert plane_normals.shape == (self.num_worlds, 3)
+
+        plane_normals = torch.nn.functional.normalize(
+            plane_normals.to(self._torch_device), p=2.0, dim=-1
+        )
+        transforms = wp.to_torch(self.model.shape_transform).to(
+            self._torch_device
+        )
+
+        for world_idx in range(self.num_worlds):
+            n = plane_normals[world_idx]
+            rot = wp.quat_between_vectors(
+                wp.vec3(0.0, 0.0, 1.0),
+                wp.vec3(n[0].item(), n[1].item(), n[2].item()),
+            )
+            shape_idx = self._tilted_plane_shape_indices[world_idx].item()
+            transforms[shape_idx, 3:7] = torch.tensor(
+                [rot[0], rot[1], rot[2], rot[3]],
+                device=transforms.device,
+                dtype=transforms.dtype,
+            )
+
+        self.model.shape_transform.assign(
+            wp.from_torch(transforms, dtype=wp.transform)
+        )
 
     def close(self) -> None:
         # Nothing to clean up explicitly.

@@ -5,6 +5,7 @@ from axion import JointMode
 from axion.core.model_builder import AxionModelBuilder
 
 PENDULUM_HEIGHT = 5.0
+LINK_LENGTH = 1.5
 
 def build_pendulum_model(
     num_worlds: int,
@@ -15,11 +16,10 @@ def build_pendulum_model(
     replicated for num_worlds."""
     builder = AxionModelBuilder()
 
-    chain_width = 1.5
     shape_ke = 1.0e4
     shape_kd = 1.0e3
     shape_kf = 1.0e4
-    hx = chain_width * 0.5
+    hx = LINK_LENGTH * 0.5
 
     link_config = newton.ModelBuilder.ShapeConfig(
         density=500.0, ke=shape_ke, kd=shape_kd, kf=shape_kf
@@ -34,7 +34,7 @@ def build_pendulum_model(
         link_0,
         xform=capsule_xform,
         radius=0.1,
-        half_height=chain_width * 0.5,
+        half_height=LINK_LENGTH * 0.5,
         cfg=link_config,
     )
 
@@ -43,7 +43,7 @@ def build_pendulum_model(
         link_1,
         xform=capsule_xform,
         radius=0.1,
-        half_height=chain_width * 0.5,
+        half_height=LINK_LENGTH * 0.5,
         cfg=link_config,
     )
 
@@ -79,6 +79,14 @@ def build_pendulum_model(
 
     builder.add_articulation([j0, j1], key="pendulum")
     builder.add_ground_plane()
+
+    # Add a plane shape for contacts
+    builder.add_shape_plane(
+        plane=(0.0, 0.0, 1.0, 0.0),
+        width=0.0,
+        length=0.0,
+        key="tilted_plane",
+    )
 
     return builder.finalize_replicated(
         num_worlds=num_worlds,

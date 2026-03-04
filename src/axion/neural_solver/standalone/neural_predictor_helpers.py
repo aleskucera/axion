@@ -123,6 +123,66 @@ def get_contact_masks(contact_depths, contact_thickness):
     
     return contact_masks
 
+def convert_contacts_w2b_batched(root_body_q, contact_points_1, contact_normals, translation_only):
+    """
+    Convert contacts from world to body frame for batched multi-world data.
+    Args:
+        root_body_q: (num_worlds, 7) - root body pose per world
+        contact_points_1: (num_worlds, num_contacts, 3) - ground contact points in world frame
+        contact_normals: (num_worlds, num_contacts, 3) - contact normals in world frame
+        translation_only: bool
+    Returns:
+        contact_points_1_body: (num_worlds, num_contacts, 3)
+        contact_normals_body: (num_worlds, num_contacts, 3)
+    """
+    num_worlds, num_contacts, _ = contact_points_1.shape
+    body_q_expanded = root_body_q.unsqueeze(1).expand(num_worlds, num_contacts, 7)
+
+    body_q_flat = body_q_expanded.reshape(-1, 7)
+    points_flat = contact_points_1.reshape(-1, 3)
+    normals_flat = contact_normals.reshape(-1, 3)
+
+    body_frame_pos = body_q_flat[:, :3]
+    if translation_only:
+        body_frame_quat = torch.zeros_like(body_q_flat[:, 3:7])
+        body_frame_quat[:, 3] = 1.0
+    else:
+        body_frame_quat = body_q_flat[:, 3:7]
+
+    contact_points_1_body = torch_utils.transform_point_inverse(
+        body_frame_pos, body_frame_quat, points_flat
+    ).view(num_worlds, num_contacts, 3)
+
+    if translation_only:
+        contact_normals_body = contact_normals.clone()
+    else:
+        contact_normals_body = torch_utils.quat_rotate_inverse(
+            body_frame_quat, normals_flat
+        ).view(num_worlds, num_contacts, 3)
+
+    return contact_points_1_body, contact_normals_body
+
+
+def apply_contact_mask(contacts, contact_masks):
+    """
+    Zero out inactive contacts using the contact mask.
+    Args:
+        contacts: dict with tensors shaped (num_worlds, num_contacts, ...).
+                  Keys starting with 'contact_' are masked.
+        contact_masks: (num_worlds, num_contacts) boolean tensor, True = active.
+    Returns:
+        contacts dict with inactive contact entries zeroed out.
+    """
+    for key in contacts:
+        if not key.startswith('contact_') or key == 'contact_masks':
+            continue
+        val = contacts[key]
+        mask = contact_masks
+        while mask.ndim < val.ndim:
+            mask = mask.unsqueeze(-1)
+        contacts[key] = torch.where(mask, val, torch.zeros_like(val))
+    return contacts
+
 def convert_contacts_w2b(root_body_q, contact_points_1, contact_normals, translation_only):
     """
     Convert contacts from world to body frame.
