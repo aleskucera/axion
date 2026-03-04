@@ -372,7 +372,7 @@ class NeuralPredictor:
 
     def _apply_contact_mask(self,):
         """
-        Once self.model_inputs are assembled (TO-DO), apply the contact mask 
+        Once self.model_inputs are assembled (TODO), apply the contact mask 
         """        
         contact_masks = self.nn_model_inputs["contact_masks"]  # (num_envs, T, num_contacts)
         for key in self.nn_model_inputs.keys():
