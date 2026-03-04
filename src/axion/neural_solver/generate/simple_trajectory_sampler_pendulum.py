@@ -170,7 +170,7 @@ class SimpleTrajectorySamplerPendulum(TrajectorySampler):
             device=self.torch_device
         )
 
-       
+
         self.env.set_env_mode('ground-truth')
         
         _eval_collisions = self.env.eval_collisions
