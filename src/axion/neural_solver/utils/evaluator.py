@@ -26,7 +26,7 @@ import warp as wp
 import newton
 
 from axion.neural_solver.generate.simple_trajectory_sampler_pendulum import SimpleTrajectorySamplerPendulum
-from axion.neural_solver.envs.axionToTrajectorySampler import AxionEnvToTrajectorySamplerAdapter
+from axion.neural_solver.envs.nn_training_interface import NnTrainingInterface
 from axion.neural_solver.utils.commons import JOINT_Q_MIN, JOINT_Q_MAX, \
     JOINT_QD_MIN, JOINT_QD_MAX, JOINT_ACT_SCALE
 from axion.neural_solver.utils.datasets import TrajectoryDataset
@@ -38,7 +38,7 @@ torch.set_printoptions(precision=6)
 class NeuralSimEvaluator:
     def __init__(
         self, 
-        neural_env: AxionEnvToTrajectorySamplerAdapter,
+        neural_env: NnTrainingInterface,
         hdf5_dataset_path = None,
         eval_horizon = 10,
         device = 'cuda:0'

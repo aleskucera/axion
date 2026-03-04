@@ -25,10 +25,10 @@ FRAME_DT = 0.01
 ENGINE_SUBSTEPS = 10
 ENGINE_DT = FRAME_DT/ENGINE_SUBSTEPS
 
-class AxionEnv:
+class AxionEngineWrapper:
     """
     Wrapper around Axion. Currently it builds the double pendulum model and calls Axion as an integrator.
-    Instance of AxionEnv will be created inside axionToTrajectorySampler class.  
+    Instance of AxionEngineWrapper will be created inside nn_training_interfaceclass.  
     """
     
     def __init__(
@@ -43,7 +43,7 @@ class AxionEnv:
         self.num_worlds = num_worlds
         self.device = wp.get_device(device)
         self.requires_grad = requires_grad
-        self.robot_name: str = self.env_name    # for compatibility with AxionToTrajectorySampler 
+        self.robot_name: str = self.env_name    # for compatibility with nn_training_interface
         
         # model (robot model built by AxionModelBuilder):
         if self.env_name in ("PendulumWithContact", "Pendulum", "pendulum"):

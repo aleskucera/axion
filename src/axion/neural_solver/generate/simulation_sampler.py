@@ -21,7 +21,7 @@ import numpy as np
 
 import torch
 
-from axion.neural_solver.envs.axionToTrajectorySampler import AxionEnvToTrajectorySamplerAdapter
+from axion.neural_solver.envs.nn_training_interface import NnTrainingInterface
 
 '''
 Compute the contact point 1 from contact point 0, contact normal and contact depth.
@@ -123,7 +123,7 @@ class WarpSimDataGenerator:
 
     def __init__(
         self,
-        env: AxionEnvToTrajectorySamplerAdapter,
+        env: NnTrainingInterface,
         joint_q_min: Union[float, np.ndarray],
         joint_q_max: Union[float, np.ndarray],
         joint_qd_min: Union[float, np.ndarray],

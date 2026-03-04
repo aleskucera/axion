@@ -10,7 +10,7 @@ The key components are:
 - **Transformer backbone** (continuous-input GPT): `axion.neural_solver.models.model_transformer.GPT`
 - **Training loop / loss**: `axion.neural_solver.algorithms.vanilla_trainer.VanillaTrainer` (and `SequenceModelTrainer` for sequence datasets)
 - **Target definition and angle wrapping**: `axion.neural_solver.integrators.newton_based_integrator_neural.NeuralModelUtilsProvider`
-- **Env adapter used by training**: `axion.neural_solver.envs.axionToTrajectorySampler.AxionEnvToTrajectorySamplerAdapter`
+- **Env adapter used by training**: `axion.neural_solver.envs.axionToTrajectorySampler.NnTrainingInterface`
 
 ---
 

@@ -118,7 +118,7 @@ class Simulator(InteractiveSimulator):
 
     def build_model(self,) -> newton.Model:
         """
-        Use the same pendulum articulation as axionEnv.py
+        Use the same pendulum articulation as AxionEngineWrapper.py
         """
         return build_pendulum_model(num_worlds=1, device="cuda:0") # is it necessary to pass device?
 

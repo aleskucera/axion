@@ -16,8 +16,8 @@ The simple dataset generation pipeline collects **state-transition trajectories*
 CLI (simple_generate_dataset_pendulum.py)
   │
   ├─ creates HDF5 file
-  ├─ instantiates AxionEnvToTrajectorySamplerAdapter
-  │       └─ internally creates AxionEnv
+  ├─ instantiates NnTrainingInterface
+  │       └─ internally creates AxionEngineWrapper
   │               └─ builds Newton Model (double pendulum) + AxionEngine
   ├─ instantiates SimpleTrajectorySamplerPendulum
   │       └─ extends TrajectorySampler → WarpSimDataGenerator
@@ -67,7 +67,7 @@ CLI (simple_generate_dataset_pendulum.py)
 1. Sets random seed via `set_random_seed(seed)`.
 2. Creates the output directory `<dataset-dir>/<env-name>/`.
 3. Opens an HDF5 file with a `data` group and writes metadata attributes (`env`, `mode`).
-4. Instantiates `AxionEnvToTrajectorySamplerAdapter` (which internally creates `AxionEnv`).
+4. Instantiates `NnTrainingInterface` (which internally creates `AxionEngineWrapper`).
 5. Looks up joint limits from `commons.py` using `env.robot_name` (`"PendulumWithContact"`):
    - `JOINT_Q_MIN["PendulumWithContact"]` = `-π`
    - `JOINT_Q_MAX["PendulumWithContact"]` = `π`
@@ -80,7 +80,7 @@ CLI (simple_generate_dataset_pendulum.py)
 
 ---
 
-### 2. `axionEnv.py` — `AxionEnv` (Low-Level Physics Wrapper)
+### 2. `AxionEngineWrapper.py` — `AxionEngineWrapper` (Low-Level Physics Wrapper)
 
 **Role:** Builds the Newton rigid-body model for a double pendulum, creates the `AxionEngine` integrator, and exposes `update()` / `reset()` to step or reset the simulation.
 
@@ -93,7 +93,7 @@ CLI (simple_generate_dataset_pendulum.py)
 - Replicates for `num_worlds` parallel environments via `builder.finalize_replicated(num_worlds, gravity=-9.81, ...)`.
 - Joint modes are set to `JointMode.NONE` (no PD controller by default).
 
-**Key runtime objects held by `AxionEnv`:**
+**Key runtime objects held by `AxionEngineWrapper`:**
 
 | Object | Type | Description |
 |---|---|---|
@@ -135,9 +135,9 @@ CLI (simple_generate_dataset_pendulum.py)
 
 ---
 
-### 3. `axionToTrajectorySampler.py` — `AxionEnvToTrajectorySamplerAdapter`
+### 3. `axionToTrajectorySampler.py` — `NnTrainingInterface`
 
-**Role:** Adapter layer between the low-level `AxionEnv` and the trajectory sampler. Exposes a clean API (`reset`, `step`, `step_with_joint_act`, `states`, `root_body_q`) and manages Warp↔Torch data conversion.
+**Role:** Adapter layer between the low-level `AxionEngineWrapper` and the trajectory sampler. Exposes a clean API (`reset`, `step`, `step_with_joint_act`, `states`, `root_body_q`) and manages Warp↔Torch data conversion.
 
 **Key state buffers it owns:**
 
@@ -153,7 +153,7 @@ CLI (simple_generate_dataset_pendulum.py)
      - Copies the torch tensor into `self.states`.
      - Runs the Warp kernel `_assign_states` to scatter `self.states` → `newton.State.joint_q` and `newton.State.joint_qd`.
      - Runs `newton.eval_fk()` to compute `body_q` / `body_qd` from the assigned generalized coordinates.
-2. If no `initial_states`: calls `AxionEnv.reset()` (zeros everything), then reads state back.
+2. If no `initial_states`: calls `AxionEngineWrapper.reset()` (zeros everything), then reads state back.
 
 **`step_with_joint_act(joint_acts)` — the method used by the simple sampler:**
 1. Writes `joint_acts` (torch tensor, shape `(num_envs, 2)`) into the Warp array `self.env.joint_act` via `wp.array(joint_acts.view(-1))`.
