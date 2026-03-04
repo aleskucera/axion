@@ -1,4 +1,6 @@
 from .contact_interaction import contact_interaction_kernel
+from .contact_interaction import reorder_ground_contacts_kernel
+from .contact_interaction import contact_penetration_depth_kernel
 from .spatial_inertia import add_inertia
 from .spatial_inertia import compute_world_inertia
 from .spatial_inertia import spatial_inertia_kernel
