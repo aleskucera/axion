@@ -35,11 +35,13 @@ class Simulator(InteractiveSimulator):
         )
 
     def build_model(self) -> newton.Model:
-        FRICTION = 0.0
+        FRICTION = 0.4
         RESTITUTION = 0.0
 
+        self.builder.rigid_gap = 1.0
+
         ball = self.builder.add_body(
-            xform=wp.transform((0.0, 0.0, 2.0), wp.quat_identity()), key="ball"
+            xform=wp.transform((0.0, 0.0, 2.0), wp.quat_identity()), label="ball"
         )
         initial_velocity = wp.spatial_vector(0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
 
@@ -53,8 +55,6 @@ class Simulator(InteractiveSimulator):
                 kf=200.0,
                 mu=FRICTION,
                 restitution=RESTITUTION,
-                thickness=0.0,
-                contact_margin=0.1,
             ),
         )
 

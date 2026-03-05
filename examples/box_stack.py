@@ -41,7 +41,6 @@ class Simulator(InteractiveSimulator):
 
     def build_model(self) -> newton.Model:
         FRICTION = 0.1
-        RESTITUTION = 0.0
         DENSITY = 1500.0
         KE = 10000000.0
         KD = 200000.0
@@ -51,8 +50,10 @@ class Simulator(InteractiveSimulator):
         box2_hx = 0.8
         box3_hx = 1.6
 
+        self.builder.rigid_gap = 1.0
+
         box1 = self.builder.add_body(
-            xform=wp.transform((0.0, 0.0, box1_hx), wp.quat_identity()), key="box1"
+            xform=wp.transform((0.0, 0.0, box1_hx), wp.quat_identity()), label="box1"
         )
         self.builder.add_shape_box(
             body=box1,
@@ -65,13 +66,11 @@ class Simulator(InteractiveSimulator):
                 kd=KD,
                 kf=KF,
                 mu=FRICTION,
-                restitution=RESTITUTION,
-                thickness=0.0,
             ),
         )
 
         box2 = self.builder.add_body(
-            xform=wp.transform((0.0, 0.0, 2 * box1_hx + box2_hx), wp.quat_identity()), key="box2"
+            xform=wp.transform((0.0, 0.0, 2 * box1_hx + box2_hx), wp.quat_identity()), label="box2"
         )
         self.builder.add_shape_box(
             body=box2,
@@ -84,14 +83,12 @@ class Simulator(InteractiveSimulator):
                 kd=KD,
                 kf=KF,
                 mu=FRICTION,
-                restitution=RESTITUTION,
-                thickness=0.0,
             ),
         )
 
         box3 = self.builder.add_body(
             xform=wp.transform((0.0, 0.0, 2 * box1_hx + 2 * box2_hx + box3_hx), wp.quat_identity()),
-            key="box3",
+            label="box3",
         )
         self.builder.add_shape_box(
             body=box3,
@@ -104,8 +101,6 @@ class Simulator(InteractiveSimulator):
                 kd=KD,
                 kf=KF,
                 mu=FRICTION,
-                restitution=RESTITUTION,
-                thickness=0.0,
             ),
         )
 
@@ -115,7 +110,6 @@ class Simulator(InteractiveSimulator):
                 kd=KD,
                 kf=KF,
                 mu=FRICTION,
-                restitution=RESTITUTION,
             )
         )
 

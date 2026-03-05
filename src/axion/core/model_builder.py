@@ -1,6 +1,7 @@
 import newton
 import warp as wp
 from axion.core.types import JointMode
+from newton import Model
 
 
 class AxionModelBuilder(newton.ModelBuilder):
@@ -16,50 +17,50 @@ class AxionModelBuilder(newton.ModelBuilder):
         self.add_custom_attribute(
             newton.ModelBuilder.CustomAttribute(
                 name="joint_dof_mode",
-                frequency=newton.ModelAttributeFrequency.JOINT_DOF,
+                frequency=Model.AttributeFrequency.JOINT_DOF,
                 dtype=wp.int32,
                 default=JointMode.NONE,
-                assignment=newton.ModelAttributeAssignment.MODEL,
+                assignment=Model.AttributeAssignment.MODEL,
             )
         )
 
         self.add_custom_attribute(
             newton.ModelBuilder.CustomAttribute(
                 name="joint_compliance",
-                frequency=newton.ModelAttributeFrequency.JOINT,
+                frequency=Model.AttributeFrequency.JOINT,
                 dtype=wp.float32,
                 default=-1.0,
-                assignment=newton.ModelAttributeAssignment.MODEL,
+                assignment=Model.AttributeAssignment.MODEL,
             )
         )
 
         self.add_custom_attribute(
             newton.ModelBuilder.CustomAttribute(
                 name="track_u_offset",
-                frequency=newton.ModelAttributeFrequency.JOINT,
+                frequency=Model.AttributeFrequency.JOINT,
                 dtype=wp.float32,
                 default=0.0,
-                assignment=newton.ModelAttributeAssignment.MODEL,
+                assignment=Model.AttributeAssignment.MODEL,
             )
         )
 
         self.add_custom_attribute(
             newton.ModelBuilder.CustomAttribute(
                 name="is_track_joint",
-                frequency=newton.ModelAttributeFrequency.JOINT,
+                frequency=Model.AttributeFrequency.JOINT,
                 dtype=wp.int32,
                 default=0,
-                assignment=newton.ModelAttributeAssignment.MODEL,
+                assignment=Model.AttributeAssignment.MODEL,
             )
         )
 
         self.add_custom_attribute(
             newton.ModelBuilder.CustomAttribute(
                 name="track_velocity",
-                frequency=newton.ModelAttributeFrequency.JOINT,
+                frequency=Model.AttributeFrequency.JOINT,
                 dtype=wp.float32,
                 default=0.0,
-                assignment=newton.ModelAttributeAssignment.CONTROL,
+                assignment=Model.AttributeAssignment.CONTROL,
             )
         )
 
@@ -137,7 +138,7 @@ class AxionModelBuilder(newton.ModelBuilder):
             # Create the link body
             # We position it exactly at the anchor point initially
             link = self.add_link(
-                key=f"{name_prefix}_link_{i}",
+                label=f"{name_prefix}_link_{i}",
                 mass=0.0,  # Kinematic / infinite mass effectively if fixed?
                 # Actually, if it's attached via FIXED joint to parent, its mass matters less for statics,
                 # but for dynamics, if parent is static, this is static.
@@ -182,5 +183,5 @@ class AxionModelBuilder(newton.ModelBuilder):
         final_builder = newton.ModelBuilder(gravity=gravity)
         for k, v in kwargs.items():
             setattr(final_builder, k, v)
-        final_builder.replicate(self, num_worlds=num_worlds)
+        final_builder.replicate(self, world_count=num_worlds)
         return final_builder.finalize(requires_grad=requires_grad)

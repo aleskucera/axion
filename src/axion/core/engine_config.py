@@ -227,8 +227,6 @@ class MuJoCoEngineConfig(EngineConfig):
     impratio: float = 1.0
     use_mujoco_cpu: bool = False
     disable_contacts: bool = False
-    default_actuator_gear: float | None = None
-    actuator_gears: dict[str, float] | None = None
     update_data_interval: int = 1
     save_to_mjcf: str | None = None
     ls_parallel: bool = False

@@ -204,6 +204,7 @@ class HelhestControlSimulator(InteractiveSimulator):
             wp.copy(self.control.joint_target_pos, self.joint_target_buffer)
 
     def build_model(self) -> newton.Model:
+        self.builder.rigid_gap = 1.0
         # --- 1. Ground ---
         ground_cfg = newton.ModelBuilder.ShapeConfig(
             mu=1.0,

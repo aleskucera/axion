@@ -195,37 +195,37 @@ class AxionModel:
     def __init__(self, model: Model) -> None:
         self.model = model
         self.device = model.device
-        self.num_worlds = model.num_worlds
+        self.num_worlds = model.world_count
 
         self.g_accel = model.gravity
 
-        self.body_count = model.body_count // model.num_worlds
-        self.shape_count = model.shape_count // model.num_worlds
-        self.joint_count = model.joint_count // model.num_worlds
-        self.joint_dof_count = model.joint_dof_count // model.num_worlds
-        self.joint_coord_count = model.joint_coord_count // model.num_worlds
+        self.body_count = model.body_count // model.world_count
+        self.shape_count = model.shape_count // model.world_count
+        self.joint_count = model.joint_count // model.world_count
+        self.joint_dof_count = model.joint_dof_count // model.world_count
+        self.joint_coord_count = model.joint_coord_count // model.world_count
 
         with wp.ScopedDevice(self.device):
-            self.body_com = model.body_com.reshape((model.num_worlds, -1))
-            self.body_inertia = model.body_inertia.reshape((model.num_worlds, -1))
-            self.body_inv_inertia = model.body_inv_inertia.reshape((model.num_worlds, -1))
-            self.body_mass = model.body_mass.reshape((model.num_worlds, -1))
-            self.body_inv_mass = model.body_inv_mass.reshape((model.num_worlds, -1))
+            self.body_com = model.body_com.reshape((model.world_count, -1))
+            self.body_inertia = model.body_inertia.reshape((model.world_count, -1))
+            self.body_inv_inertia = model.body_inv_inertia.reshape((model.world_count, -1))
+            self.body_mass = model.body_mass.reshape((model.world_count, -1))
+            self.body_inv_mass = model.body_inv_mass.reshape((model.world_count, -1))
 
-            self.joint_X_c = model.joint_X_c.reshape((model.num_worlds, -1))
-            self.joint_X_p = model.joint_X_p.reshape((model.num_worlds, -1))
-            self.joint_axis = model.joint_axis.reshape((model.num_worlds, -1))
-            self.joint_dof_dim = model.joint_dof_dim.reshape((model.num_worlds, -1))
-            self.joint_dof_mode = model.joint_dof_mode.reshape((model.num_worlds, -1))
-            self.joint_enabled = model.joint_enabled.reshape((model.num_worlds, -1))
-            self.joint_target_ke = model.joint_target_ke.reshape((model.num_worlds, -1))
-            self.joint_target_kd = model.joint_target_kd.reshape((model.num_worlds, -1))
-            self.joint_compliance = model.joint_compliance.reshape((model.num_worlds, -1))
-            self.joint_type = model.joint_type.reshape((model.num_worlds, -1))
-            self.joint_q_start = wp.zeros((model.num_worlds, self.joint_count), dtype=wp.int32)
-            self.joint_qd_start = wp.zeros((model.num_worlds, self.joint_count), dtype=wp.int32)
-            self.joint_parent = wp.zeros((model.num_worlds, self.joint_count), dtype=wp.int32)
-            self.joint_child = wp.zeros((model.num_worlds, self.joint_count), dtype=wp.int32)
+            self.joint_X_c = model.joint_X_c.reshape((model.world_count, -1))
+            self.joint_X_p = model.joint_X_p.reshape((model.world_count, -1))
+            self.joint_axis = model.joint_axis.reshape((model.world_count, -1))
+            self.joint_dof_dim = model.joint_dof_dim.reshape((model.world_count, -1))
+            self.joint_dof_mode = model.joint_dof_mode.reshape((model.world_count, -1))
+            self.joint_enabled = model.joint_enabled.reshape((model.world_count, -1))
+            self.joint_target_ke = model.joint_target_ke.reshape((model.world_count, -1))
+            self.joint_target_kd = model.joint_target_kd.reshape((model.world_count, -1))
+            self.joint_compliance = model.joint_compliance.reshape((model.world_count, -1))
+            self.joint_type = model.joint_type.reshape((model.world_count, -1))
+            self.joint_q_start = wp.zeros((model.world_count, self.joint_count), dtype=wp.int32)
+            self.joint_qd_start = wp.zeros((model.world_count, self.joint_count), dtype=wp.int32)
+            self.joint_parent = wp.zeros((model.world_count, self.joint_count), dtype=wp.int32)
+            self.joint_child = wp.zeros((model.world_count, self.joint_count), dtype=wp.int32)
 
         wp.launch(
             kernel=batch_joint_q_start_kernel,
@@ -272,11 +272,10 @@ class AxionModel:
         )
 
         with wp.ScopedDevice(self.device):
-            self.shape_body = wp.zeros((model.num_worlds, self.shape_count), dtype=wp.int32)
-            self.shape_thickness = model.shape_thickness.reshape((model.num_worlds, -1))
-            self.shape_material_mu = model.shape_material_mu.reshape((model.num_worlds, -1))
+            self.shape_body = wp.zeros((model.world_count, self.shape_count), dtype=wp.int32)
+            self.shape_material_mu = model.shape_material_mu.reshape((model.world_count, -1))
             self.shape_material_restitution = model.shape_material_restitution.reshape(
-                (model.num_worlds, -1)
+                (model.world_count, -1)
             )
 
         wp.launch(

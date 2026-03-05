@@ -4,7 +4,7 @@ defaults:
   - execution: cuda_graph
   - logging: disabled
   - engine: axion 
-  - control: helhest/position
+  - control: helhest/velocity
   - _self_
 
 # Use the recommended hybrid approach for project names

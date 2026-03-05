@@ -6,12 +6,12 @@ import newton
 import numpy as np
 import openmesh
 import warp as wp
-from axion import InteractiveSimulator
 from axion import EngineConfig
 from axion import ExecutionConfig
+from axion import InteractiveSimulator
+from axion import LoggingConfig
 from axion import RenderingConfig
 from axion import SimulationConfig
-from axion import LoggingConfig
 from omegaconf import DictConfig
 
 os.environ["PYOPENGL_PLATFORM"] = "glx"
@@ -38,8 +38,9 @@ class Simulator(InteractiveSimulator):
         )
 
     def build_model(self) -> newton.Model:
+        self.builder.rigid_gap = 1.0
+
         FRICTION = 1.0
-        RESTITUTION = 0.2
 
         surface_m = openmesh.read_trimesh(f"{ASSETS_DIR}/surface.obj")
         # mesh_points = np.array(wheel_m.points())
@@ -50,10 +51,9 @@ class Simulator(InteractiveSimulator):
         mesh_points = np.array(surface_m.points()) * scale + np.array([0.0, 0.0, 0.01])
 
         surface_mesh = newton.Mesh(mesh_points, mesh_indices)
-        # self.builder.add_articulation(key="surface")
 
         ball1 = self.builder.add_body(
-            xform=wp.transform((0.0, 0.0, 10.0), wp.quat_identity()), key="ball1"
+            xform=wp.transform((0.0, 0.0, 10.0), wp.quat_identity()), label="ball1"
         )
 
         self.builder.add_shape_sphere(
@@ -65,8 +65,6 @@ class Simulator(InteractiveSimulator):
                 kd=10.0,
                 kf=200.0,
                 mu=FRICTION,
-                restitution=RESTITUTION,
-                thickness=0.0,
             ),
         )
 
@@ -76,7 +74,6 @@ class Simulator(InteractiveSimulator):
                 kd=10.0,
                 kf=0.0,
                 mu=FRICTION,
-                restitution=RESTITUTION,
             )
         )
         self.builder.add_shape_mesh(
@@ -86,7 +83,6 @@ class Simulator(InteractiveSimulator):
                 density=0.0,
                 has_shape_collision=True,
                 mu=FRICTION,
-                restitution=0.0,
             ),
         )
 

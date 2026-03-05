@@ -157,7 +157,6 @@ class HelhestFlipSimulator(InteractiveSimulator):
             hy=1.5,
             hz=0.10,
             cfg=newton.ModelBuilder.ShapeConfig(
-                contact_margin=0.4,
                 mu=FRICTION,
                 restitution=RESTITUTION,
                 ke=KE,
@@ -174,7 +173,6 @@ class HelhestFlipSimulator(InteractiveSimulator):
             hy=1.75,
             hz=0.2,
             cfg=newton.ModelBuilder.ShapeConfig(
-                contact_margin=0.4,
                 mu=FRICTION,
                 restitution=RESTITUTION,
                 ke=KE,
@@ -186,7 +184,6 @@ class HelhestFlipSimulator(InteractiveSimulator):
         # Ground plane
         self.builder.add_ground_plane(
             cfg=newton.ModelBuilder.ShapeConfig(
-                contact_margin=0.4,
                 ke=KE,
                 kd=KD,
                 kf=KF,

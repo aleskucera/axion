@@ -45,6 +45,7 @@ class RandomSimulator(DatasetSimulator):
         )
 
     def build_model(self) -> newton.Model:
+        self.builder.rigid_gap = 0.2
         # So we should add ground plane to the builder here.
         self.builder.add_ground_plane()
 

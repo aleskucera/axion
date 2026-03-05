@@ -164,9 +164,9 @@ class MarvConfig:
 def _add_chassis(builder: newton.ModelBuilder, xform: wp.transform, is_visible: bool) -> int:
     chassis = builder.add_link(
         xform=xform,
-        key="chassis",
+        label="chassis",
         mass=MarvConfig.CHASSIS_MASS,
-        I_m=MarvConfig.CHASSIS_I,
+        inertia=MarvConfig.CHASSIS_I,
         com=MarvConfig.CHASSIS_POS_OFFSET,
     )
 
@@ -203,9 +203,9 @@ def _create_tracked_flipper_leg(
     # 1. Flipper Arm (Dynamic)
     flipper_link = builder.add_link(
         xform=wp.transform(flipper_pos_world, flipper_rot_world),
-        key=f"{name_prefix}_arm",
+        label=f"{name_prefix}_arm",
         mass=5.0,
-        I_m=wp.mat33(0.01, 0.0, 0.0, 0.0, 0.01, 0.0, 0.0, 0.0, 0.01),
+        inertia=wp.mat33(0.01, 0.0, 0.0, 0.0, 0.01, 0.0, 0.0, 0.0, 0.01),
     )
 
     # Flipper Joint
@@ -217,7 +217,7 @@ def _create_tracked_flipper_leg(
         axis=(0.0, 0.0, 1.0),
         target_ke=MarvConfig.FLIPPER_KV,
         target_kd=0.0,
-        key=f"{name_prefix}_joint",
+        label=f"{name_prefix}_joint",
         custom_attributes={"joint_dof_mode": [JointMode.TARGET_VELOCITY]},
     )
 
@@ -247,12 +247,10 @@ def _create_tracked_flipper_leg(
         mesh=mesh_obj,
         xform=wp.transform_identity(),  # Aligned with flipper link
         cfg=newton.ModelBuilder.ShapeConfig(is_visible=True, has_shape_collision=False),
-        key=f"{name_prefix}_visual",
+        label=f"{name_prefix}_visual",
     )
 
-    box_shape = newton.ModelBuilder.ShapeConfig(
-        is_visible=True, density=1000.0, mu=0.3, contact_margin=0.2
-    )
+    box_shape = newton.ModelBuilder.ShapeConfig(is_visible=True, density=1000.0, mu=0.3)
 
     # We need to pass the parent_world_xform of the FLIPPER LINK, not the chassis.
     # This is used by add_track to set initial positions of track elements.
@@ -282,7 +280,7 @@ def create_marv_tracked_model(
 ) -> Tuple[int, Dict[str, Any]]:
     # 1. Chassis
     chassis = _add_chassis(builder, xform, is_visible)
-    j_base = builder.add_joint_free(parent=-1, child=chassis, key="base_joint")
+    j_base = builder.add_joint_free(parent=-1, child=chassis, label="base_joint")
 
     all_joints = [j_base]
     track_info = {}
@@ -309,6 +307,6 @@ def create_marv_tracked_model(
         }
 
     # 3. Articulation
-    builder.add_articulation(all_joints, key="marv")
+    builder.add_articulation(all_joints, label="marv")
 
     return chassis, track_info

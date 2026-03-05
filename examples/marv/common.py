@@ -60,9 +60,9 @@ class MarvConfig:
 def _add_chassis(builder: newton.ModelBuilder, xform: wp.transform, is_visible: bool) -> int:
     chassis = builder.add_link(
         xform=xform,
-        key="chassis",
+        label="chassis",
         mass=MarvConfig.CHASSIS_MASS,
-        I_m=MarvConfig.CHASSIS_I,
+        inertia=MarvConfig.CHASSIS_I,
         com=MarvConfig.CHASSIS_POS_OFFSET,
     )
 
@@ -86,7 +86,7 @@ def _create_flipper_leg(
     parent_body: int,
     parent_xform: wp.transform,
     name_prefix: str,
-    side_code: str,  # ADDED: Explicit code (FL, FR, etc) to fix KeyError
+    side_code: str,  # ADDED: Explicit code (FL, FR, etc) to fix labelError
     is_visible: bool,
 ) -> List[int]:
     """Creates one flipper arm with 4 attached wheels."""
@@ -100,9 +100,9 @@ def _create_flipper_leg(
 
     flipper_link = builder.add_link(
         xform=wp.transform(flipper_pos_world, flipper_rot_world),
-        key=f"{name_prefix}_arm",
+        label=f"{name_prefix}_arm",
         mass=0.1,
-        I_m=wp.mat33(0.01, 0.0, 0.0, 0.0, 0.01, 0.0, 0.0, 0.0, 0.01),
+        inertia=wp.mat33(0.01, 0.0, 0.0, 0.0, 0.01, 0.0, 0.0, 0.0, 0.01),
     )
 
     # Flipper Joint (Hinge on Z relative to Flipper)
@@ -114,7 +114,7 @@ def _create_flipper_leg(
         axis=(0.0, 0.0, 1.0),
         target_ke=MarvConfig.FLIPPER_KP,
         target_kd=MarvConfig.FLIPPER_KD,
-        key=f"{name_prefix}_joint",
+        label=f"{name_prefix}_joint",
         custom_attributes={"joint_dof_mode": [JointMode.TARGET_POSITION]},
     )
 
@@ -129,9 +129,9 @@ def _create_flipper_leg(
 
         wheel_link = builder.add_link(
             xform=wp.transform(w_pos_world, flipper_rot_world),
-            key=f"{name_prefix}_wheel_{i+1}",
+            label=f"{name_prefix}_wheel_{i+1}",
             mass=MarvConfig.WHEEL_MASS,
-            I_m=MarvConfig.WHEEL_I,
+            inertia=MarvConfig.WHEEL_I,
         )
 
         # Wheel Sphere Shape
@@ -143,7 +143,6 @@ def _create_flipper_leg(
                 is_visible=is_visible,
                 collision_group=-1,
                 mu=1.0,
-                contact_margin=0.3,
             ),
         )
 
@@ -156,7 +155,7 @@ def _create_flipper_leg(
             axis=(0.0, 0.0, 1.0),
             target_ke=MarvConfig.WHEEL_KP,
             target_kd=MarvConfig.WHEEL_KV,
-            key=f"{name_prefix}_wheel_joint_{i+1}",
+            label=f"{name_prefix}_wheel_joint_{i+1}",
             custom_attributes={
                 "joint_dof_mode": [JointMode.TARGET_POSITION],
             },
@@ -173,7 +172,7 @@ def create_marv_model(
 ):
     # 1. Chassis
     chassis = _add_chassis(builder, xform, is_visible)
-    j_base = builder.add_joint_free(parent=-1, child=chassis, key="base_joint")
+    j_base = builder.add_joint_free(parent=-1, child=chassis, label="base_joint")
 
     all_joints = [j_base]
 
@@ -192,6 +191,6 @@ def create_marv_model(
     )
 
     # 3. Articulation
-    builder.add_articulation(all_joints, key="marv")
+    builder.add_articulation(all_joints, label="marv")
 
     return chassis

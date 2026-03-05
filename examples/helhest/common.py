@@ -92,9 +92,9 @@ def _add_chassis(builder: newton.ModelBuilder, xform: wp.transform, is_visible: 
     """Adds the chassis link and shape."""
     chassis = builder.add_link(
         xform=xform,
-        key="chassis",
+        label="chassis",
         mass=HelhestConfig.CHASSIS_MASS,
-        I_m=HelhestConfig.CHASSIS_I,
+        inertia=HelhestConfig.CHASSIS_I,
         com=HelhestConfig.CHASSIS_OFFSET,
     )
 
@@ -129,9 +129,9 @@ def _add_wheel(
 
     wheel_link = builder.add_link(
         xform=wp.transform(pos_world, rot_world),
-        key=name,
+        label=name,
         mass=HelhestConfig.WHEEL_MASS,
-        I_m=HelhestConfig.WHEEL_I,
+        inertia=HelhestConfig.WHEEL_I,
         com=None,
     )
 
@@ -148,7 +148,7 @@ def _add_wheel(
     )
 
     # Collision Shape
-    builder.add_shape_capsule(
+    builder.add_shape_cylinder(
         body=wheel_link,
         xform=wp.transform(wp.vec3(0.0, 0.0, 0.0), HelhestConfig.WHEEL_ROT),
         radius=HelhestConfig.WHEEL_RADIUS,
@@ -158,7 +158,6 @@ def _add_wheel(
             is_visible=False,
             collision_group=-1,
             mu=mu,
-            contact_margin=0.3,
         ),
     )
     return wheel_link
@@ -185,9 +184,9 @@ def _add_fixed_component(
 
     link = builder.add_link(
         xform=wp.transform(pos_world, rot_world),
-        key=name,
+        label=name,
         mass=mass,
-        I_m=inertia_tensor,
+        inertia=inertia_tensor,
         com=wp.vec3(0.0, 0.0, 0.0),
     )
 
@@ -209,7 +208,7 @@ def _add_fixed_component(
         child=link,
         parent_xform=wp.transform(pos, wp.quat_identity()),
         child_xform=wp.transform_identity(),
-        key=f"{name}_j",
+        label=f"{name}_j",
     )
 
     return joint
@@ -244,7 +243,7 @@ def create_helhest_model(
 
     # 1. Chassis
     chassis = _add_chassis(builder, xform, is_visible)
-    j_base = builder.add_joint_free(parent=-1, child=chassis, key="base_joint")
+    j_base = builder.add_joint_free(parent=-1, child=chassis, label="base_joint")
 
     # 2. Wheels
     left_wheel = _add_wheel(
@@ -288,7 +287,7 @@ def create_helhest_model(
         axis=Y_AXIS,
         target_ke=k_p,
         target_kd=k_d,
-        key="left_wheel_j",
+        label="left_wheel_j",
         custom_attributes={
             "joint_dof_mode": [mode],
         },
@@ -302,7 +301,7 @@ def create_helhest_model(
         axis=Y_AXIS,
         target_ke=k_p,
         target_kd=k_d,
-        key="right_wheel_j",
+        label="right_wheel_j",
         custom_attributes={
             "joint_dof_mode": [mode],
         },
@@ -316,7 +315,7 @@ def create_helhest_model(
         axis=Y_AXIS,
         target_ke=k_p,
         target_kd=k_d,
-        key="rear_wheel_j",
+        label="rear_wheel_j",
         custom_attributes={
             "joint_dof_mode": [mode],
         },
@@ -329,6 +328,6 @@ def create_helhest_model(
         fixed_joints.append(j_fixed)
 
     # 5. Articulation
-    builder.add_articulation([j_base, j_left, j_right, j_rear] + fixed_joints, key="helhest")
+    builder.add_articulation([j_base, j_left, j_right, j_rear] + fixed_joints, label="helhest")
 
     return chassis, [left_wheel]

@@ -5,12 +5,12 @@ import hydra
 import newton.examples
 import newton.usd
 import warp as wp
-from axion import InteractiveSimulator
 from axion import EngineConfig
 from axion import ExecutionConfig
+from axion import InteractiveSimulator
+from axion import LoggingConfig
 from axion import RenderingConfig
 from axion import SimulationConfig
-from axion import LoggingConfig
 from omegaconf import DictConfig
 from pxr import Usd
 
@@ -38,6 +38,8 @@ class Simulator(InteractiveSimulator):
 
     def build_model(self) -> newton.Model:
 
+        self.builder.rigid_gap = 1.0
+
         rigid_cfg = self.builder.ShapeConfig()
         rigid_cfg.restitution = 0.0
         rigid_cfg.has_shape_collision = True
@@ -53,52 +55,52 @@ class Simulator(InteractiveSimulator):
         # SPHERE
         self.sphere_pos = wp.vec3(0.0, -2.0, drop_z)
         body_sphere = self.builder.add_body(
-            xform=wp.transform(p=self.sphere_pos, q=wp.quat_identity()), key="sphere"
+            xform=wp.transform(p=self.sphere_pos, q=wp.quat_identity()), label="sphere"
         )
         self.builder.add_shape_sphere(body_sphere, radius=0.5)
 
         # ELLIPSOID (flat disk shape: a=b > c for stability when resting on ground)
         self.ellipsoid_pos = wp.vec3(0.0, -6.0, drop_z)
         body_ellipsoid = self.builder.add_body(
-            xform=wp.transform(p=self.ellipsoid_pos, q=wp.quat_identity()), key="ellipsoid"
+            xform=wp.transform(p=self.ellipsoid_pos, q=wp.quat_identity()), label="ellipsoid"
         )
         self.builder.add_shape_ellipsoid(body_ellipsoid, a=0.5, b=0.5, c=0.25)
 
         # CAPSULE
         self.capsule_pos = wp.vec3(0.0, 0.0, drop_z)
         body_capsule = self.builder.add_body(
-            xform=wp.transform(p=self.capsule_pos, q=wp.quat_identity()), key="capsule"
+            xform=wp.transform(p=self.capsule_pos, q=wp.quat_identity()), label="capsule"
         )
         self.builder.add_shape_capsule(body_capsule, radius=0.3, half_height=0.7)
 
         # CYLINDER
         self.cylinder_pos = wp.vec3(0.0, -4.0, drop_z)
         body_cylinder = self.builder.add_body(
-            xform=wp.transform(p=self.cylinder_pos, q=wp.quat_identity()), key="cylinder"
+            xform=wp.transform(p=self.cylinder_pos, q=wp.quat_identity()), label="cylinder"
         )
         self.builder.add_shape_cylinder(body_cylinder, radius=0.4, half_height=0.6)
 
         # BOX
         self.box_pos = wp.vec3(0.0, 2.0, drop_z)
         body_box = self.builder.add_body(
-            xform=wp.transform(p=self.box_pos, q=wp.quat_identity()), key="box"
+            xform=wp.transform(p=self.box_pos, q=wp.quat_identity()), label="box"
         )
         self.builder.add_shape_box(body_box, hx=0.5, hy=0.35, hz=0.25)
 
-        # # MESH (bunny)
-        # usd_stage = Usd.Stage.Open(newton.examples.get_asset("bunny.usd"))
-        # demo_mesh = newton.usd.get_mesh(usd_stage.GetPrimAtPath("/root/bunny"))
-        #
-        # self.mesh_pos = wp.vec3(0.0, 4.0, drop_z - 0.5)
-        # body_mesh = self.builder.add_body(
-        #     xform=wp.transform(p=self.mesh_pos, q=wp.quat(0.5, 0.5, 0.5, 0.5)), key="mesh"
-        # )
-        # self.builder.add_shape_mesh(body_mesh, mesh=demo_mesh)
+        # MESH (bunny)
+        usd_stage = Usd.Stage.Open(newton.examples.get_asset("bunny.usd"))
+        demo_mesh = newton.usd.get_mesh(usd_stage.GetPrimAtPath("/root/bunny"))
+
+        self.mesh_pos = wp.vec3(0.0, 4.0, drop_z - 0.5)
+        body_mesh = self.builder.add_body(
+            xform=wp.transform(p=self.mesh_pos, q=wp.quat(0.5, 0.5, 0.5, 0.5)), label="mesh"
+        )
+        self.builder.add_shape_mesh(body_mesh, mesh=demo_mesh)
 
         # CONE (no collision support in the standard collision pipeline)
         self.cone_pos = wp.vec3(0.0, 6.0, drop_z)
         body_cone = self.builder.add_body(
-            xform=wp.transform(p=self.cone_pos, q=wp.quat_identity()), key="cone"
+            xform=wp.transform(p=self.cone_pos, q=wp.quat_identity()), label="cone"
         )
         self.builder.add_shape_cone(body_cone, radius=0.45, half_height=0.6)
 

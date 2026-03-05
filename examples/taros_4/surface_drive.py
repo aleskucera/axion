@@ -164,7 +164,10 @@ class TarosSurfaceSimulator(InteractiveSimulator):
                     self.target_velocities,
                     self.clock.dt,
                     self.joint_target,
-                    6, 7, 8, 9,
+                    6,
+                    7,
+                    8,
+                    9,
                 ],
                 device=self.model.device,
             )
@@ -174,6 +177,7 @@ class TarosSurfaceSimulator(InteractiveSimulator):
         """
         Builds the unified Taros-4 model on a surface.
         """
+        self.builder.rigid_gap = 0.5
 
         # Robot position
         robot_x = -1.5
@@ -201,9 +205,7 @@ class TarosSurfaceSimulator(InteractiveSimulator):
         self.builder.add_shape_mesh(
             body=-1,
             mesh=surface_mesh,
-            cfg=newton.ModelBuilder.ShapeConfig(
-                density=0.0, has_shape_collision=True, mu=1.0, contact_margin=0.3
-            ),
+            cfg=newton.ModelBuilder.ShapeConfig(density=0.0, has_shape_collision=True, mu=1.0),
         )
 
         return self.builder.finalize_replicated(num_worlds=self.simulation_config.num_worlds)

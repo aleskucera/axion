@@ -66,6 +66,8 @@ class Simulator(InteractiveSimulator):
         )
 
     def build_model(self) -> newton.Model:
+        self.builder.rigid_gap = 1.0
+
         # Standard cylinder is along Z. Rotate 90 deg around X to align with Y.
         q_rod = wp.quat_from_axis_angle(wp.vec3(1.0, 0.0, 0.0), wp.pi * 0.5)
 
@@ -100,7 +102,7 @@ class Simulator(InteractiveSimulator):
         )
 
         # Create articulation
-        self.builder.add_articulation([j0], key="slider")
+        self.builder.add_articulation([j0], label="slider")
 
         self.builder.add_ground_plane()
 

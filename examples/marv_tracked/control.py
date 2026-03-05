@@ -354,6 +354,7 @@ class MarvTrackedSimulator(InteractiveSimulator):
         wp.copy(self.control.joint_target_vel, self.joint_targets)
 
     def build_model(self) -> newton.Model:
+        self.builder.rigid_gap = 0.2
         # Create Marv Tracked
         chassis_id, track_info = create_marv_tracked_model(
             self.builder, xform=wp.transform((0.0, 0.0, 0.5), wp.quat_identity())
@@ -362,9 +363,7 @@ class MarvTrackedSimulator(InteractiveSimulator):
         self.track_info_cpu = track_info
 
         # Add Ground
-        ground_cfg = newton.ModelBuilder.ShapeConfig(
-            contact_margin=0.2, ke=1.0e4, kd=1.0e3, kf=1.0e3, mu=0.4, restitution=0.0
-        )
+        ground_cfg = newton.ModelBuilder.ShapeConfig(ke=1.0e4, kd=1.0e3, kf=1.0e3, mu=0.4)
         self.builder.add_ground_plane(cfg=ground_cfg)
 
         # Obstacles (Same as before)

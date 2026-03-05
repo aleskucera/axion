@@ -5,12 +5,12 @@ import pathlib
 import hydra
 import newton
 import warp as wp
-from axion import InteractiveSimulator
 from axion import EngineConfig
 from axion import ExecutionConfig
+from axion import InteractiveSimulator
+from axion import LoggingConfig
 from axion import RenderingConfig
 from axion import SimulationConfig
-from axion import LoggingConfig
 from omegaconf import DictConfig
 
 os.environ["PYOPENGL_PLATFORM"] = "glx"
@@ -39,8 +39,10 @@ class Simulator(InteractiveSimulator):
         FRICTION = 0.0
         RESTITUTION = 0.0
 
+        self.builder.rigid_gap = 1.0
+
         ball1 = self.builder.add_body(
-            xform=wp.transform((0.0, 0.0, 3.0), wp.quat_identity()), key="ball"
+            xform=wp.transform((0.0, 0.0, 3.0), wp.quat_identity()), label="ball"
         )
 
         self.builder.add_shape_sphere(
@@ -53,7 +55,6 @@ class Simulator(InteractiveSimulator):
                 kf=200.0,
                 mu=FRICTION,
                 restitution=RESTITUTION,
-                thickness=0.0,
             ),
         )
 
@@ -77,7 +78,7 @@ class Simulator(InteractiveSimulator):
 
         # 3. Create the body with the new name, rotation, and velocity
         box_body = self.builder.add_body(
-            xform=wp.transform((0.0, 0.0, 1.0), rotation_quat), key="box"
+            xform=wp.transform((0.0, 0.0, 1.0), rotation_quat), label="box"
         )
 
         self.builder.add_shape_box(
@@ -92,7 +93,6 @@ class Simulator(InteractiveSimulator):
                 kf=200.0,
                 mu=FRICTION,
                 restitution=RESTITUTION,
-                thickness=0.0,
             ),
         )
 

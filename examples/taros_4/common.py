@@ -77,9 +77,9 @@ def _add_chassis(builder: newton.ModelBuilder, xform: wp.transform, is_visible: 
     """Adds the chassis link and shape."""
     chassis = builder.add_link(
         xform=xform,
-        key="chassis",
+        label="chassis",
         mass=Taros4Config.CHASSIS_MASS,
-        I_m=Taros4Config.CHASSIS_I,
+        inertia=Taros4Config.CHASSIS_I,
         com=Taros4Config.CHASSIS_OFFSET,
     )
 
@@ -114,9 +114,9 @@ def _add_wheel(
 
     wheel_link = builder.add_link(
         xform=wp.transform(pos_world, rot_world),
-        key=name,
+        label=name,
         mass=Taros4Config.WHEEL_MASS,
-        I_m=Taros4Config.WHEEL_I,
+        inertia=Taros4Config.WHEEL_I,
         com=None,
     )
 
@@ -135,7 +135,7 @@ def _add_wheel(
     else:
         # Fallback visual if mesh missing
         if is_visible:
-            builder.add_shape_capsule(
+            builder.add_shape_cylinder(
                 body=wheel_link,
                 xform=wp.transform(wp.vec3(0.0, 0.0, 0.0), Taros4Config.WHEEL_ROT),
                 radius=Taros4Config.WHEEL_RADIUS,
@@ -148,7 +148,7 @@ def _add_wheel(
             )
 
     # Collision Shape
-    builder.add_shape_capsule(
+    builder.add_shape_cylinder(
         body=wheel_link,
         xform=wp.transform(wp.vec3(0.0, 0.0, 0.0), Taros4Config.WHEEL_ROT),
         radius=Taros4Config.WHEEL_RADIUS,
@@ -158,7 +158,6 @@ def _add_wheel(
             is_visible=False,
             collision_group=-1,
             mu=mu,
-            contact_margin=0.4,
         ),
     )
     return wheel_link
@@ -191,7 +190,7 @@ def create_taros4_model(
 
     # 1. Chassis
     chassis = _add_chassis(builder, xform, is_visible)
-    j_base = builder.add_joint_free(parent=-1, child=chassis, key="base_joint")
+    j_base = builder.add_joint_free(parent=-1, child=chassis, label="base_joint")
 
     # 2. Wheels
     front_left_wheel = _add_wheel(
@@ -248,7 +247,7 @@ def create_taros4_model(
         axis=Y_AXIS,
         target_ke=k_p,
         target_kd=k_d,
-        key="front_left_wheel_j",
+        label="front_left_wheel_j",
         custom_attributes={
             "joint_dof_mode": [mode],
         },
@@ -262,7 +261,7 @@ def create_taros4_model(
         axis=Y_AXIS,
         target_ke=k_p,
         target_kd=k_d,
-        key="front_right_wheel_j",
+        label="front_right_wheel_j",
         custom_attributes={
             "joint_dof_mode": [mode],
         },
@@ -276,7 +275,7 @@ def create_taros4_model(
         axis=Y_AXIS,
         target_ke=k_p,
         target_kd=k_d,
-        key="rear_left_wheel_j",
+        label="rear_left_wheel_j",
         custom_attributes={
             "joint_dof_mode": [mode],
         },
@@ -290,7 +289,7 @@ def create_taros4_model(
         axis=Y_AXIS,
         target_ke=k_p,
         target_kd=k_d,
-        key="rear_right_wheel_j",
+        label="rear_right_wheel_j",
         custom_attributes={
             "joint_dof_mode": [mode],
         },
@@ -299,7 +298,7 @@ def create_taros4_model(
     # 4. Articulation
     builder.add_articulation(
         [j_base, j_front_left, j_front_right, j_rear_left, j_rear_right],
-        key="taros-4",
+        label="taros-4",
     )
 
     return chassis, [front_left_wheel, front_right_wheel, rear_left_wheel, rear_right_wheel]
@@ -307,7 +306,7 @@ def create_taros4_model(
     # 4. Articulation
     builder.add_articulation(
         [j_base, j_front_left, j_front_right, j_rear_left, j_rear_right],
-        key="taros-4",
+        label="taros-4",
     )
 
     return chassis, [front_left_wheel, front_right_wheel, rear_left_wheel, rear_right_wheel]

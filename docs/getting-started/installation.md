@@ -10,6 +10,7 @@ Before installing Axion, please ensure your system meets the following requireme
 
 - **Operating System**: Linux (Ubuntu 20.04+ recommended) or macOS.
 - **Python**: Version 3.12 or higher.
+- **CMake**: Version 3.x (specifically **below 4.0**) is required to build `openmesh`. CMake 4.x is not compatible.
 - **CUDA** (Optional): Version 11.8 or higher is strongly recommended for significant performance gains on NVIDIA GPUs.
 
 !!! tip "Windows Users: Use WSL2"
@@ -24,7 +25,25 @@ Before installing Axion, please ensure your system meets the following requireme
     # Expected output: Python 3.12.x or higher
     ```
 
-2. **Verify CUDA installation** (if you have an NVIDIA GPU):
+2. **Verify CMake version**:
+
+    ```bash
+    cmake --version
+    # Expected output: cmake version 3.x.x (must be below 4.0)
+    ```
+
+    If your system CMake is version 4.x, download CMake 3.27 manually:
+
+    ```bash
+    # Download and extract CMake 3.27 to ~/.local/opt
+    mkdir -p ~/.local/opt
+    wget https://github.com/Kitware/CMake/releases/download/v3.27.0/cmake-3.27.0-linux-x86_64.tar.gz -P /tmp
+    tar -xzf /tmp/cmake-3.27.0-linux-x86_64.tar.gz -C ~/.local/opt
+    ```
+
+    Then prepend it to your PATH for the installation step (see Step 4).
+
+3. **Verify CUDA installation** (if you have an NVIDIA GPU):
 
     ```bash
     nvidia-smi
@@ -76,14 +95,24 @@ git submodule update --init --recursive
 
 This is where `uv` shines. A single command handles everything.
 
-```bash
-uv sync
-```
+=== "CMake 3.x (system default)"
 
-The `uv sync` command is a powerful all-in-one tool. It reads the `pyproject.toml` file and performs two actions automatically:
+    ```bash
+    uv sync --extra sim
+    ```
+
+=== "CMake 4.x (need to use older CMake)"
+
+    If your system CMake is 4.x, prepend the CMake 3.27 binary to PATH so `openmesh` builds correctly:
+
+    ```bash
+    PATH=~/.local/opt/cmake-3.27.0-linux-x86_64/bin:$PATH uv sync --extra sim
+    ```
+
+The `uv sync` command reads `pyproject.toml` and:
 
 - **Creates a virtual environment** in the `.venv` directory.
-- **Installs all required dependencies** into that environment, ensuring a consistent and isolated setup.
+- **Installs all required dependencies** at their exact pinned versions, ensuring a fully reproducible environment.
 
 !!! info "What is `uv sync` doing?"
     Unlike traditional `pip install -r requirements.txt`, `uv sync` ensures that the environment is an *exact* reflection of the project's locked dependencies. It will add missing packages and remove ones that are not specified, guaranteeing a reproducible environment.

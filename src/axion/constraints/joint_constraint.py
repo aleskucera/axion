@@ -73,7 +73,7 @@ def joint_constraint_kernel(
     joint_X_c: wp.array(dtype=wp.transform, ndim=2),
     joint_axis: wp.array(dtype=wp.vec3, ndim=2),
     joint_qd_start: wp.array(dtype=wp.int32, ndim=2),
-    joint_enabled: wp.array(dtype=wp.int32, ndim=2),
+    joint_enabled: wp.array(dtype=wp.bool, ndim=2),
     constraint_offsets: wp.array(dtype=wp.int32, ndim=2),
     joint_compliance_override: wp.array(dtype=wp.float32, ndim=2),
     # Params
@@ -176,7 +176,7 @@ def joint_residual_kernel(
     joint_X_c: wp.array(dtype=wp.transform, ndim=2),
     joint_axis: wp.array(dtype=wp.vec3, ndim=2),
     joint_qd_start: wp.array(dtype=wp.int32, ndim=2),
-    joint_enabled: wp.array(dtype=wp.int32, ndim=2),
+    joint_enabled: wp.array(dtype=wp.bool, ndim=2),
     constraint_offsets: wp.array(dtype=wp.int32, ndim=2),
     joint_compliance_override: wp.array(dtype=wp.float32, ndim=2),
     # Params
@@ -268,7 +268,7 @@ def batch_joint_residual_kernel(
     joint_X_c: wp.array(dtype=wp.transform, ndim=2),
     joint_axis: wp.array(dtype=wp.vec3, ndim=2),
     joint_qd_start: wp.array(dtype=wp.int32, ndim=2),
-    joint_enabled: wp.array(dtype=wp.int32, ndim=2),
+    joint_enabled: wp.array(dtype=wp.bool, ndim=2),
     constraint_offsets: wp.array(dtype=wp.int32, ndim=2),
     # Params
     dt: wp.float32,
@@ -350,7 +350,7 @@ def fused_batch_joint_residual_kernel(
     joint_X_c: wp.array(dtype=wp.transform, ndim=2),
     joint_axis: wp.array(dtype=wp.vec3, ndim=2),
     joint_qd_start: wp.array(dtype=wp.int32, ndim=2),
-    joint_enabled: wp.array(dtype=wp.int32, ndim=2),
+    joint_enabled: wp.array(dtype=wp.bool, ndim=2),
     constraint_offsets: wp.array(dtype=wp.int32, ndim=2),
     # Params
     dt: wp.float32,

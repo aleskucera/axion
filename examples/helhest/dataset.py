@@ -73,6 +73,7 @@ class HelhestObstacleSimulator(DatasetSimulator):
         """
         Builds the unified Helhest model with an obstacle.
         """
+        self.builder.rigid_gap = 1.0
 
         # Robot position
         robot_x = -1.5
@@ -105,7 +106,6 @@ class HelhestObstacleSimulator(DatasetSimulator):
             hy=2.0,
             hz=0.05,
             cfg=newton.ModelBuilder.ShapeConfig(
-                contact_margin=0.2,
                 mu=FRICTION,
                 restitution=RESTITUTION,
             ),
@@ -114,7 +114,6 @@ class HelhestObstacleSimulator(DatasetSimulator):
         # Ground plane
         self.builder.add_ground_plane(
             cfg=newton.ModelBuilder.ShapeConfig(
-                contact_margin=0.1,
                 ke=KE,
                 kd=KD,
                 kf=KF,

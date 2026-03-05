@@ -4,12 +4,12 @@ import pathlib
 import hydra
 import newton
 import warp as wp
-from axion import InteractiveSimulator
 from axion import EngineConfig
 from axion import ExecutionConfig
+from axion import InteractiveSimulator
+from axion import LoggingConfig
 from axion import RenderingConfig
 from axion import SimulationConfig
-from axion import LoggingConfig
 from omegaconf import DictConfig
 
 os.environ["PYOPENGL_PLATFORM"] = "glx"
@@ -35,11 +35,11 @@ class Simulator(InteractiveSimulator):
         )
 
     def build_model(self) -> newton.Model:
+        self.builder.rigid_gap = 1.0
         FRICTION = 0.0
-        RESTITUTION = 0.0
 
         static_box = self.builder.add_body(
-            xform=wp.transform((0.0, 0.0, 0.5), wp.quat_identity()), key="box"
+            xform=wp.transform((0.0, 0.0, 0.5), wp.quat_identity()), label="box"
         )
 
         self.builder.add_shape_box(
@@ -53,9 +53,6 @@ class Simulator(InteractiveSimulator):
                 kd=1000.0,
                 kf=200.0,
                 mu=FRICTION,
-                restitution=RESTITUTION,
-                thickness=0.0,
-                contact_margin=0.1,
             ),
         )
 
@@ -65,7 +62,6 @@ class Simulator(InteractiveSimulator):
                 kd=1000.0,
                 kf=200.0,
                 mu=FRICTION,
-                restitution=RESTITUTION,
             )
         )
 

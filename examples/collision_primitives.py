@@ -43,7 +43,7 @@ class Simulator(InteractiveSimulator):
         KF = 200.0
 
         ball1 = self.builder.add_body(
-            xform=wp.transform((0.0, 0.0, 2.0), wp.quat_identity()), key="ball1"
+            xform=wp.transform((0.0, 0.0, 2.0), wp.quat_identity()), label="ball1"
         )
         self.builder.add_shape_sphere(
             body=ball1,
@@ -61,7 +61,7 @@ class Simulator(InteractiveSimulator):
         )
 
         ball2 = self.builder.add_body(
-            xform=wp.transform((0.0, 0.3, 4.5), wp.quat_identity()), key="ball2"
+            xform=wp.transform((0.0, 0.3, 4.5), wp.quat_identity()), label="ball2"
         )
 
         self.builder.add_shape_sphere(
@@ -79,7 +79,7 @@ class Simulator(InteractiveSimulator):
         )
 
         ball3 = self.builder.add_body(
-            xform=wp.transform((0.0, -0.6, 6.5), wp.quat_identity()), key="ball3"
+            xform=wp.transform((0.0, -0.6, 6.5), wp.quat_identity()), label="ball3"
         )
 
         self.builder.add_shape_sphere(
@@ -98,7 +98,7 @@ class Simulator(InteractiveSimulator):
         )
 
         ball4 = self.builder.add_body(
-            xform=wp.transform((0.0, -0.6, 10.5), wp.quat_identity()), key="ball4"
+            xform=wp.transform((0.0, -0.6, 10.5), wp.quat_identity()), label="ball4"
         )
 
         self.builder.add_shape_sphere(
@@ -117,7 +117,7 @@ class Simulator(InteractiveSimulator):
         )
 
         box1 = self.builder.add_body(
-            xform=wp.transform((0.0, 0.0, 9.0), wp.quat_identity()), key="box1"
+            xform=wp.transform((0.0, 0.0, 9.0), wp.quat_identity()), label="box1"
         )
 
         self.builder.add_shape_box(

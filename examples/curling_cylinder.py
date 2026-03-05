@@ -39,6 +39,8 @@ class CurlingSimulator(InteractiveSimulator):
         self.target_pos = wp.vec3(0.0, 3.0, 0.1)
 
     def build_model(self) -> newton.Model:
+        self.builder.rigid_gap = 1.0
+
         # Use friction that allows sliding (e.g., 0.05 for ice-like behavior)
         shape_config = newton.ModelBuilder.ShapeConfig(
             ke=1e5, kd=1e2, kf=1e3, mu=0.05, contact_margin=0.3, density=10.0

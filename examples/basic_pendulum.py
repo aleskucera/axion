@@ -5,12 +5,12 @@ from typing import override
 import hydra
 import newton
 import warp as wp
-from axion import InteractiveSimulator
 from axion import EngineConfig
 from axion import ExecutionConfig
+from axion import InteractiveSimulator
+from axion import LoggingConfig
 from axion import RenderingConfig
 from axion import SimulationConfig
-from axion import LoggingConfig
 from omegaconf import DictConfig
 
 os.environ["PYOPENGL_PLATFORM"] = "glx"
@@ -71,7 +71,7 @@ class Simulator(InteractiveSimulator):
         )
 
         # Create articulation from joints
-        self.builder.add_articulation([j0, j1], key="pendulum")
+        self.builder.add_articulation([j0, j1], label="pendulum")
 
         self.builder.add_ground_plane()
 

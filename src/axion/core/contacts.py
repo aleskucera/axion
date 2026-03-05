@@ -200,37 +200,37 @@ def contact_interaction_kernel(
 class AxionContacts:
     def __init__(self, model: Model, max_contacts_per_world: int) -> None:
         assert (
-            model.shape_count % model.num_worlds == 0
+            model.shape_count % model.world_count == 0
         ), "Worlds have not identical number of shapes."
 
         self.model = model
         self.device = model.device
-        self.num_worlds = model.num_worlds
-        self.num_shapes_per_world = model.shape_count // model.num_worlds
+        self.num_worlds = model.world_count
+        self.num_shapes_per_world = model.shape_count // model.world_count
         self.max_contacts = max_contacts_per_world
 
         with wp.ScopedDevice(self.device):
-            self.contact_count = wp.zeros(model.num_worlds, dtype=wp.int32)
+            self.contact_count = wp.zeros(model.world_count, dtype=wp.int32)
             self.contact_point0 = wp.zeros(
-                (model.num_worlds, max_contacts_per_world), dtype=wp.vec3
+                (model.world_count, max_contacts_per_world), dtype=wp.vec3
             )
             self.contact_point1 = wp.zeros(
-                (model.num_worlds, max_contacts_per_world), dtype=wp.vec3
+                (model.world_count, max_contacts_per_world), dtype=wp.vec3
             )
             self.contact_normal = wp.zeros(
-                (model.num_worlds, max_contacts_per_world), dtype=wp.vec3
+                (model.world_count, max_contacts_per_world), dtype=wp.vec3
             )
             self.contact_shape0 = wp.zeros(
-                (model.num_worlds, max_contacts_per_world), dtype=wp.int32
+                (model.world_count, max_contacts_per_world), dtype=wp.int32
             )
             self.contact_shape1 = wp.zeros(
-                (model.num_worlds, max_contacts_per_world), dtype=wp.int32
+                (model.world_count, max_contacts_per_world), dtype=wp.int32
             )
             self.contact_thickness0 = wp.zeros(
-                (model.num_worlds, max_contacts_per_world), dtype=wp.float32
+                (model.world_count, max_contacts_per_world), dtype=wp.float32
             )
             self.contact_thickness1 = wp.zeros(
-                (model.num_worlds, max_contacts_per_world), dtype=wp.float32
+                (model.world_count, max_contacts_per_world), dtype=wp.float32
             )
 
     def load_contact_data(
@@ -250,8 +250,8 @@ class AxionContacts:
                 contacts.rigid_contact_normal,
                 contacts.rigid_contact_shape0,
                 contacts.rigid_contact_shape1,
-                contacts.rigid_contact_thickness0,
-                contacts.rigid_contact_thickness1,
+                contacts.rigid_contact_margin0,
+                contacts.rigid_contact_margin1,
             ],
             outputs=[
                 self.contact_count,

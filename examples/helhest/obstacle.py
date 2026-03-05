@@ -35,7 +35,7 @@ def integrate_wheel_position_kernel(
 ):
     # Drive forward command
     v = 6.0
-    
+
     # Integrate
     new_ang_l = current_wheel_angles[0] + v * dt
     new_ang_r = current_wheel_angles[1] + v * dt
@@ -109,7 +109,9 @@ class HelhestObstacleSimulator(InteractiveSimulator):
                     self.wheel_angles,
                     self.clock.dt,
                     self.joint_target,
-                    6, 7, 8,
+                    6,
+                    7,
+                    8,
                 ],
                 device=self.model.device,
             )
@@ -151,7 +153,6 @@ class HelhestObstacleSimulator(InteractiveSimulator):
             hy=1.0,
             hz=0.1,
             cfg=newton.ModelBuilder.ShapeConfig(
-                contact_margin=0.1,
                 mu=FRICTION,
                 restitution=RESTITUTION,
             ),
@@ -164,7 +165,6 @@ class HelhestObstacleSimulator(InteractiveSimulator):
             hy=1.0,
             hz=0.25,
             cfg=newton.ModelBuilder.ShapeConfig(
-                contact_margin=0.1,
                 mu=FRICTION,
                 restitution=RESTITUTION,
             ),
@@ -177,7 +177,6 @@ class HelhestObstacleSimulator(InteractiveSimulator):
             hy=1.0,
             hz=0.40,
             cfg=newton.ModelBuilder.ShapeConfig(
-                contact_margin=0.1,
                 mu=FRICTION,
                 restitution=RESTITUTION,
             ),
@@ -190,7 +189,6 @@ class HelhestObstacleSimulator(InteractiveSimulator):
             hy=1.0,
             hz=0.65,
             cfg=newton.ModelBuilder.ShapeConfig(
-                contact_margin=0.1,
                 mu=FRICTION,
                 restitution=RESTITUTION,
             ),
@@ -203,7 +201,6 @@ class HelhestObstacleSimulator(InteractiveSimulator):
         #     hy=1.0,
         #     hz=0.80,
         #     cfg=newton.ModelBuilder.ShapeConfig(
-        #         contact_margin=0.1,
         #         mu=FRICTION,
         #         restitution=RESTITUTION,
         #     ),
@@ -212,7 +209,6 @@ class HelhestObstacleSimulator(InteractiveSimulator):
         # Ground plane
         self.builder.add_ground_plane(
             cfg=newton.ModelBuilder.ShapeConfig(
-                contact_margin=0.1,
                 ke=KE,
                 kd=KD,
                 kf=KF,

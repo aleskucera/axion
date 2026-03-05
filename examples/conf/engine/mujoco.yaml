@@ -8,11 +8,9 @@ ls_iterations: 100
 solver: "newton"
 integrator: "implicitfast"
 cone: "elliptic"
-impratio: 1.0
+impratio: 0.1
 use_mujoco_cpu: False
 disable_contacts: False
-default_actuator_gear: null
-actuator_gears: null
 update_data_interval: 1
 save_to_mjcf: null
 ls_parallel: False

@@ -6,12 +6,12 @@ import hydra
 import newton
 import numpy as np
 import warp as wp
-from axion import InteractiveSimulator
 from axion import EngineConfig
 from axion import ExecutionConfig
+from axion import InteractiveSimulator
+from axion import LoggingConfig
 from axion import RenderingConfig
 from axion import SimulationConfig
-from axion import LoggingConfig
 from omegaconf import DictConfig
 
 try:
@@ -166,13 +166,17 @@ class Taros4ControlSimulator(InteractiveSimulator):
                     self.target_velocities,
                     self.clock.dt,
                     self.joint_target,
-                    6, 7, 8, 9,  # Indices
+                    6,
+                    7,
+                    8,
+                    9,  # Indices
                 ],
                 device=self.model.device,
             )
             wp.copy(self.control.joint_target_pos, self.joint_target)
 
     def build_model(self) -> newton.Model:
+        self.builder.rigid_gap = 0.5
         # --- 1. Ground ---
         ground_cfg = newton.ModelBuilder.ShapeConfig(mu=1.0)
         self.builder.add_ground_plane(cfg=ground_cfg)

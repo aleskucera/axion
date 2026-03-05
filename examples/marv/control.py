@@ -167,13 +167,12 @@ class MarvControlSimulator(InteractiveSimulator):
         wp.copy(self.control.joint_target_pos, self.joint_target)
 
     def build_model(self) -> newton.Model:
+        self.builder.rigid_gap = 0.2
         # Create Marv
         create_marv_model(self.builder, xform=wp.transform((0.0, 0.0, 0.5), wp.quat_identity()))
 
         # Add Ground
-        ground_cfg = newton.ModelBuilder.ShapeConfig(
-            contact_margin=0.3, ke=1.0e4, kd=1.0e3, kf=1.0e3, mu=1.0, restitution=0.0
-        )
+        ground_cfg = newton.ModelBuilder.ShapeConfig(ke=1.0e4, kd=1.0e3, kf=1.0e3, mu=1.0)
         self.builder.add_ground_plane(cfg=ground_cfg)
 
         # Obstacle 1: Stairs (Stepped boxes)

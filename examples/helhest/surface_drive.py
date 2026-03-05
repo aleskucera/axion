@@ -175,6 +175,8 @@ class HelhestSurfaceSimulator(InteractiveSimulator):
         Builds the unified Helhest model on a surface.
         """
 
+        self.builder.rigid_gap = 1.0
+
         # Robot position
         robot_x = -1.5
         robot_y = 0.0
@@ -206,7 +208,6 @@ class HelhestSurfaceSimulator(InteractiveSimulator):
                 density=0.0,
                 has_shape_collision=True,
                 mu=1.0,
-                contact_margin=0.3,
                 ke=150.0,
                 kd=150.0,
                 kf=500.0,
