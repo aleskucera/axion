@@ -23,21 +23,21 @@ Helhest is a three-wheeled skid-steer robot that can also flip itself upright. A
 <table>
   <tr>
     <td align="center">
-      <video src="data/readme_videos/helhest_turning.webm" autoplay loop muted playsinline width="100%"></video>
+      <video src="data/readme_videos/helhest_turning\.mp4" autoplay loop muted playsinline width="100%"></video>
       <br><b>Skid-steer turning</b>
     </td>
     <td align="center">
-      <video src="data/readme_videos/helhest_dynamic.webm" autoplay loop muted playsinline width="100%"></video>
+      <video src="data/readme_videos/helhest_dynamic\.mp4" autoplay loop muted playsinline width="100%"></video>
       <br><b>Self-righting flip</b>
     </td>
   </tr>
   <tr>
     <td align="center">
-      <video src="data/readme_videos/helhest_obstacles.webm" autoplay loop muted playsinline width="100%"></video>
+      <video src="data/readme_videos/helhest_obstacles\.mp4" autoplay loop muted playsinline width="100%"></video>
       <br><b>Dense obstacle field</b>
     </td>
     <td align="center">
-      <video src="data/readme_videos/helhest_motors.webm" autoplay loop muted playsinline width="100%"></video>
+      <video src="data/readme_videos/helhest_motors\.mp4" autoplay loop muted playsinline width="100%"></video>
       <br><b>Motor realism on incline</b> — P-velocity controller drifts under load as expected
     </td>
   </tr>
@@ -52,21 +52,21 @@ Marv is a tracked robot with four articulated flippers — each flipper carries 
 <table>
   <tr>
     <td align="center">
-      <video src="data/readme_videos/marv_turning.webm" autoplay loop muted playsinline width="100%"></video>
+      <video src="data/readme_videos/marv_turning\.mp4" autoplay loop muted playsinline width="100%"></video>
       <br><b>Skid-steer turning</b>
     </td>
     <td align="center">
-      <video src="data/readme_videos/marv_flippers.webm" autoplay loop muted playsinline width="100%"></video>
+      <video src="data/readme_videos/marv_flippers\.mp4" autoplay loop muted playsinline width="100%"></video>
       <br><b>Flipper articulation</b>
     </td>
   </tr>
   <tr>
     <td align="center">
-      <video src="data/readme_videos/marv_obstacles.webm" autoplay loop muted playsinline width="100%"></video>
+      <video src="data/readme_videos/marv_obstacles\.mp4" autoplay loop muted playsinline width="100%"></video>
       <br><b>Dense obstacle field</b>
     </td>
     <td align="center">
-      <video src="data/readme_videos/marv_large_obstacle.webm" autoplay loop muted playsinline width="100%"></video>
+      <video src="data/readme_videos/marv_large_obstacle\.mp4" autoplay loop muted playsinline width="100%"></video>
       <br><b>Large obstacle traversal</b>
     </td>
   </tr>
