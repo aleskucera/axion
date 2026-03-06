@@ -1,78 +1,85 @@
-# Welcome to Axion
+# Axion
+
+A GPU-accelerated physics simulator with non-smooth contact and exact friction.
 
 ---
 
-**Axion** is a cutting-edge differentiable physics simulator that bridges the gap between physical simulation and gradient-based optimization. Built on NVIDIA Warp, it provides researchers and engineers with a powerful tool for developing and testing algorithms in robotics, machine learning, and computational physics.
+Axion is a rigid body simulator built for robotics research where contact accuracy matters. Unlike simulators that smooth or approximate the friction cone, Axion solves the **non-penetration contact constraints exactly** and handles **non-smooth friction** — making it particularly well-suited for skid-steer locomotion, flipper robots, and any scenario where slip behavior drives the dynamics.
 
-### Why Axion?
+**Key properties:**
 
-Modern robotics and machine learning applications require physics simulators that are not only fast and accurate but also differentiable. Axion addresses this need by providing:
+- **Stable at large timesteps** — 5×10⁻² s works well in most scenes; some contact-heavy scenes remain stable at 1×10⁻¹ s
+- **Parallel worlds** — run thousands of independent simulations simultaneously on a single GPU
+- **Maximal coordinates** — makes it straightforward to model unconventional robot morphologies accurately
+- **CUDA-accelerated** — built on [NVIDIA Warp](https://github.com/NVIDIA/warp) and [Newton](https://github.com/newton-physics/newton)
 
-- **🚀 GPU Acceleration** - Leverage CUDA for real-time or faster-than-real-time simulation
-- **🔄 Differentiable Simulation** - Compute gradients through complex physics for optimization
-- **⚙️ Flexible Architecture** - Modular design allows easy extension and customization
-- **📊 Rich Data Logging** - Comprehensive HDF5-based logging for analysis and debugging
+---
 
-## Quick Navigation
+## Helhest — 3-Wheeled Skid-Steer Robot
+
+Helhest is a three-wheeled skid-steer robot that can also flip itself upright. Accurate friction is critical here: skid-steer turning depends entirely on the difference in lateral friction forces between wheels, and the flip maneuver requires correct contact dynamics throughout.
+
+<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+  <div>
+    <video src="https://github.com/user-attachments/assets/dd1f1bc5-c91b-4d57-999b-4fda29c69596" autoplay loop muted playsinline width="100%"></video>
+    <p align="center"><b>Skid-steer turning</b></p>
+  </div>
+  <div>
+    <video src="https://github.com/user-attachments/assets/53e5079e-fe8d-4476-a2ec-e027f61fe2a6" autoplay loop muted playsinline width="100%"></video>
+    <p align="center"><b>Self-righting flip</b></p>
+  </div>
+  <div>
+    <video src="https://github.com/user-attachments/assets/363bcfca-ea37-4adb-8e50-8ff673c296e6" autoplay loop muted playsinline width="100%"></video>
+    <p align="center"><b>Dense obstacle field</b></p>
+  </div>
+  <div>
+    <video src="https://github.com/user-attachments/assets/3fb658a2-933c-46d7-9c4f-bd35bef470a6" autoplay loop muted playsinline width="100%"></video>
+    <p align="center"><b>Motor realism on incline</b> — P-velocity controller drifts under load as expected</p>
+  </div>
+</div>
+
+---
+
+## Marv — Flipper Tracked Robot
+
+Marv is a tracked robot with four articulated flippers — each flipper carries its own track. The combination of track contacts, flipper joints, and varying terrain makes this a demanding test for any simulator. Maximal coordinates make the morphology easy to express without hacks.
+
+<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+  <div>
+    <video src="https://github.com/user-attachments/assets/873f6c1c-9e41-4aed-a379-b4f9a37be361" autoplay loop muted playsinline width="100%"></video>
+    <p align="center"><b>Skid-steer turning</b></p>
+  </div>
+  <div>
+    <video src="https://github.com/user-attachments/assets/10f61094-0d38-4aee-97e8-01e133aa5c21" autoplay loop muted playsinline width="100%"></video>
+    <p align="center"><b>Flipper articulation</b></p>
+  </div>
+  <div>
+    <video src="https://github.com/user-attachments/assets/bc3e81c9-e839-44f7-aa6a-4796e2ed4b31" autoplay loop muted playsinline width="100%"></video>
+    <p align="center"><b>Dense obstacle field</b></p>
+  </div>
+  <div>
+    <video src="https://github.com/user-attachments/assets/386a8857-a66a-4715-bb1e-2572b9cfc598" autoplay loop muted playsinline width="100%"></video>
+    <p align="center"><b>Large obstacle traversal</b></p>
+  </div>
+</div>
+
+---
+
+## Getting Started
 
 <div class="grid cards" markdown>
 
-- :material-rocket-launch: **[Getting Started](getting-started/installation.md)**
-  
-    New to Axion? Start here with installation and your first simulation
+- :material-rocket-launch: **[Installation](getting-started/installation.md)**
 
-- :material-book-open-variant: **[User Guide](user-guide/concepts.md)**
-  
-    Learn core concepts and how to use Axion effectively
+    Set up Axion and its dependencies
 
-- :material-school: **[Tutorials](tutorials/ball-bounce.md)**
-  
-    Step-by-step guides for common simulation scenarios
+- :material-book-open-variant: **[Quick Start](getting-started/quickstart.md)**
 
-- :material-api: **[API Reference](api/engine.md)**
-  
-    Detailed documentation of all classes and functions
+    Run your first simulation
 
 </div>
-
-## Key Features
-
-### Physics Capabilities
-
-Axion implements state-of-the-art physics simulation techniques:
-
-- **Rigid Body Dynamics** - Fast and stable simulation of articulated and free-floating bodies
-- **Contact & Collision** - Robust handling with configurable stiffness and damping parameters
-- **Friction Models** - Accurate Coulomb friction for realistic contact interactions
-- **Joint Constraints** - Support for revolute joints
-
-### Technical Features
-
-- **Differentiable Simulation** - Full gradient computation through the simulation pipeline
-- **Constraint-Based Physics** - Modern constraint solver for accurate dynamics
-- **Matrix-Free Solvers** - Memory-efficient algorithms for large-scale systems
-- **Hydra Configuration** - Flexible experiment management and parameter sweeping
-- **CUDA Graph Optimization** - Minimized kernel launch overhead for maximum GPU utilization
-
-## Getting Help
-
-- **📚 [User Guide](user-guide/concepts.md)** - Comprehensive guide to using Axion
-- **🎓 [Tutorials](tutorials/ball-bounce.md)** - Learn by example
-- **📖 [API Reference](api/engine.md)** - Detailed API documentation
-- **🐛 [Issue Tracker](https://github.com/aleskucera/axion/issues)** - Report bugs or request features
-- **📧 [Contact](mailto:kuceral4@fel.cvut.cz)** - Reach out directly
-
-## Contributing
-
-We welcome contributions from the community! Whether it's bug fixes, new features, or documentation improvements, please check our [Contributing Guide](developer/contributing.md) to get started.
-
-## License
-
-Axion is open-source software licensed under the MIT License. See the LICENSE file for details.
 
 ---
 
-<div align="center">
-    <p><strong>Ready to start simulating?</strong></p>
-    <a href="getting-started/installation/" class="md-button md-button--primary">Get Started →</a>
-</div>
+**Aleš Kučera** — [kuceral4@fel.cvut.cz](mailto:kuceral4@fel.cvut.cz)
+Czech Technical University in Prague
