@@ -1,237 +1,117 @@
 <div align="center">
-    <h1>Axion: A Differentiable Physics Simulator</h1>
+    <h1>Axion</h1>
+    <p>A GPU-accelerated physics simulator with non-smooth contact and exact friction</p>
 </div>
-
-**Axion** is a high-performance, differentiable physics simulator designed for robotics research, machine learning, and applications requiring accurate gradients through complex dynamics. Built on top of NVIDIA Warp, it leverages GPU acceleration and automatic differentiation to enable gradient-based optimization for physics-driven systems.
-
-## 🚀 Overview
-
-Differentiable simulators are crucial tools for bridging physics-based modeling with gradient-based optimization techniques common in machine learning and robotics. Axion provides a powerful and flexible simulation environment that addresses key challenges in the field:
-
-### Core Capabilities
-
-* **⚡ GPU Acceleration:** Built on NVIDIA Warp for parallel execution on modern GPUs, maximizing computational throughput
-* **🔧 Flexible Configuration:** Hydra-based configuration system for easy experimentation and parameter tuning
-* **📊 Comprehensive Logging:** HDF5-based logging system for detailed simulation data capture and analysis
-* **🎮 Simulation Visualization:** Rendering with configurable frame rates
-
-### Physics Features
-
-* **Rigid Body Dynamics:** Robust simulation of articulated and unarticulated rigid body systems
-* **Contact & Collision:** Advanced contact constraint handling with configurable stiffness and damping
-* **Friction Modeling:** Coulomb friction implementation with customizable coefficients
-* **Joint Constraints:** Support for various joint types in articulated systems
-* **Adaptive Time Stepping:** Dynamic integration methods for optimal performance and stability
-
-## 📦 Installation
-
-### Prerequisites
-
-* Python 3.12 or higher
-* CUDA-capable GPU (recommended)
-* NVIDIA Warp (automatically installed as dependency)
-
-### Install from Source
-
-```bash
-# Clone the repository
-git clone https://github.com/aleskucera/axion.git
-cd axion
-
-# Install third-party dependencies
-git submodule update --init --recursive
-
-# Install with pip
-pip install -e .
-
-# Or install with uv (if you have it)
-uv pip install -e .
-```
-
-### Dependencies
-
-Axion depends on the following key packages:
-
-* `warp-lang`: NVIDIA's differentiable graphics and physics library
-* `torch`: PyTorch for machine learning integration
-* `hydra-core`: Configuration management
-* `h5py`: HDF5 data logging
-* `usd-core`: Universal Scene Description support
-* `trimesh`: 3D mesh processing
-
-## 🎯 Quick Start
-
-### Running Examples
-
-Axion comes with several pre-built examples that demonstrate its capabilities:
-
-```bash
-# Simple ball bouncing example
-python -m axion.examples.ball_bounce
-
-# Collision primitives demonstration
-python -m axion.examples.collision_primitives
-
-# Helhest robot simulation
-python -m axion.examples.helhest
-
-# Simplified Helhest example
-python -m axion.examples.helhest_simple
-```
-
-## ⚙️ Configuration
-
-Axion uses Hydra for flexible configuration management. Configuration files are organized in a modular structure:
-
-```
-conf/
-├── config.yaml          # Main configuration
-├── engine/             # Physics engine settings
-│   ├── base.yaml
-│   └── helhest.yaml
-├── simulation/         # Simulation parameters
-│   ├── base.yaml
-│   └── helhest.yaml
-├── rendering/          # Visualization settings
-│   ├── 30_fps.yaml
-│   └── headless.yaml
-├── execution/          # Execution modes
-│   ├── cuda_graph.yaml
-│   └── no_graph.yaml
-└── profiling/          # Performance profiling
-    ├── disabled.yaml
-    ├── timing.yaml
-    └── hdf5_logging.yaml
-```
-
-### Configuration Override
-
-You can override configuration parameters from the command line:
-
-```bash
-# Run with different frame rate
-python -m axion.examples.ball_bounce rendering=headless
-
-# Change engine parameters
-python -m axion.examples.helhest engine=helhest simulation=helhest
-
-# Enable profiling
-python -m axion.examples.ball_bounce profiling=timing
-```
-
-## 🏗️ Architecture
-
-### Project Structure
-
-```
-axion/
-├── core/               # Core simulation engine
-│   ├── engine.py      # Main physics engine
-│   ├── engine_config.py
-│   ├── engine_data.py
-│   └── abstract_simulator.py
-├── constraints/        # Physics constraints
-│   ├── contact_constraint.py
-│   ├── friction_constraint.py
-│   ├── joint_constraint.py
-│   └── dynamics_constraint.py
-├── optim/             # Optimization algorithms
-│   ├── cr.py          # Conjugate residual solver
-│   ├── preconditioner.py
-│   └── matrix_operator.py
-├── logging/           # Data logging utilities
-│   ├── hdf5_logger.py
-│   └── hdf5_reader.py
-├── types/             # Data structures
-│   ├── contact_interaction.py
-│   ├── joint_interaction.py
-│   └── generalized_mass.py
-└── examples/          # Example simulations
-```
-
-### Key Components
-
-1. **Engine Core**: The `AxionEngine` class handles the main simulation loop, integrating Newton's method for solving nonlinear systems arising from implicit time integration.
-
-2. **Constraint System**: Modular constraint handlers for different physics phenomena:
-   * Contact constraints with configurable stiffness/damping
-   * Friction constraints using Coulomb model
-   * Joint constraints for articulated bodies
-   * Dynamics constraints for Newton-Euler equations
-
-3. **Optimization Layer**: Efficient linear solvers and preconditioners for handling large-scale systems:
-   * Conjugate Residual (CR) solver
-   * Matrix-free operators for memory efficiency
-   * Jacobi preconditioning
-
-4. **Logging Infrastructure**: Comprehensive data capture for analysis and debugging:
-   * HDF5-based storage for efficient data management
-   * Real-time performance metrics
-   * Configurable logging levels and outputs
-
-## 📊 Performance & Benchmarking
-
-Axion includes benchmarking tools for performance analysis:
-
-```bash
-# Run constraint kernel benchmarks
-python tests/contact_kernel_benchmark.py
-python tests/dynamics_kernel_benchmark.py
-python tests/friction_kernel_benchmark.py
-python tests/joint_kernel_benchmark.py
-
-# Combined kernel benchmark
-python tests/combined_kernel_benchmark.py
-```
-
-### Performance Features
-
-* **CUDA Graph Execution**: Optimized GPU kernel execution
-* **Sparse Matrix Operations**: Efficient handling of large systems
-* **Parallel Constraint Resolution**: GPU-accelerated constraint solving
-* **Adaptive Timestep Control**: Dynamic adjustment for stability and speed
-
-## 🛠️ Development
-
-### Running Tests
-
-```bash
-# Run all tests
-pytest tests/
-
-# Run specific test
-pytest tests/test_ncp.py -v
-```
-
-### Building Documentation
-
-```bash
-# Build with mkdocs
-mkdocs build
-
-# Serve locally
-mkdocs serve
-```
-
-## 🤝 Contributing
-
-We welcome contributions! Please follow these guidelines:
-
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
-
-## 📧 Contact
-
-**Author:** Aleš Kučera  
-**Email:** <kuceral4@fel.cvut.cz>  
-**Institution:** Czech Technical University in Prague
 
 ---
 
-<div align="center">
-    <sub>Built with ❤️ for the robotics and machine learning community</sub>
-</div>
+Axion is a rigid body simulator built for robotics research where contact accuracy matters. Unlike simulators that smooth or approximate the friction cone, Axion solves the **non-penetration contact constraints exactly** and handles **non-smooth friction** — making it particularly well-suited for skid-steer locomotion, flipper robots, and any scenario where slip behavior drives the dynamics.
 
+Key properties:
+
+- **Stable at large timesteps** — 5×10⁻² s works well in most scenes; some contact-heavy scenes remain stable at 1×10⁻¹ s
+- **Parallel worlds** — run thousands of independent simulations simultaneously on a single GPU
+- **Maximal coordinates** — makes it straightforward to model unconventional robot morphologies accurately
+- **CUDA-accelerated** — built on [NVIDIA Warp](https://github.com/NVIDIA/warp) and [Newton](https://github.com/newton-physics/newton)
+
+---
+
+## Helhest — 3-Wheeled Skid-Steer Robot
+
+Helhest is a three-wheeled skid-steer robot that can also flip itself upright. Accurate friction is critical here: skid-steer turning depends entirely on the difference in lateral friction forces between wheels, and the flip maneuver requires correct contact dynamics throughout.
+
+<table>
+  <tr>
+    <td align="center">
+      <video src="data/readme_videos/helhest_turning.webm" autoplay loop muted playsinline width="100%"></video>
+      <br><b>Skid-steer turning</b>
+    </td>
+    <td align="center">
+      <video src="data/readme_videos/helhest_dynamic.webm" autoplay loop muted playsinline width="100%"></video>
+      <br><b>Self-righting flip</b>
+    </td>
+  </tr>
+  <tr>
+    <td align="center">
+      <video src="data/readme_videos/helhest_obstacles.webm" autoplay loop muted playsinline width="100%"></video>
+      <br><b>Dense obstacle field</b>
+    </td>
+    <td align="center">
+      <video src="data/readme_videos/helhest_motors.webm" autoplay loop muted playsinline width="100%"></video>
+      <br><b>Motor realism on incline</b> — P-velocity controller drifts under load as expected
+    </td>
+  </tr>
+</table>
+
+---
+
+## Marv — Flipper Tracked Robot
+
+Marv is a tracked robot with four articulated flippers — each flipper carries its own track. The combination of track contacts, flipper joints, and varying terrain makes this a demanding test for any simulator. Maximal coordinates make the morphology easy to express without hacks.
+
+<table>
+  <tr>
+    <td align="center">
+      <video src="data/readme_videos/marv_turning.webm" autoplay loop muted playsinline width="100%"></video>
+      <br><b>Skid-steer turning</b>
+    </td>
+    <td align="center">
+      <video src="data/readme_videos/marv_flippers.webm" autoplay loop muted playsinline width="100%"></video>
+      <br><b>Flipper articulation</b>
+    </td>
+  </tr>
+  <tr>
+    <td align="center">
+      <video src="data/readme_videos/marv_obstacles.webm" autoplay loop muted playsinline width="100%"></video>
+      <br><b>Dense obstacle field</b>
+    </td>
+    <td align="center">
+      <video src="data/readme_videos/marv_large_obstacle.webm" autoplay loop muted playsinline width="100%"></video>
+      <br><b>Large obstacle traversal</b>
+    </td>
+  </tr>
+</table>
+
+---
+
+## Installation
+
+### Prerequisites
+
+- **Python** 3.12+
+- **CMake** 3.x — must be below 4.0 (`openmesh` does not build with CMake 4.x)
+- **CUDA** 12+ with an NVIDIA GPU (strongly recommended)
+
+If your system CMake is 4.x, install CMake 3.27 manually:
+
+```bash
+mkdir -p ~/.local/opt
+wget https://github.com/Kitware/CMake/releases/download/v3.27.0/cmake-3.27.0-linux-x86_64.tar.gz -P /tmp
+tar -xzf /tmp/cmake-3.27.0-linux-x86_64.tar.gz -C ~/.local/opt
+```
+
+### Setup
+
+```bash
+# Clone and enter the repo
+git clone https://github.com/aleskucera/axion.git
+cd axion
+
+# Pull the newton submodule
+git submodule update --init --recursive
+
+# Install (CMake 3.x as default)
+uv sync --extra sim
+
+# Or, if your system CMake is 4.x
+PATH=~/.local/opt/cmake-3.27.0-linux-x86_64/bin:$PATH uv sync --extra sim
+```
+
+All dependencies are pinned to exact versions for reproducibility. `uv` handles the virtual environment automatically.
+
+---
+
+## Contact
+
+**Aleš Kučera** — [kuceral4@fel.cvut.cz](mailto:kuceral4@fel.cvut.cz)
+Czech Technical University in Prague
