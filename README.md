@@ -23,21 +23,29 @@ Helhest is a three-wheeled skid-steer robot that can also flip itself upright. A
 <table>
   <tr>
     <td align="center">
-      https://github.com/user-attachments/assets/dd1f1bc5-c91b-4d57-999b-4fda29c69596
+      <a href="https://github.com/user-attachments/assets/dd1f1bc5-c91b-4d57-999b-4fda29c69596">
+        <img src="data/readme_videos/helhest_turning_thumb.jpg" width="100%">
+      </a>
       <br><b>Skid-steer turning</b>
     </td>
     <td align="center">
-      https://github.com/user-attachments/assets/53e5079e-fe8d-4476-a2ec-e027f61fe2a6
+      <a href="https://github.com/user-attachments/assets/53e5079e-fe8d-4476-a2ec-e027f61fe2a6">
+        <img src="data/readme_videos/helhest_dynamic_thumb.jpg" width="100%">
+      </a>
       <br><b>Self-righting flip</b>
     </td>
   </tr>
   <tr>
     <td align="center">
-      https://github.com/user-attachments/assets/363bcfca-ea37-4adb-8e50-8ff673c296e6
+      <a href="https://github.com/user-attachments/assets/363bcfca-ea37-4adb-8e50-8ff673c296e6">
+        <img src="data/readme_videos/helhest_obstacles_thumb.jpg" width="100%">
+      </a>
       <br><b>Dense obstacle field</b>
     </td>
     <td align="center">
-      https://github.com/user-attachments/assets/3fb658a2-933c-46d7-9c4f-bd35bef470a6
+      <a href="https://github.com/user-attachments/assets/3fb658a2-933c-46d7-9c4f-bd35bef470a6">
+        <img src="data/readme_videos/helhest_motors_thumb.jpg" width="100%">
+      </a>
       <br><b>Motor realism on incline</b> — P-velocity controller drifts under load as expected
     </td>
   </tr>
@@ -52,21 +60,29 @@ Marv is a tracked robot with four articulated flippers — each flipper carries 
 <table>
   <tr>
     <td align="center">
-      <video src="data/readme_videos/marv_turning\.mp4" autoplay loop muted playsinline width="100%"></video>
+      <a href="https://github.com/user-attachments/assets/873f6c1c-9e41-4aed-a379-b4f9a37be361">
+        <img src="data/readme_videos/marv_turning_thumb.jpg" width="100%">
+      </a>
       <br><b>Skid-steer turning</b>
     </td>
     <td align="center">
-      <video src="data/readme_videos/marv_flippers\.mp4" autoplay loop muted playsinline width="100%"></video>
+      <a href="https://github.com/user-attachments/assets/10f61094-0d38-4aee-97e8-01e133aa5c21">
+        <img src="data/readme_videos/marv_flippers_thumb.jpg" width="100%">
+      </a>
       <br><b>Flipper articulation</b>
     </td>
   </tr>
   <tr>
     <td align="center">
-      <video src="data/readme_videos/marv_obstacles\.mp4" autoplay loop muted playsinline width="100%"></video>
+      <a href="https://github.com/user-attachments/assets/bc3e81c9-e839-44f7-aa6a-4796e2ed4b31">
+        <img src="data/readme_videos/marv_obstacles_thumb.jpg" width="100%">
+      </a>
       <br><b>Dense obstacle field</b>
     </td>
     <td align="center">
-      <video src="data/readme_videos/marv_large_obstacle\.mp4" autoplay loop muted playsinline width="100%"></video>
+      <a href="https://github.com/user-attachments/assets/386a8857-a66a-4715-bb1e-2572b9cfc598">
+        <img src="data/readme_videos/marv_large_obstacle_thumb.jpg" width="100%">
+      </a>
       <br><b>Large obstacle traversal</b>
     </td>
   </tr>
