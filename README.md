@@ -23,21 +23,21 @@ Helhest is a three-wheeled skid-steer robot that can also flip itself upright. A
 <table>
   <tr>
     <td align="center">
-      <video src="data/readme_videos/helhest_turning\.mp4" autoplay loop muted playsinline width="100%"></video>
+      https://github.com/user-attachments/assets/dd1f1bc5-c91b-4d57-999b-4fda29c69596
       <br><b>Skid-steer turning</b>
     </td>
     <td align="center">
-      <video src="data/readme_videos/helhest_dynamic\.mp4" autoplay loop muted playsinline width="100%"></video>
+      https://github.com/user-attachments/assets/53e5079e-fe8d-4476-a2ec-e027f61fe2a6
       <br><b>Self-righting flip</b>
     </td>
   </tr>
   <tr>
     <td align="center">
-      <video src="data/readme_videos/helhest_obstacles\.mp4" autoplay loop muted playsinline width="100%"></video>
+      https://github.com/user-attachments/assets/363bcfca-ea37-4adb-8e50-8ff673c296e6
       <br><b>Dense obstacle field</b>
     </td>
     <td align="center">
-      <video src="data/readme_videos/helhest_motors\.mp4" autoplay loop muted playsinline width="100%"></video>
+      https://github.com/user-attachments/assets/3fb658a2-933c-46d7-9c4f-bd35bef470a6
       <br><b>Motor realism on incline</b> — P-velocity controller drifts under load as expected
     </td>
   </tr>
