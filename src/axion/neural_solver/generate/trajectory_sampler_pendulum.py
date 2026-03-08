@@ -32,7 +32,7 @@ from examples.double_pendulum.pendulum_articulation_definition import PENDULUM_H
 
 
 MAX_ANGLE_WITH_Z_AXIS_RAD = 0.64
-MAX_D_COEFFICIENT_OFFSET = 1
+MAX_D_COEFFICIENT_OFFSET_M = 2.5
 
 """
 Trajectory-mode dataset generator for Pendulum env.
@@ -65,16 +65,16 @@ class TrajectorySamplerPendulum(TrajectorySampler):
         )
 
     def compute_pendulum_points(self, initial_states):
-        q0 = initial_states[..., 0] - torch.pi / 2
-        q1 = q0 + initial_states[..., 1]
+        q0 = torch.pi / 2 - initial_states[..., 0] 
+        q1 = q0 - initial_states[..., 1]
 
         # end of first link:
-        x0 = 0.5*LINK_LENGTH*torch.sin(q0)
-        z0 = -0.5*LINK_LENGTH*torch.cos(q0) + PENDULUM_HEIGHT
+        x0 = LINK_LENGTH*torch.sin(q0)
+        z0 = -LINK_LENGTH*torch.cos(q0) + PENDULUM_HEIGHT
         y0 = torch.zeros_like(x0)
         # end of second link
-        x1 = LINK_LENGTH*(torch.sin(q0) + 0.5*torch.sin(q1))
-        z1 = -LINK_LENGTH*(torch.cos(q0) - 0.5*torch.cos(q1)) + PENDULUM_HEIGHT
+        x1 = LINK_LENGTH*torch.sin(q1) + x0
+        z1 = -LINK_LENGTH*torch.cos(q1) + z0 
         y1 = torch.zeros_like(x1)
         # pendulum pivot (world frame)
         xPivot = torch.zeros_like(x0)
@@ -120,17 +120,24 @@ class TrajectorySamplerPendulum(TrajectorySampler):
         Where the pendulum would cross the plane, set plane_normals to (0, 0, 1) and d to 0 in-place.
         """
         # signed distances per point: (num_worlds, 3) for plane n·x + d = 0
+        print(f"a b c: {plane_normals}, d: {plane_d_coefficients}")
+        print(f"pendulum_points {pendulum_points}")
         signed_dists = (
             (pendulum_points * plane_normals.unsqueeze(1)).sum(dim=-1)
             + plane_d_coefficients
         )
+        # plane_normals_ext = plane_normals.unsqueeze(-1).repeat(1, 1, 3)
+        # signed_dists = (pendulum_points* plane_normals_ext).sum(dim=-1)
+        # signed_dists += plane_d_coefficients
+        print(f"signed distances {signed_dists}")
         min_d = signed_dists.min(dim=1).values
         max_d = signed_dists.max(dim=1).values
         crossing = (min_d < 0) & (max_d > 0)
         num_crossing = crossing.sum().item()
         if num_crossing > 0:
             num_total = plane_normals.shape[0]
-            print(f"Plane normals edited (pendulum crossing plane): {num_crossing} / {num_total}")
+            crossing_indices = crossing.nonzero(as_tuple=True)[0].tolist()
+            print(f"Plane normals edited (pendulum crossing plane): {num_crossing} / {num_total} at indices {crossing_indices}")
             plane_normals[crossing] = torch.tensor(
                 [0.0, 0.0, 1.0],
                 dtype=plane_normals.dtype,
@@ -308,18 +315,16 @@ class TrajectorySamplerPendulum(TrajectorySampler):
 
             plane_d_coefficients = self.calculate_d_coefficients_from_normals(plane_normals, normalized_plane_normals)
 
-            # self.sampler.sample_plane_d_coefficient_offsets(
-            #     batch_size=self.num_envs,
-            #     max_d_offset= MAX_D_COEFFICIENT_OFFSET,
-            #     data=plane_d_offsets,
-            # )
+            self.sampler.sample_plane_d_coefficient_offsets(
+                batch_size=self.num_envs,
+                max_d_offset= MAX_D_COEFFICIENT_OFFSET_M,
+                data=plane_d_offsets,
+            )
 
             # Finalize the d coefficients
-            plane_d_coefficients = plane_d_coefficients - plane_d_offsets # minus because we want to push the plane IN the sphere 
-
-
-            print(f"Plane d coefficients shape: {plane_d_coefficients.shape}")
+            plane_d_coefficients = plane_d_coefficients + plane_d_offsets # minus because we want to push the plane IN the sphere 
             # Check if the sampled plane does not cross the pendulum
+            
             self.check_for_pendulum_crossing_plane(
                 pendulum_points_world, normalized_plane_normals, plane_d_coefficients
             )
