@@ -32,8 +32,7 @@ from examples.double_pendulum.pendulum_articulation_definition import PENDULUM_H
 
 
 MAX_ANGLE_WITH_Z_AXIS_RAD = 0.64
-MAX_D_COEFFICIENT_OF_CONTACT_PLANE_M = 0
-MIN_D_COEFFICIENT_OF_CONTACT_PLANE_M = -3
+MAX_D_COEFFICIENT_OFFSET = 1
 
 """
 Trajectory-mode dataset generator for Pendulum env.
@@ -86,6 +85,29 @@ class TrajectorySamplerPendulum(TrajectorySampler):
         link1_xyz = torch.stack([x0, y0, z0], dim=-1)
         link2_xyz = torch.stack([x1, y1, z1], dim=-1)
         return torch.stack([pivot_xyz, link1_xyz, link2_xyz], dim=1)
+
+    def calculate_d_coefficients_from_normals(self, 
+        plane_normals: torch.Tensor, 
+        normalized_plane_normals: torch.Tensor):
+        """
+        Calculate baseline d coefficients for the contact planes such that the plane would
+        touch the sphere circumscribed by the pendulum
+        Arg:
+            plane_normals before normalization (num_envs, 3)
+            normalized_plane_normals (num_envs, 3)
+        Ret:
+            d coefficents of the tangent planes (num_envs, 1)
+        """
+        a = normalized_plane_normals[:, 0]
+        b = normalized_plane_normals[:, 1]
+        c = normalized_plane_normals[:, 2]
+        # Contact point coords:
+        x = plane_normals[:, 0]
+        y = plane_normals[:, 1]
+        # Calculation:
+        z = plane_normals[:, 2] + PENDULUM_HEIGHT
+        d = -a*x -b*y - c*z
+        return d.unsqueeze(1) # make it a 2d tensor (nums_ens, 1)
 
     def check_for_pendulum_crossing_plane(
         self,
@@ -238,7 +260,7 @@ class TrajectorySamplerPendulum(TrajectorySampler):
             dtype = torch.float32,
             device = self.torch_device
         )
-        plane_d_coefficients = torch.empty(
+        plane_d_offsets = torch.zeros(
             self.num_envs,
             1,
             dtype = torch.float32,
@@ -274,26 +296,41 @@ class TrajectorySamplerPendulum(TrajectorySampler):
                 data = joint_acts.view(-1, self.joint_act_dim)
             )
             # ground plane normals (batched per env), at most 0.64 rad from world z
-            self.sampler.sample_plane_normals_near_z(
+            self.sampler.sample_plane_normals(
                 batch_size=self.num_envs,
-                max_angle_rad= MAX_ANGLE_WITH_Z_AXIS_RAD,
                 data=plane_normals,
-            )   # they are already unit normals
+            ) 
 
-            self.sampler.sample_plane_d_coefficients(
-                batch_size=self.num_envs,
-                min_z_coord= MIN_D_COEFFICIENT_OF_CONTACT_PLANE_M,
-                max_z_coord= MAX_D_COEFFICIENT_OF_CONTACT_PLANE_M,
-                data=plane_d_coefficients,
-            )
+            # Normalize the normals
+            normalized_plane_normals = torch.nn.functional.normalize(plane_normals, p = 2.0, dim = -1)
+            print(f"Plane normals shape: {plane_normals.shape}")
+            print(f"Plane normals normalized shape: {normalized_plane_normals.shape}")
 
+            plane_d_coefficients = self.calculate_d_coefficients_from_normals(plane_normals, normalized_plane_normals)
+
+            # self.sampler.sample_plane_d_coefficient_offsets(
+            #     batch_size=self.num_envs,
+            #     max_d_offset= MAX_D_COEFFICIENT_OFFSET,
+            #     data=plane_d_offsets,
+            # )
+
+            # Finalize the d coefficients
+            plane_d_coefficients = plane_d_coefficients - plane_d_offsets # minus because we want to push the plane IN the sphere 
+
+
+            print(f"Plane d coefficients shape: {plane_d_coefficients.shape}")
+            # Check if the sampled plane does not cross the pendulum
             self.check_for_pendulum_crossing_plane(
-                pendulum_points_world, plane_normals, plane_d_coefficients
+                pendulum_points_world, normalized_plane_normals, plane_d_coefficients
             )
 
-            # Build (a,b,c,d) per step for rollout: (T, num_envs, 4)
-            plane_normals_expanded = plane_normals.unsqueeze(0).expand(trajectory_length, -1, -1)
-            plane_d_expanded = plane_d_coefficients.unsqueeze(0).expand(trajectory_length, -1, -1)
+            # Build (a,b,c,d) per round: (T, num_envs, 4)
+            # Negate both normal and d so the stored plane equation stays consistent:
+            # n·x + d = 0  <=>  (-n)·x + (-d) = 0
+            flipped_normals = -normalized_plane_normals
+            flipped_d = -plane_d_coefficients
+            plane_normals_expanded = flipped_normals.unsqueeze(0).expand(trajectory_length, -1, -1)
+            plane_d_expanded = flipped_d.unsqueeze(0).expand(trajectory_length, -1, -1)
             plane_coefficients = torch.cat([plane_normals_expanded, plane_d_expanded], dim=-1)
 
             if passive:
@@ -302,8 +339,8 @@ class TrajectorySamplerPendulum(TrajectorySampler):
             # set initial states and scene (plane n·x + d = 0)
             self.env.reset(
                 initial_states=initial_states,
-                plane_normals=plane_normals,
-                plane_d_coefficients=plane_d_coefficients,
+                plane_normals= flipped_normals,
+                plane_d_coefficients= flipped_d,
             )
 
             for step in range(trajectory_length):
