@@ -62,9 +62,8 @@ class DifferentiableSimulator(BaseSimulator, ABC):
         ]
 
         # 3. Collision Setup
-        self.collision_pipeline = newton.CollisionPipeline.from_model(self.model)
-        # Initialize contact data
-        self.contacts = self.model.collide(self.states[0], self.collision_pipeline)
+        self.collision_pipeline = newton.CollisionPipeline(self.model)
+        self.collision_pipeline.collide(self.states[0], self.contacts)
 
         # 4. Viewer Initialization (Using Factory)
         self.viewer = self.rendering_config.create_viewer(
@@ -86,41 +85,23 @@ class DifferentiableSimulator(BaseSimulator, ABC):
             device=self.model.device,
         )
 
-        # Possible optimized values
-        self.optimized_body_f = wp.zeros(
-            shape=(self.clock.total_sim_steps, self.model.body_count),
-            dtype=wp.spatial_vector,
-            requires_grad=True,
-        )
-
-        self.optimized_joint_target_pos = wp.zeros(
-            shape=(self.clock.total_sim_steps, self.model.joint_dof_count),
-            dtype=wp.float32,
-            requires_grad=True,
-        )
-
-        self.optimized_joint_target_vel = wp.zeros(
-            shape=(self.clock.total_sim_steps, self.model.joint_dof_count),
-            dtype=wp.float32,
-            requires_grad=True,
-        )
-
-        self.trajectory = TrajectoryBuffer(
-            dims=self.solver.dims,
-            num_steps=self.clock.total_sim_steps,
-            device=self.model.device,
-        )
+        if isinstance(self.engine_config, AxionEngineConfig):
+            self.trajectory = TrajectoryBuffer(
+                data=self.solver.data,
+                contacts=self.solver.axion_contacts,
+                dims=self.solver.dims,
+                num_steps=self.clock.total_sim_steps,
+                device=self.model.device,
+            )
 
     # ============== ABSTRACT METHODS ==============
     # These methods together with the world model define the experiment
     @abstractmethod
     def update(self):
-        """Should modify self.states[0] before the run."""
         pass
 
     @abstractmethod
     def compute_loss(self):
-        """Should take self.states[-1] (or full trajectory) and modify self.loss."""
         pass
 
     # ============== DIFFERENTIABLE SIMULATION METHODS ==============
@@ -137,7 +118,7 @@ class DifferentiableSimulator(BaseSimulator, ABC):
 
     def _forward_backward(self):
         if isinstance(self.engine_config, AxionEngineConfig):
-            self._axion_forward_backward_explicit()
+            self._axion_forward_backward()
         elif isinstance(self.engine_config, SemiImplicitEngineConfig):
             self._newton_forward_backward()
         else:
@@ -145,48 +126,13 @@ class DifferentiableSimulator(BaseSimulator, ABC):
                 "Differentiation only supported for Axion and SemiImplicit engines."
             )
 
-    def _axion_forward_backward_explicit(self):
-        self.episode_buffer.reset()
-        self.tape.zero()
-
-        with self.tape:
-            self.episode_buffer.save_state(self.states[0], 0)
-
-        # --- FORWARD PASS ---
-        for i in range(self.clock.total_sim_steps):
-            # Clear forces on the tape
-            with self.tape:
-                self.episode_buffer.apply_external_force(self.states[i], i)
-
-            # Collision is usually non-differentiable or handled separately
-            self.contacts = self.model.collide(self.states[i], self.collision_pipeline)
-
-            # Integrate step on the tape
-            with self.tape:
-                self.solver.step(
-                    state_in=self.states[i],
-                    state_out=self.states[i + 1],
-                    control=self.control,
-                    contacts=self.contacts,
-                    dt=self.clock.dt,
-                )
-                self.episode_buffer.save_state(self.states[i + 1], i + 1)
-
-        with self.tape:
-            self.compute_loss()
-
-        # --- BACKWARD PASS ---
-        self.tape.backward(self.loss)
-
-    def _axion_forward_backward_implicit(self):
-
-        # We make sure that the gradients are zero
+    def _axion_forward_backward(self):
         self.trajectory.zero_grad()
 
         # --- FORWARD PASS ---
         for i in range(self.clock.total_sim_steps):
-            self.contacts = self.model.collide(self.states[i], self.collision_pipeline)
-
+            # BUG: This doesn't work, because Newton tries to do it differentiable
+            self.collision_pipeline.collide(self.states[i], self.contacts)
             self.solver.step(
                 state_in=self.states[i],
                 state_out=self.states[i + 1],
@@ -194,10 +140,9 @@ class DifferentiableSimulator(BaseSimulator, ABC):
                 contacts=self.contacts,
                 dt=self.clock.dt,
             )
-            self.trajectory.save_step(i, self.solver.data)
+            self.trajectory.save_step(i, self.solver.data, self.solver.axion_contacts)
 
         with self.tape:
-            # Record the computation of the loss
             self.compute_loss()
 
         # --- BACKWARD PASS ---
@@ -207,7 +152,7 @@ class DifferentiableSimulator(BaseSimulator, ABC):
         # Now compute the implicit gradients
         for i in range(self.clock.total_sim_steps - 1, -1, -1):
             # TODO : Check if the indexing is correct
-            self.trajectory.load_step(i, self.solver.data)
+            self.trajectory.load_step(i, self.solver.data, self.solver.axion_contacts)
             self.solver.step_backward()
             self.trajectory.save_gradients(i, self.solver.data)
 
@@ -230,8 +175,8 @@ class DifferentiableSimulator(BaseSimulator, ABC):
             with self.tape:
                 self.episode_buffer.apply_external_force(self.states[i], i)
 
-            # Collision is usually non-differentiable or handled separately
-            self.contacts = self.model.collide(self.states[i], self.collision_pipeline)
+            # self.collision_pipeline.collide(self.states[i], self.contacts)
+            self.contacts = self.model.collide(self.current_state)
 
             # Integrate step on the tape
             with self.tape:

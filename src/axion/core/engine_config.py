@@ -14,6 +14,7 @@ class EngineConfig:
     def create_engine(
         self,
         model: Any,
+        sim_steps: Optional[int] = None,
         init_state_fn: Optional[Callable] = None,
         logging_config: Optional[Any] = None,
     ) -> Any:
@@ -109,6 +110,7 @@ class AxionEngineConfig(EngineConfig):
     def create_engine(
         self,
         model: Any,
+        sim_steps: Optional[int] = None,
         init_state_fn: Optional[Callable] = None,
         logging_config: Optional[Any] = None,
     ):
@@ -121,6 +123,7 @@ class AxionEngineConfig(EngineConfig):
         # Pass the separate config objects to the constructor
         return AxionEngine(
             model=model,
+            sim_steps=sim_steps,
             init_state_fn=init_state_fn,
             config=self,
             logging_config=logging_config,

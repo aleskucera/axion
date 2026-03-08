@@ -40,7 +40,7 @@ class SimulationHDF5Logger:
             # 2. Get the specific kernel for this array's dimensionality
             # Note: source_array can be 1D, 2D, or 3D.
             # get_or_create_save_kernel handles dim -> dim+1 mapping.
-            kernel = create_save_to_buffer_kernel(source_array)
+            kernel = get_or_create_save_kernel(source_array)
 
             # 3. Store operation
             self._capture_ops.append((source_array, dest_array, kernel))
@@ -115,6 +115,7 @@ class SimulationHDF5Logger:
         # =========================================================================
         self.iter_count = _register_log("iter_count", data.iter_count)
         self.res_norm_sq = _register_log("res_norm_sq", data.res_norm_sq)
+        self._res = _register_log("_res", data._res)
 
         # # =========================================================================
         # # 6. Adjoint (Conditional)
@@ -130,6 +131,8 @@ class SimulationHDF5Logger:
         # =========================================================================
         # 8. Detailed History (From EngineData HistoryGroup)
         # =========================================================================
+
+        self.candidates_best_idx = _register_log("candidates_best_idx", data.candidates_best_idx)
         self.candidates_body_pose = _register_log("candidates_body_pose", data.candidates_body_pose)
         self.candidates_body_vel = _register_log("candidates_body_vel", data.candidates_body_vel)
         self._candidates_constr_force = _register_log(
@@ -196,6 +199,13 @@ class SimulationHDF5Logger:
             f.attrs["num_steps"] = self.max_num_steps
             f.attrs["num_worlds"] = self.dims.num_worlds
             f.attrs["dt"] = self.dt
+
+            grp_dims = f.create_group("dims")
+            grp_dims.attrs["N_u"] = self.dims.N_u
+            grp_dims.attrs["N_j"] = self.dims.N_j
+            grp_dims.attrs["N_ctrl"] = self.dims.N_ctrl
+            grp_dims.attrs["N_n"] = self.dims.N_n
+            grp_dims.attrs["N_f"] = self.dims.N_f
 
             for attr_name, attr_value in vars(self).items():
                 if isinstance(attr_value, wp.array):

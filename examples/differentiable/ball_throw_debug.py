@@ -43,6 +43,7 @@ def bourke_color_map(v_min, v_max, v):
 @wp.kernel
 def loss_kernel(
     trajectory_body_q: wp.array(dtype=wp.transform, ndim=3),
+    trajectory_body_vel: wp.array(dtype=wp.spatial_vector, ndim=3),
     target_pos: wp.vec3,
     loss: wp.array(dtype=wp.float32),
 ):
@@ -51,9 +52,10 @@ def loss_kernel(
         return
 
     # Use the final state from the trajectory
-    pos = wp.transform_get_translation(trajectory_body_q[trajectory_body_q.shape[0] - 1, 0, 0])
-    delta = pos - target_pos
-    loss[0] = wp.dot(delta, delta)
+    # pos = wp.transform_get_translation(trajectory_body_q[trajectory_body_q.shape[0] - 1, 0, 0])
+    vel = trajectory_body_vel[trajectory_body_vel.shape[0] - 1, 0, 0][1]
+    # delta = pos - target_pos
+    loss[0] = vel
 
 
 @wp.kernel
@@ -104,7 +106,7 @@ class BallThrowOptimizerImplicit(DifferentiableSimulator):
         # 2. Optimization Setup
         self.target_pos = wp.vec3(0.0, 5.0, 1.0)
         self.loss = wp.zeros(1, dtype=float, requires_grad=True)
-        self.learning_rate = 1.0
+        self.learning_rate = 0.01
 
         self.frame = 0
 
@@ -115,22 +117,16 @@ class BallThrowOptimizerImplicit(DifferentiableSimulator):
         self.track_body(body_idx=0, name="ball", color=(0.0, 1.0, 0.0))
 
     def build_model(self) -> Model:
-        shape_config = newton.ModelBuilder.ShapeConfig(
-            ke=1e6, kf=1e3, kd=1e3, mu=0.5, collision_group=1
-        )
-        ground_config = newton.ModelBuilder.ShapeConfig(
-            ke=1e6, kf=1e3, kd=1e3, mu=0.5, collision_group=1
-        )
-        self.builder.rigid_gap = 1.0
+        shape_config = newton.ModelBuilder.ShapeConfig(ke=1e6, kf=1e3, kd=1e3, mu=0.5, density=0.0)
 
         # Initialize the ball
-        ball = self.builder.add_body(
+        self.builder.add_body(
             xform=wp.transform(wp.vec3(0.0, 0.0, 1.0), wp.quat_identity()),
             mass=1.0,
         )
-        self.builder.add_shape_sphere(body=ball, radius=0.2, cfg=shape_config)
+        self.builder.add_shape_sphere(body=0, radius=0.2, cfg=shape_config)
 
-        self.builder.add_ground_plane(cfg=ground_config)
+        # self.builder.add_ground_plane(cfg=shape_config)
         return self.builder.finalize_replicated(
             num_worlds=self.simulation_config.num_worlds,
             requires_grad=True,
@@ -142,6 +138,7 @@ class BallThrowOptimizerImplicit(DifferentiableSimulator):
             dim=1,
             inputs=[
                 self.trajectory.body_pose,
+                self.trajectory.body_vel,
                 self.target_pos,
             ],
             outputs=[
@@ -163,57 +160,18 @@ class BallThrowOptimizerImplicit(DifferentiableSimulator):
             ],
         )
 
-    def render(self, train_iter):
-        # Only render every 5 iterations
-        if self.frame > 0 and train_iter % 5 != 0:
-            return
-
-        loss_val = self.loss.numpy()[0]
-        color = bourke_color_map(0.0, 10.0, loss_val)
-        self._tracked_bodies[0]["color"] = tuple(color)
-
-        def draw_extras(viewer, step_idx, state):
-            viewer.log_scalar("/loss", loss_val)
-            viewer.log_shapes(
-                "/target",
-                newton.GeoType.BOX,
-                (0.1, 0.1, 0.1),
-                wp.array([wp.transform(self.target_pos, wp.quat_identity())], dtype=wp.transform),
-                wp.array([wp.vec3(1.0, 0.0, 0.0)], dtype=wp.vec3),
-            )
-
-        print(f"Rendering iteration {train_iter} (Loss: {loss_val:.4f})...")
-
-        self.render_episode(
-            iteration=train_iter,
-            callback=draw_extras,
-            loop=True,
-            loops_count=1,
-            playback_speed=1.0,
-        )
-
-        self.frame += 1
-
-    def train(self, iterations=30):
+    def debug_train(self):
         # Set initial velocity
         wp.copy(self.states[0].body_qd, wp.array([self.init_vel], dtype=wp.spatial_vector))
         self.states[0].body_qd.requires_grad = True
 
-        for i in range(iterations):
-            # diff_step uses _axion_forward_backward_implicit for AxionEngine
-            self.diff_step()
+        self.diff_step()
 
-            curr_loss = self.loss.numpy()[0]
-            vel = self.states[0].body_qd.numpy()[0][3:6]
-            print(
-                f"Iter {i}: Loss={curr_loss:.4f} | Init Linear Vel=({vel[0]:.2f}, {vel[1]:.2f}, {vel[2]:.2f})"
-            )
+        curr_loss = self.loss.numpy()[0]
+        vel = self.states[0].body_qd.numpy()[0][3:6]
 
-            self.render(i)
-            self.update()
-
-            self.tape.zero()
-            self.loss.zero_()
+        print(f"Loss={curr_loss:.4f} | Init Linear Vel=({vel[0]:.2f}, {vel[1]:.2f}, {vel[2]:.2f})")
+        self.solver.save_logs()
 
 
 @hydra.main(version_base=None, config_path=str(CONFIG_PATH), config_name="config_diff")
@@ -231,7 +189,7 @@ def main(cfg: DictConfig):
         engine_config,
         logging_config,
     )
-    sim.train(iterations=40)
+    sim.debug_train()
 
 
 if __name__ == "__main__":

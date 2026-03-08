@@ -12,6 +12,7 @@ from newton import Model
 from newton import State
 from newton.solvers import SolverBase
 
+from .adjoint_logger import AdjointHDF5Logger
 from .adjoint_utils import compute_adjoint_rhs_kernel
 from .adjoint_utils import compute_body_adjoint_init_kernel
 from .adjoint_utils import subtract_constraint_feedback_kernel
@@ -64,10 +65,24 @@ def increment_timestep_kernel(step_count: wp.array(dtype=int)):
     step_count[0] = step_count[0] + 1
 
 
+@wp.kernel
+def decrement_timestep_kernel(step_count: wp.array(dtype=int)):
+    step_count[0] = step_count[0] - 1
+
+
+@wp.kernel
+def init_backward_counter_kernel(
+    forward_timestep: wp.array(dtype=int),
+    backward_timestep: wp.array(dtype=int),
+):
+    backward_timestep[0] = forward_timestep[0] - 1
+
+
 class AxionEngine(SolverBase):
     def __init__(
         self,
         model: Model,
+        sim_steps: int,
         init_state_fn: Callable[[State, State, Contacts, float], None],
         config: Optional[AxionEngineConfig] = AxionEngineConfig(),
         logging_config: Optional[LoggingConfig] = LoggingConfig(),
@@ -97,7 +112,8 @@ class AxionEngine(SolverBase):
             dims=self.dims,
             config=self.config,
             device=self.device,
-            alloc_history_arrays=self.logging_config.enable_hdf5_logging,
+            alloc_history_arrays=self.logging_config.enable_hdf5_logging
+            or self.logging_config.enable_adjoint_logging,
             alloc_grad_arrays=self.config.differentiable_simulation,
         )
 
@@ -119,7 +135,7 @@ class AxionEngine(SolverBase):
         self.logger = None
         if self.logging_config.enable_hdf5_logging:
             self.logger = SimulationHDF5Logger(
-                num_steps=self.logging_config.max_simulation_steps,
+                num_steps=sim_steps,
                 data=self.data,
                 config=self.config,
                 dims=self.dims,
@@ -129,7 +145,7 @@ class AxionEngine(SolverBase):
         self.dataset_logger = None
         if self.logging_config.enable_dataset_logging:
             self.dataset_logger = DatasetHDF5Logger(
-                num_steps=self.logging_config.dataset_simulation_steps,
+                num_steps=sim_steps,
                 model=self.axion_model,
                 data=self.data,
                 contacts=self.axion_contacts,
@@ -138,7 +154,24 @@ class AxionEngine(SolverBase):
                 device=self.device,
             )
 
+        self.adjoint_logger = None
+        if self.logging_config.enable_adjoint_logging:
+            assert (
+                self.config.differentiable_simulation
+            ), "enable_adjoint_logging requires differentiable_simulation=True"
+            self.adjoint_logger = AdjointHDF5Logger(
+                num_steps=sim_steps,
+                data=self.data,
+                dims=self.dims,
+                config=self.config,
+                device=self.device,
+            )
+
         self.timestep = wp.zeros(1, dtype=wp.int32, device=self.device)
+        # Counts backward steps 0,1,2,... — reset before each backward pass
+        self.backward_timestep = wp.zeros(1, dtype=wp.int32, device=self.device)
+
+        self.tape = wp.Tape()
 
     def _save_iter_to_history(self):
         if not self.logging_config.enable_hdf5_logging:
@@ -177,6 +210,14 @@ class AxionEngine(SolverBase):
 
     def reset_timestep_counter(self):
         self.timestep.zero_()
+
+    def reset_backward_counter(self):
+        wp.launch(
+            kernel=init_backward_counter_kernel,
+            dim=(1,),
+            inputs=[self.timestep, self.backward_timestep],
+            device=self.device,
+        )
 
     def step(
         self,
@@ -323,7 +364,6 @@ class AxionEngine(SolverBase):
         )
         self.preconditioner.update()
 
-        self._update_mass_matrix()
         self.data.w.c.full.zero_()
         _ = self.cr_solver.solve(
             A=self.A_op,
@@ -333,7 +373,7 @@ class AxionEngine(SolverBase):
             iters=self.config.max_linear_iters,
             tol=self.config.linear_tol,
             atol=self.config.linear_atol,
-            log=False,
+            log=self.adjoint_logger is not None,
         )
 
         wp.launch(
@@ -360,18 +400,37 @@ class AxionEngine(SolverBase):
 
         # Initialize with explicit part BEFORE backward
         # This ensures tape.backward accumulates (adds) the implicit part to the explicit part
+        # BUG: This is fucking problem
         # wp.copy(dest=self.data.body_pose_prev.grad, src=self.data.body_pose_grad)
         # wp.copy(dest=self.data.body_vel_prev.grad, src=self.data.body_vel_grad)
 
+        # BUG: This is fucking big problem when using cuda graphs
         tape = wp.Tape()
+        tape.zero()
         with tape:
-            compute_residual(self.axion_model, self.data, self.config, self.dims)
+            compute_residual(
+                self.axion_model, self.axion_contacts, self.data, self.config, self.dims
+            )
 
         # This adds the implicit gradient (-w^T * dh/d_theta) to the arrays
         tape.backward(grads={self.data._res: self.data._w})
+
+        if self.adjoint_logger:
+            wp.copy(dest=self.data.pcr_iter_count, src=self.cr_solver.iter_count)
+            wp.copy(dest=self.data.pcr_final_res_norm_sq, src=self.cr_solver.r_sq)
+            wp.copy(dest=self.data.pcr_res_norm_sq_history, src=self.cr_solver.history_r_sq)
+            self.adjoint_logger.capture_step(self.backward_timestep, self.data)
+            wp.launch(
+                kernel=decrement_timestep_kernel,
+                dim=(1,),
+                inputs=[self.backward_timestep],
+                device=self.device,
+            )
 
     def save_logs(self):
         if self.logger:
             self.logger.save_to_hdf5(self.logging_config.hdf5_log_file)
         if self.dataset_logger:
             self.dataset_logger.save_to_hdf5(self.logging_config.dataset_log_file)
+        if self.adjoint_logger:
+            self.adjoint_logger.save_to_hdf5(self.logging_config.adjoint_log_file)

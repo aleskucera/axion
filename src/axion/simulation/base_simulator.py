@@ -57,6 +57,7 @@ class BaseSimulator(ABC):
         # We explicitly pass logging_config; the factory decides whether to use it.
         self.solver = self.engine_config.create_engine(
             model=self.model,
+            sim_steps=self.clock.total_sim_steps,
             init_state_fn=self.init_state_fn,
             logging_config=self.logging_config,
         )

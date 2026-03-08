@@ -1,65 +1,72 @@
 import warp as wp
+from axion.core.contacts import AxionContacts
 from axion.core.engine_data import EngineData
 from axion.core.engine_dims import EngineDimensions
 
 
 class TrajectoryBuffer:
-    def __init__(self, dims: EngineDimensions, num_steps: int, device):
+    def __init__(
+        self,
+        data: EngineData,
+        contacts: AxionContacts,
+        dims: EngineDimensions,
+        num_steps: int,
+        device,
+    ):
+        self.data = data
+        self.contacts = contacts
         self.num_steps = num_steps
         self.dims = dims
         self.device = device
 
-        def _alloc(shape, dtype, requires_grad=False):
-            return wp.zeros(shape, dtype=dtype, device=device, requires_grad=requires_grad)
+        def _alloc_buffer(
+            name: str,
+            source_array: wp.array,
+            requires_grad: bool = False,
+            add_one_slot: bool = False,
+        ):
+            if not isinstance(source_array, wp.array):
+                return None
+
+            if add_one_slot:
+                dest_shape = (num_steps + 1,) + source_array.shape
+            else:
+                dest_shape = (num_steps,) + source_array.shape
+
+            dest_array = wp.zeros(
+                dest_shape,
+                dtype=source_array.dtype,
+                device=device,
+                requires_grad=requires_grad,
+            )
+            return dest_array
 
         # =========================================================================
-        # 1. Body & Joint State (Requires N+1 slots for Time 0..N)
+        # 1. Body State
         # =========================================================================
-        # State exists at boundaries (Start -> End)
-        per_body_shape_larger = (num_steps + 1, dims.num_worlds, dims.body_count)
-        per_body_shape = (num_steps, dims.num_worlds, dims.body_count)
-
-        self.body_pose = _alloc(per_body_shape_larger, wp.transform, True)
-        self.body_vel = _alloc(per_body_shape_larger, wp.spatial_vector, True)
-        # Forces apply DURING the step -> Size N
-        self.ext_force = _alloc(per_body_shape, wp.spatial_vector, True)
-
-        per_joint_dof_shape = (num_steps, dims.num_worlds, dims.joint_dof_count)
-
-        self.joint_target_pos = _alloc(per_joint_dof_shape, wp.float32, True)
-        self.joint_target_vel = _alloc(per_joint_dof_shape, wp.float32, True)
+        self.ext_force = _alloc_buffer("ext_force", data.ext_force, True)
+        self.body_pose = _alloc_buffer("body_pose", data.body_pose, True, add_one_slot=True)
+        self.body_vel = _alloc_buffer("body_vel", data.body_vel, True, add_one_slot=True)
+        self.joint_target_pos = _alloc_buffer("joint_target_pos", data.joint_target_pos, True)
+        self.joint_target_vel = _alloc_buffer("joint_target_vel", data.joint_target_vel, True)
 
         # =========================================================================
-        # 2. Constraint Multipliers (Interval Data -> Size N)
+        # 2. Constraints
         # =========================================================================
-        per_constraint_shape = (num_steps, dims.num_worlds, dims.N_c)
-        per_constraint_idx_shape = (num_steps, dims.num_worlds, dims.N_c, 2)
-
-        self.constr_force = _alloc(per_constraint_shape, wp.float32)
-        self.constr_force_prev_iter = _alloc(per_constraint_shape, wp.float32)
-        self.constr_active_mask = _alloc(per_constraint_shape, wp.float32)
-        self.constr_body_idx = _alloc(per_constraint_idx_shape, wp.int32)
+        self._constr_force = _alloc_buffer("_constr_force", data._constr_force)
+        self._constr_force_prev_iter = _alloc_buffer("_constr_force_prev_iter", data._constr_force)
 
         # =========================================================================
-        # 3. Contact Manifold (Interval Data -> Size N)
+        # 3. Contact Data
         # =========================================================================
-        per_contact_shape = (num_steps, dims.num_worlds, dims.contact_count)
-
-        self.contact_body_a = _alloc(per_contact_shape, wp.int32)
-        self.contact_body_b = _alloc(per_contact_shape, wp.int32)
-        self.contact_point_a = _alloc(per_contact_shape, wp.vec3)
-        self.contact_point_b = _alloc(per_contact_shape, wp.vec3)
-        self.contact_normal = _alloc(per_contact_shape, wp.spatial_vector)
-        self.contact_dist = _alloc(per_contact_shape, wp.float32)
-        self.contact_friction = _alloc(per_contact_shape, wp.float32)
-        self.contact_restitution = _alloc(per_contact_shape, wp.float32)
-        self.contact_thickness_a = _alloc(per_contact_shape, wp.float32)
-        self.contact_thickness_b = _alloc(per_contact_shape, wp.float32)
-        self.contact_basis_t1_a = _alloc(per_contact_shape, wp.spatial_vector)
-        self.contact_basis_t2_a = _alloc(per_contact_shape, wp.spatial_vector)
-        self.contact_basis_n_b = _alloc(per_contact_shape, wp.spatial_vector)
-        self.contact_basis_t1_b = _alloc(per_contact_shape, wp.spatial_vector)
-        self.contact_basis_t2_b = _alloc(per_contact_shape, wp.spatial_vector)
+        self.contact_count = _alloc_buffer("contact_count", contacts.contact_count)
+        self.contact_point0 = _alloc_buffer("contact_point0", contacts.contact_point0)
+        self.contact_point1 = _alloc_buffer("contact_point1", contacts.contact_point1)
+        self.contact_normal = _alloc_buffer("contact_normal", contacts.contact_normal)
+        self.contact_shape0 = _alloc_buffer("contact_shape0", contacts.contact_shape0)
+        self.contact_shape1 = _alloc_buffer("contact_shape1", contacts.contact_shape1)
+        self.contact_thickness0 = _alloc_buffer("contact_thickness0", contacts.contact_thickness0)
+        self.contact_thickness1 = _alloc_buffer("contact_thickness1", contacts.contact_thickness1)
 
     def zero_grad(self):
         if self.body_pose.requires_grad:
@@ -73,7 +80,7 @@ class TrajectoryBuffer:
         if self.joint_target_vel.requires_grad:
             self.joint_target_vel.grad.zero_()
 
-    def save_step(self, step_idx: int, data: EngineData):
+    def save_step(self, step_idx: int, data: EngineData, contacts: AxionContacts):
         """
         Saves the current state from EngineData into the buffer.
         State Result -> Index [step_idx + 1]
@@ -90,37 +97,26 @@ class TrajectoryBuffer:
         wp.copy(self.body_pose[step_idx + 1], data.body_pose)
         wp.copy(self.body_vel[step_idx + 1], data.body_vel)
 
-        # 3. Interval Data (Forces applied during step t go to t)
-        wp.copy(self.ext_force[step_idx], data.ext_force)
-
         # --- Inputs ---
+        wp.copy(self.ext_force[step_idx], data.ext_force)
         wp.copy(self.joint_target_pos[step_idx], data.joint_target_pos)
         wp.copy(self.joint_target_vel[step_idx], data.joint_target_vel)
 
         # --- Lambdas ---
-        wp.copy(self.constr_force[step_idx], data._constr_force)
-        wp.copy(self.constr_force_prev_iter[step_idx], data._constr_force_prev_iter)
-        wp.copy(self.constr_active_mask[step_idx], data._constr_active_mask)
-        wp.copy(self.constr_body_idx[step_idx], data._constr_body_idx)
+        wp.copy(self._constr_force[step_idx], data._constr_force)
+        wp.copy(self._constr_force_prev_iter[step_idx], data._constr_force_prev_iter)
 
-        # --- Contact Manifold ---
-        wp.copy(self.contact_body_a[step_idx], data.contact_body_a)
-        wp.copy(self.contact_body_b[step_idx], data.contact_body_b)
-        wp.copy(self.contact_point_a[step_idx], data.contact_point_a)
-        wp.copy(self.contact_point_b[step_idx], data.contact_point_b)
-        wp.copy(self.contact_normal[step_idx], data.contact_basis_n_a)  # Renamed field
-        wp.copy(self.contact_dist[step_idx], data.contact_dist)
-        wp.copy(self.contact_friction[step_idx], data.contact_friction_coeff)
-        wp.copy(self.contact_restitution[step_idx], data.contact_restitution_coeff)
-        wp.copy(self.contact_thickness_a[step_idx], data.contact_thickness_a)
-        wp.copy(self.contact_thickness_b[step_idx], data.contact_thickness_b)
-        wp.copy(self.contact_basis_t1_a[step_idx], data.contact_basis_t1_a)
-        wp.copy(self.contact_basis_t2_a[step_idx], data.contact_basis_t2_a)
-        wp.copy(self.contact_basis_n_b[step_idx], data.contact_basis_n_b)
-        wp.copy(self.contact_basis_t1_b[step_idx], data.contact_basis_t1_b)
-        wp.copy(self.contact_basis_t2_b[step_idx], data.contact_basis_t2_b)
+        # --- Contacts ---
+        wp.copy(self.contact_count[step_idx], contacts.contact_count)
+        wp.copy(self.contact_point0[step_idx], contacts.contact_point0)
+        wp.copy(self.contact_point1[step_idx], contacts.contact_point1)
+        wp.copy(self.contact_normal[step_idx], contacts.contact_normal)
+        wp.copy(self.contact_shape0[step_idx], contacts.contact_shape0)
+        wp.copy(self.contact_shape1[step_idx], contacts.contact_shape1)
+        wp.copy(self.contact_thickness0[step_idx], contacts.contact_thickness0)
+        wp.copy(self.contact_thickness1[step_idx], contacts.contact_thickness1)
 
-    def load_step(self, step_idx: int, data: EngineData):
+    def load_step(self, step_idx: int, data: EngineData, contacts: AxionContacts):
         """
         Restores the state from the buffer into EngineData.
         Start State <- Index [step_idx]
@@ -143,27 +139,18 @@ class TrajectoryBuffer:
         wp.copy(data.joint_target_vel, self.joint_target_vel[step_idx])
 
         # --- Lambdas ---
-        wp.copy(data._constr_force, self.constr_force[step_idx])
-        wp.copy(data._constr_force_prev_iter, self.constr_force_prev_iter[step_idx])
-        wp.copy(data._constr_active_mask, self.constr_active_mask[step_idx])
-        wp.copy(data._constr_body_idx, self.constr_body_idx[step_idx])
+        wp.copy(data._constr_force, self._constr_force[step_idx])
+        wp.copy(data._constr_force_prev_iter, self._constr_force_prev_iter[step_idx])
 
-        # --- Contact Manifold ---
-        wp.copy(data.contact_body_a, self.contact_body_a[step_idx])
-        wp.copy(data.contact_body_b, self.contact_body_b[step_idx])
-        wp.copy(data.contact_point_a, self.contact_point_a[step_idx])
-        wp.copy(data.contact_point_b, self.contact_point_b[step_idx])
-        wp.copy(data.contact_basis_n_a, self.contact_normal[step_idx])
-        wp.copy(data.contact_dist, self.contact_dist[step_idx])
-        wp.copy(data.contact_friction_coeff, self.contact_friction[step_idx])
-        wp.copy(data.contact_restitution_coeff, self.contact_restitution[step_idx])
-        wp.copy(data.contact_thickness_a, self.contact_thickness_a[step_idx])
-        wp.copy(data.contact_thickness_b, self.contact_thickness_b[step_idx])
-        wp.copy(data.contact_basis_t1_a, self.contact_basis_t1_a[step_idx])
-        wp.copy(data.contact_basis_t2_a, self.contact_basis_t2_a[step_idx])
-        wp.copy(data.contact_basis_n_b, self.contact_basis_n_b[step_idx])
-        wp.copy(data.contact_basis_t1_b, self.contact_basis_t1_b[step_idx])
-        wp.copy(data.contact_basis_t2_b, self.contact_basis_t2_b[step_idx])
+        # --- Contacts ---
+        wp.copy(contacts.contact_count, self.contact_count[step_idx])
+        wp.copy(contacts.contact_point0, self.contact_point0[step_idx])
+        wp.copy(contacts.contact_point1, self.contact_point1[step_idx])
+        wp.copy(contacts.contact_normal, self.contact_normal[step_idx])
+        wp.copy(contacts.contact_shape0, self.contact_shape0[step_idx])
+        wp.copy(contacts.contact_shape1, self.contact_shape1[step_idx])
+        wp.copy(contacts.contact_thickness0, self.contact_thickness0[step_idx])
+        wp.copy(contacts.contact_thickness1, self.contact_thickness1[step_idx])
 
     def save_gradients(self, step_idx: int, data: EngineData):
         """
