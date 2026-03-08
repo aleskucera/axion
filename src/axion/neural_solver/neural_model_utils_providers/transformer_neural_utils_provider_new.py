@@ -433,8 +433,8 @@ class TransformerNeuralModelUtilsProvider:
         state_min_coords: (..., state_dim) with state_dim >= 4, layout [q0, q1, q0_dot, q1_dot].
         Returns: (...,) same shape as input without the last dimension (one energy per sample).
         """
-        q0 = state_min_coords[..., 0] - torch.pi / 2
-        q1 = q0 + state_min_coords[..., 1]
+        q0 = torch.pi / 2 - state_min_coords[..., 0] 
+        q1 = q0 - state_min_coords[..., 1]
         q0_dot = state_min_coords[..., 2]
         q1_dot = q0_dot + state_min_coords[..., 3]
         l = 1  # TODO: get from model
