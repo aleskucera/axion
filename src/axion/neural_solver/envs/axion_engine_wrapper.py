@@ -215,9 +215,6 @@ class AxionEngineWrapper:
         """
         assert plane_normals.shape == (self.num_worlds, 3)
 
-        plane_normals = torch.nn.functional.normalize(
-            plane_normals.to(self._torch_device), p=2.0, dim=-1
-        )
         transforms = wp.to_torch(self.model.shape_transform).to(
             self._torch_device
         )
