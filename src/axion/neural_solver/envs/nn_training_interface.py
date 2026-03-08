@@ -322,15 +322,22 @@ class NnTrainingInterface:
             self.simulator_wrapper.contacts
         )
 
-    def reset(self, initial_states: torch.Tensor, plane_normals: Optional[torch.tensor] = None):
+    def reset(
+        self,
+        initial_states: torch.Tensor,
+        plane_normals: Optional[torch.Tensor] = None,
+        plane_d_coefficients: Optional[torch.Tensor] = None,
+    ) -> None:
         # Clear history first so the initial state persists as the first entry.
         self.utils_provider.reset()
 
         assert initial_states.shape[0] == self.num_envs
 
-        # Reset the internal scene representation
+        # Reset the internal scene representation (plane n·x + d = 0)
         if plane_normals is not None:
-            self.simulator_wrapper.reset_scene(plane_normals)
+            self.simulator_wrapper.reset_scene(
+                plane_normals, plane_d_coefficients=plane_d_coefficients
+            )
 
         # Reset states
         initial_states = initial_states.to(self.torch_device)

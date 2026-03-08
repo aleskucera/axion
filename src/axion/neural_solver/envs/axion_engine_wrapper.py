@@ -1,5 +1,6 @@
 import os
 import sys
+from typing import Optional
 
 import torch
 import warp as wp
@@ -102,20 +103,20 @@ class AxionEngineWrapper:
         # control info
         self.joint_act_dim = self.dof_q_per_world# 2 for planar double pendulum
         self.control_dim = self.joint_act_dim
-        self.control_limits = torch.full(
-            (self.control_dim, 2), [-1.0, 1.0],
+        self.control_limits = torch.tensor(
+            [[-1.0, 1.0]],
             dtype=torch.float32, device=self._torch_device
-        )
+        ).expand(self.control_dim, 2).clone()
         # Temporary joint_act buffer exposed to the adapter.
         self.joint_act = wp.zeros(
             self.model.joint_dof_count,
             dtype=float,
             device=self.device,
         )
-        # Mirror inside control for adapter compatibility - Newton's Control does not have joint_act
+        #Mirror inside control for adapter compatibility - Newton's Control does not have joint_act
         self.control.joint_act = self.joint_act     # implicitly creates joint_act!! not  ideal
         
-        # contact info
+        #contact info
         self.abstract_contacts = AbstractContact(
             num_contacts_per_env= NUM_CONTACTS_PER_WORLD,
             num_envs = self.num_envs,
@@ -197,14 +198,20 @@ class AxionEngineWrapper:
         self.state.joint_qd.zero_()
         newton.eval_fk(self.model, self.state.joint_q, self.state.joint_qd, self.state)
 
-    def reset_scene(self, plane_normals: torch.Tensor):
+    def reset_scene(
+        self,
+        plane_normals: torch.Tensor,
+        plane_d_coefficients: Optional[torch.Tensor] = None,
+    ) -> None:
         """
-        Update every world's tilted-plane normal.
+        Update every world's tilted-plane normal and optional d (plane n·x + d = 0).
         The gravity-perpendicular ground plane is left unchanged.
-        Only the second ("tilted") plane in each world is rotated so that its
-        collision normal matches the corresponding row of *plane_normals*.
+        Only the second ("tilted") plane in each world is rotated and translated
+        so that its collision normal matches *plane_normals* and it lies on n·x + d = 0.
         Args:
             plane_normals: (num_worlds, 3) tensor of unit normals, one per world.
+            plane_d_coefficients: optional (num_worlds, 1) or (num_worlds,) tensor; plane offset d.
+                If None, only rotation is updated (position unchanged).
         """
         assert plane_normals.shape == (self.num_worlds, 3)
 
@@ -227,6 +234,10 @@ class AxionEngineWrapper:
                 device=transforms.device,
                 dtype=transforms.dtype,
             )
+            if plane_d_coefficients is not None:
+                d = plane_d_coefficients[world_idx].item()
+                # Plane n·x + d = 0: a point on the plane is -d*n
+                transforms[shape_idx, 0:3] = (-d * n).to(transforms.dtype)
 
         self.model.shape_transform.assign(
             wp.from_torch(transforms, dtype=wp.transform)

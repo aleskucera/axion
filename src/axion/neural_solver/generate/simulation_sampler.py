@@ -88,6 +88,15 @@ class Sampler:
         Fills data of shape (batch_size, 3) with unit vectors, in-place."""
         raise NotImplementedError
 
+    def sample_plane_d_coefficients(
+        self,
+        batch_size: int,
+        max_z_coord: float,
+        data: torch.Tensor,
+    ) -> None:
+        """Sample plane d coefficient for n·x + d = 0. Fills data of shape (batch_size, 1) in-place."""
+        raise NotImplementedError
+
 class SobolSampler(Sampler):
     """Systematic sampling using Sobol sequences."""
 
@@ -118,17 +127,27 @@ class SobolSampler(Sampler):
         max_angle_rad: float,
         data: torch.Tensor,
     ) -> None:
-        """Sample unit vectors on the spherical cap using 2D Sobol (n_z, phi)."""
-        assert data.shape[0] == batch_size and data.shape[1] == 3
-        cos_max = math.cos(max_angle_rad)
-        soboleng = torch.quasirandom.SobolEngine(2, scramble=self.scramble, seed=self.seed)
-        u = soboleng.draw(batch_size, dtype=torch.float32, device=data.device)
-        n_z = cos_max + (1.0 - cos_max) * u[:, 0]
-        phi = 2 * math.pi * u[:, 1]
-        r_xy = torch.sqrt((1 - n_z.square()).clamp(min=0))
-        data[:, 0] = r_xy * torch.cos(phi)
-        data[:, 1] = r_xy * torch.sin(phi)
-        data[:, 2] = n_z
+        raise NotImplementedError
+        # """Sample unit vectors on the spherical cap using 2D Sobol (n_z, phi)."""
+
+    def sample_plane_d_coefficients(
+        self,
+        batch_size: int,
+        max_z_coord: float,
+        data: torch.Tensor,
+    ) -> None:
+        raise NotImplementedError
+        # """Sample plane d coefficient for n·x + d = 0."""
+        # assert data.shape[0] == batch_size and data.shape[1] == 3
+        # cos_max = math.cos(max_angle_rad)
+        # soboleng = torch.quasirandom.SobolEngine(2, scramble=self.scramble, seed=self.seed)
+        # u = soboleng.draw(batch_size, dtype=torch.float32, device=data.device)
+        # n_z = cos_max + (1.0 - cos_max) * u[:, 0]
+        # phi = 2 * math.pi * u[:, 1]
+        # r_xy = torch.sqrt((1 - n_z.square()).clamp(min=0))
+        # data[:, 0] = r_xy * torch.cos(phi)
+        # data[:, 1] = r_xy * torch.sin(phi)
+        # data[:, 2] = n_z
 
 
 class UniformSampler(Sampler):
@@ -153,17 +172,30 @@ class UniformSampler(Sampler):
         max_angle_rad: float,
         data: torch.Tensor,
     ) -> None:
-        """Sample unit vectors uniformly on the spherical cap: angle to (0,0,1) <= max_angle_rad."""
+        """Sample unit vectors uniformly on the spherical cap: angle to (0,0,1) >= max_angle_rad,
+        with normal in the upper z+ half-space (n_z >= 0, pointing against gravity)."""
         assert data.shape[0] == batch_size and data.shape[1] == 3
         cos_max = math.cos(max_angle_rad)
-        # n_z uniform in [cos_max, 1] for uniform measure on the cap
-        data[:, 2].uniform_(cos_max, 1.0)
+        # n_z uniform in [0, cos_max]: angle >= max_angle_rad and upper half-space
+        data[:, 2].uniform_(0.0, cos_max)
         # azimuth uniform in [0, 2*pi]
         phi = data[:, 0].clone()
         phi.uniform_(0, 2 * math.pi)
         r_xy = torch.sqrt((1 - data[:, 2].square()).clamp(min=0))
         data[:, 0] = r_xy * torch.cos(phi)
         data[:, 1] = r_xy * torch.sin(phi)
+
+    def sample_plane_d_coefficients(
+        self,
+        batch_size: int,
+        min_z_coord: float,
+        max_z_coord: float,
+        data: torch.Tensor,
+    ) -> None:
+        assert data.shape[0] == batch_size and data.shape[1] == 1
+        data.uniform_()
+        data[...] = data * (max_z_coord - min_z_coord) + min_z_coord
+
 
 class WarpSimDataGenerator:
     """Generic data generator for WarpSim environments."""
