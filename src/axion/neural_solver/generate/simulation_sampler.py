@@ -23,6 +23,7 @@ import numpy as np
 import torch
 
 from axion.neural_solver.envs.nn_training_interface import NnTrainingInterface
+from examples.double_pendulum.pendulum_articulation_definition import LINK_LENGTH
 
 '''
 Compute the contact point 1 from contact point 0, contact normal and contact depth.
@@ -121,7 +122,7 @@ class SobolSampler(Sampler):
         soboleng.draw(batch_size, dtype=torch.float32, out=data)
         data[...] = data * (high - low) + low
 
-    def sample_plane_normals_near_z(
+    def sample_plane_normals(
         self,
         batch_size: int,
         max_angle_rad: float,
@@ -166,35 +167,35 @@ class UniformSampler(Sampler):
         data.uniform_()
         data[...] = data * (high - low) + low
 
-    def sample_plane_normals_near_z(
+    def sample_plane_normals(
         self,
         batch_size: int,
-        max_angle_rad: float,
         data: torch.Tensor,
     ) -> None:
-        """Sample unit vectors uniformly on the spherical cap: angle to (0,0,1) >= max_angle_rad,
-        with normal in the upper z+ half-space (n_z >= 0, pointing against gravity)."""
+        """
+        Sample plane normals as (x,y,z) vector with limits on their coords.
+        """
         assert data.shape[0] == batch_size and data.shape[1] == 3
-        cos_max = math.cos(max_angle_rad)
-        # n_z uniform in [0, cos_max]: angle >= max_angle_rad and upper half-space
-        data[:, 2].uniform_(0.0, cos_max)
-        # azimuth uniform in [0, 2*pi]
-        phi = data[:, 0].clone()
-        phi.uniform_(0, 2 * math.pi)
-        r_xy = torch.sqrt((1 - data[:, 2].square()).clamp(min=0))
-        data[:, 0] = r_xy * torch.cos(phi)
-        data[:, 1] = r_xy * torch.sin(phi)
+        data.uniform_()
+        min_a, max_a = -3 ,3
+        min_b, max_b = 0, 0
+        min_c, max_c = -3, 0
+        data[:, 0] = data[:, 0] * (max_a - min_a) + min_a
+        data[:, 1] = data[:, 1] * (max_b - min_b) + min_b
+        #data[:, 2] = data[:, 2] * (max_c - min_c) + min_c
+        data[:,2] = -torch.sqrt((2*LINK_LENGTH)**2*torch.ones_like(data[:,0]) - data[:,0]*data[:,0])
+        #data = -1*data  # normals should point up (against gravity)
 
-    def sample_plane_d_coefficients(
+    def sample_plane_d_coefficient_offsets(
         self,
         batch_size: int,
-        min_z_coord: float,
-        max_z_coord: float,
+        max_d_offset: float,
         data: torch.Tensor,
     ) -> None:
         assert data.shape[0] == batch_size and data.shape[1] == 1
         data.uniform_()
-        data[...] = data * (max_z_coord - min_z_coord) + min_z_coord
+        min_d_offset = 0 
+        data[...] = data * (max_d_offset - min_d_offset) + min_d_offset
 
 
 class WarpSimDataGenerator:
