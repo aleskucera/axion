@@ -1,6 +1,12 @@
-## Create a Dataset (example)
+## Create a Dataset 
+
+### States only
 ```
 python src/axion/neural_solver/generate/simple_generate_dataset_pendulum.py --env-name Pendulum --num-transitions 10000 --dataset-name pendulumDatasetName.hdf5 --trajectory-length 100 --num-envs 2 --seed 0 --passive
+```
+### States + contacts
+```
+python src/axion/neural_solver/generate/generate_dataset_pendulum.py --env-name Pendulum --num-transitions 10000 --dataset-name pendulumDatasetName.hdf5 --trajectory-length 100 --num-envs 2 --seed 0 --passive
 ```
 
 ## Training

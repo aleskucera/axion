@@ -32,6 +32,8 @@ from examples.double_pendulum.pendulum_articulation_definition import PENDULUM_H
 
 
 MAX_ANGLE_WITH_Z_AXIS_RAD = 0.64
+MAX_D_COEFFICIENT_OF_CONTACT_PLANE_M = 0
+MIN_D_COEFFICIENT_OF_CONTACT_PLANE_M = -3
 
 """
 Trajectory-mode dataset generator for Pendulum env.
@@ -85,25 +87,36 @@ class TrajectorySamplerPendulum(TrajectorySampler):
         link2_xyz = torch.stack([x1, y1, z1], dim=-1)
         return torch.stack([pivot_xyz, link1_xyz, link2_xyz], dim=1)
 
-    def check_for_pendulum_crossing_plane(self, pendulum_points, plane_normals):
+    def check_for_pendulum_crossing_plane(
+        self,
+        pendulum_points: torch.Tensor,
+        plane_normals: torch.Tensor,
+        plane_d_coefficients: torch.Tensor,
+    ) -> None:
         """
-        For each world, ensure all pendulum points lie on one side of the plane (n·x = 0).
-        Where the pendulum would cross the plane, set plane_normals to (0, 0, 1) in-place.
+        For each world, ensure all pendulum points lie on one side of the plane (n·x + d = 0).
+        Where the pendulum would cross the plane, set plane_normals to (0, 0, 1) and d to 0 in-place.
         """
-        # signed distances per point: (num_worlds, 3)
-        signed_dists = (pendulum_points * plane_normals.unsqueeze(1)).sum(dim=-1)
+        # signed distances per point: (num_worlds, 3) for plane n·x + d = 0
+        signed_dists = (
+            (pendulum_points * plane_normals.unsqueeze(1)).sum(dim=-1)
+            + plane_d_coefficients
+        )
         min_d = signed_dists.min(dim=1).values
         max_d = signed_dists.max(dim=1).values
         crossing = (min_d < 0) & (max_d > 0)
-        if crossing.any():
-            num_edited = crossing.sum().item()
+        num_crossing = crossing.sum().item()
+        if num_crossing > 0:
             num_total = plane_normals.shape[0]
-            print(f"Plane normals edited (pendulum crossing plane): {num_edited} / {num_total}")
+            print(f"Plane normals edited (pendulum crossing plane): {num_crossing} / {num_total}")
             plane_normals[crossing] = torch.tensor(
                 [0.0, 0.0, 1.0],
                 dtype=plane_normals.dtype,
                 device=plane_normals.device,
             )
+            plane_d_coefficients[crossing] = 0.0
+        else:
+            print("no plane normals were edited")
 
     def sample_trajectories(
         self, 
@@ -130,7 +143,8 @@ class TrajectorySamplerPendulum(TrajectorySampler):
                 'contact_thicknesses': []
             },
             'joint_acts': [],
-            'next_states': []
+            'next_states': [],
+            'plane_coefficients': []
         }
         
         progress = trange(
@@ -224,6 +238,12 @@ class TrajectorySamplerPendulum(TrajectorySampler):
             dtype = torch.float32,
             device = self.torch_device
         )
+        plane_d_coefficients = torch.empty(
+            self.num_envs,
+            1,
+            dtype = torch.float32,
+            device = self.torch_device
+        )
 
         self.env.set_env_mode('ground-truth')
         
@@ -260,13 +280,31 @@ class TrajectorySamplerPendulum(TrajectorySampler):
                 data=plane_normals,
             )   # they are already unit normals
 
-            self.check_for_pendulum_crossing_plane(pendulum_points_world, plane_normals)
+            self.sampler.sample_plane_d_coefficients(
+                batch_size=self.num_envs,
+                min_z_coord= MIN_D_COEFFICIENT_OF_CONTACT_PLANE_M,
+                max_z_coord= MAX_D_COEFFICIENT_OF_CONTACT_PLANE_M,
+                data=plane_d_coefficients,
+            )
+
+            self.check_for_pendulum_crossing_plane(
+                pendulum_points_world, plane_normals, plane_d_coefficients
+            )
+
+            # Build (a,b,c,d) per step for rollout: (T, num_envs, 4)
+            plane_normals_expanded = plane_normals.unsqueeze(0).expand(trajectory_length, -1, -1)
+            plane_d_expanded = plane_d_coefficients.unsqueeze(0).expand(trajectory_length, -1, -1)
+            plane_coefficients = torch.cat([plane_normals_expanded, plane_d_expanded], dim=-1)
 
             if passive:
                 joint_acts *= 0.
 
-            # set initial states
-            self.env.reset(initial_states = initial_states, plane_normals= plane_normals)
+            # set initial states and scene (plane n·x + d = 0)
+            self.env.reset(
+                initial_states=initial_states,
+                plane_normals=plane_normals,
+                plane_d_coefficients=plane_d_coefficients,
+            )
 
             for step in range(trajectory_length):
                 
@@ -285,7 +323,6 @@ class TrajectorySamplerPendulum(TrajectorySampler):
                 contact_points_1[step, :, :].copy_(converted_contacts["contact_points_1"])
                 contact_thicknesses[step, :, :].copy_(converted_contacts["contact_thicknesses"])
 
-            # print(contact_depths.min())
             # save to trajectories
             rollout_batches['gravity_dir'].append(gravity_dir.clone())
             rollout_batches['root_body_q'].append(root_body_q.clone())
@@ -297,6 +334,10 @@ class TrajectorySamplerPendulum(TrajectorySampler):
             rollout_batches['contacts']['contact_thicknesses'].append(contact_thicknesses.clone())
             rollout_batches['joint_acts'].append(joint_acts.clone())
             rollout_batches['next_states'].append(next_states.clone())
+            #plane_normals_expanded = plane_normals.unsqueeze(0).expand(trajectory_length, -1, -1)
+            #d = torch.zeros(plane_normals_expanded.shape[0], plane_normals_expanded.shape[1], 1, dtype = torch.float32, device = self.torch_device)
+            #plane_coefficients = torch.cat([plane_normals_expanded, d], dim=-1)
+            rollout_batches['plane_coefficients'].append(plane_coefficients.clone())
 
         print(f'\n\nTotal number of transitions generated: {rounds * self.num_envs * trajectory_length}')
 

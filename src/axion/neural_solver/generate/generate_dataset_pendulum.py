@@ -103,6 +103,10 @@ def collect_dataset(
         data = rollouts['gravity_dir'].detach().cpu().numpy()
     )
     data_grp.create_dataset(
+        name = 'plane_coefficients',
+        data = rollouts['plane_coefficients'].detach().cpu().numpy()
+    )
+    data_grp.create_dataset(
         name = 'root_body_q',
         data = rollouts['root_body_q'].detach().cpu().numpy()
     )
