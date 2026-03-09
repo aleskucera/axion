@@ -358,6 +358,8 @@ class TrajectorySamplerPendulum(TrajectorySampler):
                         env_mode = 'ground-truth'
                     )
                 )
+                converted_gravity = self.env.get_gravity_dir()
+                gravity_dir[step,:,:].copy_(converted_gravity)
                 converted_contacts = self.env.convert_newton_contacts_to_contacts_for_nn_model()
                 contact_normals[step, :, :].copy_(converted_contacts["contact_normals"])
                 contact_depths[step, :, :].copy_(converted_contacts["contact_depths"])

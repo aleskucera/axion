@@ -315,6 +315,20 @@ def convert_gravity_w2b(root_body_q, gravity_dir, translation_only):
     return gravity_dir_body
 
 
+def convert_gravity_w2b_batched(root_body_q, gravity_dir):
+    """
+    Convert gravity direction from world to body frame for batched (num_worlds, dim) inputs.
+    Always applies full rotation (no translation_only option).
+    Args:
+        root_body_q: (num_worlds, 7) - root body pose per world
+        gravity_dir: (num_worlds, 3) - gravity direction in world frame (modified in-place or use return value)
+    Returns:
+        gravity_dir_body: (num_worlds, 3) - gravity direction in body frame
+    """
+    body_frame_quat = root_body_q[:, 3:7]
+    return torch_utils.quat_rotate_inverse(body_frame_quat, gravity_dir)
+
+
 def convert_coordinate_frame(
     root_body_q,  # (B, T, 7)
     states,  # (B, T, dof_states)

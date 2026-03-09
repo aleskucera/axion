@@ -19,9 +19,9 @@ from axion.types import reorder_ground_contacts_kernel, contact_penetration_dept
 from axion.core.contacts import AxionContacts
 from axion.neural_solver.standalone.neural_predictor_helpers import (
     get_contact_masks,
-    convert_contacts_w2b,
     convert_contacts_w2b_batched,
     apply_contact_mask,
+    convert_gravity_w2b_batched,
 )
 
 PENDULUM_MAX_NUM_CONTACTS_PER_ROBOT_MODEL = 4
@@ -222,7 +222,7 @@ class TransformerNeuralModelUtilsProvider:
         # Batch Newton's flat 1D contacts into per-world 2D arrays
         self.axion_contacts.load_contact_data(newton_contacts)
 
-        print(self.axion_contacts.verbose_str())
+        #print(self.axion_contacts.verbose_str())
 
         # Reorder batched contacts such that points_0 are on body and points_1 are ground
         shape = (self.num_worlds, PENDULUM_MAX_NUM_CONTACTS_PER_ROBOT_MODEL)
@@ -363,6 +363,16 @@ class TransformerNeuralModelUtilsProvider:
         apply_contact_mask(contacts, contact_masks)
 
         return contacts # processed contacts: converted to body reference frame and masked
+
+    def convert_gravity_vec_w2b(self, state_in: newton.State):
+        """
+        Convert gravity vector via the root_body_q + additional translation transform
+        """
+        body_q_2d = state_in.body_q.reshape((self.num_worlds, self.bodies_per_world))
+        body_q_torch = wp.to_torch(body_q_2d)   # (num_worlds, bodies_per_world, 7)
+        root_body_q = body_q_torch[:, 0, :]      # (num_worlds, 7)
+        return convert_gravity_w2b_batched(root_body_q, self.gravity_dir)
+
 
     def process_neural_model_inputs(self, model_inputs: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
         """
