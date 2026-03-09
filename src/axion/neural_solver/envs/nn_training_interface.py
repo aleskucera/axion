@@ -316,11 +316,16 @@ class NnTrainingInterface:
         Converts self.contacts from Axion to Contact data form suitable for
         NN module training. 
         """
-        #TODO: call a standalone method from self.utils_provider here to do it
         return self.utils_provider.convert_newton_contacts_to_contacts_for_nn_model(
             self.simulator_wrapper.state,
             self.simulator_wrapper.contacts
         )
+
+    def get_gravity_dir(self):
+        """
+        Return the current gravity vector in the body's reference frame
+        """
+        return self.utils_provider.convert_gravity_vec_w2b(self.simulator_wrapper.state)
 
     def reset(
         self,
