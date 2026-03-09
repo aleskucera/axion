@@ -225,7 +225,7 @@ class AxionDifferentiableSimulator(DifferentiableSimulator, ABC):
             self.solver.step(
                 state_in=self.states[i],
                 state_out=self.states[i + 1],
-                control=self.control,
+                control=self.controls[i],
                 contacts=self.contacts,
                 dt=self.clock.dt,
             )
@@ -246,7 +246,7 @@ class AxionDifferentiableSimulator(DifferentiableSimulator, ABC):
 
     def run_target_episode(self):
         for i in range(self.clock.total_sim_steps):
-            self.collision_pipeline.collide(self.states[i], self.contacts)
+            self.collision_pipeline.collide(self.target_states[i], self.contacts)
             self.solver.step(
                 state_in=self.target_states[i],
                 state_out=self.target_states[i + 1],

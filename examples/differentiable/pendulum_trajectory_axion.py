@@ -1,13 +1,13 @@
 """
-Pendulum initial angular velocity optimization using implicit differentiation.
+Pendulum target velocity optimization using implicit differentiation.
 
-Goal: find the initial angular velocity of a single pendulum that reproduces
-a target trajectory. The optimizer starts from a different angular velocity
-and uses the Axion implicit gradient to recover the target.
+Goal: find the constant target joint velocity of a single pendulum that reproduces
+a target trajectory. The optimizer starts from a different target velocity
+and uses the Axion implicit gradient to recover the true target velocity.
 
 Scene: single pendulum, pivot fixed at (0, 0, 5), link swings in the XZ plane
        (revolute joint around world Y axis).
-Optimization parameter: initial angular velocity around Y (scalar).
+Optimization parameter: target angular velocity around Y (scalar, constant over time).
 Loss: L2 trajectory matching across all timesteps.
 """
 import os
@@ -23,6 +23,7 @@ from axion import ExecutionConfig
 from axion import LoggingConfig
 from axion import RenderingConfig
 from axion import SimulationConfig
+from axion.core.types import JointMode  # Need this for control modes
 from newton import Model
 from omegaconf import DictConfig
 
@@ -68,35 +69,25 @@ def loss_kernel(
 
 
 @wp.kernel
-def update_kernel(
-    body_vel_grad: wp.array(dtype=wp.spatial_vector, ndim=2),
+def update_control_kernel(
+    target_vel_grad: wp.array(dtype=wp.float32, ndim=3),
     alpha: float,
-    body_qd: wp.array(dtype=wp.spatial_vector, ndim=1),
+    total_steps: int,
+    target_vel: wp.array(dtype=wp.float32, ndim=3),
 ):
-    """
-    Update only the Y angular velocity component.
-    spatial_vector layout: [linear (top), angular (bottom)]
-    For our Y-axis revolute joint: angular gradient is in spatial_bottom(...)[1].
-    """
-    tid = wp.tid()
-    if tid > 0:
-        return
+    sim_step, world_idx, dof_idx = wp.tid()
 
-    angular_grad = wp.spatial_bottom(body_vel_grad[0, 0])
-    grad_y = angular_grad[1]
-
+    g = target_vel_grad[sim_step, world_idx, dof_idx]
     max_grad = 100.0
-    grad_y = wp.clamp(grad_y, -max_grad, max_grad)
+    grad_clamped = wp.clamp(g, -max_grad, max_grad)
 
-    wp.printf("Angular gradient (Y): %f\n", grad_y)
+    # if world_idx == 0 and dof_idx == 0:
+    #     wp.printf("Target Vel Grad: %f\n", g)
 
-    current = body_qd[0]
-    omega = wp.spatial_bottom(current)
-    omega_new = wp.vec3(omega[0], omega[1] - alpha * grad_y, omega[2])
-    body_qd[0] = wp.spatial_vector(wp.spatial_top(current), omega_new)
+    wp.atomic_add(target_vel, sim_step, world_idx, dof_idx, -alpha * grad_clamped)
 
 
-class PendulumVelocityOptimizer(AxionDifferentiableSimulator):
+class PendulumControlOptimizer(AxionDifferentiableSimulator):
     def __init__(
         self,
         sim_config: SimulationConfig,
@@ -114,14 +105,14 @@ class PendulumVelocityOptimizer(AxionDifferentiableSimulator):
         )
 
         self.loss = wp.zeros(1, dtype=float, requires_grad=True)
-        self.learning_rate = 5e-3
+        # Learning rate might need tuning depending on how long your trajectory is
+        self.learning_rate = 1.0
 
         self.frame = 0
 
-        # Angular velocity around Y axis (rad/s).
-        # spatial_vector layout: [linear, angular] → angular Y is component [4].
-        self.init_omega = 1.0
-        self.target_omega = 0.3
+        # Optimization targets
+        self.init_target_vel = 1.0  # Starting guess
+        self.true_target_vel = 3.0  # The trajectory we want to mimic
 
         self.track_body(body_idx=0, name="link", color=(0.0, 0.5, 1.0))
 
@@ -133,8 +124,6 @@ class PendulumVelocityOptimizer(AxionDifferentiableSimulator):
         link_0 = self.builder.add_link()
         self.builder.add_shape_box(link_0, hx=hx, hy=hy, hz=hz)
 
-        # Pivot at (0, 0, 5). The -pi/2 rotation around Z makes the link
-        # start horizontal, giving it room to swing downward under gravity.
         rot = wp.quat_from_axis_angle(wp.vec3(0.0, 0.0, 1.0), -wp.pi * 0.5)
         j0 = self.builder.add_joint_revolute(
             parent=-1,
@@ -142,14 +131,22 @@ class PendulumVelocityOptimizer(AxionDifferentiableSimulator):
             axis=wp.vec3(0.0, 1.0, 0.0),
             parent_xform=wp.transform(p=wp.vec3(0.0, 0.0, 5.0), q=rot),
             child_xform=wp.transform(p=wp.vec3(-hx, 0.0, 0.0), q=wp.quat_identity()),
+            target_ke=1000.0,
+            target_kd=1000.0,
+            label="pendulum_joint",
+            custom_attributes={
+                "joint_dof_mode": [JointMode.TARGET_VELOCITY],
+            },
         )
 
         self.builder.add_articulation([j0], label="pendulum")
 
-        return self.builder.finalize_replicated(
+        model = self.builder.finalize_replicated(
             num_worlds=self.simulation_config.num_worlds,
             requires_grad=True,
         )
+
+        return model
 
     def compute_loss(self):
         wp.launch(
@@ -165,14 +162,18 @@ class PendulumVelocityOptimizer(AxionDifferentiableSimulator):
 
     def update(self):
         wp.launch(
-            kernel=update_kernel,
-            dim=1,
+            kernel=update_control_kernel,
+            dim=(self.clock.total_sim_steps, self.simulation_config.num_worlds, 1),
             inputs=[
-                self.trajectory.body_vel.grad[0],
+                self.trajectory.joint_target_vel.grad,
                 self.learning_rate,
+                self.clock.total_sim_steps,
+                self.trajectory.joint_target_vel,
             ],
-            outputs=[self.states[0].body_qd],
+            device=self.solver.model.device,
         )
+        for i in range(self.clock.total_sim_steps):
+            wp.copy(self.controls[i].joint_target_vel, self.trajectory.joint_target_vel[i])
 
     def render(self, train_iter):
         if self.frame > 0 and train_iter % 3 != 0:
@@ -197,30 +198,27 @@ class PendulumVelocityOptimizer(AxionDifferentiableSimulator):
 
         self.frame += 1
 
-    def _make_body_qd(self, omega_y: float) -> wp.array:
-        """Build a body_qd array with the given angular velocity around Y."""
-        return wp.array(
-            [wp.spatial_vector(0.0, 0.0, 0.0, 0.0, omega_y, 0.0)],
-            dtype=wp.spatial_vector,
-        )
-
     def train(self, iterations=60):
-        # Run target episode to populate target trajectory
-        wp.copy(self.target_states[0].body_qd, self._make_body_qd(self.target_omega))
+        newton.eval_fk(self.model, self.model.joint_q, self.model.joint_qd, self.states[0])
         newton.eval_fk(self.model, self.model.joint_q, self.model.joint_qd, self.target_states[0])
+
+        self.trajectory.joint_target_vel.fill_(self.true_target_vel)
+
+        for i in range(self.clock.total_sim_steps):
+            self.target_controls[i].joint_target_vel.fill_(self.true_target_vel)
+            self.controls[i].joint_target_vel.fill_(self.init_target_vel)
+
         self.run_target_episode()
 
-        # Set initial guess
-        wp.copy(self.states[0].body_qd, self._make_body_qd(self.init_omega))
-        newton.eval_fk(self.model, self.model.joint_q, self.model.joint_qd, self.states[0])
-
+        # 2. Reset back to the initial guess for optimization
         for i in range(iterations):
             self.diff_step()
 
             curr_loss = self.loss.numpy()[0]
-            omega_y = self.states[0].body_qd.numpy()[0][4]  # spatial_bottom Y
+            # Peek at the target velocity assigned for the first timestep
+            current_vel = self.trajectory.joint_target_vel.numpy()[0][0][0]
             print(
-                f"Iter {i}: Loss={curr_loss:.6f} | omega_y={omega_y:.4f} (target={self.target_omega})"
+                f"Iter {i}: Loss={curr_loss:.6f} | target_vel={current_vel:.4f} (true_target={self.true_target_vel})"
             )
 
             self.render(i)
@@ -238,7 +236,7 @@ def main(cfg: DictConfig):
     engine_config: EngineConfig = hydra.utils.instantiate(cfg.engine)
     logging_config: LoggingConfig = hydra.utils.instantiate(cfg.logging)
 
-    sim = PendulumVelocityOptimizer(
+    sim = PendulumControlOptimizer(
         sim_config,
         render_config,
         exec_config,
