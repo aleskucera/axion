@@ -6,13 +6,12 @@ import newton
 import numpy as np
 import warp as wp
 import warp.optim
-from axion import DifferentiableSimulator
+from axion import NewtonDifferentiableSimulator
 from axion import EngineConfig
 from axion import ExecutionConfig
 from axion import LoggingConfig
 from axion import RenderingConfig
 from axion import SimulationConfig
-from axion.core.engine_config import SemiImplicitEngineConfig
 from newton import Model
 from omegaconf import DictConfig
 
@@ -81,7 +80,7 @@ def update_kernel(
     wp.printf("Gradient: [%f %f %f %f %f %f]\n", g[0], g[1], g[2], g[3], g[4], g[5])
 
 
-class BallBounceOptimizer(DifferentiableSimulator):
+class BallBounceOptimizer(NewtonDifferentiableSimulator):
     def __init__(
         self,
         sim_config: SimulationConfig,
@@ -105,8 +104,6 @@ class BallBounceOptimizer(DifferentiableSimulator):
         self.init_vel = wp.spatial_vector(0.0, 6.0, -4.0, 0.0, 0.0, 0.0)
         self.track_body(body_idx=0, name="ball", color=(0.0, 1.0, 0.0))
 
-        if not isinstance(self.engine_config, SemiImplicitEngineConfig):
-            ValueError("Please run this example with engine=semi_implicit")
 
     def build_model(self) -> Model:
         shape_config = newton.ModelBuilder.ShapeConfig(ke=1e6, kf=1e2, kd=1e3, mu=0.2)

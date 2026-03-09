@@ -6,10 +6,10 @@ import newton
 import numpy as np
 import warp as wp
 import warp.optim
-from axion import DifferentiableSimulator
 from axion import EngineConfig
 from axion import ExecutionConfig
 from axion import LoggingConfig
+from axion import NewtonDifferentiableSimulator
 from axion import RenderingConfig
 from axion import SimulationConfig
 from newton import Model
@@ -80,7 +80,7 @@ def update_kernel(
     wp.printf("Gradient: [%f %f %f %f %f %f]\n", g[0], g[1], g[2], g[3], g[4], g[5])
 
 
-class BallThrowOptimizerImplicit(DifferentiableSimulator):
+class BallThrowOptimizerImplicit(NewtonDifferentiableSimulator):
     def __init__(
         self,
         sim_config: SimulationConfig,
@@ -98,10 +98,10 @@ class BallThrowOptimizerImplicit(DifferentiableSimulator):
         )
         self.target_pos = wp.vec3(0.0, 5.0, 1.0)
         self.loss = wp.zeros(1, dtype=float, requires_grad=True)
-        self.learning_rate = 0.1
+        self.learning_rate = 0.2
         self.frame = 0
 
-        self.init_vel = wp.spatial_vector(0.0, 0.5, 4.0, 0.0, 0.0, 0.0)
+        self.init_vel = wp.spatial_vector(0.0, 0.5, 8.0, 0.0, 0.0, 0.0)
         self.track_body(body_idx=0, name="ball", color=(0.0, 1.0, 0.0))
 
     def build_model(self) -> Model:

@@ -6,7 +6,7 @@ import newton
 import numpy as np
 import warp as wp
 import warp.optim
-from axion import DifferentiableSimulator
+from axion import AxionDifferentiableSimulator
 from axion import EngineConfig
 from axion import ExecutionConfig
 from axion import LoggingConfig
@@ -88,7 +88,7 @@ def update_kernel(
     wp.printf("Gradient: [%f %f %f %f %f %f]\n", g[0], g[1], g[2], g[3], g[4], g[5])
 
 
-class BallThrowOptimizerImplicit(DifferentiableSimulator):
+class BallThrowOptimizerImplicit(AxionDifferentiableSimulator):
     def __init__(
         self,
         sim_config: SimulationConfig,

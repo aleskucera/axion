@@ -20,7 +20,6 @@ class TrajectoryBuffer:
         self.device = device
 
         def _alloc_buffer(
-            name: str,
             source_array: wp.array,
             requires_grad: bool = False,
             add_one_slot: bool = False,
@@ -42,31 +41,37 @@ class TrajectoryBuffer:
             return dest_array
 
         # =========================================================================
-        # 1. Body State
+        # 1. Contact Data
         # =========================================================================
-        self.ext_force = _alloc_buffer("ext_force", data.ext_force, True)
-        self.body_pose = _alloc_buffer("body_pose", data.body_pose, True, add_one_slot=True)
-        self.body_vel = _alloc_buffer("body_vel", data.body_vel, True, add_one_slot=True)
-        self.joint_target_pos = _alloc_buffer("joint_target_pos", data.joint_target_pos, True)
-        self.joint_target_vel = _alloc_buffer("joint_target_vel", data.joint_target_vel, True)
+        self.target_body_pose = _alloc_buffer(data.body_pose, add_one_slot=True)
+        self.target_body_vel = _alloc_buffer(data.body_vel, add_one_slot=True)
 
         # =========================================================================
-        # 2. Constraints
+        # 2. Body State
         # =========================================================================
-        self._constr_force = _alloc_buffer("_constr_force", data._constr_force)
-        self._constr_force_prev_iter = _alloc_buffer("_constr_force_prev_iter", data._constr_force)
+        self.ext_force = _alloc_buffer(data.ext_force, True)
+        self.body_pose = _alloc_buffer(data.body_pose, True, add_one_slot=True)
+        self.body_vel = _alloc_buffer(data.body_vel, True, add_one_slot=True)
+        self.joint_target_pos = _alloc_buffer(data.joint_target_pos, True)
+        self.joint_target_vel = _alloc_buffer(data.joint_target_vel, True)
 
         # =========================================================================
-        # 3. Contact Data
+        # 3. Constraints
         # =========================================================================
-        self.contact_count = _alloc_buffer("contact_count", contacts.contact_count)
-        self.contact_point0 = _alloc_buffer("contact_point0", contacts.contact_point0)
-        self.contact_point1 = _alloc_buffer("contact_point1", contacts.contact_point1)
-        self.contact_normal = _alloc_buffer("contact_normal", contacts.contact_normal)
-        self.contact_shape0 = _alloc_buffer("contact_shape0", contacts.contact_shape0)
-        self.contact_shape1 = _alloc_buffer("contact_shape1", contacts.contact_shape1)
-        self.contact_thickness0 = _alloc_buffer("contact_thickness0", contacts.contact_thickness0)
-        self.contact_thickness1 = _alloc_buffer("contact_thickness1", contacts.contact_thickness1)
+        self._constr_force = _alloc_buffer(data._constr_force)
+        self._constr_force_prev_iter = _alloc_buffer(data._constr_force)
+
+        # =========================================================================
+        # 4. Contact Data
+        # =========================================================================
+        self.contact_count = _alloc_buffer(contacts.contact_count)
+        self.contact_point0 = _alloc_buffer(contacts.contact_point0)
+        self.contact_point1 = _alloc_buffer(contacts.contact_point1)
+        self.contact_normal = _alloc_buffer(contacts.contact_normal)
+        self.contact_shape0 = _alloc_buffer(contacts.contact_shape0)
+        self.contact_shape1 = _alloc_buffer(contacts.contact_shape1)
+        self.contact_thickness0 = _alloc_buffer(contacts.contact_thickness0)
+        self.contact_thickness1 = _alloc_buffer(contacts.contact_thickness1)
 
     def zero_grad(self):
         if self.body_pose.requires_grad:
@@ -80,15 +85,21 @@ class TrajectoryBuffer:
         if self.joint_target_vel.requires_grad:
             self.joint_target_vel.grad.zero_()
 
-    def save_step(self, step_idx: int, data: EngineData, contacts: AxionContacts):
-        """
-        Saves the current state from EngineData into the buffer.
-        State Result -> Index [step_idx + 1]
-        Interval Data -> Index [step_idx]
-        """
+    def save_target_step(self, step_idx: int, data: EngineData):
         assert step_idx >= 0, "Argument 'step_idx' has to be larger or equal to zero."
 
         # 1. Handle Initial Conditions (Only on first step)
+        if step_idx == 0:
+            wp.copy(self.target_body_pose[0], data.body_pose_prev)
+            wp.copy(self.target_body_vel[0], data.body_vel_prev)
+
+        # 2. Body State (Result of step t goes to t+1)
+        wp.copy(self.target_body_pose[step_idx + 1], data.body_pose)
+        wp.copy(self.target_body_vel[step_idx + 1], data.body_vel)
+
+    def save_step(self, step_idx: int, data: EngineData, contacts: AxionContacts):
+        assert step_idx >= 0, "Argument 'step_idx' has to be larger or equal to zero."
+
         if step_idx == 0:
             wp.copy(self.body_pose[0], data.body_pose_prev)
             wp.copy(self.body_vel[0], data.body_vel_prev)

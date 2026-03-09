@@ -6,7 +6,7 @@ import newton
 import numpy as np
 import warp as wp
 import warp.optim
-from axion import DifferentiableSimulator
+from axion import AxionDifferentiableSimulator
 from axion import EngineConfig
 from axion import ExecutionConfig
 from axion import LoggingConfig
@@ -81,7 +81,7 @@ def update_kernel(
     qd[0] = qd[0] - g_clamped * alpha
 
 
-class BallThrowOptimizerImplicit(DifferentiableSimulator):
+class BallThrowOptimizerImplicit(AxionDifferentiableSimulator):
     def __init__(
         self,
         sim_config: SimulationConfig,
@@ -106,7 +106,7 @@ class BallThrowOptimizerImplicit(DifferentiableSimulator):
         self.frame = 0
 
         # Initial velocity guessing (angular, linear)
-        self.init_vel = wp.spatial_vector(0.0, 0.5, 4.0, 0.0, 0.0, 0.0)
+        self.init_vel = wp.spatial_vector(0.0, 0.5, 10.0, 0.0, 0.0, 0.0)
 
         # 3. Setup Automatic Trajectory Tracking
         self.track_body(body_idx=0, name="ball", color=(0.0, 1.0, 0.0))
@@ -186,7 +186,7 @@ class BallThrowOptimizerImplicit(DifferentiableSimulator):
             callback=draw_extras,
             loop=True,
             loops_count=1,
-            playback_speed=3.0,
+            playback_speed=2.0,
         )
 
         self.frame += 1
@@ -227,7 +227,7 @@ def main(cfg: DictConfig):
         engine_config,
         logging_config,
     )
-    sim.train(iterations=40)
+    sim.train(iterations=30)
 
 
 if __name__ == "__main__":

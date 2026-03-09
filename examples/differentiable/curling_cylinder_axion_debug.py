@@ -6,7 +6,7 @@ import newton
 import numpy as np
 import warp as wp
 import warp.optim
-from axion import DifferentiableSimulator
+from axion import AxionDifferentiableSimulator
 from axion import EngineConfig
 from axion import ExecutionConfig
 from axion import LoggingConfig
@@ -60,7 +60,7 @@ def update_kernel(
     initial_qd[0] = wp.spatial_vector(0.0, qd_y_new, 0.0, 0.0, 0.0, 0.0)
 
 
-class CurlingOptimizerImplicitDebug(DifferentiableSimulator):
+class CurlingOptimizerImplicitDebug(AxionDifferentiableSimulator):
     def __init__(
         self,
         sim_config: SimulationConfig,

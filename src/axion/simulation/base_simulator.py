@@ -8,7 +8,6 @@ from typing import Optional
 
 import newton
 import warp as wp
-from axion.core.engine_config import AxionEngineConfig
 from axion.core.engine_config import EngineConfig
 from axion.core.logging_config import LoggingConfig
 from axion.core.model_builder import AxionModelBuilder
@@ -60,6 +59,7 @@ class BaseSimulator(ABC):
             sim_steps=self.clock.total_sim_steps,
             init_state_fn=self.init_state_fn,
             logging_config=self.logging_config,
+            differentiable_simulation=hasattr(self, "differentiable_simulation"),
         )
 
         newton.eval_fk(self.model, self.model.joint_q, self.model.joint_qd, self.current_state)
@@ -69,11 +69,6 @@ class BaseSimulator(ABC):
 
     @property
     def use_cuda_graph(self) -> bool:
-        # if (
-        #     isinstance(self.engine_config, AxionEngineConfig)
-        #     and self.logging_config.enable_hdf5_logging
-        # ):
-        #     return False
         return self.execution_config.use_cuda_graph and wp.get_device().is_cuda
 
     @abstractmethod

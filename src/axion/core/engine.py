@@ -87,6 +87,7 @@ class AxionEngine(SolverBase):
         init_state_fn: Callable[[State, State, Contacts, float], None],
         config: Optional[AxionEngineConfig] = AxionEngineConfig(),
         logging_config: Optional[LoggingConfig] = LoggingConfig(),
+        differentiable_simulation: bool = False,
     ):
         super().__init__(model)
         self.init_state_fn = init_state_fn
@@ -115,7 +116,7 @@ class AxionEngine(SolverBase):
             device=self.device,
             alloc_history_arrays=self.logging_config.enable_hdf5_logging
             or self.logging_config.enable_adjoint_logging,
-            alloc_grad_arrays=self.config.differentiable_simulation,
+            alloc_grad_arrays=differentiable_simulation,
         )
 
         self.A_op = SystemOperator(
@@ -158,7 +159,7 @@ class AxionEngine(SolverBase):
         self.adjoint_logger = None
         if self.logging_config.enable_adjoint_logging:
             assert (
-                self.config.differentiable_simulation
+                differentiable_simulation
             ), "enable_adjoint_logging requires differentiable_simulation=True"
             self.adjoint_logger = AdjointHDF5Logger(
                 num_steps=sim_steps,
@@ -169,8 +170,6 @@ class AxionEngine(SolverBase):
             )
 
         self.timestep = wp.zeros(1, dtype=wp.int32, device=self.device)
-        # Counts backward steps 0,1,2,... — reset before each backward pass
-        self.backward_timestep = wp.zeros(1, dtype=wp.int32, device=self.device)
 
     def _save_iter_to_history(self):
         if not self.logging_config.enable_hdf5_logging:
@@ -395,35 +394,6 @@ class AxionEngine(SolverBase):
 
         self.data.w.sync_to_float()
 
-        # self.data.zero_gradients()
-
-        # Initialize with explicit part BEFORE backward
-        # This ensures tape.backward accumulates (adds) the implicit part to the explicit part
-        # BUG: This is fucking problem, here accumulates somehow gradient
-        # wp.copy(dest=self.data.body_pose_prev.grad, src=self.data.body_pose_grad)
-        # wp.copy(dest=self.data.body_vel_prev.grad, src=self.data.body_vel_grad)
-        # tape = wp.Tape()
-        # with tape:
-        #     compute_residual(
-        #         self.axion_model, self.axion_contacts, self.data, self.config, self.dims
-        #     )
-
-        # This adds the implicit gradient (-w^T * dh/d_theta) to the arrays
-        # if True:
-        #     import numpy as np
-        #
-        #     output_dim = self.data._res.shape[-1]
-        #     for output_index in range(output_dim):
-        #         select_index = np.zeros(output_dim)
-        #         select_index[output_index] = 1.0
-        #         e = wp.array(select_index, dtype=wp.float32)
-        #
-        #         tape.backward(grads={self.data._res: e})
-        #         print(
-        #             f"output_index: {output_index}, grad: {self.data.body_vel_prev.grad.numpy()[0]}"
-        #         )
-        #         tape.zero()
-        # tape.backward(grads={self.data._res: self.data._w})
         compute_residual_gradient(
             self.axion_model, self.axion_contacts, self.data, self.config, self.dims
         )

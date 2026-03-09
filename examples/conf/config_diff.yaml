@@ -1,9 +1,9 @@
 defaults:
   - simulation: base
   - rendering: gl
-  - execution: no_graph
+  - execution: cuda_graph
   - logging: disabled 
-  - engine: semi_implicit
+  - engine: axion
   - _self_
 
 # Use the recommended hybrid approach for project names

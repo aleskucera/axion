@@ -42,50 +42,47 @@ def bourke_color_map(v_min, v_max, v):
 
 @wp.kernel
 def loss_kernel(
-    trajectory_body_q: wp.array(dtype=wp.transform, ndim=3),
-    trajectory_body_qd: wp.array(dtype=wp.spatial_vector, ndim=3),
-    target_pos: wp.vec3,
+    body_pose: wp.array(dtype=wp.transform, ndim=3),
+    target_body_pose: wp.array(dtype=wp.transform, ndim=3),
     loss: wp.array(dtype=wp.float32),
 ):
     tid = wp.tid()
-    if tid > 0:
-        return
 
-    # Position error at the final timestep
-    pos = wp.transform_get_translation(trajectory_body_q[trajectory_body_q.shape[0] - 1, 0, 0])
-    diff = pos - target_pos
-    dist_sq = wp.dot(diff, diff)
+    pos = wp.transform_get_translation(body_pose[tid, 0, 0])
+    target_pos = wp.transform_get_translation(target_body_pose[tid, 0, 0])
 
-    # Velocity penalty: we want the stone to stop at the target
-    qd_y = trajectory_body_qd[trajectory_body_qd.shape[0] - 1, 0, 0][1]
-
-    loss[0] = dist_sq + 0.0001 * wp.pow(qd_y, 2.0)
+    delta = pos - target_pos
+    l2_loss = wp.dot(delta, delta)
+    wp.atomic_add(loss, 0, l2_loss)
 
 
 @wp.kernel
 def update_kernel(
-    initial_qd_grad: wp.array(dtype=wp.spatial_vector, ndim=2),
+    body_pose_grad: wp.array(dtype=wp.transform, ndim=2),
     alpha: float,
-    initial_qd: wp.array(dtype=wp.spatial_vector, ndim=1),
+    body_q: wp.array(dtype=wp.transform, ndim=1),
 ):
     tid = wp.tid()
     if tid > 0:
         return
 
-    # Only update the Y (sliding) velocity component
-    qd_y = initial_qd[0][1]
-    qd_y_grad = initial_qd_grad[0, 0][1]
-
-    wp.printf("Gradient: %f\n", qd_y_grad)
+    grad_pos = wp.transform_get_translation(body_pose_grad[0, 0])
 
     max_grad = 5.0
-    qd_y_grad = wp.clamp(qd_y_grad, -max_grad, max_grad)
+    grad_pos_clamped = wp.vec3(
+        wp.clamp(grad_pos[0], -max_grad, max_grad),
+        wp.clamp(grad_pos[1], -max_grad, max_grad),
+        wp.clamp(grad_pos[2], -max_grad, max_grad),
+    )
 
-    qd_y_new = qd_y - alpha * qd_y_grad
-    initial_qd[0] = wp.spatial_vector(0.0, qd_y_new, 0.0, 0.0, 0.0, 0.0)
+    wp.printf("Gradient (pos): [%f %f %f]\n", grad_pos[0], grad_pos[1], grad_pos[2])
+
+    current = body_q[0]
+    new_pos = wp.transform_get_translation(current) - alpha * grad_pos_clamped
+    body_q[0] = wp.transform(new_pos, wp.transform_get_rotation(current))
 
 
-class CurlingOptimizerImplicit(AxionDifferentiableSimulator):
+class BallThrowPositionOptimizer(AxionDifferentiableSimulator):
     def __init__(
         self,
         sim_config: SimulationConfig,
@@ -102,34 +99,30 @@ class CurlingOptimizerImplicit(AxionDifferentiableSimulator):
             logging_config,
         )
 
-        # Optimization Setup
-        self.target_pos = wp.vec3(0.0, 3.0, 0.0)
         self.loss = wp.zeros(1, dtype=float, requires_grad=True)
-        self.learning_rate = 100.0
+        self.learning_rate = 5e-2
 
         self.frame = 0
 
-        # Initial velocity guess (Y = sliding direction)
-        self.init_vel = wp.spatial_vector(0.0, 2.0, 0.0, 0.0, 0.0, 0.0)
+        # Both runs use the same fixed velocity
+        self.fixed_vel = wp.spatial_vector(0.0, 4.0, 7.0, 0.0, 0.0, 0.0)
 
-        # Track the stone (Body 0)
-        self.track_body(body_idx=0, name="stone", color=(0.0, 0.5, 1.0))
+        # Initial position guess and target position to recover
+        self.init_pos = wp.vec3(0.0, 0.0, 1.0)
+        self.target_init_pos = wp.vec3(2.0, 0.0, 3.0)
+
+        self.track_body(body_idx=0, name="ball", color=(0.0, 1.0, 0.0))
 
     def build_model(self) -> Model:
-        self.builder.rigid_gap = 0.5
-        shape_config = newton.ModelBuilder.ShapeConfig(ke=1e5, kd=1e2, kf=1e3, mu=0.1, density=10.0)
+        self.builder.rigid_gap = 1.0
 
-        # The stone (cylinder)
-        self.builder.add_body(
-            xform=wp.transform(wp.vec3(0.0, 0.0, 0.15), wp.quat_identity()),
+        ball = self.builder.add_body(
+            xform=wp.transform(wp.vec3(0.0, 0.0, 1.0), wp.quat_identity()),
             mass=1.0,
         )
-        # self.builder.add_shape_cylinder(body=0, radius=0.3, half_height=0.1, cfg=shape_config)
-        self.builder.add_shape_ellipsoid(body=0, a=0.3, b=0.3, c=0.05)
+        self.builder.add_shape_sphere(body=ball, radius=0.2)
 
-        # Ice / floor
-        self.builder.add_ground_plane(cfg=shape_config)
-
+        self.builder.add_ground_plane()
         return self.builder.finalize_replicated(
             num_worlds=self.simulation_config.num_worlds,
             requires_grad=True,
@@ -138,11 +131,10 @@ class CurlingOptimizerImplicit(AxionDifferentiableSimulator):
     def compute_loss(self) -> wp.array:
         wp.launch(
             kernel=loss_kernel,
-            dim=1,
+            dim=self.clock.total_sim_steps,
             inputs=[
                 self.trajectory.body_pose,
-                self.trajectory.body_vel,
-                self.target_pos,
+                self.trajectory.target_body_pose,
             ],
             outputs=[
                 self.loss,
@@ -155,16 +147,16 @@ class CurlingOptimizerImplicit(AxionDifferentiableSimulator):
             kernel=update_kernel,
             dim=1,
             inputs=[
-                self.trajectory.body_vel.grad[0],
+                self.trajectory.body_pose.grad[0],
                 self.learning_rate,
             ],
             outputs=[
-                self.states[0].body_qd,
+                self.states[0].body_q,
             ],
         )
 
     def render(self, train_iter):
-        if self.frame > 0 and train_iter % 5 != 0:
+        if self.frame > 0 and train_iter % 3 != 0:
             return
 
         loss_val = self.loss.numpy()[0]
@@ -175,9 +167,9 @@ class CurlingOptimizerImplicit(AxionDifferentiableSimulator):
             viewer.log_scalar("/loss", loss_val)
             viewer.log_shapes(
                 "/target",
-                newton.GeoType.CYLINDER,
-                (0.3, 0.01, 0.3),
-                wp.array([wp.transform(self.target_pos, wp.quat_identity())], dtype=wp.transform),
+                newton.GeoType.SPHERE,
+                0.18,
+                wp.array(self.trajectory.target_body_pose.numpy()[-1, 0], dtype=wp.transform),
                 wp.array([wp.vec3(1.0, 0.0, 0.0)], dtype=wp.vec3),
             )
 
@@ -188,24 +180,43 @@ class CurlingOptimizerImplicit(AxionDifferentiableSimulator):
             callback=draw_extras,
             loop=True,
             loops_count=1,
-            playback_speed=1.0,
+            playback_speed=2.0,
         )
 
         self.frame += 1
 
     def train(self, iterations=50):
-        # Set initial velocity
-        wp.copy(self.states[0].body_qd, wp.array([self.init_vel], dtype=wp.spatial_vector))
-        self.states[0].body_qd.requires_grad = True
+        vel_array = wp.array([self.fixed_vel], dtype=wp.spatial_vector)
+
+        # Run target episode with target initial position
+        self.target_states[0].body_q.assign(
+            wp.array(
+                [wp.transform(self.target_init_pos, wp.quat_identity())],
+                dtype=wp.transform,
+            )
+        )
+        wp.copy(self.target_states[0].body_qd, vel_array)
+        self.run_target_episode()
+
+        # Set initial guess position and the same fixed velocity
+        self.states[0].body_q.assign(
+            wp.array(
+                [wp.transform(self.init_pos, wp.quat_identity())],
+                dtype=wp.transform,
+            )
+        )
+        self.states[0].body_q.requires_grad = True
+        wp.copy(self.states[0].body_qd, vel_array)
 
         for i in range(iterations):
-            # diff_step uses implicit gradient backward pass
             self.diff_step()
 
             curr_loss = self.loss.numpy()[0]
-            vel = self.states[0].body_qd.numpy()[0][0:3]
+            pos = wp.transform_get_translation(
+                wp.transform(*self.states[0].body_q.numpy()[0])
+            )
             print(
-                f"Iter {i}: Loss={curr_loss:.4f} | Init Vel=({vel[0]:.2f}, {vel[1]:.2f}, {vel[2]:.2f})"
+                f"Iter {i}: Loss={curr_loss:.4f} | Init Pos=({pos[0]:.3f}, {pos[1]:.3f}, {pos[2]:.3f})"
             )
 
             self.render(i)
@@ -223,7 +234,7 @@ def main(cfg: DictConfig):
     engine_config: EngineConfig = hydra.utils.instantiate(cfg.engine)
     logging_config: LoggingConfig = hydra.utils.instantiate(cfg.logging)
 
-    sim = CurlingOptimizerImplicit(
+    sim = BallThrowPositionOptimizer(
         sim_config,
         render_config,
         exec_config,

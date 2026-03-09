@@ -17,6 +17,7 @@ class EngineConfig:
         sim_steps: Optional[int] = None,
         init_state_fn: Optional[Callable] = None,
         logging_config: Optional[Any] = None,
+        differentiable_simulation: bool = False,
     ) -> Any:
         """
         Factory method to create the appropriate solver instance.
@@ -113,20 +114,20 @@ class AxionEngineConfig(EngineConfig):
         sim_steps: Optional[int] = None,
         init_state_fn: Optional[Callable] = None,
         logging_config: Optional[Any] = None,
+        differentiable_simulation: bool = False,
     ):
-        # Import internally to avoid circular imports
         from axion.core.engine import AxionEngine
 
         if init_state_fn is None:
             raise ValueError("AxionEngine requires an init_state_fn.")
 
-        # Pass the separate config objects to the constructor
         return AxionEngine(
             model=model,
             sim_steps=sim_steps,
             init_state_fn=init_state_fn,
             config=self,
             logging_config=logging_config,
+            differentiable_simulation=differentiable_simulation,
         )
 
     def __post_init__(self):
