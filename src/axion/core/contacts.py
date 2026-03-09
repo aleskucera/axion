@@ -101,6 +101,82 @@ class AxionContacts:
                 (model.num_worlds, max_contacts_per_world), dtype=wp.float32
             )
 
+    def __repr__(self) -> str:
+        return (
+            f"AxionContacts(num_worlds={self.num_worlds}, "
+            f"max_contacts={self.max_contacts}, device={self.device})"
+        )
+
+    def __str__(self) -> str:
+        lines = [
+            "AxionContacts (batched per-world contact buffers)",
+            f"  num_worlds:           {self.num_worlds}",
+            f"  max_contacts/world:  {self.max_contacts}",
+            f"  num_shapes_per_world: {self.num_shapes_per_world}",
+            f"  device:              {self.device}",
+            f"  array shape:         (num_worlds, max_contacts) = ({self.num_worlds}, {self.max_contacts})",
+        ]
+        return "\n".join(lines)
+
+    def verbose_str(
+        self,
+        max_worlds: int = 8,
+        max_contacts_per_world: int = 4,
+        decimals: int = 4,
+    ) -> str:
+        """
+        Sync contact data from device and return a human-readable dump for debugging.
+        Limits output to the first max_worlds and first max_contacts_per_world slots
+        to avoid flooding the terminal.
+        """
+        try:
+            import torch
+        except ImportError:
+            return "AxionContacts.verbose_str requires torch"
+
+        with wp.ScopedDevice(self.device):
+            count = wp.to_torch(self.contact_count).cpu().numpy()
+            p0 = wp.to_torch(self.contact_point0).cpu().numpy()
+            p1 = wp.to_torch(self.contact_point1).cpu().numpy()
+            n = wp.to_torch(self.contact_normal).cpu().numpy()
+            s0 = wp.to_torch(self.contact_shape0).cpu().numpy()
+            s1 = wp.to_torch(self.contact_shape1).cpu().numpy()
+            t0 = wp.to_torch(self.contact_thickness0).cpu().numpy()
+            t1 = wp.to_torch(self.contact_thickness1).cpu().numpy()
+
+        total = int(count.sum())
+        nw = min(max_worlds, self.num_worlds)
+        counts_preview = count[:nw].tolist()
+        if self.num_worlds > max_worlds:
+            counts_preview.append(f"... (+{self.num_worlds - max_worlds} more)")
+
+        lines = [
+            "AxionContacts (verbose)",
+            f"  num_worlds={self.num_worlds}, max_contacts_per_world={self.max_contacts}, device={self.device}",
+            f"  Per-world contact count (first {nw} worlds): {counts_preview}",
+            f"  Total contacts: {total}  |  min/max/mean per world: {count.min()} / {count.max()} / {count.mean():.2f}",
+            "",
+        ]
+
+        fmt = f".{decimals}f"
+        for w in range(nw):
+            nc = int(count[w])
+            lines.append(f"  ---- World {w} ({nc} contacts) ----")
+            n_show = min(nc, max_contacts_per_world)
+            for c in range(n_show):
+                lines.append(
+                    f"    contact {c}: shape0={s0[w, c]} shape1={s1[w, c]}  "
+                    f"thickness0={t0[w, c]:{fmt}} thickness1={t1[w, c]:{fmt}}"
+                )
+                lines.append(f"      point0  = [{p0[w, c, 0]:{fmt}}, {p0[w, c, 1]:{fmt}}, {p0[w, c, 2]:{fmt}}]")
+                lines.append(f"      point1  = [{p1[w, c, 0]:{fmt}}, {p1[w, c, 1]:{fmt}}, {p1[w, c, 2]:{fmt}}]")
+                lines.append(f"      normal  = [{n[w, c, 0]:{fmt}}, {n[w, c, 1]:{fmt}}, {n[w, c, 2]:{fmt}}]")
+            if nc > max_contacts_per_world:
+                lines.append(f"    ... ({nc - max_contacts_per_world} more contacts in this world)")
+            lines.append("")
+
+        return "\n".join(lines)
+
     def load_contact_data(self, contacts: Contacts):
         self.contact_count.zero_()
 
