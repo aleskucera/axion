@@ -16,6 +16,7 @@ import warp as wp
 import newton
 
 from axion.types import reorder_ground_contacts_kernel, contact_penetration_depth_kernel
+from axion.core.contacts import AxionContacts
 from axion.neural_solver.standalone.neural_predictor_helpers import (
     get_contact_masks,
     convert_contacts_w2b,
@@ -121,6 +122,12 @@ class TransformerNeuralModelUtilsProvider:
         else:
             self.angular_q_indices = torch.tensor(list(angular_q_indices), dtype=torch.long, device="cpu")
 
+        self.axion_contacts = AxionContacts(
+            model=self.robot_model,
+            max_contacts_per_world= PENDULUM_MAX_NUM_CONTACTS_PER_ROBOT_MODEL,
+        )
+        self.bodies_per_world = self.robot_model.body_count // self.num_worlds
+
         self.root_body_q = torch.zeros((self.num_worlds, 7), device=self.torch_device, dtype=torch.float32)
         self.gravity_dir = torch.zeros((self.num_worlds, 3), device=self.torch_device, dtype=torch.float32)
         up_axis = int(getattr(self.robot_model, "up_axis", 2))
@@ -197,17 +204,22 @@ class TransformerNeuralModelUtilsProvider:
         newton_contacts: newton.Contacts, 
         ):
         """
-        1.  Reorder the contacts from newton such that points_0 are always on the robot body and
+        1.  Batch the 1D newton contacts into 2D arrays (world, contact)
+        2.  Reorder the contacts from newton such that points_0 are always on the robot body and
             points_1 are the corresponding points on the external object (the contact plane)
-        2.  Calculate penetration depth (used for contact masking later)
-        3.  Convert the contact data to torch tensors.
-        4.  Calculate the contact mask (mask that defines active contacts)
-        5.  Convert points_1 and contact normals to the body frame (robot body frame)
-        6.  Apply the contact mask
+        3.  Calculate penetration depth (used for contact masking later)
+        4.  Convert the contact data to torch tensors.
+        5.  Calculate the contact mask (mask that defines active contacts)
+        6.  Convert points_1 and contact normals to the body frame (robot body frame)
+        7.  Apply the contact mask
         """
-        # Reorder contacts from Newton such that points_0 are on body and points_1 are ground
-        max_num_contacts_per_robot_model = PENDULUM_MAX_NUM_CONTACTS_PER_ROBOT_MODEL 
-        shape = (self.num_worlds, max_num_contacts_per_robot_model)
+        # Batch Newton's flat 1D contacts into per-world 2D arrays
+        self.axion_contacts.load_contact_data(newton_contacts)
+
+        print(self.axion_contacts.verbose_str())
+
+        # Reorder batched contacts such that points_0 are on body and points_1 are ground
+        shape = (self.num_worlds, PENDULUM_MAX_NUM_CONTACTS_PER_ROBOT_MODEL)
         device = str(self.torch_device)
         reordered_point0 = wp.zeros(shape, dtype=wp.vec3, device=device)
         reordered_point1 = wp.zeros(shape, dtype=wp.vec3, device=device)
@@ -215,23 +227,23 @@ class TransformerNeuralModelUtilsProvider:
         reordered_thickness0 = wp.zeros(shape, dtype=wp.float32, device=device)
         reordered_thickness1 = wp.zeros(shape, dtype=wp.float32, device=device)
         reordered_body_shape = wp.full(shape, -1, dtype=wp.int32, device=device)
-        body_contact_count = wp.zeros(self.robot_model.body_count, dtype=wp.int32, device=device)
+        body_contact_count = wp.zeros((self.num_worlds, self.bodies_per_world), dtype=wp.int32, device=device)
         if len(self.robot_model.shape_body.shape) == 1:
             shape_body_2d = self.robot_model.shape_body.reshape((1, -1))  # (shape_count,) -> (1, shape_count)
         else:
             shape_body_2d = self.robot_model.shape_body
         wp.launch(
             kernel=reorder_ground_contacts_kernel,
-            dim=(self.num_worlds, max_num_contacts_per_robot_model),
+            dim=(self.num_worlds, self.axion_contacts.max_contacts),
             inputs=[
-                newton_contacts.rigid_contact_count,
-                newton_contacts.rigid_contact_shape0,
-                newton_contacts.rigid_contact_shape1,
-                newton_contacts.rigid_contact_point0,
-                newton_contacts.rigid_contact_point1,
-                newton_contacts.rigid_contact_normal,
-                newton_contacts.rigid_contact_thickness0,
-                newton_contacts.rigid_contact_thickness1,
+                self.axion_contacts.contact_count,
+                self.axion_contacts.contact_shape0,
+                self.axion_contacts.contact_shape1,
+                self.axion_contacts.contact_point0,
+                self.axion_contacts.contact_point1,
+                self.axion_contacts.contact_normal,
+                self.axion_contacts.contact_thickness0,
+                self.axion_contacts.contact_thickness1,
                 shape_body_2d,
                 body_contact_count,
             ],
@@ -247,7 +259,7 @@ class TransformerNeuralModelUtilsProvider:
         )
 
         # Calculate Penetration depth using reordered contact data
-        contact_depths_wp_array = wp.zeros((self.num_worlds, max_num_contacts_per_robot_model), dtype=wp.float32, device=str(self.torch_device))
+        contact_depths_wp_array = wp.zeros((self.num_worlds, PENDULUM_MAX_NUM_CONTACTS_PER_ROBOT_MODEL), dtype=wp.float32, device=str(self.torch_device))
         if len(state_in.body_q.shape) == 1:
             body_q_2d = state_in.body_q.reshape((1, -1))    # (body_count,) -> (1, body_count)
         else:
@@ -255,7 +267,7 @@ class TransformerNeuralModelUtilsProvider:
 
         wp.launch(
             kernel=contact_penetration_depth_kernel,
-            dim=(self.num_worlds, max_num_contacts_per_robot_model),
+            dim=(self.num_worlds, PENDULUM_MAX_NUM_CONTACTS_PER_ROBOT_MODEL),
             inputs=[
                 body_q_2d,
                 shape_body_2d,
@@ -307,7 +319,7 @@ class TransformerNeuralModelUtilsProvider:
         contacts["contact_normals"] = contact_normals_body
 
         # Zero out inactive contacts
-        apply_contact_mask(contacts, contact_masks)
+        #apply_contact_mask(contacts, contact_masks)
 
         return contacts # processed contacts: converted to body reference frame and masked
 
