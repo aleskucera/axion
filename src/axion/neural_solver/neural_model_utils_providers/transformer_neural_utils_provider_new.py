@@ -229,9 +229,12 @@ class TransformerNeuralModelUtilsProvider:
         reordered_body_shape = wp.full(shape, -1, dtype=wp.int32, device=device)
         body_contact_count = wp.zeros((self.num_worlds, self.bodies_per_world), dtype=wp.int32, device=device)
         if len(self.robot_model.shape_body.shape) == 1:
-            shape_body_2d = self.robot_model.shape_body.reshape((1, -1))  # (shape_count,) -> (1, shape_count)
+            # Newton model: shape_body is flat (num_worlds * shapes_per_world). Kernel expects (num_worlds, shapes_per_world).
+            num_shapes_per_world = self.robot_model.shape_count // self.num_worlds
+            shape_body_2d = self.robot_model.shape_body.reshape((self.num_worlds, num_shapes_per_world))
         else:
-            shape_body_2d = self.robot_model.shape_body
+            raise NotImplementedError("This should not happen, Newton always returns 1d flat array... hopefully")
+
         wp.launch(
             kernel=reorder_ground_contacts_kernel,
             dim=(self.num_worlds, self.axion_contacts.max_contacts),
@@ -245,6 +248,7 @@ class TransformerNeuralModelUtilsProvider:
                 self.axion_contacts.contact_thickness0,
                 self.axion_contacts.contact_thickness1,
                 shape_body_2d,
+                self.bodies_per_world,  # Newton uses global body indices; kernel converts to per-world
                 body_contact_count,
             ],
             outputs=[
@@ -258,12 +262,27 @@ class TransformerNeuralModelUtilsProvider:
             device=str(self.torch_device)
         )
 
+        # Debug: copy reordered outputs to CPU and print (body_shape >= 0 means slot was filled)
+        # _p0 = wp.to_torch(reordered_point0).cpu()
+        # _p1 = wp.to_torch(reordered_point1).cpu()
+        # _n = wp.to_torch(reordered_normal).cpu()
+        # _body_shape = wp.to_torch(reordered_body_shape).cpu()
+        # for w in range(self.num_worlds):
+        #     active_slots = [s for s in range(_body_shape.shape[1]) if _body_shape[w, s].item() >= 0]
+        #     if not active_slots:
+        #         print(f"  [reorder] world {w}: no contacts written")
+        #         continue
+        #     print(f"  [reorder] world {w}: {len(active_slots)} contact(s)")
+        #     for slot in active_slots:
+        #         print(f"    slot {slot} body_shape={_body_shape[w, slot].item()}  point0={_p0[w, slot].tolist()}  point1={_p1[w, slot].tolist()}  normal={_n[w, slot].tolist()}")
+
         # Calculate Penetration depth using reordered contact data
         contact_depths_wp_array = wp.zeros((self.num_worlds, PENDULUM_MAX_NUM_CONTACTS_PER_ROBOT_MODEL), dtype=wp.float32, device=str(self.torch_device))
         if len(state_in.body_q.shape) == 1:
-            body_q_2d = state_in.body_q.reshape((1, -1))    # (body_count,) -> (1, body_count)
+            # Newton state: body_q is flat (num_worlds * bodies_per_world). Kernel expects (num_worlds, bodies_per_world).
+            body_q_2d = state_in.body_q.reshape((self.num_worlds, self.bodies_per_world))
         else:
-            body_q_2d = state_in.body_q
+            raise NotImplementedError("This should not happen, Newton always returns 1d flat array... hopefully")
 
         wp.launch(
             kernel=contact_penetration_depth_kernel,
@@ -271,6 +290,7 @@ class TransformerNeuralModelUtilsProvider:
             inputs=[
                 body_q_2d,
                 shape_body_2d,
+                self.bodies_per_world,  # Newton uses global body indices; kernel converts to per-world
                 reordered_point0,  # Body points (reordered)
                 reordered_point1,  # Ground points (reordered)
                 reordered_normal,  # Normal from body to ground (reordered)
@@ -315,11 +335,25 @@ class TransformerNeuralModelUtilsProvider:
             contact_normals,
             translation_only=False,
         )
+
+        # Debug: per-world print of contact_points_1_body and contact_normals_body (only filled slots)
+        # _body_shape = wp.to_torch(reordered_body_shape).cpu()
+        # for w in range(self.num_worlds):
+        #     active_slots = [s for s in range(_body_shape.shape[1]) if _body_shape[w, s].item() >= 0]
+        #     if not active_slots:
+        #         print(f"  [w2b] world {w}: no contacts")
+        #         continue
+        #     print(f"  [w2b] world {w}: {len(active_slots)} contact(s)")
+        #     for slot in active_slots:
+        #         p1 = contact_points_1_body[w, slot].cpu().tolist()
+        #         n = contact_normals_body[w, slot].cpu().tolist()
+        #         print(f"    slot {slot}  point1_body={p1}  normal_body={n}")
+
         contacts["contact_points_1"] = contact_points_1_body
         contacts["contact_normals"] = contact_normals_body
 
         # Zero out inactive contacts
-        #apply_contact_mask(contacts, contact_masks)
+        apply_contact_mask(contacts, contact_masks)
 
         return contacts # processed contacts: converted to body reference frame and masked
 

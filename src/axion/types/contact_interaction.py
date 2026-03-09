@@ -141,6 +141,7 @@ def reorder_ground_contacts_kernel(
     contact_thickness0: wp.array(dtype=wp.float32, ndim=2),
     contact_thickness1: wp.array(dtype=wp.float32, ndim=2),
     shape_body: wp.array(dtype=wp.int32, ndim=2),
+    bodies_per_world: wp.int32,  # Newton uses global body indices; we need per-world for slot indexing
     # --- Per-world, per-body contact counter (zeroed before launch) ---
     body_contact_count: wp.array(dtype=wp.int32, ndim=2),  # (num_worlds, bodies_per_world)
     # --- Outputs (reordered, 2D arrays for neural network) ---
@@ -184,8 +185,10 @@ def reorder_ground_contacts_kernel(
     if not is_ground_contact:
         return
 
-    # Body index (the non-ground body); assign output slot by (link, contact index)
+    # Body index (the non-ground body). Newton stores global body indices; convert to per-world for slot indexing.
     body_idx = body_a if body_a >= 0 else body_b
+    if body_idx >= 0 and bodies_per_world > 0:
+        body_idx = body_idx % bodies_per_world
     contact_slot_within_body = wp.atomic_add(body_contact_count, world_idx, body_idx, 1)
     link_index = body_idx
     if link_index < 0:
@@ -219,6 +222,7 @@ def contact_penetration_depth_kernel(
     # --- Inputs (reordered 2D arrays: body always in position 0, ground in position 1) ---
     body_q: wp.array(dtype=wp.transform, ndim=2),
     shape_body: wp.array(dtype=wp.int32, ndim=2),
+    bodies_per_world: wp.int32,  # Newton uses global body indices; convert to per-world for body_q indexing
     contact_point0: wp.array(dtype=wp.vec3, ndim=2),  # Always body (reordered)
     contact_point1: wp.array(dtype=wp.vec3, ndim=2),  # Always ground (reordered)
     contact_normal: wp.array(dtype=wp.vec3, ndim=2),  # From body to ground (reordered)
@@ -253,6 +257,8 @@ def contact_penetration_depth_kernel(
     if body_idx < 0:
         depths[world_idx, contact_idx] = NON_TOUCHING_DEPTH  # Invalid body
         return
+    if bodies_per_world > 0:
+        body_idx = body_idx % bodies_per_world
 
     # Contact normal (already reordered to point from body to ground)
     n = contact_normal[world_idx, contact_idx]
