@@ -66,7 +66,6 @@ def update_kernel(
     if tid > 0:
         return
 
-    # Gradient clipping to prevent divergence
     max_grad = 20.0
     g = qd_grad[0, 0]
     g_clamped = wp.spatial_vector(
@@ -80,8 +79,6 @@ def update_kernel(
 
     # gradient descent step
     qd[0] = qd[0] - g_clamped * alpha
-
-    wp.printf("Gradient: [%f %f %f %f %f %f]\n", g[0], g[1], g[2], g[3], g[4], g[5])
 
 
 class BallThrowOptimizerImplicit(DifferentiableSimulator):
@@ -109,7 +106,7 @@ class BallThrowOptimizerImplicit(DifferentiableSimulator):
         self.frame = 0
 
         # Initial velocity guessing (angular, linear)
-        self.init_vel = wp.spatial_vector(0.0, 0.0, 0.0, 0.0, 2.0, 5.0)
+        self.init_vel = wp.spatial_vector(0.0, 0.5, 4.0, 0.0, 0.0, 0.0)
 
         # 3. Setup Automatic Trajectory Tracking
         self.track_body(body_idx=0, name="ball", color=(0.0, 1.0, 0.0))
@@ -165,7 +162,7 @@ class BallThrowOptimizerImplicit(DifferentiableSimulator):
 
     def render(self, train_iter):
         # Only render every 5 iterations
-        if self.frame > 0 and train_iter % 5 != 0:
+        if self.frame > 0 and train_iter % 3 != 0:
             return
 
         loss_val = self.loss.numpy()[0]
@@ -189,7 +186,7 @@ class BallThrowOptimizerImplicit(DifferentiableSimulator):
             callback=draw_extras,
             loop=True,
             loops_count=1,
-            playback_speed=1.0,
+            playback_speed=3.0,
         )
 
         self.frame += 1
@@ -200,11 +197,10 @@ class BallThrowOptimizerImplicit(DifferentiableSimulator):
         self.states[0].body_qd.requires_grad = True
 
         for i in range(iterations):
-            # diff_step uses _axion_forward_backward_implicit for AxionEngine
             self.diff_step()
 
             curr_loss = self.loss.numpy()[0]
-            vel = self.states[0].body_qd.numpy()[0][3:6]
+            vel = self.states[0].body_qd.numpy()[0][0:3]
             print(
                 f"Iter {i}: Loss={curr_loss:.4f} | Init Linear Vel=({vel[0]:.2f}, {vel[1]:.2f}, {vel[2]:.2f})"
             )

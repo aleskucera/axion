@@ -28,6 +28,7 @@ from .linesearch_utils import perform_linesearch
 from .logging_config import LoggingConfig
 from .model import AxionModel
 from .residual_utils import compute_residual
+from .residual_utils import compute_residual_gradient
 from .sim_logger import SimulationHDF5Logger
 from .update_utils import apply_stardard_newton_step
 
@@ -170,8 +171,6 @@ class AxionEngine(SolverBase):
         self.timestep = wp.zeros(1, dtype=wp.int32, device=self.device)
         # Counts backward steps 0,1,2,... — reset before each backward pass
         self.backward_timestep = wp.zeros(1, dtype=wp.int32, device=self.device)
-
-        self.tape = wp.Tape()
 
     def _save_iter_to_history(self):
         if not self.logging_config.enable_hdf5_logging:
@@ -396,36 +395,50 @@ class AxionEngine(SolverBase):
 
         self.data.w.sync_to_float()
 
-        self.data.zero_gradients()
+        # self.data.zero_gradients()
 
         # Initialize with explicit part BEFORE backward
         # This ensures tape.backward accumulates (adds) the implicit part to the explicit part
-        # BUG: This is fucking problem
+        # BUG: This is fucking problem, here accumulates somehow gradient
         # wp.copy(dest=self.data.body_pose_prev.grad, src=self.data.body_pose_grad)
         # wp.copy(dest=self.data.body_vel_prev.grad, src=self.data.body_vel_grad)
-
-        # BUG: This is fucking big problem when using cuda graphs
-        tape = wp.Tape()
-        tape.zero()
-        with tape:
-            compute_residual(
-                self.axion_model, self.axion_contacts, self.data, self.config, self.dims
-            )
+        # tape = wp.Tape()
+        # with tape:
+        #     compute_residual(
+        #         self.axion_model, self.axion_contacts, self.data, self.config, self.dims
+        #     )
 
         # This adds the implicit gradient (-w^T * dh/d_theta) to the arrays
-        tape.backward(grads={self.data._res: self.data._w})
+        # if True:
+        #     import numpy as np
+        #
+        #     output_dim = self.data._res.shape[-1]
+        #     for output_index in range(output_dim):
+        #         select_index = np.zeros(output_dim)
+        #         select_index[output_index] = 1.0
+        #         e = wp.array(select_index, dtype=wp.float32)
+        #
+        #         tape.backward(grads={self.data._res: e})
+        #         print(
+        #             f"output_index: {output_index}, grad: {self.data.body_vel_prev.grad.numpy()[0]}"
+        #         )
+        #         tape.zero()
+        # tape.backward(grads={self.data._res: self.data._w})
+        compute_residual_gradient(
+            self.axion_model, self.axion_contacts, self.data, self.config, self.dims
+        )
 
         if self.adjoint_logger:
             wp.copy(dest=self.data.pcr_iter_count, src=self.cr_solver.iter_count)
             wp.copy(dest=self.data.pcr_final_res_norm_sq, src=self.cr_solver.r_sq)
             wp.copy(dest=self.data.pcr_res_norm_sq_history, src=self.cr_solver.history_r_sq)
-            self.adjoint_logger.capture_step(self.backward_timestep, self.data)
             wp.launch(
                 kernel=decrement_timestep_kernel,
                 dim=(1,),
-                inputs=[self.backward_timestep],
+                inputs=[self.timestep],
                 device=self.device,
             )
+            self.adjoint_logger.capture_step(self.timestep, self.data)
 
     def save_logs(self):
         if self.logger:

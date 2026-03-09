@@ -1,7 +1,6 @@
 import warp as wp
-
-from .utils import compute_spatial_momentum
-from .utils import compute_world_inertia
+from axion.math import compute_spatial_momentum
+from axion.math import compute_world_inertia
 
 
 @wp.kernel
@@ -139,3 +138,4 @@ def fused_batch_unconstrained_dynamics_kernel(
 
         # Write Output
         h_d[b, world_idx, body_idx] = momentum_diff - (f + f_g + f_gyro) * dt
+

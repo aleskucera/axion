@@ -42,57 +42,50 @@ def bourke_color_map(v_min, v_max, v):
 
 @wp.kernel
 def loss_kernel(
-    body_q: wp.array(dtype=wp.transform, ndim=2),
-    body_qd: wp.array(dtype=wp.spatial_vector, ndim=2),
-    body_f: wp.array(dtype=wp.spatial_vector, ndim=2),
+    trajectory_body_q: wp.array(dtype=wp.transform, ndim=3),
+    trajectory_body_qd: wp.array(dtype=wp.spatial_vector, ndim=3),
     target_pos: wp.vec3,
     loss: wp.array(dtype=wp.float32),
 ):
-    step_idx = wp.tid()
-    if step_idx >= body_q.shape[0]:
+    tid = wp.tid()
+    if tid > 0:
         return
 
-    # if step_idx == (body_q.shape[0] - 2):  # The last step
-    pos = wp.transform_get_translation(body_q[step_idx, 0])
-    delta = pos
-    final_position_loss = wp.dot(delta, delta)
-    wp.atomic_add(loss, 0, final_position_loss)
+    # Position error at the final timestep
+    pos = wp.transform_get_translation(trajectory_body_q[trajectory_body_q.shape[0] - 1, 0, 0])
+    diff = pos - target_pos
+    dist_sq = wp.dot(diff, diff)
 
-    qd = body_qd[step_idx, 0]
-    velocity_loss = wp.spatial_dot(qd, qd) / wp.float(body_q.shape[0])
-    wp.atomic_add(loss, 0, velocity_loss)
+    # Velocity penalty: we want the stone to stop at the target
+    qd_y = trajectory_body_qd[trajectory_body_qd.shape[0] - 1, 0, 0][1]
 
-    # f = body_f[step_idx, 0]
-    # f_delta = wp.spatial_vector(0.0, 2.0, 0.0, 0.0, 0.0, 0.0) - f
-    # f_loss = wp.spatial_dot(f_delta, f_delta)
-    # wp.atomic_add(loss, 0, f_loss)
+    loss[0] = dist_sq
 
 
 @wp.kernel
 def update_kernel(
-    body_f_grad: wp.array(dtype=wp.spatial_vector, ndim=2),
+    initial_qd_grad: wp.array(dtype=wp.spatial_vector, ndim=2),
     alpha: float,
-    body_f: wp.array(dtype=wp.spatial_vector, ndim=2),
+    initial_qd: wp.array(dtype=wp.spatial_vector, ndim=1),
 ):
-    step_idx = wp.tid()
-    if step_idx >= body_f.shape[0]:
+    tid = wp.tid()
+    if tid > 0:
         return
 
-    # gradient descent step
-    body_f[step_idx, 0] = body_f[step_idx, 0] - alpha * body_f_grad[step_idx, 0]
-    if step_idx == 0:
-        wp.printf(
-            "Gradient: [%f %f %f %f %f %f %f]\n",
-            body_f_grad[step_idx, 0][0],
-            body_f_grad[step_idx, 0][1],
-            body_f_grad[step_idx, 0][2],
-            body_f_grad[step_idx, 0][3],
-            body_f_grad[step_idx, 0][4],
-            body_f_grad[step_idx, 0][5],
-        )
+    # Only update the Y (sliding) velocity component
+    qd_y = initial_qd[0][1]
+    qd_y_grad = initial_qd_grad[0, 0][1]
+
+    wp.printf("Gradient: %f\n", qd_y_grad)
+
+    max_grad = 5.0
+    qd_y_grad = wp.clamp(qd_y_grad, -max_grad, max_grad)
+
+    qd_y_new = qd_y - alpha * qd_y_grad
+    initial_qd[0] = wp.spatial_vector(0.0, qd_y_new, 0.0, 0.0, 0.0, 0.0)
 
 
-class BallThrowOptimizer(DifferentiableSimulator):
+class CurlingOptimizerImplicit(DifferentiableSimulator):
     def __init__(
         self,
         sim_config: SimulationConfig,
@@ -109,34 +102,36 @@ class BallThrowOptimizer(DifferentiableSimulator):
             logging_config,
         )
 
-        # 2. Optimization Setup
-        # Target is now forward in Y, instead of requiring a bounce
-        self.target_pos = wp.vec3(0.0, 3.0, 3.5)
+        # Optimization Setup
+        self.target_pos = wp.vec3(0.0, 3.5, 0.0)
         self.loss = wp.zeros(1, dtype=float, requires_grad=True)
-        self.learning_rate = 0.1
+        self.learning_rate = 2.5
 
         self.frame = 0
 
-        # Initial velocity guessing (w, v) -> v=(0, 2, 5)
-        # Starting with a velocity that might undershoot or miss
-        self.init_vel = wp.spatial_vector(0.0, 0.0, 6.0, 0.0, 0.0, 0.0)
+        # Initial velocity guess (Y = sliding direction)
+        self.init_vel = wp.spatial_vector(0.0, 2.0, 0.0, 0.0, 0.0, 0.0)
 
-        # 3. Setup Automatic Trajectory Tracking
-        self.track_body(body_idx=0, name="ball", color=(0.0, 1.0, 0.0))
+        # Track the stone (Body 0)
+        self.track_body(body_idx=0, name="stone", color=(0.0, 0.5, 1.0))
 
     def build_model(self) -> Model:
-        shape_config = newton.ModelBuilder.ShapeConfig(ke=1e6, kf=1e3, kd=1e3, mu=0.2, density=0.0)
-
-        # Initialize the ball
-        self.builder.add_body(
-            xform=wp.transform(wp.vec3(0.0, -0.5, 1.0), wp.quat_identity()),
-            mass=10.0,
+        self.builder.rigid_gap = 0.5
+        shape_config = newton.ModelBuilder.ShapeConfig(
+            ke=1e5, kd=1e2, kf=1e3, mu=0.1, density=100.0
         )
-        self.builder.add_shape_sphere(body=0, radius=0.2, cfg=shape_config)
 
-        # Removed the box obstacle to allow free throw
+        # The stone (cylinder)
+        self.builder.add_body(
+            xform=wp.transform(wp.vec3(0.0, 0.0, 0.21), wp.quat_identity()),
+        )
+        # self.builder.add_shape_cylinder(body=0, radius=0.3, half_height=0.1, cfg=shape_config)
+        self.builder.add_shape_box(body=0, hx=0.2, hy=0.2, hz=0.2, cfg=shape_config)
+        # self.builder.add_shape_ellipsoid(body=0, a=0.3, b=0.3, c=0.05)
 
+        # Ice / floor
         self.builder.add_ground_plane(cfg=shape_config)
+
         return self.builder.finalize_replicated(
             num_worlds=self.simulation_config.num_worlds,
             requires_grad=True,
@@ -145,11 +140,10 @@ class BallThrowOptimizer(DifferentiableSimulator):
     def compute_loss(self) -> wp.array:
         wp.launch(
             kernel=loss_kernel,
-            dim=self.clock.total_sim_steps,
+            dim=1,
             inputs=[
-                self.episode_buffer.body_q,
-                self.episode_buffer.body_qd,
-                self.episode_buffer.body_f,
+                self.trajectory.body_pose,
+                self.trajectory.body_vel,
                 self.target_pos,
             ],
             outputs=[
@@ -161,66 +155,69 @@ class BallThrowOptimizer(DifferentiableSimulator):
     def update(self):
         wp.launch(
             kernel=update_kernel,
-            dim=self.clock.total_sim_steps,
+            dim=1,
             inputs=[
-                self.episode_buffer.body_f.grad,
+                self.trajectory.body_vel.grad[0],
                 self.learning_rate,
             ],
             outputs=[
-                self.episode_buffer.body_f,
+                self.states[0].body_qd,
             ],
         )
 
     def render(self, train_iter):
-        # Only render every 10 iterations
         if self.frame > 0 and train_iter % 5 != 0:
             return
 
-        # Update the tracked color dynamically based on loss
         loss_val = self.loss.numpy()[0]
-        color = bourke_color_map(0.0, 7.0, loss_val)
+        color = bourke_color_map(0.0, 10.0, loss_val)
         self._tracked_bodies[0]["color"] = tuple(color)
 
-        # Define callback for extra visuals (Target & Loss Text)
         def draw_extras(viewer, step_idx, state):
             viewer.log_scalar("/loss", loss_val)
-            # Draw target box
             viewer.log_shapes(
                 "/target",
-                newton.GeoType.BOX,
-                (0.1, 0.1, 0.1),
+                newton.GeoType.CYLINDER,
+                (0.3, 0.01, 0.3),
                 wp.array([wp.transform(self.target_pos, wp.quat_identity())], dtype=wp.transform),
-                wp.array([wp.vec3(0.0, 0.0, 0.0)], dtype=wp.vec3),
+                wp.array([wp.vec3(1.0, 0.0, 0.0)], dtype=wp.vec3),
             )
 
-        print(f"Rendering iteration {train_iter}...")
+        print(f"Rendering iteration {train_iter} (Loss: {loss_val:.4f})...")
 
-        # Use the powerful render_episode method we just added
         self.render_episode(
             iteration=train_iter,
             callback=draw_extras,
-            loop=True,  # Enable looping
-            loops_count=1,  # Play once (loop=True makes the logic cleaner)
-            playback_speed=1.0,  # Slow Motion
+            loop=True,
+            loops_count=1,
+            playback_speed=1.0,
         )
 
         self.frame += 1
 
-    def train(self, iterations=20):
+    def train(self, iterations=50):
         # Set initial velocity
         wp.copy(self.states[0].body_qd, wp.array([self.init_vel], dtype=wp.spatial_vector))
         self.states[0].body_qd.requires_grad = True
 
         for i in range(iterations):
+            # diff_step uses implicit gradient backward pass
             self.diff_step()
+
+            curr_loss = self.loss.numpy()[0]
+            vel = self.states[0].body_qd.numpy()[0][0:3]
+            print(
+                f"Iter {i}: Loss={curr_loss:.4f} | Init Vel=({vel[0]:.2f}, {vel[1]:.2f}, {vel[2]:.2f})"
+            )
+
             self.render(i)
-            print(f"Train iter: {i} Loss: {self.loss.numpy()[0]:.4f}")
             self.update()
+
             self.tape.zero()
             self.loss.zero_()
 
 
-@hydra.main(version_base=None, config_path=str(CONFIG_PATH), config_name="config")
+@hydra.main(version_base=None, config_path=str(CONFIG_PATH), config_name="config_diff")
 def main(cfg: DictConfig):
     sim_config: SimulationConfig = hydra.utils.instantiate(cfg.simulation)
     render_config: RenderingConfig = hydra.utils.instantiate(cfg.rendering)
@@ -228,14 +225,14 @@ def main(cfg: DictConfig):
     engine_config: EngineConfig = hydra.utils.instantiate(cfg.engine)
     logging_config: LoggingConfig = hydra.utils.instantiate(cfg.logging)
 
-    sim = BallThrowOptimizer(
+    sim = CurlingOptimizerImplicit(
         sim_config,
         render_config,
         exec_config,
         engine_config,
         logging_config,
     )
-    sim.train(iterations=40)
+    sim.train(iterations=50)
 
 
 if __name__ == "__main__":

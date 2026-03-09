@@ -13,10 +13,10 @@ from axion.core.engine_config import SemiImplicitEngineConfig
 from axion.core.logging_config import LoggingConfig
 
 from .base_simulator import BaseSimulator
-from .episode_buffer import EpisodeBuffer
 from .sim_config import ExecutionConfig
 from .sim_config import RenderingConfig
 from .sim_config import SimulationConfig
+from .trajectory import EpisodeTrajectory
 from .trajectory_buffer import TrajectoryBuffer
 
 
@@ -62,7 +62,10 @@ class DifferentiableSimulator(BaseSimulator, ABC):
         ]
 
         # 3. Collision Setup
-        self.collision_pipeline = newton.CollisionPipeline(self.model)
+        self.collision_pipeline = newton.CollisionPipeline(
+            self.model,
+            requires_grad=False,
+        )
         self.collision_pipeline.collide(self.states[0], self.contacts)
 
         # 4. Viewer Initialization (Using Factory)
@@ -79,17 +82,17 @@ class DifferentiableSimulator(BaseSimulator, ABC):
 
         self._tracked_bodies = {}
 
-        self.episode_buffer = EpisodeBuffer(
-            model=self.model,
-            num_steps=self.clock.total_sim_steps,
-            device=self.model.device,
-        )
-
         if isinstance(self.engine_config, AxionEngineConfig):
             self.trajectory = TrajectoryBuffer(
                 data=self.solver.data,
                 contacts=self.solver.axion_contacts,
                 dims=self.solver.dims,
+                num_steps=self.clock.total_sim_steps,
+                device=self.model.device,
+            )
+        else:
+            self.episode_trajectory = EpisodeTrajectory(
+                model=self.model,
                 num_steps=self.clock.total_sim_steps,
                 device=self.model.device,
             )
@@ -106,6 +109,8 @@ class DifferentiableSimulator(BaseSimulator, ABC):
 
     # ============== DIFFERENTIABLE SIMULATION METHODS ==============
     def diff_step(self):
+        # if self.tmp_tapes:
+
         if self.use_cuda_graph and self.cuda_graph is None:
             with wp.ScopedCapture() as capture:
                 self._forward_backward()
@@ -131,7 +136,6 @@ class DifferentiableSimulator(BaseSimulator, ABC):
 
         # --- FORWARD PASS ---
         for i in range(self.clock.total_sim_steps):
-            # BUG: This doesn't work, because Newton tries to do it differentiable
             self.collision_pipeline.collide(self.states[i], self.contacts)
             self.solver.step(
                 state_in=self.states[i],
@@ -142,6 +146,7 @@ class DifferentiableSimulator(BaseSimulator, ABC):
             )
             self.trajectory.save_step(i, self.solver.data, self.solver.axion_contacts)
 
+        self.tape.zero()
         with self.tape:
             self.compute_loss()
 
@@ -149,9 +154,7 @@ class DifferentiableSimulator(BaseSimulator, ABC):
         # We get explicit gradients in the TrajectoryBuffer
         self.tape.backward(self.loss)
 
-        # Now compute the implicit gradients
         for i in range(self.clock.total_sim_steps - 1, -1, -1):
-            # TODO : Check if the indexing is correct
             self.trajectory.load_step(i, self.solver.data, self.solver.axion_contacts)
             self.solver.step_backward()
             self.trajectory.save_gradients(i, self.solver.data)
@@ -161,22 +164,14 @@ class DifferentiableSimulator(BaseSimulator, ABC):
         Standard explicit differentiation (unrolling loop on tape).
         Used for Newton solvers (SemiImplicit, etc).
         """
-
-        # Zero-out the gradients
-        self.episode_buffer.reset()
         self.tape.zero()
-
-        with self.tape:
-            self.episode_buffer.save_state(self.states[0], 0)
 
         # --- FORWARD PASS ---
         for i in range(self.clock.total_sim_steps):
-            # Clear forces on the tape
             with self.tape:
-                self.episode_buffer.apply_external_force(self.states[i], i)
+                self.states[i].clear_forces()
 
-            # self.collision_pipeline.collide(self.states[i], self.contacts)
-            self.contacts = self.model.collide(self.current_state)
+            self.collision_pipeline.collide(self.states[i], self.contacts)
 
             # Integrate step on the tape
             with self.tape:
@@ -187,7 +182,6 @@ class DifferentiableSimulator(BaseSimulator, ABC):
                     contacts=self.contacts,
                     dt=self.clock.dt,
                 )
-                self.episode_buffer.save_state(self.states[i + 1], i + 1)
 
         # Compute loss on the final state (or trajectory)
         with self.tape:
@@ -195,6 +189,10 @@ class DifferentiableSimulator(BaseSimulator, ABC):
 
         # --- BACKWARD PASS ---
         self.tape.backward(self.loss)
+        # self.tape.visualize(
+        #     filename="tape_euler.dot",
+        #     array_labels={self.loss: "loss"},
+        # )
 
     # ============== VISUALIZATION METHODS ==============
     def track_body(self, body_idx: int, name: str = None, color: tuple = (1.0, 0.0, 0.0)):

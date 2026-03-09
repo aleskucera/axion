@@ -42,51 +42,45 @@ def bourke_color_map(v_min, v_max, v):
 
 @wp.kernel
 def loss_kernel(
-    body_q: wp.array(dtype=wp.transform, ndim=2),
-    body_qd: wp.array(dtype=wp.spatial_vector, ndim=2),
-    body_f: wp.array(dtype=wp.spatial_vector, ndim=2),
+    body_q: wp.array(dtype=wp.transform),
     target_pos: wp.vec3,
     loss: wp.array(dtype=wp.float32),
 ):
-    step_idx = wp.tid()
-    if step_idx >= body_q.shape[0]:
+    tid = wp.tid()
+    if tid > 0:
         return
 
-    if step_idx == (body_q.shape[0] - 2):  # The last step
-        pos = wp.transform_get_translation(body_q[step_idx, 0])
-        delta = target_pos - pos
-        final_position_loss = wp.dot(delta, delta)
-        wp.atomic_add(loss, 0, final_position_loss)
-
-    # qd = body_qd[step_idx, 0]
-    # velocity_loss = wp.spatial_dot(qd, qd) / wp.float(body_q.shape[0])
-    # wp.atomic_add(loss, 0, velocity_loss)
-
-    # f = body_f[step_idx, 0]
-    # f_delta = wp.spatial_vector(0.0, 2.0, 0.0, 0.0, 0.0, 0.0) - f
-    # f_loss = wp.spatial_dot(f_delta, f_delta)
-    # wp.atomic_add(loss, 0, f_loss)
+    pos = wp.transform_get_translation(body_q[0])
+    delta = pos - target_pos
+    loss[0] = wp.dot(delta, delta)
 
 
 @wp.kernel
 def update_kernel(
-    body_inv_mass_grad: wp.array(dtype=wp.float32),
+    qd_grad: wp.array(dtype=wp.spatial_vector),
     alpha: float,
-    body_inv_mass: wp.array(dtype=wp.float32),
+    qd: wp.array(dtype=wp.spatial_vector),
 ):
-    step_idx = wp.tid()
-    if step_idx >= body_inv_mass.shape[0]:
+    tid = wp.tid()
+    if tid > 0:
         return
 
-    # gradient descent step
-    body_inv_mass[0] = wp.max(body_inv_mass[0] - alpha * body_inv_mass_grad[0], 0.001)
-    if step_idx == 0:
-        wp.printf("Body mass shape: %d\n", body_inv_mass.shape[0])
-        wp.printf("Body mass value: %f\n", body_inv_mass[0])
-        wp.printf("Gradient: %f\n", body_inv_mass_grad[0])
+    max_grad = 1e3
+    g = qd_grad[0]
+    g_clamped = wp.spatial_vector(
+        wp.clamp(g[0], -max_grad, max_grad),
+        wp.clamp(g[1], -max_grad, max_grad),
+        wp.clamp(g[2], -max_grad, max_grad),
+        wp.clamp(g[3], -max_grad, max_grad),
+        wp.clamp(g[4], -max_grad, max_grad),
+        wp.clamp(g[5], -max_grad, max_grad),
+    )
+    qd[0] = qd[0] - g_clamped * alpha
+
+    wp.printf("Gradient: [%f %f %f %f %f %f]\n", g[0], g[1], g[2], g[3], g[4], g[5])
 
 
-class BallThrowOptimizer(DifferentiableSimulator):
+class BallThrowOptimizerImplicit(DifferentiableSimulator):
     def __init__(
         self,
         sim_config: SimulationConfig,
@@ -102,35 +96,25 @@ class BallThrowOptimizer(DifferentiableSimulator):
             engine_config,
             logging_config,
         )
-
-        # 2. Optimization Setup
-        # Target is now forward in Y, instead of requiring a bounce
-        self.target_pos = wp.vec3(0.0, 3.0, 3.5)
+        self.target_pos = wp.vec3(0.0, 5.0, 1.0)
         self.loss = wp.zeros(1, dtype=float, requires_grad=True)
-        self.learning_rate = 0.00001
-
+        self.learning_rate = 0.1
         self.frame = 0
 
-        # Initial velocity guessing (w, v) -> v=(0, 2, 5)
-        # Starting with a velocity that might undershoot or miss
-        self.init_vel = wp.spatial_vector(0.0, 2.0, 9.0, 0.0, 0.0, 0.0)
-
-        # 3. Setup Automatic Trajectory Tracking
+        self.init_vel = wp.spatial_vector(0.0, 0.5, 4.0, 0.0, 0.0, 0.0)
         self.track_body(body_idx=0, name="ball", color=(0.0, 1.0, 0.0))
 
     def build_model(self) -> Model:
-        shape_config = newton.ModelBuilder.ShapeConfig(ke=1e6, kf=1e3, kd=1e3, mu=0.2, density=0.0)
-
-        # Initialize the ball
-        self.builder.add_body(
-            xform=wp.transform(wp.vec3(0.0, -0.5, 1.0), wp.quat_identity()),
-            mass=10.0,
+        shape_config = newton.ModelBuilder.ShapeConfig(
+            ke=1e6, kf=1e3, kd=1e3, mu=0.5, collision_group=1
         )
-        self.builder.add_shape_sphere(body=0, radius=0.2, cfg=shape_config)
+        # Initialize the ball
+        ball = self.builder.add_body(
+            xform=wp.transform(wp.vec3(0.0, 0.0, 1.0), wp.quat_identity()),
+            mass=1.0,
+        )
+        self.builder.add_shape_sphere(body=ball, radius=0.2, cfg=shape_config)
 
-        # Removed the box obstacle to allow free throw
-
-        self.builder.add_ground_plane(cfg=shape_config)
         return self.builder.finalize_replicated(
             num_worlds=self.simulation_config.num_worlds,
             requires_grad=True,
@@ -139,11 +123,9 @@ class BallThrowOptimizer(DifferentiableSimulator):
     def compute_loss(self) -> wp.array:
         wp.launch(
             kernel=loss_kernel,
-            dim=self.clock.total_sim_steps,
+            dim=1,
             inputs=[
-                self.episode_buffer.body_q,
-                self.episode_buffer.body_qd,
-                self.episode_buffer.body_f,
+                self.states[-1].body_q,
                 self.target_pos,
             ],
             outputs=[
@@ -155,47 +137,43 @@ class BallThrowOptimizer(DifferentiableSimulator):
     def update(self):
         wp.launch(
             kernel=update_kernel,
-            dim=self.clock.total_sim_steps,
+            dim=1,
             inputs=[
-                self.model.body_inv_mass.grad,
+                self.states[0].body_qd.grad,  # Initial velocity gradient from trajectory
                 self.learning_rate,
             ],
             outputs=[
-                self.model.body_inv_mass,
+                self.states[0].body_qd,  # Update initial state for next episode
             ],
         )
 
     def render(self, train_iter):
-        # Only render every 10 iterations
-        if self.frame > 0 and train_iter % 5 != 0:
+        # Only render every 5 iterations
+        if self.frame > 0 and train_iter % 3 != 0:
             return
 
-        # Update the tracked color dynamically based on loss
         loss_val = self.loss.numpy()[0]
-        color = bourke_color_map(0.0, 7.0, loss_val)
+        color = bourke_color_map(0.0, 10.0, loss_val)
         self._tracked_bodies[0]["color"] = tuple(color)
 
-        # Define callback for extra visuals (Target & Loss Text)
         def draw_extras(viewer, step_idx, state):
             viewer.log_scalar("/loss", loss_val)
-            # Draw target box
             viewer.log_shapes(
                 "/target",
                 newton.GeoType.BOX,
                 (0.1, 0.1, 0.1),
                 wp.array([wp.transform(self.target_pos, wp.quat_identity())], dtype=wp.transform),
-                wp.array([wp.vec3(0.0, 0.0, 0.0)], dtype=wp.vec3),
+                wp.array([wp.vec3(1.0, 0.0, 0.0)], dtype=wp.vec3),
             )
 
-        print(f"Rendering iteration {train_iter}...")
+        print(f"Rendering iteration {train_iter} (Loss: {loss_val:.4f})...")
 
-        # Use the powerful render_episode method we just added
         self.render_episode(
             iteration=train_iter,
             callback=draw_extras,
-            loop=True,  # Enable looping
-            loops_count=1,  # Play once (loop=True makes the logic cleaner)
-            playback_speed=1.0,  # Slow Motion
+            loop=True,
+            loops_count=1,
+            playback_speed=3.0,
         )
 
         self.frame += 1
@@ -207,14 +185,14 @@ class BallThrowOptimizer(DifferentiableSimulator):
 
         for i in range(iterations):
             self.diff_step()
-            self.render(i)
             print(f"Train iter: {i} Loss: {self.loss.numpy()[0]:.4f}")
+            self.render(i)
             self.update()
             self.tape.zero()
             self.loss.zero_()
 
 
-@hydra.main(version_base=None, config_path=str(CONFIG_PATH), config_name="config")
+@hydra.main(version_base=None, config_path=str(CONFIG_PATH), config_name="config_diff")
 def main(cfg: DictConfig):
     sim_config: SimulationConfig = hydra.utils.instantiate(cfg.simulation)
     render_config: RenderingConfig = hydra.utils.instantiate(cfg.rendering)
@@ -222,7 +200,7 @@ def main(cfg: DictConfig):
     engine_config: EngineConfig = hydra.utils.instantiate(cfg.engine)
     logging_config: LoggingConfig = hydra.utils.instantiate(cfg.logging)
 
-    sim = BallThrowOptimizer(
+    sim = BallThrowOptimizerImplicit(
         sim_config,
         render_config,
         exec_config,
