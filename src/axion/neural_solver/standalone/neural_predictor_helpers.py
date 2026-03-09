@@ -123,16 +123,27 @@ def get_contact_masks(contact_depths, contact_thickness):
     
     return contact_masks
 
-def convert_contacts_w2b_batched(root_body_q, contact_points_1, contact_normals, translation_only):
+def convert_contacts_w2b_batched(
+    root_body_q,
+    contact_points_1,
+    contact_normals,
+    translation_only,
+    com_to_pivot_offset,
+):
     """
     Convert contacts from world to body frame for batched multi-world data.
+    Express points in a frame anchored at the root joint pivot (same orientation
+    as the first link, origin at the pivot) by subtracting the pivot position in body frame.
+
     Args:
         root_body_q: (num_worlds, 7) - root body pose per world
         contact_points_1: (num_worlds, num_contacts, 3) - ground contact points in world frame
         contact_normals: (num_worlds, num_contacts, 3) - contact normals in world frame
         translation_only: bool
+        com_to_pivot_offset: (3,) or (1, 1, 3) tensor - position of the root joint
+            pivot in the first link's COM frame (body frame).
     Returns:
-        contact_points_1_body: (num_worlds, num_contacts, 3)
+        contact_points_1_body: (num_worlds, num_contacts, 3) in body or pivot frame
         contact_normals_body: (num_worlds, num_contacts, 3)
     """
     num_worlds, num_contacts, _ = contact_points_1.shape
@@ -159,6 +170,13 @@ def convert_contacts_w2b_batched(root_body_q, contact_points_1, contact_normals,
         contact_normals_body = torch_utils.quat_rotate_inverse(
             body_frame_quat, normals_flat
         ).view(num_worlds, num_contacts, 3)
+
+    # Express points in pivot frame (origin at root joint pivot, same orientation as body)
+    offset = com_to_pivot_offset.view(1, 1, 3).to(
+        device=contact_points_1_body.device, 
+        dtype=contact_points_1_body.dtype
+    )
+    contact_points_1_body = contact_points_1_body - offset
 
     return contact_points_1_body, contact_normals_body
 

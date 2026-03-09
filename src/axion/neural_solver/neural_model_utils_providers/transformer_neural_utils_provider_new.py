@@ -128,6 +128,12 @@ class TransformerNeuralModelUtilsProvider:
         )
         self.bodies_per_world = self.robot_model.body_count // self.num_worlds
 
+        # Root joint pivot in first-link body (COM) frame: from model joint child xform (index 0 = root)
+        joint_X_c = self.robot_model.joint_X_c.numpy()
+        root_joint_idx = 0
+        pivot_in_body = joint_X_c[root_joint_idx, :3].astype("float32")
+        self._com_to_pivot_offset = torch.as_tensor(pivot_in_body, dtype=torch.float32, device=self.torch_device)
+
         self.root_body_q = torch.zeros((self.num_worlds, 7), device=self.torch_device, dtype=torch.float32)
         self.gravity_dir = torch.zeros((self.num_worlds, 3), device=self.torch_device, dtype=torch.float32)
         up_axis = int(getattr(self.robot_model, "up_axis", 2))
@@ -328,12 +334,13 @@ class TransformerNeuralModelUtilsProvider:
         body_q_torch = wp.to_torch(body_q_2d)   # (num_worlds, bodies_per_world, 7)
         root_body_q = body_q_torch[:, 0, :]      # (num_worlds, 7)
 
-        # Convert contact points_1 and normals from world to body frame
+        # Convert contact points_1 and normals from world to body frame, then to pivot frame
         contact_points_1_body, contact_normals_body = convert_contacts_w2b_batched(
             root_body_q,
             contact_points_1,
             contact_normals,
             translation_only=False,
+            com_to_pivot_offset=self._com_to_pivot_offset,
         )
 
         # Debug: per-world print of contact_points_1_body and contact_normals_body (only filled slots)
