@@ -71,6 +71,16 @@ class NeuralSimEvaluator:
             if self.trajectory_dataset is not None:
                 self.trajectory_dataset.update_sample_sequence_length(eval_horizon)
 
+    def _get_plane_for_batch(self, trajectories, start_id, end_id):
+        """Return (plane_normals, plane_d_coefficients) for envs [start_id:end_id], or (None, None)."""
+        if 'plane_coefficients' not in trajectories:
+            return None, None
+        # (num_traj, 4) -> slice -> (num_envs, 4); last dim is (n_x, n_y, n_z, d)
+        pc = trajectories['plane_coefficients'][start_id:end_id]
+        plane_normals = pc[:, :3]
+        plane_d_coefficients = pc[:, 3:4]  # (num_envs, 1)
+        return plane_normals, plane_d_coefficients
+
     """
     Evaluate with action mode:
     - Initial states are ramdomly generated
@@ -156,6 +166,12 @@ class NeuralSimEvaluator:
             trajectories['next_states'] = (
                 trajectories['next_states'].transpose(0, 1).to(self.device)
             )
+            # Plane coefficients (n_x, n_y, n_z, d) per trajectory, constant along T
+            if 'plane_coefficients' in trajectories:
+                # (num_traj, T, 4) -> use first timestep -> (num_traj, 4)
+                trajectories['plane_coefficients'] = (
+                    trajectories['plane_coefficients'][:, 0, :].to(self.device)
+                )
             if 'actions' in trajectories:
                 trajectories['actions'] = (
                     trajectories['actions'].transpose(0, 1).to(self.device)
@@ -209,7 +225,14 @@ class NeuralSimEvaluator:
         # Run neural model for a few dummy steps to avoid overhead in the 
         # first few steps for correct fps measurements
         if measure_fps:
-            self.neural_env.reset(initial_states[:num_envs])
+            plane_normals, plane_d = self._get_plane_for_batch(
+                trajectories, 0, num_envs
+            )
+            self.neural_env.reset_for_eval(
+                initial_states[:num_envs],
+                plane_normals=plane_normals,
+                plane_d_coefficients=plane_d,
+            )
             for _ in range(50):
                 self.neural_env.step(
                     actions[0, :num_envs, :], 
@@ -222,14 +245,24 @@ class NeuralSimEvaluator:
         num_rounds = total_traj // num_envs
         for round in tqdm.tqdm(range(num_rounds)):
             start_id, end_id = round * num_envs, (round + 1) * num_envs
-            self.neural_env.reset(
-                initial_states[start_id: end_id]
+            plane_normals, plane_d = self._get_plane_for_batch(
+                trajectories, start_id, end_id
+            )
+            self.neural_env.reset_for_eval(
+                initial_states[start_id: end_id],
+                plane_normals=plane_normals,
+                plane_d_coefficients=plane_d,
             )
                 
             for step in range(self.eval_horizon):  
                 if eval_mode == 'single-step':
-                    self.neural_env.reset(
-                        trajectories['states'][step, start_id: end_id]
+                    plane_normals_step, plane_d_step = self._get_plane_for_batch(
+                        trajectories, start_id, end_id
+                    )
+                    self.neural_env.reset_for_eval(
+                        trajectories['states'][step, start_id: end_id],
+                        plane_normals=plane_normals_step,
+                        plane_d_coefficients=plane_d_step,
                     )
                 rollout_states[step + 1, start_id: end_id, :].copy_(
                     self.neural_env.step(
