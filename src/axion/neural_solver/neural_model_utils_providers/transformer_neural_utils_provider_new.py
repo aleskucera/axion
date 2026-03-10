@@ -167,21 +167,43 @@ class TransformerNeuralModelUtilsProvider:
         self,
         *,
         joint_acts: Optional[torch.Tensor] = None,
+        contacts: Optional[Dict[str, torch.Tensor]] = None,
+        gravity_dir_body: Optional[torch.Tensor] = None,
     ):
         """
         Append a snapshot of the current env-related tensors to the history.
 
         Caller (e.g. env wrapper) is expected to keep self.states, self.root_body_q,
-        self.gravity_dir, and possibly joint_acts in sync with the simulator.
+        and possibly joint_acts in sync with the simulator.
+        Args:
+            gravity_dir_body: gravity vector already converted to the body
+                frame.  When provided it is stored instead of the world-frame
+                constant ``self.gravity_dir`` so that the history matches what
+                the training dataset contains.
         """
         entry: Dict[str, torch.Tensor] = {
             "root_body_q": self.root_body_q.clone(),
             "states": self.states.clone(),
-            "gravity_dir": self.gravity_dir.clone(),
+            "gravity_dir": (
+                gravity_dir_body.clone()
+                if gravity_dir_body is not None
+                else self.gravity_dir.clone()
+            ),
         }
 
         if self.states_embedding_type in (None, "identical"):
             entry["states_embedding"] = entry["states"].clone()
+
+        n = PENDULUM_MAX_NUM_CONTACTS_PER_ROBOT_MODEL
+        if contacts is not None:
+            for k in ("contact_normals", "contact_points_1", "contact_depths"):
+                if k in contacts:
+                    entry[k] = contacts[k].clone()
+        else:
+            # zeros so the model always sees the expected keys during neural rollout
+            entry["contact_normals"]  = torch.zeros((self.num_worlds, n * 3), device=self.torch_device)
+            entry["contact_points_1"] = torch.zeros((self.num_worlds, n * 3), device=self.torch_device)
+            entry["contact_depths"]   = torch.zeros((self.num_worlds, n),     device=self.torch_device)
 
         if joint_acts is not None:
             entry["joint_acts"] = joint_acts.clone()
@@ -221,8 +243,6 @@ class TransformerNeuralModelUtilsProvider:
         """
         # Batch Newton's flat 1D contacts into per-world 2D arrays
         self.axion_contacts.load_contact_data(newton_contacts)
-
-        #print(self.axion_contacts.verbose_str())
 
         # Reorder batched contacts such that points_0 are on body and points_1 are ground
         shape = (self.num_worlds, PENDULUM_MAX_NUM_CONTACTS_PER_ROBOT_MODEL)
@@ -267,20 +287,6 @@ class TransformerNeuralModelUtilsProvider:
             ],
             device=str(self.torch_device)
         )
-
-        # Debug: copy reordered outputs to CPU and print (body_shape >= 0 means slot was filled)
-        # _p0 = wp.to_torch(reordered_point0).cpu()
-        # _p1 = wp.to_torch(reordered_point1).cpu()
-        # _n = wp.to_torch(reordered_normal).cpu()
-        # _body_shape = wp.to_torch(reordered_body_shape).cpu()
-        # for w in range(self.num_worlds):
-        #     active_slots = [s for s in range(_body_shape.shape[1]) if _body_shape[w, s].item() >= 0]
-        #     if not active_slots:
-        #         print(f"  [reorder] world {w}: no contacts written")
-        #         continue
-        #     print(f"  [reorder] world {w}: {len(active_slots)} contact(s)")
-        #     for slot in active_slots:
-        #         print(f"    slot {slot} body_shape={_body_shape[w, slot].item()}  point0={_p0[w, slot].tolist()}  point1={_p1[w, slot].tolist()}  normal={_n[w, slot].tolist()}")
 
         # Calculate Penetration depth using reordered contact data
         contact_depths_wp_array = wp.zeros((self.num_worlds, PENDULUM_MAX_NUM_CONTACTS_PER_ROBOT_MODEL), dtype=wp.float32, device=str(self.torch_device))
@@ -343,19 +349,6 @@ class TransformerNeuralModelUtilsProvider:
             com_to_pivot_offset=self._com_to_pivot_offset,
         )
 
-        # Debug: per-world print of contact_points_1_body and contact_normals_body (only filled slots)
-        # _body_shape = wp.to_torch(reordered_body_shape).cpu()
-        # for w in range(self.num_worlds):
-        #     active_slots = [s for s in range(_body_shape.shape[1]) if _body_shape[w, s].item() >= 0]
-        #     if not active_slots:
-        #         print(f"  [w2b] world {w}: no contacts")
-        #         continue
-        #     print(f"  [w2b] world {w}: {len(active_slots)} contact(s)")
-        #     for slot in active_slots:
-        #         p1 = contact_points_1_body[w, slot].cpu().tolist()
-        #         n = contact_normals_body[w, slot].cpu().tolist()
-        #         print(f"    slot {slot}  point1_body={p1}  normal_body={n}")
-
         contacts["contact_points_1"] = contact_points_1_body
         contacts["contact_normals"] = contact_normals_body
 
@@ -399,6 +392,10 @@ class TransformerNeuralModelUtilsProvider:
             else:
                 model_inputs["states_embedding"] = _ensure_bt(model_inputs["states_embedding"])
 
+        for contact_key in ("contact_normals", "contact_points_1", "contact_depths"):
+            if contact_key in model_inputs and model_inputs[contact_key] is not None:
+                model_inputs[contact_key] = _ensure_bt(model_inputs[contact_key])
+
         self.wrap2PI(model_inputs["states"])
         if model_inputs.get("next_states", None) is not None:
             self.wrap2PI(model_inputs["next_states"])
@@ -417,6 +414,15 @@ class TransformerNeuralModelUtilsProvider:
                 "root_body_q": torch.zeros_like(self.root_body_q).unsqueeze(1),
                 "states": torch.zeros_like(self.states).unsqueeze(1),
                 "gravity_dir": torch.zeros_like(self.gravity_dir).unsqueeze(1),
+                "contact_normals": torch.zeros(
+                                    (self.num_worlds, 1, 3* PENDULUM_MAX_NUM_CONTACTS_PER_ROBOT_MODEL),
+                                    device=self.torch_device),
+                "contact_points_1": torch.zeros(
+                                    (self.num_worlds, 1, 3* PENDULUM_MAX_NUM_CONTACTS_PER_ROBOT_MODEL),
+                                    device=self.torch_device),
+                "contact_depths": torch.zeros(
+                                    (self.num_worlds, 1, PENDULUM_MAX_NUM_CONTACTS_PER_ROBOT_MODEL),
+                                    device=self.torch_device),
             }
             if self.states_embedding_type in (None, "identical"):
                 processed_model_inputs["states_embedding"] = processed_model_inputs[

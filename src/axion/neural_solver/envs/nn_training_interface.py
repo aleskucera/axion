@@ -194,9 +194,16 @@ class NnTrainingInterface:
     def wrap2PI(self, states):
         self.utils_provider.wrap2PI(states)
 
-    # ---- State sync  ----
+    # ---- State sync (pure bookkeeping, no contacts / gravity / history) ----
 
-    def _update_states(self, states: Optional[torch.Tensor] = None):
+    def _sync_states(self, states: Optional[torch.Tensor] = None):
+        """Synchronise internal torch buffers with the simulator.
+
+        *Ground-truth path* (``states is None``): reads joint coordinates
+        produced by the engine back into torch tensors.
+        *Reset / neural path* (``states`` given): pushes torch values into
+        the simulator and runs forward-kinematics so body poses match.
+        """
         if states is None:
             if not getattr(self.simulator_wrapper, "uses_generalized_coordinates", True):
                 warp_utils.eval_ik(self.simulator_wrapper.model, self.simulator_wrapper.state)
@@ -206,17 +213,43 @@ class NnTrainingInterface:
             warp_utils.assign_states_from_torch(self.simulator_wrapper, self.states)
             warp_utils.eval_fk(self.simulator_wrapper.model, self.simulator_wrapper.state)
 
-        # body_q is now up-to-date in both paths; read root pose.
         self.root_body_q.copy_(
             wp.to_torch(self.sim_states.body_q)[0 :: self.bodies_per_env, :].view(
                 self.num_envs, 7
             )
         )
-
         self.utils_provider.states.copy_(self.states)
         self.utils_provider.root_body_q.copy_(self.root_body_q)
         self.utils_provider.wrap2PI(self.utils_provider.states)
-        self.utils_provider.append_current_state_to_history(joint_acts=self.joint_acts)
+
+    # ---- Neural-eval helpers (collision detection + history) ----
+
+    def _collide_and_append_to_history(self):
+        """Run collision detection, convert contacts & gravity, append to history.
+
+        Must be called after ``_sync_states`` so that body poses are current.
+        Used exclusively by the neural-eval path (``reset_for_eval`` /
+        ``_step_neural``).
+        """
+        self.simulator_wrapper.contacts = self.simulator_wrapper.model.collide(
+            self.simulator_wrapper.state
+        )
+
+        raw = self.convert_newton_contacts_to_contacts_for_nn_model()
+        n = raw["contact_normals"].shape[1]
+        contacts = {
+            "contact_normals":  raw["contact_normals"].reshape(self.num_envs, n * 3),
+            "contact_points_1": raw["contact_points_1"].reshape(self.num_envs, n * 3),
+            "contact_depths":   raw["contact_depths"],
+        }
+
+        gravity_dir_body = self.get_gravity_dir()
+
+        self.utils_provider.append_current_state_to_history(
+            joint_acts=self.joint_acts,
+            contacts=contacts,
+            gravity_dir_body=gravity_dir_body,
+        )
 
     # ---- Neural model step  ----
 
@@ -224,9 +257,13 @@ class NnTrainingInterface:
     def _step_neural(self) -> torch.Tensor:
         """Step using the neural model instead of ground-truth physics.
 
-        Reads state history from the utils_provider, runs a forward pass through
-        the neural model, converts the prediction to next states, and syncs the
-        result back into the warp simulation and state history.
+        1. Read model inputs from the state history (contacts & gravity
+           were placed there by the previous ``_collide_and_append_to_history``
+           call).
+        2. Run the neural-model forward pass.
+        3. Convert the prediction to next states.
+        4. Sync the simulator to those states, run collision detection, and
+           store the fresh contacts / gravity in the history for the next step.
         """
         neural_model = self.utils_provider.neural_model
         assert neural_model is not None, (
@@ -237,9 +274,6 @@ class NnTrainingInterface:
         model_inputs = self.utils_provider.get_neural_model_inputs()
         prediction = neural_model(model_inputs)
 
-        # The transformer produces predictions for every timestep in the
-        # history sequence (B, T, prediction_dim). We only need the last
-        # timestep's prediction to advance the simulation by one step.
         current_states = self.states.unsqueeze(1)  # (B, 1, state_dim)
         if prediction.ndim == 3:
             prediction = prediction[:, -1:, :]
@@ -250,10 +284,11 @@ class NnTrainingInterface:
             dt=self.frame_dt,
         ).squeeze(1)  # back to (B, state_dim)
 
-        self._update_states(next_states)
+        self._sync_states(next_states)
+        self._collide_and_append_to_history()
         return self.states
 
-    # ---- Step, con reset (trajectory sampler uses these) ----
+    # ---- Ground-truth stepping (dataset generation) ----
 
     def step(
         self,
@@ -282,7 +317,7 @@ class NnTrainingInterface:
             return self._step_neural()
         else:
             self.simulator_wrapper.update()
-            self._update_states()
+            self._sync_states()
             return self.states
 
     def step_with_joint_act(
@@ -308,24 +343,23 @@ class NnTrainingInterface:
             return self._step_neural()
         else:
             self.simulator_wrapper.update()
-            self._update_states()
+            self._sync_states()
             return self.states
 
+    # ---- Contact / gravity helpers (called explicitly by dataset sampler) ----
+
     def convert_newton_contacts_to_contacts_for_nn_model(self):
-        """
-        Converts self.contacts from Axion to Contact data form suitable for
-        NN module training. 
-        """
+        """Process simulator contacts into the format expected by the NN."""
         return self.utils_provider.convert_newton_contacts_to_contacts_for_nn_model(
             self.simulator_wrapper.state,
             self.simulator_wrapper.contacts
         )
 
     def get_gravity_dir(self):
-        """
-        Return the current gravity vector in the body's reference frame
-        """
+        """Return the gravity vector converted to the body's reference frame."""
         return self.utils_provider.convert_gravity_vec_w2b(self.simulator_wrapper.state)
+
+    # ---- Reset (dataset generation) ----
 
     def reset(
         self,
@@ -333,20 +367,51 @@ class NnTrainingInterface:
         plane_normals: Optional[torch.Tensor] = None,
         plane_d_coefficients: Optional[torch.Tensor] = None,
     ) -> None:
-        # Clear history first so the initial state persists as the first entry.
-        self.utils_provider.reset()
+        """Reset the simulator to *initial_states*.
 
+        Used by dataset-generation samplers.  Does **not** populate the state
+        history or run collision detection — the sampler reads contacts and
+        gravity explicitly after each ground-truth step.
+        """
         assert initial_states.shape[0] == self.num_envs
 
-        # Reset the internal scene representation (plane n·x + d = 0)
         if plane_normals is not None:
             self.simulator_wrapper.reset_scene(
                 plane_normals, plane_d_coefficients=plane_d_coefficients
             )
 
-        # Reset states
         initial_states = initial_states.to(self.torch_device)
-        self._update_states(initial_states)
+        self._sync_states(initial_states)
+
+    # ---- Reset (neural eval) ----
+
+    def reset_for_eval(
+        self,
+        initial_states: torch.Tensor,
+        plane_normals: Optional[torch.Tensor] = None,
+        plane_d_coefficients: Optional[torch.Tensor] = None,
+    ) -> None:
+        """Reset the simulator **and** prepare the state history for neural eval.
+
+        In addition to what ``reset`` does, this method:
+        1. Clears the utils_provider state history.
+        2. Runs collision detection for *initial_states*.
+        3. Converts contacts and gravity to body frame.
+        4. Appends the result as the first entry in the state history so that
+           the very first ``_step_neural`` call sees correct inputs.
+        """
+        self.utils_provider.reset()
+
+        assert initial_states.shape[0] == self.num_envs
+
+        if plane_normals is not None:
+            self.simulator_wrapper.reset_scene(
+                plane_normals, plane_d_coefficients=plane_d_coefficients
+            )
+
+        initial_states = initial_states.to(self.torch_device)
+        self._sync_states(initial_states)
+        self._collide_and_append_to_history()
 
     def close(self):
         self.simulator_wrapper.close()

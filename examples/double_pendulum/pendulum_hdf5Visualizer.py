@@ -14,11 +14,11 @@ from pendulum_articulation_definition import build_pendulum_model, PENDULUM_HEIG
 HDF5_PATH = (
     pathlib.Path(__file__).resolve().parents[2]
     / "src" / "axion" / "neural_solver" / "datasets" / "Pendulum"
-    / "pendulumContacts.hdf5"
+    / "pendulumTrain50kLen1000Envs100Seed0.hdf5"
 )
 
 DT = 0.01
-TRAJECTORY_INDEX = 1
+TRAJECTORY_INDEX = 99
 PLAYBACK_SPEED = 1.0
 
 
