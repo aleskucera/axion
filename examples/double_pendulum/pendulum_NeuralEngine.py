@@ -141,6 +141,5 @@ def basic_pendulum_example(cfg: DictConfig):
 
     simulator.run()
 
-
 if __name__ == "__main__":
     basic_pendulum_example()
