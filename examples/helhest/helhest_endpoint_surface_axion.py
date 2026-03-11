@@ -1,21 +1,11 @@
-"""
-Helhest wheel velocity optimization using implicit differentiation.
-
-Goal: find the per-timestep wheel target velocities that bring the chassis
-to a target final position. The loss is computed only from the last state,
-so the optimizer is free to take any path — it only cares where the robot
-ends up.
-
-Scene: Helhest robot on flat ground (no obstacles).
-Optimization parameter: joint_target_vel at wheel DOFs [6, 7, 8] per timestep.
-Loss: L2 distance between final chassis position and target final position.
-"""
 import os
 import pathlib
+import time
 
 import hydra
 import newton
 import numpy as np
+import openmesh
 import warp as wp
 from axion import AxionDifferentiableSimulator
 from axion import EngineConfig
@@ -37,6 +27,7 @@ from axion.optim.trajectory_adam import TrajectoryAdam
 
 os.environ["PYOPENGL_PLATFORM"] = "glx"
 CONFIG_PATH = pathlib.Path(__file__).parent.parent.joinpath("conf")
+ASSETS_DIR = pathlib.Path(__file__).parent.parent.joinpath("assets")
 
 # DOF layout: [0..5] = free base joint, [6] = left wheel, [7] = right wheel, [8] = rear wheel
 WHEEL_DOF_OFFSET = 6
@@ -153,14 +144,13 @@ class HelhestEndpointOptimizer(AxionDifferentiableSimulator):
         self.loss = wp.zeros(1, dtype=float, requires_grad=True)
         self.learning_rate = 1.0
         self.endpoint_weight = 10.0
-        self.smoothness_weight = 5e-3
-        self.regularization_weight = 1e-6
+        self.smoothness_weight = 1e-2
+        self.regularization_weight = 1e-7
 
         self.frame = 0
 
-        # Straight-line drive: equal velocity on all three wheels
-        self.init_wheel_vel = 4.0  # rad/s — starting guess
-        self.true_wheel_vel = 3.0  # rad/s — defines the target final position
+        # Straight-line drive initial guess (Left, Right, Rear)
+        self.init_wheel_vel = (4.0, 3.0, 0.0)
 
         # Track chassis (body 0)
         self.track_body(body_idx=0, name="chassis", color=(0.0, 0.5, 1.0))
@@ -174,11 +164,11 @@ class HelhestEndpointOptimizer(AxionDifferentiableSimulator):
             kd=50.0,
             kf=50.0,
         )
-        self.builder.add_ground_plane(cfg=ground_cfg)
+        # self.builder.add_ground_plane(cfg=ground_cfg)
 
         create_helhest_model(
             self.builder,
-            xform=wp.transform(wp.vec3(0.0, 0.0, 0.5), wp.quat_identity()),
+            xform=wp.transform(wp.vec3(0.0, 0.0, 1.4), wp.quat_identity()),
             control_mode="velocity",
             k_p=HelhestConfig.TARGET_KE,
             k_d=HelhestConfig.TARGET_KD,
@@ -186,6 +176,27 @@ class HelhestEndpointOptimizer(AxionDifferentiableSimulator):
             friction_rear=0.35,
         )
 
+        # Surface Mesh
+        surface_m = openmesh.read_trimesh(str(ASSETS_DIR.joinpath("surface.obj")))
+        mesh_indices = np.array(surface_m.face_vertex_indices(), dtype=np.int32).flatten()
+
+        scale = np.array([6.0, 6.0, 3.0])
+        mesh_points = np.array(surface_m.points()) * scale + np.array([0.0, 0.0, 0.05])
+
+        surface_mesh = newton.Mesh(mesh_points, mesh_indices)
+
+        self.builder.add_shape_mesh(
+            body=-1,
+            mesh=surface_mesh,
+            cfg=newton.ModelBuilder.ShapeConfig(
+                density=0.0,
+                has_shape_collision=True,
+                mu=1.0,
+                ke=150.0,
+                kd=150.0,
+                kf=500.0,
+            ),
+        )
         return self.builder.finalize_replicated(
             num_worlds=self.simulation_config.num_worlds,
             requires_grad=True,
@@ -229,13 +240,15 @@ class HelhestEndpointOptimizer(AxionDifferentiableSimulator):
     def update(self):
         # Apply Adam step directly
         self.optimizer.step(self.trajectory.joint_target_vel.grad)
+
         self.trajectory.joint_target_vel.grad.zero_()
+
         # Sync updated trajectory values back into per-step controls
         for i in range(self.clock.total_sim_steps):
             wp.copy(self.controls[i].joint_target_vel, self.trajectory.joint_target_vel[i])
 
     def render(self, train_iter):
-        if self.frame > 0 and train_iter % 3 != 0:
+        if self.frame > 0 and train_iter % 5 != 0:
             return
 
         loss_val = self.loss.numpy()[0]
@@ -267,18 +280,18 @@ class HelhestEndpointOptimizer(AxionDifferentiableSimulator):
             callback=draw_extras,
             loop=True,
             loops_count=1,
-            playback_speed=5.0,
+            playback_speed=3.0,
         )
 
         self.frame += 1
 
-    def _make_wheel_vel_array(self, vel: float) -> np.ndarray:
-        """Build a full joint_target_vel numpy array with `vel` at the 3 wheel DOFs."""
+    def _make_wheel_vel_array(self, vels: tuple) -> np.ndarray:
+        """Build a full joint_target_vel numpy array with `vels` at the 3 wheel DOFs."""
         num_dofs = self.trajectory.joint_target_vel.shape[-1]
         arr = np.zeros((self.clock.total_sim_steps, 1, num_dofs), dtype=np.float32)
-        arr[:, :, WHEEL_DOF_OFFSET + 0] = vel  # left
-        arr[:, :, WHEEL_DOF_OFFSET + 1] = vel  # right
-        arr[:, :, WHEEL_DOF_OFFSET + 2] = vel  # rear
+        arr[:, :, WHEEL_DOF_OFFSET + 0] = vels[0]  # left
+        arr[:, :, WHEEL_DOF_OFFSET + 1] = vels[1]  # right
+        arr[:, :, WHEEL_DOF_OFFSET + 2] = vels[2]  # rear
         return arr
 
     def train(self, iterations=60):
@@ -288,12 +301,15 @@ class HelhestEndpointOptimizer(AxionDifferentiableSimulator):
 
         # --- Target episode ---
         num_dofs = self.trajectory.joint_target_vel.shape[-1]
-        target_ctrl = np.zeros(num_dofs, dtype=np.float32)
-        target_ctrl[WHEEL_DOF_OFFSET + 0] = self.true_wheel_vel
-        target_ctrl[WHEEL_DOF_OFFSET + 1] = self.true_wheel_vel
-        target_ctrl[WHEEL_DOF_OFFSET + 2] = self.true_wheel_vel
-        target_ctrl_wp = wp.array(target_ctrl, dtype=wp.float32, device=self.model.device)
+
+        # Create a time-varying, swerving target control
         for i in range(self.clock.total_sim_steps):
+            target_ctrl = np.zeros(num_dofs, dtype=np.float32)
+            target_ctrl[WHEEL_DOF_OFFSET + 0] = 6.0
+            target_ctrl[WHEEL_DOF_OFFSET + 1] = 1.0
+            target_ctrl[WHEEL_DOF_OFFSET + 2] = 2.0
+
+            target_ctrl_wp = wp.array(target_ctrl, dtype=wp.float32, device=self.model.device)
             wp.copy(self.target_controls[i].joint_target_vel, target_ctrl_wp)
 
         self.run_target_episode()
@@ -310,29 +326,32 @@ class HelhestEndpointOptimizer(AxionDifferentiableSimulator):
         wp.copy(self.trajectory.joint_target_vel, wp.array(init_arr, dtype=wp.float32))
 
         init_ctrl = np.zeros(num_dofs, dtype=np.float32)
-        init_ctrl[WHEEL_DOF_OFFSET + 0] = self.init_wheel_vel
-        init_ctrl[WHEEL_DOF_OFFSET + 1] = self.init_wheel_vel
-        init_ctrl[WHEEL_DOF_OFFSET + 2] = self.init_wheel_vel
+        init_ctrl[WHEEL_DOF_OFFSET + 0] = self.init_wheel_vel[0]
+        init_ctrl[WHEEL_DOF_OFFSET + 1] = self.init_wheel_vel[1]
+        init_ctrl[WHEEL_DOF_OFFSET + 2] = self.init_wheel_vel[2]
         init_ctrl_wp = wp.array(init_ctrl, dtype=wp.float32, device=self.model.device)
 
         self.optimizer = TrajectoryAdam(
             params=self.trajectory.joint_target_vel,
-            lr=0.1,  # Try tuning this between 0.01 and 0.1
+            lr=1.0,
             betas=(0.9, 0.999),
             dof_offset=WHEEL_DOF_OFFSET,
             num_dofs=NUM_WHEEL_DOFS,
         )
+
         for i in range(self.clock.total_sim_steps):
             wp.copy(self.controls[i].joint_target_vel, init_ctrl_wp)
 
         for i in range(iterations):
+            t0 = time.perf_counter()
             self.diff_step()
+            wp.synchronize()
+            t_episode = time.perf_counter() - t0
 
             curr_loss = self.loss.numpy()[0]
-            current_vel = self.trajectory.joint_target_vel.numpy()[0, 0, WHEEL_DOF_OFFSET]
+            current_vel_l = self.trajectory.joint_target_vel.numpy()[0, 0, WHEEL_DOF_OFFSET]
             print(
-                f"Iter {i}: Loss={curr_loss:.4f} | "
-                f"wheel_vel={current_vel:.3f} (target={self.true_wheel_vel})"
+                f"Iter {i}: Loss={curr_loss:.4f} | init left_vel={current_vel_l:.3f} | episode={t_episode:.3f}s"
             )
 
             self.render(i)
@@ -340,8 +359,6 @@ class HelhestEndpointOptimizer(AxionDifferentiableSimulator):
 
             self.tape.zero()
             self.loss.zero_()
-            if self.loss.grad:
-                self.loss.grad.zero_()
 
 
 @hydra.main(version_base=None, config_path=str(CONFIG_PATH), config_name="helhest_diff")

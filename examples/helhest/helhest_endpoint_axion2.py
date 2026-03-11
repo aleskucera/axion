@@ -1,5 +1,6 @@
 import os
 import pathlib
+import time
 
 import hydra
 import newton
@@ -141,13 +142,13 @@ class HelhestEndpointOptimizer(AxionDifferentiableSimulator):
         self.loss = wp.zeros(1, dtype=float, requires_grad=True)
         self.learning_rate = 1.0
         self.endpoint_weight = 10.0
-        self.smoothness_weight = 0.0
-        self.regularization_weight = 0.0
+        self.smoothness_weight = 1e-2
+        self.regularization_weight = 1e-7
 
         self.frame = 0
 
         # Straight-line drive initial guess (Left, Right, Rear)
-        self.init_wheel_vel = (3.0, 4.0, 0.0)
+        self.init_wheel_vel = (2.0, 5.0, 0.0)
 
         # Track chassis (body 0)
         self.track_body(body_idx=0, name="chassis", color=(0.0, 0.5, 1.0))
@@ -217,12 +218,14 @@ class HelhestEndpointOptimizer(AxionDifferentiableSimulator):
         # Apply Adam step directly
         self.optimizer.step(self.trajectory.joint_target_vel.grad)
 
+        self.trajectory.joint_target_vel.grad.zero_()
+
         # Sync updated trajectory values back into per-step controls
         for i in range(self.clock.total_sim_steps):
             wp.copy(self.controls[i].joint_target_vel, self.trajectory.joint_target_vel[i])
 
     def render(self, train_iter):
-        if self.frame > 0 and train_iter % 3 != 0:
+        if self.frame > 0 and train_iter % 10 != 0:
             return
 
         loss_val = self.loss.numpy()[0]
@@ -278,14 +281,8 @@ class HelhestEndpointOptimizer(AxionDifferentiableSimulator):
 
         # Create a time-varying, swerving target control
         for i in range(self.clock.total_sim_steps):
-            phase = i / float(self.clock.total_sim_steps)
-
-            vl = 3.0 + 5.0 * np.sin(np.pi * phase)  # Left wheel speed fluctuates
-            vr = 1.0 + 5.0 * np.cos(np.pi * phase)  # Right wheel does the opposite
-            vback = 2.0 + 1.0 * phase  # Rear wheel accelerates
-
             target_ctrl = np.zeros(num_dofs, dtype=np.float32)
-            target_ctrl[WHEEL_DOF_OFFSET + 0] = 0.5
+            target_ctrl[WHEEL_DOF_OFFSET + 0] = 1.0
             target_ctrl[WHEEL_DOF_OFFSET + 1] = 6.0
             target_ctrl[WHEEL_DOF_OFFSET + 2] = 0.0
 
@@ -313,7 +310,7 @@ class HelhestEndpointOptimizer(AxionDifferentiableSimulator):
 
         self.optimizer = TrajectoryAdam(
             params=self.trajectory.joint_target_vel,
-            lr=0.1,
+            lr=1.0,
             betas=(0.9, 0.999),
             dof_offset=WHEEL_DOF_OFFSET,
             num_dofs=NUM_WHEEL_DOFS,
@@ -323,11 +320,16 @@ class HelhestEndpointOptimizer(AxionDifferentiableSimulator):
             wp.copy(self.controls[i].joint_target_vel, init_ctrl_wp)
 
         for i in range(iterations):
+            t0 = time.perf_counter()
             self.diff_step()
+            wp.synchronize()
+            t_episode = time.perf_counter() - t0
 
             curr_loss = self.loss.numpy()[0]
             current_vel_l = self.trajectory.joint_target_vel.numpy()[0, 0, WHEEL_DOF_OFFSET]
-            print(f"Iter {i}: Loss={curr_loss:.4f} | init left_vel={current_vel_l:.3f}")
+            print(
+                f"Iter {i}: Loss={curr_loss:.4f} | init left_vel={current_vel_l:.3f} | episode={t_episode:.3f}s"
+            )
 
             self.render(i)
             self.update()

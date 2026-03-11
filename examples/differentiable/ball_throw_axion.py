@@ -106,7 +106,7 @@ class BallThrowOptimizerImplicit(AxionDifferentiableSimulator):
         self.frame = 0
 
         # Initial velocity guessing (angular, linear)
-        self.init_vel = wp.spatial_vector(0.0, 0.5, 10.0, 0.0, 0.0, 0.0)
+        self.init_vel = wp.spatial_vector(0.0, 0.5, 3.0, 0.0, 0.0, 0.0)
 
         # 3. Setup Automatic Trajectory Tracking
         self.track_body(body_idx=0, name="ball", color=(0.0, 1.0, 0.0))
