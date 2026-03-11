@@ -271,7 +271,7 @@ class NewtonDifferentiableSimulator(DifferentiableSimulator, ABC):
         simulation_config: SimulationConfig,
         rendering_config: RenderingConfig,
         execution_config: ExecutionConfig,
-        engine_config: SemiImplicitEngineConfig,
+        engine_config: EngineConfig,
         logging_config: Optional[LoggingConfig] = None,
     ):
         super().__init__(

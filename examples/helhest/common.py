@@ -122,6 +122,9 @@ def _add_wheel(
     wheel_mesh: newton.Mesh,
     is_visible: bool,
     mesh_rotation: wp.quat = wp.quat_identity(),
+    ke: float = None,
+    kd: float = None,
+    kf: float = None,
 ) -> int:
     """Adds a wheel link, shapes, and returns the link index."""
     pos_world = wp.transform_point(parent_xform, pos_local)
@@ -148,17 +151,20 @@ def _add_wheel(
     )
 
     # Collision Shape
+    collision_cfg_kwargs = {"density": 0.0, "is_visible": False, "collision_group": -1, "mu": mu}
+    if ke is not None:
+        collision_cfg_kwargs["ke"] = ke
+    if kd is not None:
+        collision_cfg_kwargs["kd"] = kd
+    if kf is not None:
+        collision_cfg_kwargs["kf"] = kf
+
     builder.add_shape_cylinder(
         body=wheel_link,
         xform=wp.transform(wp.vec3(0.0, 0.0, 0.0), HelhestConfig.WHEEL_ROT),
         radius=HelhestConfig.WHEEL_RADIUS,
         half_height=HelhestConfig.WHEEL_WIDTH / 2.0,
-        cfg=newton.ModelBuilder.ShapeConfig(
-            density=0.0,
-            is_visible=False,
-            collision_group=-1,
-            mu=mu,
-        ),
+        cfg=newton.ModelBuilder.ShapeConfig(**collision_cfg_kwargs),
     )
     return wheel_link
 
@@ -223,6 +229,9 @@ def create_helhest_model(
     k_d: float = 0.1,
     friction_left_right: float = 0.7,
     friction_rear: float = 0.4,
+    ke: float = None,
+    kd: float = None,
+    kf: float = None,
 ):
     """
     Creates a Helhest robot model using physical parameters from the URDF
@@ -254,6 +263,9 @@ def create_helhest_model(
         friction_left_right,
         wheel_mesh_render,
         is_visible,
+        ke=ke,
+        kd=kd,
+        kf=kf,
     )
     right_wheel = _add_wheel(
         builder,
@@ -263,6 +275,9 @@ def create_helhest_model(
         friction_left_right,
         wheel_mesh_render,
         is_visible,
+        ke=ke,
+        kd=kd,
+        kf=kf,
     )
     rear_wheel = _add_wheel(
         builder,
@@ -272,6 +287,9 @@ def create_helhest_model(
         friction_rear,
         wheel_mesh_render,
         is_visible,
+        ke=ke,
+        kd=kd,
+        kf=kf,
     )
 
     # 3. Wheel Joints

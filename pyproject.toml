@@ -27,6 +27,10 @@ sim = [
   "mujoco-warp==3.5.0.1",
   "warp-lang==1.11.0",
 ]
+brax = [
+  "brax",
+  "jax[cuda12]",
+]
 dev = [
   "axion[sim]",
   "axion[docs]",
