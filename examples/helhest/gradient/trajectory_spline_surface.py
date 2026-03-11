@@ -316,7 +316,7 @@ class HelhestTrajectorySplineSurfaceOptimizer(AxionDifferentiableSimulator):
         for i in range(T):
             target_ctrl = np.zeros(num_dofs, dtype=np.float32)
             target_ctrl[WHEEL_DOF_OFFSET + 0] = 6.0
-            target_ctrl[WHEEL_DOF_OFFSET + 1] = 1.0
+            target_ctrl[WHEEL_DOF_OFFSET + 1] = 0.8
             target_ctrl[WHEEL_DOF_OFFSET + 2] = 2.0
 
             target_ctrl_wp = wp.array(target_ctrl, dtype=wp.float32, device=self.model.device)
@@ -338,7 +338,7 @@ class HelhestTrajectorySplineSurfaceOptimizer(AxionDifferentiableSimulator):
             dtype=np.float64,
         )  # [K, 3]
 
-        self.spline_adam = SplineAdam(K=self.K, num_dofs=NUM_WHEEL_DOFS, lr=0.1)
+        self.spline_adam = SplineAdam(K=self.K, num_dofs=NUM_WHEEL_DOFS, lr=0.2)
 
         self._apply_params(self.spline_params)
 
