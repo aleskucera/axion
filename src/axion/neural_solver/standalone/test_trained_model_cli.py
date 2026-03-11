@@ -39,38 +39,21 @@ def load_model_and_config(model_path, cfg_path):
     return model, robot_name, cfg
 
 
-def create_pendulum_predictor(model, cfg, device='cuda:0'):
+def create_pendulum_predictor(newton_model, nn_model, cfg, device='cuda:0'):
     """
     Create NeuralPredictor for Pendulum robot.
 
-    Pendulum configuration:
-    - 2 revolute joints (double pendulum)
-    - Each joint: 1 DOF (angle) + 1 velocity
-    - Total: 2 position DOFs + 2 velocity DOFs = 4 state dimensions
+    Robot configuration is inferred from newton_model (DOFs, joint types, etc.).
     """
     # NeuralPredictor reads cfg['env']['neural_integrator_cfg']; training uses utils_provider_cfg
     env_cfg = cfg.get('env', {})
     if 'neural_integrator_cfg' not in env_cfg and 'utils_provider_cfg' in env_cfg:
         cfg = {**cfg, 'env': {**env_cfg, 'neural_integrator_cfg': env_cfg['utils_provider_cfg']}}
     return NeuralPredictor(
-        nn_model=model,
+        newton_model=newton_model,
+        nn_model=nn_model,
         cfg=cfg,
         device=device,
-        # Robot configuration for Pendulum
-        dof_q_per_env=2,      # 2 revolute joints, each with 1 angle
-        dof_qd_per_env=2,     # 2 revolute joints, each with 1 angular velocity
-        # Joint types: both are REVOLUTE (Newton JointType.REVOLUTE = 1; BALL = 2)
-        joint_types=[1, 1],
-        # Joint DOF start indices in q vector
-        joint_q_start=[0, 1],
-        # Joint DOF end indices in q vector
-        joint_q_end=[1, 2],
-        # Which DOFs are angular (for state embedding): position DOFs only
-        # [angle1, angle2, vel1, vel2]
-        is_angular_dof=[True, True, False, False],
-        # Which DOFs are continuous (unwrapped angles)
-        # Position DOFs (angles) are continuous, velocities are not
-        is_continuous_dof=[True, True, False, False]
     )
 
 
@@ -122,20 +105,25 @@ def run_prediction_example(model_path, cfg_path, device='cuda:0', num_steps=10):
     print("=" * 60)
     print("NeRD Standalone Predictor Example")
     print("=" * 60)
-    
+
     # Step 1: Load model and configuration
-    model, robot_name, cfg = load_model_and_config(model_path, cfg_path)
+    nn_model, robot_name, cfg = load_model_and_config(model_path, cfg_path)
     print(f"\n✓ Model and config loaded successfully")
-    
-    # Step 2: Create predictor
+
+    # Step 2: Build Newton pendulum model (robot config is inferred from it)
+    try:
+        from src.axion.neural_solver.compare import build_pendulum_model
+    except ModuleNotFoundError:
+        from axion.neural_solver.compare import build_pendulum_model
+    newton_model = build_pendulum_model(device=device)
+
+    # Step 3: Create predictor
     print("\nCreating NeuralPredictor...")
-    # Note: You'll need to adjust the robot configuration based on your specific robot
-    # This example uses Pendulum configuration - adjust for your robot!
-    predictor = create_pendulum_predictor(model, cfg, device=device)
+    predictor = create_pendulum_predictor(newton_model, nn_model, cfg, device=device)
     print(f"✓ Predictor created for device: {device}")
     print(f"  State dimension: {predictor.state_dim} (dof_q={predictor.dof_q_per_env}, dof_qd={predictor.dof_qd_per_env})")
 
-    # Step 3: Create example inputs
+    # Step 4: Create example inputs
     print("\nCreating example input data...")
     states, root_body_q, gravity_dir = create_example_inputs(
         num_envs=1, device=device
@@ -145,7 +133,7 @@ def run_prediction_example(model_path, cfg_path, device='cuda:0', num_steps=10):
     print(f"  Root body q shape: {root_body_q.shape}")
     print(f"  Gravity dir shape: {gravity_dir.shape}")
 
-    # Step 4: Run predictions
+    # Step 5: Run predictions
     print("\nRunning predictions...")
     print("-" * 60)
 
@@ -246,6 +234,6 @@ if __name__ == '__main__':
             import traceback
             traceback.print_exc()
             print("\nNote: Make sure you have:")
-            print("  1. Correct robot configuration in create_pendulum_predictor()")
+            print("  1. Newton model matches the robot the network was trained for")
             print("  2. Correct input data shapes matching your robot")
             print("  3. Valid pretrained model and config files")

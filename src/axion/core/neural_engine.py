@@ -21,7 +21,6 @@ from .engine_logger import EngineLogger
 import yaml
 import torch
 import sys
-from axion.types import reorder_ground_contacts_kernel, contact_penetration_depth_kernel
 from axion.neural_solver.standalone.neural_predictor import NeuralPredictor
 from axion.nn_prediction import models, utils
 
@@ -29,25 +28,9 @@ from axion.nn_prediction import models, utils
 # (saved when the trainer was run with a different sys.path) to load correctly.
 sys.modules['models'] = models
 sys.modules['utils'] = utils
-# import axion.neural_solver.models.models as _ns_models_models
-# import axion.neural_solver.models.base_models as _ns_models_base_models
-# import axion.neural_solver.models.model_transformer as _ns_models_model_transformer
-# import axion.neural_solver.models.model_utils as _ns_models_model_utils
-# sys.modules['models.models'] = _ns_models_models
-# sys.modules['models.base_models'] = _ns_models_base_models
-# sys.modules['models.model_transformer'] = _ns_models_model_transformer
-# sys.modules['models.model_utils'] = _ns_models_model_utils
-# import axion.neural_solver.utils.running_mean_std as _ns_utils_running_mean_std
-# import axion.neural_solver.utils.commons as _ns_utils_commons
-# import axion.neural_solver.utils.torch_utils as _ns_utils_torch_utils
-# import axion.neural_solver.utils.warp_utils as _ns_utils_warp_utils
-# sys.modules['utils.running_mean_std'] = _ns_utils_running_mean_std
-# sys.modules['utils.commons'] = _ns_utils_commons
-# sys.modules['utils.torch_utils'] = _ns_utils_torch_utils
-# sys.modules['utils.warp_utils'] = _ns_utils_warp_utils
 
-NN_BASE_PATH = Path.cwd() /"src"/"axion"/"neural_solver"/"train"/"trained_models"/"03-01-2026-10-46-58" #"03-01-2026-20-48-21"
-NN_PENDULUM_PT_PATH = NN_BASE_PATH/"nn"/"final_model.pt"
+NN_BASE_PATH = Path.cwd() /"src"/"axion"/"neural_solver"/"train"/"trained_models"/"03-10-2026-14-22-43" #"03-01-2026-10-46-58" 
+NN_PENDULUM_PT_PATH = NN_BASE_PATH/"nn"/"best_valid_valid_model.pt"
 NN_PENDULUM_CFG_PATH = NN_BASE_PATH/"cfg.yaml"
  
 class NeuralEngine(SolverBase):
@@ -78,7 +61,7 @@ class NeuralEngine(SolverBase):
             nn_cfg_path: Filepath to the desired .yaml configuration file of the neural network. 
         """
 
-        # TO-DO: add some assertions if model != nn_model_path != nn_cfg_path
+        # TODO: add some assertions if model != nn_model_path != nn_cfg_path
 
         #########################################
         #  Classic AxionEngine-like initialization
@@ -105,20 +88,12 @@ class NeuralEngine(SolverBase):
         with open(nn_cfg_path, 'r') as f:
             loaded_nn_cfg = yaml.load(f, Loader=yaml.SafeLoader)
 
-        # Initialize NeRDPredictor object with the loaded .pt anf cfg files
-        # TO-DO: make the arguments of this initialization not hardcoded
+        # Initialize NeRDPredictor: robot config is inferred from self.model (newton.Model)
         self.nn_predictor = NeuralPredictor(
-            nn_model= loaded_nn_model,
-            cfg= loaded_nn_cfg,
-            device= str(self.device),
-            # Robot configuration for Pendulum
-            dof_q_per_env=2,      # 2 revolute joints, each with 1 angle
-            dof_qd_per_env=2,     # 2 revolute joints, each with 1 angular velocity
-            joint_types=[1, 1],             # Joint types: both are REVOLUTE    TO-DO: make them newton enums
-            joint_q_start=[0, 1],               # Joint DOF start indices in q vector
-            joint_q_end=[1, 2],                 # Joint DOF end indices in q vector
-            is_angular_dof=[True, True, True, True],      # Which DOFs are angular (for state embedding)
-            is_continuous_dof=[True, True, False, False]  # Which DOFs are continuous (unwrapped angles) Position DOFs (angles) are continuous, velocities are not
+            newton_model=self.model,
+            nn_model=loaded_nn_model,
+            nn_cfg=loaded_nn_cfg,
+            device=str(self.device),
         )
 
         self.num_models = 1    # num_worlds
@@ -149,101 +124,9 @@ class NeuralEngine(SolverBase):
         dt: float,
     ):
 
-        # STATE VARIABLES--------------------------------------------------------------------------
-        # transform states into torch arrays for the model 
-        state_min_coords = torch.cat( (wp.to_torch(state_in.joint_q), wp.to_torch(state_in.joint_qd)))
-        state_min_coords = state_min_coords.unsqueeze(0)  # shape (1,4)
-        root_body_q = wp.to_torch(state_in.body_q)[0, :].unsqueeze(0)
-
-        # # CONTACTS---------------------------------------------------------------------------------
-        # # Reorder contacts from Newton such that points_0 are on body and points_1 are
-        # max_num_contacts_per_model = 4 
-        # shape = (self.num_models, max_num_contacts_per_model)
-        # device = str(self.device)
-        # reordered_point0 = wp.zeros(shape, dtype=wp.vec3, device=device)
-        # reordered_point1 = wp.zeros(shape, dtype=wp.vec3, device=device)
-        # reordered_normal = wp.zeros(shape, dtype=wp.vec3, device=device)
-        # reordered_thickness0 = wp.zeros(shape, dtype=wp.float32, device=device)
-        # reordered_thickness1 = wp.zeros(shape, dtype=wp.float32, device=device)
-        # reordered_body_shape = wp.full(shape, -1, dtype=wp.int32, device=device)
-        # body_contact_count = wp.zeros(self.model.body_count, dtype=wp.int32, device=device)
-        # if len(self.model.shape_body.shape) == 1:
-        #     shape_body_2d = self.model.shape_body.reshape((1, -1))  # (shape_count,) -> (1, shape_count)
-        # else:
-        #     shape_body_2d = self.model.shape_body
-        # wp.launch(
-        #     kernel=reorder_ground_contacts_kernel,
-        #     dim=(self.num_models, max_num_contacts_per_model),
-        #     inputs=[
-        #         contacts.rigid_contact_count,
-        #         contacts.rigid_contact_shape0,
-        #         contacts.rigid_contact_shape1,
-        #         contacts.rigid_contact_point0,
-        #         contacts.rigid_contact_point1,
-        #         contacts.rigid_contact_normal,
-        #         contacts.rigid_contact_thickness0,
-        #         contacts.rigid_contact_thickness1,
-        #         shape_body_2d,
-        #         body_contact_count,
-        #     ],
-        #     outputs=[
-        #         reordered_point0,  # Always body
-        #         reordered_point1,  # Always ground
-        #         reordered_normal,
-        #         reordered_thickness0,  # Always body
-        #         reordered_thickness1,  # Always ground
-        #         reordered_body_shape,  # Body shape index for each contact
-        #     ],
-        #     device=str(self.device)
-        # )
-
-        # # Calculate Penetration depth using reordered contact data
-        # contact_depths_wp_array = wp.zeros((self.num_models, max_num_contacts_per_model), dtype=wp.float32, device=str(self.device))
-        # if len(state_in.body_q.shape) == 1:
-        #     body_q_2d = state_in.body_q.reshape((1, -1))    # (body_count,) -> (1, body_count)
-        # else:
-        #     body_q_2d = state_in.body_q
-
-        # wp.launch(
-        #     kernel=contact_penetration_depth_kernel,
-        #     dim=(self.num_models, max_num_contacts_per_model),
-        #     inputs=[
-        #         body_q_2d,
-        #         shape_body_2d,
-        #         reordered_point0,  # Body points (reordered)
-        #         reordered_point1,  # Ground points (reordered)
-        #         reordered_normal,  # Normal from body to ground (reordered)
-        #         reordered_thickness0,  # Body thickness (reordered)
-        #         reordered_thickness1,  # Ground thickness (reordered)
-        #         reordered_body_shape,  # Body shape indices
-        #     ],
-        #     outputs=[
-        #         contact_depths_wp_array
-        #     ],
-        #     device=str(self.device)
-        # )
-
-        # # Convert to torch if needed
-        # contact_depths = wp.to_torch(contact_depths_wp_array)
-        # contact_normals = wp.to_torch(reordered_normal).flatten().unsqueeze(0).clone()
-        # contact_thickness = wp.to_torch(reordered_thickness0).flatten().unsqueeze(0).clone()  # Body thickness
-        # contact_points_0 = wp.to_torch(reordered_point0).flatten().unsqueeze(0).clone()  # Body points  
-        # contact_points_1 = wp.to_torch(reordered_point1).flatten().unsqueeze(0).clone()  # Ground points
-        # contacts = {
-        #     "contact_normals": contact_normals,
-        #     "contact_depths": contact_depths,
-        #     "contact_thicknesses": contact_thickness,
-        #     "contact_points_0": contact_points_0,
-        #     "contact_points_1": contact_points_1
-        # }
-
         # PASS ALL THE INPUTS TO THE NN------------------------------------------------------------
-        # Process the inputs (NerdPredictor does this internally using process_inputs)
-        self.nn_predictor.process_inputs(
-            states= state_min_coords.clone(),
-            root_body_q= root_body_q,  # extract only body at index 0, shape = (1, 7)
-            gravity_dir= self.gravity_vector,
-        )
+        # Process the inputs (Neural Predictor does this internally using process_inputs)
+        self.nn_predictor.process_inputs(state_in, contacts, dt)
 
         # Predict using self.nn_predictor
         state_predicted = self.nn_predictor.predict()

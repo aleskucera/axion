@@ -5,37 +5,49 @@ This module provides a simplified interface for using pretrained neural models
 as black-box robot dynamics predictors.
 """
 
-import torch
 import numpy as np
+import torch
+import warp as wp
+import newton
 from typing import Dict, Optional
 from collections import deque
+
 try:
     from src.axion.neural_solver.standalone.neural_predictor_helpers import (
         wrap2PI,
         convert_prediction_to_next_states_orientation_dofs,
         convert_prediction_to_next_states_regular_dofs,
         get_contact_masks,
-        convert_coordinate_frame
+        convert_contacts_w2b_batched,
+        apply_contact_mask,
+        convert_gravity_w2b_batched,
     )
     from src.axion.neural_solver.utils import torch_utils
+    from src.axion.types import reorder_ground_contacts_kernel, contact_penetration_depth_kernel
+    from src.axion.core.contacts import AxionContacts
 except ModuleNotFoundError:
     from axion.neural_solver.standalone.neural_predictor_helpers import (
         wrap2PI,
         convert_prediction_to_next_states_orientation_dofs,
         convert_prediction_to_next_states_regular_dofs,
         get_contact_masks,
-        convert_coordinate_frame,
-        
+        convert_contacts_w2b_batched,
+        apply_contact_mask,
+        convert_gravity_w2b_batched,
     )
     from axion.neural_solver.utils import torch_utils
+    from axion.types import reorder_ground_contacts_kernel, contact_penetration_depth_kernel
+    from axion.core.contacts import AxionContacts
 
-from newton import JointType
-JOINT_FREE = JointType.FREE
-JOINT_BALL = JointType.BALL
-JOINT_REVOLUTE = JointType.REVOLUTE
-JOINT_PRISMATIC = JointType.PRISMATIC
-JOINT_FIXED = JointType.FIXED
-JOINT_DISTANCE = JointType.DISTANCE
+
+JOINT_FREE = newton.JointType.FREE
+JOINT_BALL = newton.JointType.BALL
+JOINT_REVOLUTE = newton.JointType.REVOLUTE
+JOINT_PRISMATIC = newton.JointType.PRISMATIC
+JOINT_FIXED = newton.JointType.FIXED
+JOINT_DISTANCE = newton.JointType.DISTANCE
+
+PENDULUM_MAX_NUM_CONTACTS_PER_ROBOT_MODEL = 4
 
 class NeuralPredictor:
     """
@@ -47,81 +59,69 @@ class NeuralPredictor:
     
     def __init__(
         self,
+        newton_model: newton.Model,
         nn_model: torch.nn.Module,
-        cfg: dict,
+        nn_cfg: dict,
         device: str = 'cuda:0',
-        # Robot-specific configuration
-        dof_q_per_env: int = None,
-        dof_qd_per_env: int = None,
-        joint_types: list = None,
-        joint_q_start: list = None,
-        joint_q_end: list = None,
-        is_angular_dof: list = None,
-        is_continuous_dof: list = None,
+        # Robot-specific configuration that would be too cumbersome to infer
+        joint_q_end=[1, 2],                 # Joint DOF end indices in q vector
+        is_angular_dof=[True, True, True, True],      # Which DOFs are angular (for state embedding)
+        is_continuous_dof=[True, True, False, False]  # Which DOFs are continuous (unwrapped angles) Position DOFs (angles) are continuous, velocities are not
     ):
         """
         Initialize NeRD predictor.
-        
+
+        Robot configuration (dofs, joint types, q start/end, angular/continuous flags)
+        is inferred from newton_model.
+
         Args:
-            nn_model: Pretrained NeRD model (loaded via torch.load)
-            cfg: Configuration dictionary from cfg.yaml
-            device: Device to run on ('cuda:0', 'cpu', etc.)
-            dof_q_per_env: Number of position DOFs per environment
-            dof_qd_per_env: Number of velocity DOFs per environment
-            joint_types: List of joint types (0=FREE, 1=BALL, 2=REVOLUTE, etc.)
-            joint_q_start: Start indices for each joint in q vector
-            joint_q_end: End indices for each joint in q vector
-            is_angular_dof: Boolean array indicating which DOFs are angular
-            is_continuous_dof: Boolean array indicating which DOFs are continuous (unwrapped)
+            newton_model: Newton physics model (robot + scene); used to infer DOFs and joint layout.
+            nn_model: Pretrained NeRD model (loaded via torch.load).
+            nn_cfg: Configuration dictionary from cfg.yaml.
+            device: Device to run on ('cuda:0', 'cpu', etc.).
         """
         self.device = device
+    
+        # Robot model reference (used for contacts and body count)
+        self.robot_model = newton_model
+        self.num_worlds = 1
+        self.dof_q_per_env = int(newton_model.joint_coord_count) // self.num_worlds
+        self.dof_qd_per_env = int(newton_model.joint_dof_count) // self.num_worlds
+        self.state_dim = self.dof_q_per_env + self.dof_qd_per_env
+        self.num_joints_per_env = int(newton_model.joint_count) // self.num_worlds
+        self.bodies_per_world = int(newton_model.body_count) // self.num_worlds
+        joint_type_np = newton_model.joint_type.numpy()
+        joint_q_start_global = newton_model.joint_q_start.numpy()
+        self.joint_types = joint_type_np[:self.num_joints_per_env].copy()
+        self.joint_q_start = (joint_q_start_global[:self.num_joints_per_env] % self.dof_q_per_env).tolist()
+        self.joint_q_end = joint_q_end
+        self.is_angular_dof= np.array(is_angular_dof)
+        self.is_continuous_dof= np.array(is_continuous_dof)
+        self.gravity_vector = torch.zeros((self.num_worlds, 3), device= str(self.device))
+        self.gravity_vector[:, self.robot_model.up_axis] = -1.0 # copy the gravity dir from model (should be along Z) 
+        # Root joint pivot in first-link body (COM) frame: from model joint child xform (index 0 = root)
+        joint_X_c = self.robot_model.joint_X_c.numpy()
+        root_joint_idx = 0
+        pivot_in_body = joint_X_c[root_joint_idx, :3].astype("float32")
+        self._com_to_pivot_offset = torch.as_tensor(pivot_in_body, dtype=torch.float32, device=self.device)
+
+        # NN model 
         self.nn_model = nn_model
         self.nn_model.to(device)
         self.nn_model.eval()
-        
-        # Load configuration
-        self.neural_integrator_cfg = cfg.get('env', {}).get('neural_integrator_cfg', {})
+
+        # Load NN model configuration
+        self.neural_integrator_cfg = nn_cfg.get('env', {}).get('neural_integrator_cfg', {})
         self.states_frame = self.neural_integrator_cfg.get('states_frame', 'body')
         self.anchor_frame_step = self.neural_integrator_cfg.get('anchor_frame_step', 'every')
         self.prediction_type = self.neural_integrator_cfg.get('prediction_type', 'relative')
-        self.orientation_prediction_parameterization = self.neural_integrator_cfg.get(
-            'orientation_prediction_parameterization', 'quaternion'
-        )
+        self.orientation_prediction_parameterization = self.neural_integrator_cfg.get('orientation_prediction_parameterization', 'quaternion')
         self.states_embedding_type = self.neural_integrator_cfg.get('states_embedding_type', None)
         self.num_states_history = self.neural_integrator_cfg.get('num_states_history', 1)   # history window, defaults to 1
 
         # state history double ended queue
         self.states_history = deque(maxlen=self.num_states_history)
 
-        # Robot configuration
-        if dof_q_per_env is None:
-            raise ValueError("dof_q_per_env must be provided")
-        if dof_qd_per_env is None:
-            raise ValueError("dof_qd_per_env must be provided")
-        
-        self.dof_q_per_env = dof_q_per_env
-        self.dof_qd_per_env = dof_qd_per_env
-        self.state_dim = dof_q_per_env + dof_qd_per_env
-        
-        # Joint configuration
-        if joint_types is None:
-            raise ValueError("joint_types must be provided")
-        if joint_q_start is None:
-            raise ValueError("joint_q_start must be provided")
-        if joint_q_end is None:
-            raise ValueError("joint_q_end must be provided")
-        if is_angular_dof is None:
-            raise ValueError("is_angular_dof must be provided")
-        if is_continuous_dof is None:
-            raise ValueError("is_continuous_dof must be provided")
-        
-        self.num_joints_per_env = len(joint_types)
-        self.joint_types = np.array(joint_types)
-        self.joint_q_start = np.array(joint_q_start)
-        self.joint_q_end = np.array(joint_q_end)
-        self.is_angular_dof = np.array(is_angular_dof)
-        self.is_continuous_dof = np.array(is_continuous_dof)
-        
         # Prepare model_inputs dict (input to torch model, to be filled by process_inputs method)
         self.nn_model_inputs = {}
 
@@ -135,42 +135,184 @@ class NeuralPredictor:
         """Reset the history buffer (call at start of new trajectory)."""
         self.states_history.clear()
 
+
+    def _convert_newton_contacts_to_contacts_for_nn_model(
+        self,
+        state_in,
+        newton_contacts,
+        root_body_q: torch.Tensor,
+        ):
+        """
+        1.  Batch the 1D newton contacts into 2D arrays (world, contact)
+        2.  Reorder the contacts from newton such that points_0 are always on the robot body and
+            points_1 are the corresponding points on the external object (the contact plane)
+        3.  Calculate penetration depth (used for contact masking later)
+        4.  Convert the contact data to torch tensors.
+        5.  Calculate the contact mask (mask that defines active contacts)
+        6.  Convert points_1 and contact normals to the body frame (robot body frame)
+        7.  Apply the contact mask
+        """
+        # Batch Newton's flat 1D contacts into per-world 2D arrays
+        axion_contacts = AxionContacts(model= self.robot_model, max_contacts_per_world= PENDULUM_MAX_NUM_CONTACTS_PER_ROBOT_MODEL)
+        axion_contacts.load_contact_data(newton_contacts)
+
+        # Reorder batched contacts such that points_0 are on body and points_1 are ground
+        num_shapes_per_world = self.robot_model.shape_count // self.num_worlds
+        shape = (self.num_worlds, PENDULUM_MAX_NUM_CONTACTS_PER_ROBOT_MODEL)
+        device = str(self.device)
+        reordered_point0 = wp.zeros(shape, dtype=wp.vec3, device=device)
+        reordered_point1 = wp.zeros(shape, dtype=wp.vec3, device=device)
+        reordered_normal = wp.zeros(shape, dtype=wp.vec3, device=device)
+        reordered_thickness0 = wp.zeros(shape, dtype=wp.float32, device=device)
+        reordered_thickness1 = wp.zeros(shape, dtype=wp.float32, device=device)
+        reordered_body_shape = wp.full(shape, -1, dtype=wp.int32, device=device)
+        body_contact_count = wp.zeros((self.num_worlds, self.bodies_per_world), dtype=wp.int32, device=device)
+
+        shape_body_2d = self.robot_model.shape_body.reshape((self.num_worlds, num_shapes_per_world))
+
+        wp.launch(
+            kernel=reorder_ground_contacts_kernel,
+            dim=(self.num_worlds, axion_contacts.max_contacts),
+            inputs=[
+                axion_contacts.contact_count,
+                axion_contacts.contact_shape0,
+                axion_contacts.contact_shape1,
+                axion_contacts.contact_point0,
+                axion_contacts.contact_point1,
+                axion_contacts.contact_normal,
+                axion_contacts.contact_thickness0,
+                axion_contacts.contact_thickness1,
+                shape_body_2d,
+                self.bodies_per_world,  # Newton uses global body indices; kernel converts to per-world
+                body_contact_count,
+            ],
+            outputs=[
+                reordered_point0,  # Always body
+                reordered_point1,  # Always ground
+                reordered_normal,
+                reordered_thickness0,  # Always body
+                reordered_thickness1,  # Always ground
+                reordered_body_shape,  # Body shape index for each contact
+            ],
+            device=str(self.device)
+        )
+
+        # Calculate Penetration depth using reordered contact data
+        contact_depths_wp_array = wp.zeros((self.num_worlds, PENDULUM_MAX_NUM_CONTACTS_PER_ROBOT_MODEL), dtype=wp.float32, device=str(self.device))
+        body_q_2d = state_in.body_q.reshape((self.num_worlds, self.bodies_per_world))
+
+        wp.launch(
+            kernel=contact_penetration_depth_kernel,
+            dim=(self.num_worlds, PENDULUM_MAX_NUM_CONTACTS_PER_ROBOT_MODEL),
+            inputs=[
+                body_q_2d,
+                shape_body_2d,
+                self.bodies_per_world,  # Newton uses global body indices; kernel converts to per-world
+                reordered_point0,  # Body points (reordered)
+                reordered_point1,  # Ground points (reordered)
+                reordered_normal,  # Normal from body to ground (reordered)
+                reordered_thickness0,  # Body thickness (reordered)
+                reordered_thickness1,  # Ground thickness (reordered)
+                reordered_body_shape,  # Body shape indices
+            ],
+            outputs=[
+                contact_depths_wp_array
+            ],
+            device=str(self.device)
+        )
+
+        # Convert to torch — shapes: (num_worlds, num_contacts, 3) for vec3,
+        # (num_worlds, num_contacts) for scalars.
+        contact_depths = wp.to_torch(contact_depths_wp_array)
+        contact_normals = wp.to_torch(reordered_normal)
+        contact_thickness = wp.to_torch(reordered_thickness0)  # Body thickness
+        contact_points_0 = wp.to_torch(reordered_point0) # Body points  
+        contact_points_1 = wp.to_torch(reordered_point1)  # Ground points
+        contacts = {
+            "contact_normals": contact_normals,
+            "contact_depths": contact_depths,
+            "contact_thicknesses": contact_thickness,
+            "contact_points_0": contact_points_0,
+            "contact_points_1": contact_points_1
+        }
+
+        contact_masks = get_contact_masks(
+            contacts['contact_depths'],
+            contacts['contact_thicknesses']
+        )
+
+        # Convert contact points_1 and normals from world to body frame, then to pivot frame
+        contact_points_1_body, contact_normals_body = convert_contacts_w2b_batched(
+            root_body_q,
+            contact_points_1,
+            contact_normals,
+            translation_only=False,
+            com_to_pivot_offset=self._com_to_pivot_offset,
+        )
+
+        contacts["contact_points_1"] = contact_points_1_body
+        contacts["contact_normals"] = contact_normals_body
+
+        # Zero out inactive contacts
+        apply_contact_mask(contacts, contact_masks)
+
+        return contacts # processed contacts: converted to body reference frame and masked
+
+
+    def _convert_gravity_vec_w2b(self, root_body_q: torch.Tensor):
+        """
+        Convert gravity vector via the root_body_q + additional translation transform.
+        root_body_q: (num_worlds, 7)
+        """
+        return convert_gravity_w2b_batched(root_body_q, self.gravity_vector)
+
     def process_inputs(
         self,
-        states: torch.Tensor,
-        root_body_q: torch.Tensor,
-        gravity_dir: torch.Tensor,
-        dt: Optional[float] = None
+        state_in, #newton.State,
+        contacts, #newton.Contacts,
+        dt: float,
     ) -> Dict[str, torch.Tensor]:
         """
         Process model inputs: coordinate frame conversion, state embedding.
         """
         
-        # Reset model_inputs dict
-        self.nn_model_inputs = {}
+        # Get min coordinate representation from newton's state
+        state_min_coords = torch.cat( (wp.to_torch(state_in.joint_q), wp.to_torch(state_in.joint_qd)))
+        state_min_coords = state_min_coords.unsqueeze(0)  # shape (1,4)
+        states = state_min_coords.to(self.device)
+        # Get root body q (q of first pendulum link) once; (num_worlds, 7)
+        body_q_2d = state_in.body_q.reshape((self.num_worlds, self.bodies_per_world))
+        body_q_torch = wp.to_torch(body_q_2d)  # (num_worlds, bodies_per_world, 7)
+        root_body_q = body_q_torch[:, 0, :].to(self.device)  # (num_worlds, 7)
 
-        # Ensure tensors are on correct device
-        states = states.to(self.device)
-        root_body_q = root_body_q.to(self.device)
-        gravity_dir = gravity_dir.to(self.device)
+        # Process contacts 
+        processed_contacts = self._convert_newton_contacts_to_contacts_for_nn_model(state_in, contacts, root_body_q)
 
-        # TODO: get contact mask
+        # Convert gravity
+        gravity_in_body = self._convert_gravity_vec_w2b(root_body_q)
 
         # Add current state to history BEFORE prediction
         history_entry = {
             "root_body_q": root_body_q.clone(),
             "states": states.clone(),
-            "gravity_dir": gravity_dir.clone(),
+            "gravity_dir": gravity_in_body.clone(),
+            "contact_normals": processed_contacts['contact_normals'].clone(),
+            "contact_depths": processed_contacts['contact_depths'].clone(), 
+            "contact_points_1": processed_contacts['contact_points_1'].clone(), 
         }
         self.states_history.append(history_entry)
 
         # Assemble model inputs
+        self.nn_model_inputs = {}   # Reset model_inputs dict
         for key in self.states_history[0].keys():       # pick the first in the queue
             stacked = torch.stack([entry[key] for entry in self.states_history], dim=1)
             self.nn_model_inputs[key] = stacked  # (num_envs, T, dim)
         
-        # TODO: call convert_coordinate_frame (but rethink if states really need to be converted)
-
+        # Flatten contact tensors to match training format: (B, T, num_contacts, 3) -> (B, T, num_contacts*3)
+        B, T = self.nn_model_inputs["states"].shape[0], self.nn_model_inputs["states"].shape[1]
+        self.nn_model_inputs["contact_normals"] = self.nn_model_inputs["contact_normals"].view(B, T, -1)
+        self.nn_model_inputs["contact_points_1"] = self.nn_model_inputs["contact_points_1"].view(B, T, -1)
+        
         # Wrap continuous DOFs
         # Reshape states to (num_envs * T, state_dim) for wrapping
         B, T, D = self.nn_model_inputs["states"].shape
@@ -182,8 +324,6 @@ class NeuralPredictor:
         states_embedding = self._embed_states(self.nn_model_inputs["states"])
         self.nn_model_inputs["states_embedding"] = states_embedding
         
-        # TODO: call _apply_contact_mask()
-
         return self.nn_model_inputs
     
     def predict(self) -> torch.Tensor:
@@ -221,12 +361,7 @@ class NeuralPredictor:
         next_states = self._convert_prediction_to_next_states(cur_states, prediction)
         
         # Convert back to world frame if needed
-        print("After _convert_prediction_to_next_states", next_states)
-        # next_states = self._convert_states_back_to_world(
-        #     self.nn_model_inputs["root_body_q"],
-        #     next_states
-        # )
-        # print("After _convert_states_back_to_world", next_states)
+        #print("After _convert_prediction_to_next_states", next_states)
         
         # Wrap continuous DOFs
         wrap2PI(next_states, self.is_continuous_dof)
