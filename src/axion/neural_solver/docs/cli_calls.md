@@ -42,3 +42,19 @@ scp mestemar@dasenka:/local/mestemar/axion/src/axion/neural_solver/datasets/Pend
 ```
 scp -r mestemar@dasenka:/local/mestemar/axion/src/axion/neural_solver/train/trained_models/02-25-2026-13-07-56 /home/maros/axion/src/axion/neural_solver/train/trained_models
 ```
+
+### Monitoring GPUs/CPU
+one time:
+```
+nvidia-smi
+```
+
+continuous monitoring
+```
+watch -n 1 nvidia-smi
+```
+
+cpu continuous monitoring
+```
+top
+```
