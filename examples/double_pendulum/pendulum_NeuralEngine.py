@@ -14,6 +14,7 @@ from axion import RenderingConfig
 from axion import SimulationConfig
 from omegaconf import DictConfig
 from pendulum_articulation_definition import build_pendulum_model, PENDULUM_HEIGHT
+from pendulum_utils import generalized_to_maximal, set_tilted_plane_from_coefficients
 #from axion.core.control_utils import JointMode
 
 import os
@@ -29,7 +30,10 @@ class Simulator(InteractiveSimulator):
         exec_config: ExecutionConfig,
         engine_config: EngineConfig,
         logging_config: LoggingConfig,
+        plane_coefficients: tuple[float, float, float, float] = (0.0, 0.0, 1.0, 0.0),
+        initial_state: tuple[float, float, float, float] | None = None,
     ):
+        self.plane_coefficients = plane_coefficients
         super().__init__(
             sim_config,
             render_config,
@@ -37,6 +41,12 @@ class Simulator(InteractiveSimulator):
             engine_config,
             logging_config,
         )
+        if initial_state is not None:
+            q0, q1, qd0, qd1 = initial_state
+            generalized_to_maximal(
+                self.model, self.current_state,
+                q0=q0, q1=q1, qd0=qd0, qd1=qd1,
+            )
 
     @override
     def control_policy(self, state: newton.State):
@@ -120,7 +130,10 @@ class Simulator(InteractiveSimulator):
         """
         Use the same pendulum articulation as AxionEngineWrapper.py
         """
-        return build_pendulum_model(num_worlds=1, device="cuda:0") # is it necessary to pass device?
+        model = build_pendulum_model(num_worlds=1, device="cuda:0")
+        a, b, c, d = self.plane_coefficients
+        set_tilted_plane_from_coefficients(model, a, b, c, d, world_idx=0)
+        return model
 
 
 @hydra.main(config_path=str(CONFIG_PATH), config_name="neuralPendulum", version_base=None)
@@ -131,12 +144,22 @@ def basic_pendulum_example(cfg: DictConfig):
     logging_config: LoggingConfig = hydra.utils.instantiate(cfg.logging)
     engine_config: EngineConfig = hydra.utils.instantiate(cfg.engine)
 
+    # Plane equation: nx*x + ny*y + nz*z + d = 0 (default: horizontal z=0)
+    plane_coefficients = [0.0, 0.0, 1.0, 0.0]
+    plane_coefficients = [0.6002, -0.0000, 0.7998, -1.1384]
+
+    # Custom initial conditions: (q0, q1, qd0, qd1). Set to None for default rest.
+    INITIAL_STATE = (2.8, 1.8, -1.06, 8)  # e.g. (0.5, -0.3, 1.0, -2.0)
+    INITIAL_STATE = (0, 0, 0, 0) 
+
     simulator = Simulator(
         sim_config=sim_config,
         render_config=render_config,
         exec_config=exec_config,
         engine_config=engine_config,
         logging_config=logging_config,
+        plane_coefficients=plane_coefficients,
+        initial_state=INITIAL_STATE,
     )
 
     simulator.run()
