@@ -15,13 +15,12 @@ from pendulum_utils import set_tilted_plane_from_coefficients
 HDF5_PATH = (
     pathlib.Path(__file__).resolve().parents[2]
     / "src" / "axion" / "neural_solver" / "datasets" / "Pendulum"
-    / "pendulumTrain50kLen1000Envs100Seed0.hdf5"
+    / "pendulumContactsValid250klen500envs250seed1.hdf5"
 )
 
 DT = 0.01
-TRAJECTORY_INDEX = 1
+TRAJECTORY_INDEX = 8
 PLAYBACK_SPEED = 1.0
-
 
 def load_trajectory(hdf5_path: pathlib.Path, traj_idx: int):
     """Load a single trajectory and its plane coefficients from the HDF5 dataset.
@@ -43,6 +42,8 @@ def load_trajectory(hdf5_path: pathlib.Path, traj_idx: int):
     if plane_coeffs is not None:
         print(f"  Plane coefficients (a,b,c,d): [{plane_coeffs[0]:.4f}, {plane_coeffs[1]:.4f}, "
               f"{plane_coeffs[2]:.4f}, {plane_coeffs[3]:.4f}]")
+    q0, q1, qd0, qd1 = states[0, 0], states[0, 1], states[0, 2], states[0, 3]
+    print(f"  Initial state (q0, q1, q0_dot, q1_dot): [{q0:.4f}, {q1:.4f}, {qd0:.4f}, {qd1:.4f}]")
     return states, plane_coeffs
 
 
