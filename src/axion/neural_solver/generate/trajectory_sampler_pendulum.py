@@ -120,8 +120,6 @@ class TrajectorySamplerPendulum(TrajectorySampler):
         Where the pendulum would cross the plane, set plane_normals to (0, 0, 1) and d to 0 in-place.
         """
         # signed distances per point: (num_worlds, 3) for plane n·x + d = 0
-        print(f"a b c: {plane_normals}, d: {plane_d_coefficients}")
-        print(f"pendulum_points {pendulum_points}")
         signed_dists = (
             (pendulum_points * plane_normals.unsqueeze(1)).sum(dim=-1)
             + plane_d_coefficients
@@ -129,7 +127,6 @@ class TrajectorySamplerPendulum(TrajectorySampler):
         # plane_normals_ext = plane_normals.unsqueeze(-1).repeat(1, 1, 3)
         # signed_dists = (pendulum_points* plane_normals_ext).sum(dim=-1)
         # signed_dists += plane_d_coefficients
-        print(f"signed distances {signed_dists}")
         min_d = signed_dists.min(dim=1).values
         max_d = signed_dists.max(dim=1).values
         crossing = (min_d < 0) & (max_d > 0)
@@ -310,8 +307,6 @@ class TrajectorySamplerPendulum(TrajectorySampler):
 
             # Normalize the normals
             normalized_plane_normals = torch.nn.functional.normalize(plane_normals, p = 2.0, dim = -1)
-            print(f"Plane normals shape: {plane_normals.shape}")
-            print(f"Plane normals normalized shape: {normalized_plane_normals.shape}")
 
             plane_d_coefficients = self.calculate_d_coefficients_from_normals(plane_normals, normalized_plane_normals)
 

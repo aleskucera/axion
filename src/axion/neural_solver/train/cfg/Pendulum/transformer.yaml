@@ -11,14 +11,11 @@ env:
   
 algorithm:
   name: SequenceModelTrainer
-  num_epochs: 15
-  num_iters_per_epoch: 195
-  num_epochs: 15
-  num_iters_per_epoch: 195
+  num_epochs: 25
+  num_iters_per_epoch: 976  # 976 x 1024 = 999 424 (1 M)
   sample_sequence_length: 10 # the length to sample sequence from dataset
-  batch_size: 512
-  batch_size: 512
-  num_valid_batches: 128
+  batch_size: 1024
+  num_valid_batches: 256 # what portion of validation dataset to validate on (num_valid_batches * batch_size)
   truncate_grad: True
   grad_norm: 1.0
   optimizer:
@@ -27,9 +24,9 @@ algorithm:
     lr_schedule: linear
 
   dataset:
-    train_dataset_path: src/axion/neural_solver/datasets/Pendulum/pendulumTrain50kLen1000Envs100Seed0.hdf5
+    train_dataset_path: src/axion/neural_solver/datasets/Pendulum/pendulumContactsTrain1Mlen2000envs250seed0.hdf5
     valid_datasets: 
-      valid: src/axion/neural_solver/datasets/Pendulum/pendulumValid10kLen1000Envs100Seed1.hdf5
+      valid: src/axion/neural_solver/datasets/Pendulum/pendulumContactsValid1Mlen2000envs250seed1.hdf5
       #exp_trajectory: PATH/TO/VALID_DATASET_1.hdf5
       #fixed_ground_passive: PATH/TO/VALID_DATASET_2.hdf5
     max_capacity: 100000000
@@ -39,7 +36,7 @@ algorithm:
     mode: dataset
     rollout_horizon: 10
     num_rollouts: 16384
-    dataset_path: src/axion/neural_solver/datasets/Pendulum/pendulumValid10kLen1000Envs100Seed1.hdf5
+    dataset_path: src/axion/neural_solver/datasets/Pendulum/pendulumContactsValid1Mlen2000envs250seed1.hdf5
     passive: True
 
 inputs:
