@@ -29,8 +29,8 @@ from axion.nn_prediction import models, utils
 sys.modules['models'] = models
 sys.modules['utils'] = utils
 
-NN_BASE_PATH = Path.cwd() /"src"/"axion"/"neural_solver"/"train"/"trained_models"/"03-10-2026-14-22-43" #"03-01-2026-10-46-58" 
-NN_PENDULUM_PT_PATH = NN_BASE_PATH/"nn"/"best_valid_valid_model.pt"
+NN_BASE_PATH = Path.cwd() /"src"/"axion"/"neural_solver"/"train"/"trained_models"/"03-12-2026-16-09-14" #"03-01-2026-10-46-58" 
+NN_PENDULUM_PT_PATH = NN_BASE_PATH/"nn"/"best_eval_model.pt"
 NN_PENDULUM_CFG_PATH = NN_BASE_PATH/"cfg.yaml"
  
 class NeuralEngine(SolverBase):

@@ -36,7 +36,7 @@ python src/axion/neural_solver/standalone/test_trained_model_cli.py --model-path
 
 ### Copy from remote to local
 ```
-scp mestemar@dasenka:/local/mestemar/axion/src/axion/neural_solver/datasets/Pendulum/pendulumTrainStatesOnly100kenvs100Seed0.hdf5 ~/Downloads/
+scp mestemar@dasenka:/local/mestemar/axion/src/axion/neural_solver/datasets/Pendulum/pendulumTrainStatesOnly100kenvs100Seed0.hdf5 /home/maros/axion/src/axion/neural_solver/datasets/Pendulum
 ```
 
 ```
