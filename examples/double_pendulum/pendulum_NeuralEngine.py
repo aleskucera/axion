@@ -146,11 +146,11 @@ def basic_pendulum_example(cfg: DictConfig):
 
     # Plane equation: nx*x + ny*y + nz*z + d = 0 (default: horizontal z=0)
     plane_coefficients = [0.0, 0.0, 1.0, 0.0]
-    plane_coefficients = [0.6002, -0.0000, 0.7998, -1.1384]
+    #plane_coefficients = [-0.2354, -0.0000, 0.9719, -2.3318]
 
-    # Custom initial conditions: (q0, q1, qd0, qd1). Set to None for default rest.
-    INITIAL_STATE = (2.8, 1.8, -1.06, 8)  # e.g. (0.5, -0.3, 1.0, -2.0)
-    INITIAL_STATE = (0, 0, 0, 0) 
+    # Custom initial conditions: (q0, q1, qd0, qd1)
+    # Set to None to start from the default rest position.
+    INITIAL_STATE = (-0.5704, 2.8907, -3.6530, -7.6918)  # e.g. (0.5, -0.3, 1.0, -2.0)
 
     simulator = Simulator(
         sim_config=sim_config,
