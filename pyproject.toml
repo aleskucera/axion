@@ -31,6 +31,12 @@ brax = [
   "brax",
   "jax[cuda12]",
 ]
+genesis = [
+  "genesis-world",
+]
+nimble = [
+  "nimblephysics",
+]
 dev = [
   "axion[sim]",
   "axion[docs]",

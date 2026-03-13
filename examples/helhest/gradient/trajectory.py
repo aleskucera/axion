@@ -268,7 +268,7 @@ class HelhestTrajectoryOptimizer(AxionDifferentiableSimulator):
 
         self.optimizer = TrajectoryAdam(
             params=self.trajectory.joint_target_vel,
-            lr=3.0,
+            lr=4.0,
             betas=(0.9, 0.999),
             dof_offset=WHEEL_DOF_OFFSET,
             num_dofs=NUM_WHEEL_DOFS,

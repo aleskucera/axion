@@ -1,14 +1,16 @@
-"""Helhest endpoint optimization using MuJoCo MJX (JAX-based differentiable physics).
+"""Helhest trajectory optimization using MuJoCo MJX (JAX-based differentiable physics).
 
-Comparable to examples/helhest/gradient/endpoint_featherstone.py.
+Comparable to examples/helhest/gradient/trajectory_spline.py.
 
-Optimizes constant wheel velocities (left, right, rear) to drive the chassis
-to a target endpoint position.
-
-Contact differentiation: uses iterations=1 in the MJX solver so the constraint
-loop is a fixed-size fori_loop compatible with JAX reverse-mode AD.
+Optimizes K spline control points (K << T) that are linearly interpolated to
+per-timestep wheel velocities. With K=10, jax.jacfwd needs only K*3=30 forward
+passes per gradient step, making it practical while keeping iterations=10 for
+stable contact resolution.
 """
+import argparse
+import json
 import os
+import pathlib
 import time
 
 os.environ.setdefault("DISPLAY", ":1")
@@ -21,15 +23,19 @@ import mujoco.mjx as mjx
 import numpy as np
 import optax
 
-# Match helhest_featherstone_diff.yaml: dt=1e-3, duration=2.0s
 DT = 2e-3
-DURATION = 5.0
-T = int(DURATION / DT)  # 400 steps
+DURATION = 3.0
+T = int(DURATION / DT)  # 2500 steps
+K = 10  # number of spline control points
 
 # DOF indices: qpos = [x, y, z, qw, qx, qy, qz, theta_l, theta_r, theta_rear]
 # ctrl = [vel_left, vel_right, vel_rear]
 TARGET_CTRL = np.array([1.0, 6.0, 0.0], dtype=np.float32)
 INIT_CTRL = np.array([2.0, 5.0, 0.0], dtype=np.float32)
+
+TRAJECTORY_WEIGHT = 10.0
+SMOOTHNESS_WEIGHT = 1e-2
+REGULARIZATION_WEIGHT = 1e-7
 
 HELHEST_XML = f"""
 <mujoco model="helhest">
@@ -83,25 +89,19 @@ HELHEST_XML = f"""
         <joint name="left_wheel_j" type="hinge" axis="0 1 0"/>
         <inertial mass="5.5" pos="0 0 0" diaginertia="0.20045 0.20045 0.3888"/>
         <geom type="cylinder" fromto="0 -0.055 0 0 0.055 0" size="0.36"
-              friction="0.7 0.1 0.01"
-
-              rgba="0.15 0.15 0.15 1"/>
+              friction="0.7 0.1 0.01" rgba="0.15 0.15 0.15 1"/>
       </body>
       <body name="right_wheel" pos="0 -0.36 0">
         <joint name="right_wheel_j" type="hinge" axis="0 1 0"/>
         <inertial mass="5.5" pos="0 0 0" diaginertia="0.20045 0.20045 0.3888"/>
         <geom type="cylinder" fromto="0 -0.055 0 0 0.055 0" size="0.36"
-              friction="0.7 0.1 0.01"
-
-              rgba="0.15 0.15 0.15 1"/>
+              friction="0.7 0.1 0.01" rgba="0.15 0.15 0.15 1"/>
       </body>
       <body name="rear_wheel" pos="-0.697 0 0">
         <joint name="rear_wheel_j" type="hinge" axis="0 1 0"/>
         <inertial mass="5.5" pos="0 0 0" diaginertia="0.20045 0.20045 0.3888"/>
         <geom type="cylinder" fromto="0 -0.055 0 0 0.055 0" size="0.36"
-              friction="0.35 0.1 0.01"
-
-              rgba="0.15 0.15 0.15 1"/>
+              friction="0.35 0.1 0.01" rgba="0.15 0.15 0.15 1"/>
       </body>
     </body>
   </worldbody>
@@ -116,6 +116,19 @@ HELHEST_XML = f"""
 """
 
 
+def make_interp_matrix(T: int, K: int) -> np.ndarray:
+    """Build (T, K) linear interpolation matrix. W @ params gives (T, 3) ctrl_traj."""
+    W = np.zeros((T, K), dtype=np.float32)
+    for t in range(T):
+        k_float = t * (K - 1) / max(T - 1, 1)
+        k_low = int(k_float)
+        k_high = min(k_low + 1, K - 1)
+        alpha = k_float - k_low
+        W[t, k_low] += 1.0 - alpha
+        W[t, k_high] += alpha
+    return W
+
+
 def make_init_data(mx, mj_model):
     """Create initial MJX data with the robot in its default pose."""
     mj_data = mujoco.MjData(mj_model)
@@ -123,40 +136,44 @@ def make_init_data(mx, mj_model):
     return mjx.put_data(mj_model, mj_data)
 
 
-def rollout(mx, dx0, ctrl):
-    """Simulate T steps with constant ctrl. Returns [T, 3] chassis xy positions."""
+def rollout(mx, dx0, ctrl_traj):
+    """Simulate T steps with per-timestep ctrl_traj (T, 3). Returns (T, 2) chassis xy."""
 
-    def step_fn(carry, _):
-        d = carry.replace(ctrl=ctrl)
+    def step_fn(carry, ctrl_t):
+        d = carry.replace(ctrl=ctrl_t)
         d = mjx.step(mx, d)
-        return d, d.qpos[:2]  # track x, y only
+        return d, d.qpos[:2]
 
-    _, xy_traj = jax.lax.scan(step_fn, dx0, None, length=T)
-    return xy_traj  # [T, 2]
+    _, xy_traj = jax.lax.scan(step_fn, dx0, ctrl_traj)
+    return xy_traj  # (T, 2)
 
 
-def endpoint_loss(mx, dx0, ctrl, target_xy):
-    xy_traj = rollout(mx, dx0, ctrl)
-    delta = xy_traj[-1] - target_xy
-    return 10.0 * jnp.dot(delta, delta)
+def trajectory_loss(mx, dx0, W, params, target_xy_traj):
+    ctrl_traj = W @ params  # (T, K) @ (K, 3) -> (T, 3)
+    xy_traj = rollout(mx, dx0, ctrl_traj)
+    delta = xy_traj - target_xy_traj
+    traj = TRAJECTORY_WEIGHT / T * jnp.sum(delta**2)
+    smooth = SMOOTHNESS_WEIGHT * jnp.sum((ctrl_traj[1:] - ctrl_traj[:-1]) ** 2)
+    reg = REGULARIZATION_WEIGHT * jnp.sum(ctrl_traj**2)
+    return traj + smooth + reg
 
 
 def simulate_cpu(mj_model, ctrl_np, print_every=50):
-    """Run on CPU with viewer and print chassis trajectory."""
+    """Run on CPU with viewer. ctrl_np: (3,) constant or (T, 3) per-step."""
     import mujoco.viewer
+    import time as _time
 
+    per_step = ctrl_np.ndim == 2
     mj_data = mujoco.MjData(mj_model)
     mujoco.mj_forward(mj_model, mj_data)
 
     print(f"  {'step':>5}  {'x':>8}  {'y':>8}  {'z':>8}")
-    import time as _time
-
     with mujoco.viewer.launch_passive(mj_model, mj_data) as viewer:
         viewer.cam.distance = 5.0
         viewer.cam.elevation = -20.0
         for step in range(T):
             step_start = _time.time()
-            mj_data.ctrl[:] = ctrl_np
+            mj_data.ctrl[:] = ctrl_np[step] if per_step else ctrl_np
             mujoco.mj_step(mj_model, mj_data)
             viewer.sync()
             if step % print_every == 0 or step == T - 1:
@@ -164,75 +181,100 @@ def simulate_cpu(mj_model, ctrl_np, print_every=50):
                 print(f"  {step:>5}  {x:>8.3f}  {y:>8.3f}  {z:>8.3f}")
             if not viewer.is_running():
                 break
-            # real-time pacing
             elapsed = _time.time() - step_start
             _time.sleep(max(0.0, mj_model.opt.timestep - elapsed))
 
 
 def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--save", metavar="PATH", help="Save results to JSON and skip CPU viewer")
+    args = parser.parse_args()
+
     mj_model = mujoco.MjModel.from_xml_string(HELHEST_XML)
     mx = mjx.put_model(mj_model)
     dx0 = make_init_data(mx, mj_model)
 
-    print(f"qpos size: {mj_model.nq}, ctrl size: {mj_model.nu}, T={T}, dt={DT}")
+    print(f"T={T}, dt={DT}, K={K} control points, jacfwd passes={K * mj_model.nu}")
 
-    # --- Visualize target episode on CPU first ---
-    print("Simulating target episode (CPU)...")
-    simulate_cpu(mj_model, TARGET_CTRL)
+    # --- Visualize target episode on CPU ---
+    if not args.save:
+        print("Simulating target episode (CPU)...")
+        simulate_cpu(mj_model, TARGET_CTRL)
 
-    # --- Target episode ---
-    target_ctrl = jnp.array(TARGET_CTRL)
-    target_xy = rollout(mx, dx0, target_ctrl)[-1]
-    print(f"Target final xy: ({target_xy[0]:.3f}, {target_xy[1]:.3f})")
+    # --- Target trajectory ---
+    target_ctrl_traj = jnp.tile(jnp.array(TARGET_CTRL), (T, 1))
+    target_xy_traj = jax.jit(rollout)(mx, dx0, target_ctrl_traj)
+    target_xy_traj.block_until_ready()
+    print(f"Target final xy: ({target_xy_traj[-1, 0]:.3f}, {target_xy_traj[-1, 1]:.3f})")
 
-    # --- Compile loss + grad ---
-    ctrl = jnp.array(INIT_CTRL)
+    # --- Spline setup ---
+    W = jnp.array(make_interp_matrix(T, K))  # (T, K)
+    params = jnp.tile(jnp.array(INIT_CTRL), (K, 1))  # (K, 3)
 
-    # MJX constraint solver uses while_loop with dynamic convergence check,
-    # which is incompatible with reverse-mode AD (jax.grad).
-    # Forward-mode AD (jax.jacfwd / jvp) works through while_loop.
-    # Cost: n_params forward passes per iteration (n=3 here, so 3x overhead).
-    loss_fn = lambda c: endpoint_loss(mx, dx0, c, target_xy)
+    # MJX constraint solver uses while_loop (iterations>1) → incompatible with jax.grad.
+    # jax.jacfwd works through while_loop. Cost: K*nu=30 forward passes per iteration.
+    loss_fn = lambda p: trajectory_loss(mx, dx0, W, p, target_xy_traj)
     value_fn = jax.jit(loss_fn)
-    grad_fn = jax.jit(jax.jacfwd(loss_fn))  # forward-mode, compatible with while_loop
+    grad_fn = jax.jit(jax.jacfwd(loss_fn))
 
-    print("Compiling value_fn...")
+    print(f"Compiling value_fn + grad_fn ({K * mj_model.nu} forward passes)...")
     t0 = time.perf_counter()
-    loss = value_fn(ctrl)
+    loss = value_fn(params)
     loss.block_until_ready()
-    print(f"  value compile: {time.perf_counter() - t0:.2f}s")
-
-    print("Compiling grad_fn (3x forward passes)...")
-    t0 = time.perf_counter()
-    grad = grad_fn(ctrl)
+    grad = grad_fn(params)
     grad.block_until_ready()
-    print(f"  grad compile:  {time.perf_counter() - t0:.2f}s\n")
+    print(f"  compile: {time.perf_counter() - t0:.2f}s\n")
 
-    # --- Adam optimizer (lr=1.0, matching endpoint_featherstone.py) ---
-    optimizer = optax.adam(learning_rate=1.0)
-    opt_state = optimizer.init(ctrl)
+    # --- Adam optimizer ---
+    optimizer = optax.adam(learning_rate=0.1)
+    opt_state = optimizer.init(params)
 
-    print(f"Optimizing: T={T}, dt={DT}, lr=1.0 (Adam, forward-mode AD)")
-    for i in range(200):
+    print(f"Optimizing: T={T}, dt={DT}, K={K}, lr=0.3 (Adam, forward-mode AD)")
+    results = {
+        "simulator": "MJX",
+        "problem": "helhest",
+        "dt": DT,
+        "T": T,
+        "K": K,
+        "iterations": [],
+        "loss": [],
+        "time_ms": [],
+    }
+    for i in range(50):
         t0 = time.perf_counter()
-        loss = value_fn(ctrl)
-        grad = grad_fn(ctrl)
+        loss = value_fn(params)
+        grad = grad_fn(params)
         loss.block_until_ready()
         grad.block_until_ready()
         t_iter = time.perf_counter() - t0
 
         updates, opt_state = optimizer.update(grad, opt_state)
-        ctrl = optax.apply_updates(ctrl, updates)
+        params = optax.apply_updates(params, updates)
 
+        p0, pm, pN = params[0], params[K // 2], params[-1]
         print(
-            f"Iter {i:3d}: Loss={loss:.4f} | "
-            f"ctrl=({ctrl[0]:.3f}, {ctrl[1]:.3f}, {ctrl[2]:.3f}) | "
+            f"Iter {i:3d}: loss={loss:.4f} | "
+            f"cp[0]=({p0[0]:.2f},{p0[1]:.2f}) "
+            f"cp[{K//2}]=({pm[0]:.2f},{pm[1]:.2f}) "
+            f"cp[-1]=({pN[0]:.2f},{pN[1]:.2f}) | "
             f"t={t_iter * 1000:.1f}ms"
         )
+        results["iterations"].append(i)
+        results["loss"].append(float(loss))
+        results["time_ms"].append(t_iter * 1000)
 
         if loss < 1e-4:
             print("Converged!")
             break
+
+    if args.save:
+        pathlib.Path(args.save).parent.mkdir(parents=True, exist_ok=True)
+        pathlib.Path(args.save).write_text(json.dumps(results, indent=2))
+        print(f"Saved to {args.save}")
+    else:
+        print("\nSimulating optimized episode (CPU)...")
+        ctrl_traj_np = np.array(W @ params)
+        simulate_cpu(mj_model, ctrl_traj_np)
 
 
 if __name__ == "__main__":
