@@ -23,7 +23,7 @@ from typing import Optional
 
 import warp as wp
 import torch
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, ConcatDataset
 from torch.nn.utils.clip_grad import clip_grad_norm_
 import yaml
 import numpy as np
@@ -200,15 +200,28 @@ class SequenceModelTrainer:
                         )
     
     def get_datasets(self, train_dataset_path, valid_datasets_cfg):
-        self.train_dataset = TrajectoryDataset(
-            sample_sequence_length=self.sample_sequence_length,
-            hdf5_dataset_path=train_dataset_path,
-            max_capacity=self.dataset_max_capacity,
-        )
-        for valid_dataset_name in valid_datasets_cfg.keys():
+        # Support single path (str) or multiple paths (list) for training
+        if isinstance(train_dataset_path, (list, tuple)):
+            train_datasets = [
+                TrajectoryDataset(
+                    sample_sequence_length=self.sample_sequence_length,
+                    hdf5_dataset_path=path,
+                    max_capacity=self.dataset_max_capacity,
+                )
+                for path in train_dataset_path
+            ]
+            self.train_dataset = ConcatDataset(train_datasets)
+        else:
+            self.train_dataset = TrajectoryDataset(
+                sample_sequence_length=self.sample_sequence_length,
+                hdf5_dataset_path=train_dataset_path,
+                max_capacity=self.dataset_max_capacity,
+            )
+        valid_cfg = valid_datasets_cfg or {}
+        for valid_dataset_name in valid_cfg.keys():
             self.valid_datasets[valid_dataset_name] = TrajectoryDataset(
                 sample_sequence_length=self.sample_sequence_length,
-                hdf5_dataset_path=valid_datasets_cfg[valid_dataset_name],
+                hdf5_dataset_path=valid_cfg[valid_dataset_name],
             )
         self.collate_fn = None
 
@@ -368,7 +381,7 @@ class SequenceModelTrainer:
                     try:
                         data = next(dataloader_iter)
                     except StopIteration:
-                        if shuffle:
+                        if shuffle and hasattr(self.train_dataset, 'shuffle'):
                             self.train_dataset.shuffle()
                         dataloader_iter = iter(dataloader)
                         data = next(dataloader_iter)
