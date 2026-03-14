@@ -30,7 +30,7 @@ The `SequenceModelTrainer` class has the following methods:
 Saves the `neural_env` instance and its `utils_provider`. Creates the torch network module (the transformer) by constructing an instance of the `ModelMixedInput` class, but only if `model_checkpoint_path` is not None. Initializes various training-related attributes, such as `num_epochs`, `num_iters_per_epoch`, `batch_size` (most of them were read form [transformer.yaml](../train/cfg/Pendulum/transformer.yaml))
 
 - **`get_datasets(...)`**<br>
-Creates the `TrajectoryDataset` class instances for training and possibly validation datasets. On init, the `TrajectoryDataset`reads and processes the hdf5 dataset file via `h5py`.
+Creates the `TrajectoryDataset` class instances for training and possibly validation datasets. On init, the `TrajectoryDataset` reads and processes the hdf5 dataset file via `h5py`. Training can use a single HDF5 path or multiple: set `train_dataset_path` in the config to a list of paths (e.g. `[path/len500.hdf5, path/len2000.hdf5]`) to train on several datasets without merging them; they are combined with PyTorch's `ConcatDataset`.
 
 - **`compute_dataset_statistics(...)`**<br>
 Computes the mean and std of the input and output of the dataset.

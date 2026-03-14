@@ -24,7 +24,10 @@ algorithm:
     lr_schedule: linear
 
   dataset:
-    train_dataset_path: src/axion/neural_solver/datasets/Pendulum/pendulumContactsValid1Mlen2000envs250seed1.hdf5
+    # Single dataset: train_dataset_path: path/to/one.hdf5
+    # Multiple datasets (e.g. len 500 + len 2000): list of paths
+    #train_dataset_path: src/axion/neural_solver/datasets/Pendulum/pendulumContactsValid1Mlen2000envs250seed1.hdf5
+    train_dataset_path: [src/axion/neural_solver/datasets/Pendulum/pendulumContactsValid1Mlen2000envs250seed1.hdf5, src/axion/neural_solver/datasets/Pendulum/pendulumContactsValid250klen500envs250seed1.hdf5]
     valid_datasets: 
       valid: src/axion/neural_solver/datasets/Pendulum/pendulumContactsValid1Mlen2000envs250seed1.hdf5
       #exp_trajectory: PATH/TO/VALID_DATASET_1.hdf5
