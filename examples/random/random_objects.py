@@ -1,9 +1,9 @@
 import os
 import pathlib
-import random
 
 import hydra
 import newton
+import numpy as np
 import warp as wp
 from axion import DatasetSimulator
 from axion import EngineConfig
@@ -52,10 +52,11 @@ class RandomSimulator(DatasetSimulator):
         # 2. Initialize SceneGenerator with our builder
         gen = SceneGenerator(self.builder, seed=self.seed)
 
-        for i in range(15):  # Pause again to show post-resolve state.
+        num_objects = np.random.randint(3, 15)
+        for i in range(num_objects):  # Pause again to show post-resolve state.
             gen.generate_random_object(
                 pos_bounds=((-1, -1, 0), (1, 1, 3)),
-                mass_bounds=(0.3, 10.0),
+                density_bounds=(10.0, 100.0),
                 size_bounds=(0.1, 0.3),
             )
 

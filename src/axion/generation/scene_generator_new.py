@@ -54,20 +54,23 @@ class SceneGenerator:
 
         return wp.transform(pos, rot)
 
-    def _random_mass(self, mass_bounds: tuple):
-        return random.uniform(mass_bounds[0], mass_bounds[1])
+    def _random_density(self, density_bounds: tuple):
+        return random.uniform(density_bounds[0], density_bounds[1])
 
     def _add_to_builder(
-        self, shape_type: str, params: dict, xform: wp.transform, mass: float
+        self, shape_type: str, params: dict, xform: wp.transform, density: float
     ) -> int:
-        body = self.builder.add_body(xform=xform, mass=mass)
+        body = self.builder.add_body(xform=xform)
+        cfg = self.builder.ShapeConfig(density=density)
         if shape_type == "box":
-            self.builder.add_shape_box(body, hx=params["hx"], hy=params["hy"], hz=params["hz"])
+            self.builder.add_shape_box(
+                body, hx=params["hx"], hy=params["hy"], hz=params["hz"], cfg=cfg
+            )
         elif shape_type == "sphere":
-            self.builder.add_shape_sphere(body, radius=params["radius"])
+            self.builder.add_shape_sphere(body, radius=params["radius"], cfg=cfg)
         elif shape_type == "capsule":
             self.builder.add_shape_capsule(
-                body, radius=params["radius"], half_height=params["half_height"]
+                body, radius=params["radius"], half_height=params["half_height"], cfg=cfg
             )
 
         return body
@@ -79,7 +82,7 @@ class SceneGenerator:
     def generate_random_object(
         self,
         pos_bounds: tuple,
-        mass_bounds: tuple,
+        density_bounds: tuple,
         size_bounds: tuple,
         shape_type: str = None,
     ) -> int:
@@ -89,21 +92,24 @@ class SceneGenerator:
 
         params = self._random_params(shape_type, size_bounds)
         xform = self._random_xform(pos_bounds)
-        mass = self._random_mass(mass_bounds)
-        self._add_to_builder(shape_type, params, xform, mass)
+        density = self._random_density(density_bounds)
+        self._add_to_builder(shape_type, params, xform, density)
 
     def _add_link_to_builder(
-        self, shape_type: str, params: dict, xform: wp.transform, mass: float
+        self, shape_type: str, params: dict, xform: wp.transform, density: float
     ) -> int:
         """Helper to add links (required for joints) instead of standard bodies."""
-        body = self.builder.add_link(xform=xform, mass=mass)
+        body = self.builder.add_link(xform=xform)
+        cfg = self.builder.ShapeConfig(density=density)
         if shape_type == "box":
-            self.builder.add_shape_box(body, hx=params["hx"], hy=params["hy"], hz=params["hz"])
+            self.builder.add_shape_box(
+                body, hx=params["hx"], hy=params["hy"], hz=params["hz"], cfg=cfg
+            )
         elif shape_type == "sphere":
-            self.builder.add_shape_sphere(body, radius=params["radius"])
+            self.builder.add_shape_sphere(body, radius=params["radius"], cfg=cfg)
         elif shape_type == "capsule":
             self.builder.add_shape_capsule(
-                body, radius=params["radius"], half_height=params["half_height"]
+                body, radius=params["radius"], half_height=params["half_height"], cfg=cfg
             )
         return body
 
@@ -120,7 +126,7 @@ class SceneGenerator:
         self,
         num_objects: int,
         pos_bounds: tuple,
-        mass_bounds: tuple,
+        density_bounds: tuple,
         size_bounds: tuple,
         joint_types: list[str] = ["revolute", "ball", "fixed"],
     ) -> list[int]:
@@ -135,7 +141,7 @@ class SceneGenerator:
         for i in range(num_objects):
             shape_type = random.choice(["box", "sphere", "capsule"])
             params = self._random_params(shape_type, size_bounds)
-            mass = self._random_mass(mass_bounds)
+            density = self._random_density(density_bounds)
 
             # Spawn randomly within the bounds
             pos = wp.vec3(
@@ -146,7 +152,7 @@ class SceneGenerator:
             rot = self._random_quat()
             xform = wp.transform(pos, rot)
 
-            link_id = self._add_link_to_builder(shape_type, params, xform, mass)
+            link_id = self._add_link_to_builder(shape_type, params, xform, density)
             link_indices.append(link_id)
 
             # Store data for joint creation
