@@ -70,8 +70,8 @@ class AxionDatasetGNN(InMemoryDataset):
                 continue
             with h5py.File(path, "r") as f:
                 for step in [0, 10]:  # take first step, but more steps can be added
-                    graphs = self.construct_graphs(f, step)
-                    graphs.extend(graphs)
+                    graphs_new = self.construct_graphs(f, step)
+                    graphs.extend(graphs_new)
         stats = calculate_statistics(graphs)
 
         self.save(graphs, self.processed_paths[0])
@@ -109,21 +109,25 @@ class AxionDatasetGNN(InMemoryDataset):
         num_bodies = dims["body_count"][()]
         nodes_object = []
         preds_object = []
+
+        body_vel = data["body_vel"][step][world][:]
+        body_vel_prev = data["body_vel_prev"][step][world][:]
+        body_mass = model["body_mass"][world][:]
+        ext_force = data["ext_force"][step][world][:]
+        body_pose_prev = data["body_pose_prev"][step][world][:]
+        body_inertia = model["body_inertia"][world][:]
         for obj in range(num_bodies):
             nodes_object.append(
                 [
-                    *data["body_vel_prev"][step][world][obj],
-                    model["body_mass"][world][obj],
-                    *data["ext_force"][step][world][obj],
-                    *_transform_toi(
-                        data["body_pose_prev"][step][world][obj][3:],
-                        model["body_inertia"][world][obj],
-                    ).flatten(),
+                    *body_vel_prev[obj],
+                    body_mass[obj],
+                    *ext_force[obj],
+                    *_transform_toi(body_pose_prev[obj][3:], body_inertia[obj]).flatten(),
                 ]
             )
             preds_object.append(
                 [
-                    *data["body_vel"][step][world][obj].tolist(),
+                    *body_vel[obj].tolist(),
                 ]
             )
         graph["object"].x = torch.tensor(nodes_object, dtype=torch.float32)
@@ -139,18 +143,16 @@ class AxionDatasetGNN(InMemoryDataset):
     def create_contacts(
         self, graph: HeteroData, step: int, world: int, model: Group, data: Group, dims: Group
     ) -> None:
-        def _find_global_index(body_idx, point_global):
+        def _find_global_index(body_idx, point_global, tol=1e-3):
             nonlocal points_cnt
-            dists = np.linalg.norm(
-                np.array(point_pos[point_body == body_idx]) - point_global, axis=1
-            )
-            if len(dists) > 0 and dists[np.argmin(dists)] < 1e-3:
-                global_index = point_idx[point_body == body_idx][np.argmin(dists)]
+            grid_coord = tuple(np.round(point_global / tol).astype(int))
+            hash_key = (body_idx, grid_coord)
+            if hash_key in point_registry:
+                global_index = point_registry[hash_key]
                 new_node = False
             else:
                 global_index = points_cnt
-                point_body[points_cnt] = body_idx
-                point_pos[points_cnt] = point_global
+                point_registry[hash_key] = global_index
                 points_cnt += 1
                 new_node = True
             return global_index, new_node
@@ -174,31 +176,47 @@ class AxionDatasetGNN(InMemoryDataset):
         preds_contact_contact = []
 
         points_cnt = 0
-        point_idx = np.arange(2 * data["contact_count"][step][world], dtype=int)
-        point_body = np.zeros(2 * data["contact_count"][step][world], dtype=int)
-        point_pos = np.inf * np.ones((2 * data["contact_count"][step][world], 3), dtype=float)
+        point_registry = {}
+
+        contact_shape = (
+            data[f"contact_shape0"][step][world][:],
+            data[f"contact_shape1"][step][world][:],
+        )
+        contact_point = (
+            data[f"contact_point0"][step][world][:],
+            data[f"contact_point1"][step][world][:],
+        )
+        contact_thickness = (
+            data[f"contact_thickness0"][step][world][:],
+            data[f"contact_thickness1"][step][world][:],
+        )
+        body_pose = data["body_pose"][step][world][:]
+        contact_normal = data["contact_normal"][step][world][:]
+        shape_body = model["shape_body"][world][:]
+        shape_material_mu = model["shape_material_mu"][world][:]
+        body_com = model["body_com"][world][:]
         for i in range(data["contact_count"][step][world]):
             contact_indices = [None, None]
             contact_attributes = [None, None]
             contact_preds = [None, None]
             for j in [0, 1]:
-                shape_idx = data[f"contact_shape{j}"][step][world][i]
-                body_idx = resolve_body_indices(shape_idx, model["shape_body"][world])
+                shape_idx = contact_shape[j][i]
+                body_idx = resolve_body_indices(shape_idx, shape_body)
                 if body_idx >= 0:
-                    body_pose = data["body_pose"][step][world][body_idx]
+                    pose = body_pose[body_idx]
                 else:
-                    body_pose = np.zeros(7, dtype=float)
-                    body_pose[-1] = 1.0
-                point = data[f"contact_point{j}"][step][world][i]
-                point_global = _transform(body_pose, point)
+                    pose = np.zeros(7, dtype=float)
+                    pose[-1] = 1.0
+                point = contact_point[j][i]
+                point_global = _transform(pose, point)
                 contact_idx, new_node = _find_global_index(body_idx, point_global)
 
-                normal = (-1 if j else 1) * data["contact_normal"][step][world][i][()]
-                mu = model["shape_material_mu"][world][shape_idx]
-                com = model["body_com"][world][body_idx]
-                thicc = data[f"contact_thickness{j}"][step][world][i]
+                normal = (-1 if j else 1) * contact_normal[i][()]
+                mu = shape_material_mu[shape_idx]
+                com = body_com[body_idx]
+                thicc = contact_thickness[j][i]
                 point_adj = point_global - (thicc * normal)
-                lever = point_adj - _transform(body_pose, com)
+                lever = point_adj - _transform(pose, com)
                 lever_norm = np.linalg.norm(lever)
 
                 if new_node:
@@ -314,4 +332,4 @@ def calculate_statistics(graphs):
 
 
 if __name__ == "__main__":
-    AxionDatasetGNN(root="data/gnn_data/test_dataset")
+    AxionDatasetGNN(root=sys.argv[1])
