@@ -55,7 +55,7 @@ class RandomSimulator(DatasetSimulator):
         gen.generate_chaotic_tree(
             num_objects=5,
             pos_bounds=((-1, -1, 1), (1, 1, 5)),  # Confined spawning box floating in the air
-            mass_bounds=(0.5, 5.0),
+            density_bounds=(0.5, 5.0),
             size_bounds=(0.1, 0.3),
             joint_types=["ball", "revolute"],
         )
