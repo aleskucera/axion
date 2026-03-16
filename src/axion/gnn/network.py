@@ -118,7 +118,7 @@ class Decoder(nn.Module):
         nodes_decoded = {}
         for key, node_attr in x_dict.items():
             if key in self.mlp_nodes:
-                nodes_decoded[edge_type] = self.mlp_nodes[key](node_attr)
+                nodes_decoded[key] = self.mlp_nodes[key](node_attr)
         edges_decoded = {}
         for edge_type, edge_attr in edge_attr_dict.items():
             edge_key = "_".join(edge_type)
@@ -207,7 +207,7 @@ class Processor(nn.Module):
         return x_dict, edge_attr_dict
 
 
-class GNNSim2D(nn.Module):
+class AxionGNN(nn.Module):
     def __init__(
         self,
         message_passes: int,

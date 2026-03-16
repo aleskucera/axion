@@ -1,0 +1,3 @@
+# @package engine
+_target_: axion.GNNEngineConfig
+model_path: "data/gnn_data/models/model.pt"

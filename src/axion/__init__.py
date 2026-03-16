@@ -7,6 +7,7 @@ from .core import LoggingConfig
 from .core import MuJoCoEngineConfig
 from .core import SemiImplicitEngineConfig
 from .core import XPBDEngineConfig
+from .core import GNNEngineConfig
 from .simulation import DatasetSimulator
 from .simulation import DifferentiableSimulator
 from .simulation import ExecutionConfig
@@ -22,6 +23,7 @@ __all__ = [
     "MuJoCoEngineConfig",
     "SemiImplicitEngineConfig",
     "XPBDEngineConfig",
+    "GNNEngineConfig",
     "InteractiveSimulator",
     "DifferentiableSimulator",
     "DatasetSimulator",

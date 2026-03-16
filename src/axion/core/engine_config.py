@@ -272,3 +272,13 @@ class SemiImplicitEngineConfig(EngineConfig):
         from newton.solvers import SolverSemiImplicit
 
         return SolverSemiImplicit
+
+
+@dataclass(frozen=True)
+class GNNEngineConfig(EngineConfig):
+    model_path: str = "data/gnn_data/models/model.pt"
+
+    def _get_solver_class(self):
+        from axion.core.gnn_engine import GNNEngine
+
+        return GNNEngine

@@ -17,6 +17,7 @@ from torch_geometric.data import InMemoryDataset, HeteroData
 NODE_FEATURE_DIMS = {"object": 22, "contact_point": 0, "floor": 0}
 EDGE_FEATURE_DIMS = {
     ("object", "inter_object", "contact_point"): 4,
+    ("contact_point", "inter_object", "object"): 4,
     ("floor", "inter_object", "contact_point"): 4,
     ("contact_point", "contact", "contact_point"): 5,
     ("object", "fixed_joint", "object"): 12,
@@ -28,7 +29,7 @@ EDGE_FEATURE_DIMS = {
 }
 OUTPUT_FEATURE_DIMS = {
     "object": 6,
-    ("contact_point", "contact", "contact_point"): 3,
+    # ("contact_point", "contact", "contact_point"): 0,
     ("object", "fixed_joint", "object"): 3,
     ("object", "revolute_joint", "object"): 2,
     ("object", "prismatic_joint", "object"): 2,
@@ -42,7 +43,7 @@ def norm(x: Any):
     return torch.norm(torch.tensor(x, dtype=torch.float32))
 
 
-class DatasetSim2D(InMemoryDataset):
+class AxionDatasetGNN(InMemoryDataset):
     """
     Args:
         root: path to directory containing HDF5 files for multiple passes
@@ -52,7 +53,7 @@ class DatasetSim2D(InMemoryDataset):
         super().__init__(root)
         self.load(self.processed_paths[0], HeteroData)
         if osp.exists(self.processed_paths[1]):
-            self.stats = torch.load(self.processed_paths[1])
+            self.stats = torch.load(self.processed_paths[1], weights_only=False)
         else:
             self.stats = None
 
@@ -68,10 +69,10 @@ class DatasetSim2D(InMemoryDataset):
             if not path.suffix == ".h5":
                 continue
             with h5py.File(path, "r") as f:
-                for step in [0]:  # take first step, but more steps can be added
+                for step in [0, 10]:  # take first step, but more steps can be added
                     graphs = self.construct_graphs(f, step)
                     graphs.extend(graphs)
-        stats = self.calculate_statistics(graphs)
+        stats = calculate_statistics(graphs)
 
         self.save(graphs, self.processed_paths[0])
         torch.save(stats, self.processed_paths[1])
@@ -92,7 +93,7 @@ class DatasetSim2D(InMemoryDataset):
             # -- Contacts --
             num_nodes += self.create_contacts(graph, step, world, model, data, dims)
             # --Joints --
-            self.create_joint_edges(graph, step, world, model, data, dims)
+            # self.create_joint_edges(graph, step, world, model, data, dims)
             # -- Add graph --
             graph.num_nodes = num_nodes
             graphs.append(graph)
@@ -162,6 +163,8 @@ class DatasetSim2D(InMemoryDataset):
 
         attrs_object_contact = []
         indices_object_contact = []
+        attrs_contact_object = []
+        indices_contact_object = []
 
         attrs_floor_contact = []
         indices_floor_contact = []
@@ -180,7 +183,7 @@ class DatasetSim2D(InMemoryDataset):
             contact_preds = [None, None]
             for j in [0, 1]:
                 shape_idx = data[f"contact_shape{j}"][step][world][i]
-                body_idx = self._resolve_body_indices(shape_idx, model["shape_body"][world])
+                body_idx = resolve_body_indices(shape_idx, model["shape_body"][world])
                 if body_idx >= 0:
                     body_pose = data["body_pose"][step][world][body_idx]
                 else:
@@ -202,21 +205,20 @@ class DatasetSim2D(InMemoryDataset):
                     nodes_contact.append([])
                 if body_idx == -1:
                     indices_floor_contact.append([0, contact_idx])
-                    indices_floor_contact.append([contact_idx, 0])
                     attrs_floor_contact.append([*lever, lever_norm])
-                    attrs_floor_contact.append([*-lever, lever_norm])
                 else:
                     indices_object_contact.append([body_idx, contact_idx])
-                    indices_object_contact.append([contact_idx, body_idx])
+                    indices_contact_object.append([contact_idx, body_idx])
                     attrs_object_contact.append([*lever, lever_norm])
-                    attrs_object_contact.append([*-lever, lever_norm])
+                    attrs_contact_object.append([*-lever, lever_norm])
                 contact_indices[j] = contact_idx
                 contact_attributes[j] = [normal, point_adj, mu]
                 contact_preds[j] = []
 
             mu = (contact_attributes[0][2] + contact_attributes[1][2]) / 2
-            dist = np.dot(-normal, contact_attributes[0][1] - contact_attributes[1][1])
-            assert dist >= -0.0001, f"Distance is not greater than 0.0, current value is: {dist}"
+            dist = np.dot(
+                contact_attributes[0][0], contact_attributes[0][1] - contact_attributes[1][1]
+            )
 
             indices_contact_contact.append(contact_indices)
             indices_contact_contact.append(contact_indices[::-1])
@@ -226,28 +228,30 @@ class DatasetSim2D(InMemoryDataset):
             preds_contact_contact.append([])
 
         graph["contact_point"].x = torch.tensor(nodes_contact, dtype=torch.float32)
-        self._assign_edge_data(
+        assign_edge_data(
             graph,
             ("object", "inter_object", "contact_point"),
             indices_object_contact,
             attrs_object_contact,
-            EDGE_FEATURE_DIMS[("object", "inter_object", "contact_point")],
         )
-        self._assign_edge_data(
+        assign_edge_data(
+            graph,
+            ("contact_point", "inter_object", "object"),
+            indices_contact_object,
+            attrs_contact_object,
+        )
+        assign_edge_data(
             graph,
             ("floor", "inter_object", "contact_point"),
             indices_floor_contact,
             attrs_floor_contact,
-            EDGE_FEATURE_DIMS[("floor", "inter_object", "contact_point")],
         )
-        self._assign_edge_data(
+        assign_edge_data(
             graph,
             ("contact_point", "contact", "contact_point"),
             indices_contact_contact,
             attrs_contact_contact,
-            EDGE_FEATURE_DIMS[("contact_point", "contact", "contact_point")],
-            preds_contact_contact,
-            OUTPUT_FEATURE_DIMS[("contact_point", "contact", "contact_point")],
+            # preds_contact_contact,
         )
         return points_cnt
 
@@ -256,56 +260,58 @@ class DatasetSim2D(InMemoryDataset):
     ) -> None:
         pass
 
-    # ---- Helper functions ----
-    def _resolve_body_indices(self, shape0: int, shape_body: np.ndarray):
-        body0 = -1
-        if shape0 >= 0:
-            body0 = shape_body[shape0]
-        return body0
 
-    def _assign_edge_data(
-        self, graph, edge_type, indices, attrs, attr_dim, preds=None, pred_dim=None
-    ):
-        if len(indices) > 0:
-            graph[edge_type].edge_index = torch.tensor(indices, dtype=torch.long).T
-            graph[edge_type].edge_attr = torch.tensor(attrs, dtype=torch.float32)
-            if not preds is None:
-                graph[edge_type].y = torch.tensor(preds, dtype=torch.float32)
-        else:
-            graph[edge_type].edge_index = torch.zeros((2, 0), dtype=torch.long)
-            graph[edge_type].edge_attr = torch.zeros((0, attr_dim), dtype=torch.float32)
-            if not pred_dim is None:
-                graph[edge_type].y = torch.zeros((0, pred_dim), dtype=torch.float32)
+# ---- Helper functions ----
+def resolve_body_indices(shape0: int, shape_body: np.ndarray):
+    body0 = -1
+    if shape0 >= 0:
+        body0 = shape_body[shape0]
+    return body0
 
-    # ---- Statistics calculation ----
-    def calculate_statistics(self, graphs):
-        stats = {"nodes": {}, "edges": {}}
-        for node_type in NODE_FEATURE_DIMS.keys():
-            all_x = [g[node_type].x for g in graphs if g[node_type].num_nodes > 0]
-            if all_x:
-                all_x = torch.cat(all_x, dim=0)
-                mean = all_x.mean(dim=0)
-                std = all_x.std(dim=0)
-                std[std < 1e-6] = 1.0
-                stats["nodes"][node_type] = {"mean": mean, "std": std}
 
-        all_edge_types = set()
-        for g in graphs:
-            all_edge_types.update(g.edge_types)
-        for edge_type in all_edge_types:
-            all_attr = [
-                g[edge_type].edge_attr
-                for g in graphs
-                if edge_type in g.edge_attr_dict and g[edge_type].num_edges > 0
-            ]
-            if all_attr:
-                all_attr = torch.cat(all_attr, dim=0)
-                mean = all_attr.mean(dim=0)
-                std = all_attr.std(dim=0)
-                std[std < 1e-6] = 1.0
-                stats["edges"]["_".join(edge_type)] = {"mean": mean, "std": std}
-        return stats
+def assign_edge_data(graph, edge_type, indices, attrs, preds=None):
+    if len(indices) > 0:
+        graph[edge_type].edge_index = torch.tensor(indices, dtype=torch.long).T
+        graph[edge_type].edge_attr = torch.tensor(attrs, dtype=torch.float32)
+        if not preds is None:
+            graph[edge_type].y = torch.tensor(preds, dtype=torch.float32)
+    else:
+        attr_dim = EDGE_FEATURE_DIMS[edge_type]
+        graph[edge_type].edge_index = torch.zeros((2, 0), dtype=torch.long)
+        graph[edge_type].edge_attr = torch.zeros((0, attr_dim), dtype=torch.float32)
+        if not preds is None:
+            pred_dim = OUTPUT_FEATURE_DIMS[edge_type]
+            graph[edge_type].y = torch.zeros((0, pred_dim), dtype=torch.float32)
+
+
+def calculate_statistics(graphs):
+    stats = {"nodes": {}, "edges": {}}
+    for node_type in NODE_FEATURE_DIMS.keys():
+        all_x = [g[node_type].x for g in graphs if g[node_type].num_nodes > 0]
+        if all_x:
+            all_x = torch.cat(all_x, dim=0)
+            mean = all_x.mean(dim=0)
+            std = all_x.std(dim=0)
+            std[std < 1e-6] = 1.0
+            stats["nodes"][node_type] = {"mean": mean, "std": std}
+
+    all_edge_types = set()
+    for g in graphs:
+        all_edge_types.update(g.edge_types)
+    for edge_type in all_edge_types:
+        all_attr = [
+            g[edge_type].edge_attr
+            for g in graphs
+            if edge_type in g.edge_attr_dict and g[edge_type].num_edges > 0
+        ]
+        if all_attr:
+            all_attr = torch.cat(all_attr, dim=0)
+            mean = all_attr.mean(dim=0)
+            std = all_attr.std(dim=0)
+            std[std < 1e-6] = 1.0
+            stats["edges"]["_".join(edge_type)] = {"mean": mean, "std": std}
+    return stats
 
 
 if __name__ == "__main__":
-    DatasetSim2D(root="data/gnn_data/test_dataset")
+    AxionDatasetGNN(root="data/gnn_data/test_dataset")
