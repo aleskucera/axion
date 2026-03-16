@@ -253,7 +253,7 @@ class HelhestTrajectoryOptimizer(AxionDifferentiableSimulator):
 
         print("Rendering target episode...")
         self.states, self.target_states = self.target_states, self.states
-        self.render_episode(iteration=-1, loop=True, loops_count=2, playback_speed=1.0)
+        self.render_episode(iteration=-1, loop=True, loops_count=2, playback_speed=1.0, start_paused=True)
         self.states, self.target_states = self.target_states, self.states
 
         # --- Optimization ---

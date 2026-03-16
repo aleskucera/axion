@@ -113,6 +113,7 @@ class DifferentiableSimulator(BaseSimulator, ABC):
         loop: bool = False,
         loops_count: int = 1,
         playback_speed: float = 1.0,
+        start_paused: bool = False,
     ):
         """
         Replays the simulation episode in the viewer, rendering tracked trajectories.
@@ -128,6 +129,9 @@ class DifferentiableSimulator(BaseSimulator, ABC):
             return
 
         import time
+
+        if start_paused and isinstance(self.viewer, newton.viewer.ViewerGL):
+            self.viewer._paused = True
 
         # 1. Pre-calculate trajectories for all tracked bodies
         trajectories = {}
@@ -146,10 +150,17 @@ class DifferentiableSimulator(BaseSimulator, ABC):
         # 3. Replay Loop
         for play_idx in range(plays):
             start_wall_time = time.time()
+            paused_elapsed = 0.0
 
             while True:
                 current_wall_time = time.time()
-                elapsed_sim_time = (current_wall_time - start_wall_time) * playback_speed
+
+                if self.viewer.is_paused():
+                    start_wall_time = current_wall_time - paused_elapsed / playback_speed
+                    elapsed_sim_time = paused_elapsed
+                else:
+                    elapsed_sim_time = (current_wall_time - start_wall_time) * playback_speed
+                    paused_elapsed = elapsed_sim_time
 
                 if elapsed_sim_time > total_sim_time:
                     break

@@ -151,7 +151,7 @@ class HelhestTrajectorySplineSurfaceOptimizer(AxionDifferentiableSimulator):
 
         create_helhest_model(
             self.builder,
-            xform=wp.transform(wp.vec3(0.0, 0.0, 1.4), wp.quat_identity()),
+            xform=wp.transform(wp.vec3(0.0, 0.0, 2.0), wp.quat_identity()),
             control_mode="velocity",
             k_p=HelhestConfig.TARGET_KE,
             k_d=HelhestConfig.TARGET_KD,
@@ -161,7 +161,7 @@ class HelhestTrajectorySplineSurfaceOptimizer(AxionDifferentiableSimulator):
 
         surface_m = openmesh.read_trimesh(str(ASSETS_DIR.joinpath("surface.obj")))
         mesh_indices = np.array(surface_m.face_vertex_indices(), dtype=np.int32).flatten()
-        scale = np.array([6.0, 6.0, 3.0])
+        scale = np.array([6.0, 6.0, 5.0])
         mesh_points = np.array(surface_m.points()) * scale + np.array([0.0, 0.0, 0.05])
         surface_mesh = newton.Mesh(mesh_points, mesh_indices)
 
@@ -315,9 +315,9 @@ class HelhestTrajectorySplineSurfaceOptimizer(AxionDifferentiableSimulator):
 
         for i in range(T):
             target_ctrl = np.zeros(num_dofs, dtype=np.float32)
-            target_ctrl[WHEEL_DOF_OFFSET + 0] = 6.0
-            target_ctrl[WHEEL_DOF_OFFSET + 1] = 0.8
-            target_ctrl[WHEEL_DOF_OFFSET + 2] = 2.0
+            target_ctrl[WHEEL_DOF_OFFSET + 0] = 4.0
+            target_ctrl[WHEEL_DOF_OFFSET + 1] = 1.0
+            target_ctrl[WHEEL_DOF_OFFSET + 2] = 1.0
 
             target_ctrl_wp = wp.array(target_ctrl, dtype=wp.float32, device=self.model.device)
             wp.copy(self.target_controls[i].joint_target_vel, target_ctrl_wp)
@@ -326,7 +326,9 @@ class HelhestTrajectorySplineSurfaceOptimizer(AxionDifferentiableSimulator):
 
         print("Rendering target episode...")
         self.states, self.target_states = self.target_states, self.states
-        self.render_episode(iteration=-1, loop=True, loops_count=2, playback_speed=1.0)
+        self.render_episode(
+            iteration=-1, loop=True, loops_count=1, playback_speed=1.0, start_paused=True
+        )
         self.states, self.target_states = self.target_states, self.states
 
         # --- Spline setup ---
@@ -338,7 +340,7 @@ class HelhestTrajectorySplineSurfaceOptimizer(AxionDifferentiableSimulator):
             dtype=np.float64,
         )  # [K, 3]
 
-        self.spline_adam = SplineAdam(K=self.K, num_dofs=NUM_WHEEL_DOFS, lr=0.2)
+        self.spline_adam = SplineAdam(K=self.K, num_dofs=NUM_WHEEL_DOFS, lr=0.05)
 
         self._apply_params(self.spline_params)
 
@@ -376,7 +378,7 @@ def main(cfg: DictConfig):
         exec_config,
         engine_config,
         logging_config,
-        num_control_points=5,
+        num_control_points=10,
     )
     sim.train(iterations=200)
 
