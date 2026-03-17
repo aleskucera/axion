@@ -22,6 +22,7 @@ from .profiling import EngineProfiler
 from .simulation import AxionDifferentiableSimulator
 from .simulation import DatasetSimulator
 from .core import NeuralEngineConfig
+from .core import HybridEngineConfig
 from .simulation import DifferentiableSimulator
 from .simulation import InteractiveSimulator
 from .simulation import NewtonDifferentiableSimulator
@@ -46,6 +47,7 @@ __all__ = [
     "SemiImplicitEngineConfig",
     "XPBDEngineConfig",
     "NeuralEngineConfig",
+    "HybridEngineConfig",
     "InteractiveSimulator",
     "AxionDifferentiableSimulator",
     "DifferentiableSimulator",
