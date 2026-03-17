@@ -57,6 +57,7 @@ class SequenceModelTrainer:
 
         self.seed = algo_cfg.get('seed', 0)
         self.device = device
+        self.use_energy_loss = bool(algo_cfg.get('use_energy_loss', False))
 
         set_random_seed(self.seed)
 
@@ -321,11 +322,13 @@ class SequenceModelTrainer:
         )
         self.utils_provider.wrap2PI(predicted_next_states)
 
-        # Energy loss: per-sample energies (B, T), then MSE over batch and time
-        E_next_states_gt = self.utils_provider.calculate_total_energy(data['next_states'])
-        E_next_states_predicted = self.utils_provider.calculate_total_energy(predicted_next_states)
-        loss_energy = torch.nn.MSELoss()(E_next_states_predicted, E_next_states_gt)
-        loss = loss + loss_energy
+        loss_energy = None
+        if self.use_energy_loss:
+            # Energy loss: per-sample energies (B, T), then MSE over batch and time
+            E_next_states_gt = self.utils_provider.calculate_total_energy(data['next_states'])
+            E_next_states_predicted = self.utils_provider.calculate_total_energy(predicted_next_states)
+            loss_energy = torch.nn.MSELoss()(E_next_states_predicted, E_next_states_gt)
+            loss = loss + loss_energy
 
         # Reported error statistics (no grad)
         with torch.no_grad():
@@ -348,7 +351,8 @@ class SequenceModelTrainer:
                 - data['next_states'][..., self.utils_provider.dof_q_per_env:],
                 dim=-1
             ).mean()
-            loss_itemized['energy_MSE'] = loss_energy.detach()
+            if loss_energy is not None:
+                loss_itemized['energy_MSE'] = loss_energy.detach()
 
         return loss, loss_itemized
         
