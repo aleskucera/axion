@@ -57,7 +57,6 @@ class BaseSimulator(ABC):
         self.solver = self.engine_config.create_engine(
             model=self.model,
             sim_steps=self.clock.total_sim_steps,
-            init_state_fn=self.init_state_fn,
             logging_config=self.logging_config,
             differentiable_simulation=hasattr(self, "differentiable_simulation"),
         )

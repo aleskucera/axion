@@ -1,6 +1,5 @@
 from dataclasses import dataclass
 from typing import Any
-from typing import Callable
 from typing import Optional
 
 
@@ -15,7 +14,6 @@ class EngineConfig:
         self,
         model: Any,
         sim_steps: Optional[int] = None,
-        init_state_fn: Optional[Callable] = None,
         logging_config: Optional[Any] = None,
         differentiable_simulation: bool = False,
     ) -> Any:
@@ -112,19 +110,14 @@ class AxionEngineConfig(EngineConfig):
         self,
         model: Any,
         sim_steps: Optional[int] = None,
-        init_state_fn: Optional[Callable] = None,
         logging_config: Optional[Any] = None,
         differentiable_simulation: bool = False,
     ):
         from axion.core.engine import AxionEngine
 
-        if init_state_fn is None:
-            raise ValueError("AxionEngine requires an init_state_fn.")
-
         return AxionEngine(
             model=model,
             sim_steps=sim_steps,
-            init_state_fn=init_state_fn,
             config=self,
             logging_config=logging_config,
             differentiable_simulation=differentiable_simulation,
