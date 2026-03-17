@@ -306,3 +306,42 @@ class NeuralEngineConfig(EngineConfig):
             logger=logger,
             config=self,
         )
+
+@dataclass(frozen=True)
+class HybridEngineConfig(AxionEngineConfig):
+    """
+    Configuration for the HybridEngine solver (neural-network-assisted Newton method).
+    """
+
+    def _get_solver_class(self):
+        from axion.core.hybrid_engine import HybridEngine
+
+        return HybridEngine
+
+    def create_engine(
+        self,
+        model: Any,
+        init_state_fn: Optional[Callable] = None,
+        logging_config: Optional[Any] = None,
+    ) -> Any:
+        from axion.logging import HDF5Logger
+        from axion.logging import NullLogger
+
+        from axion.core.hybrid_engine import HybridEngine
+
+        if logging_config is not None and getattr(
+            logging_config, "enable_hdf5_logging", False
+        ):
+            logger = HDF5Logger(filepath=logging_config.hdf5_log_file)
+            logger.open()
+        else:
+            logger = NullLogger()
+
+        return HybridEngine(
+            model=model,
+            # HybridEngine owns its default init_state_fn (in `hybrid_engine.py`).
+            # We intentionally do not forward `init_state_fn` from generic callers.
+            init_state_fn=None,
+            logging_config=logging_config,
+            config=self,
+        )
