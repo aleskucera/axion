@@ -5,18 +5,20 @@ a 2×2 figure: loss curves and per-iteration timing for ball throw and helhest.
 
 Usage:
     # First collect data (one command per simulator):
-    python examples/comparison/ball_throw/ball_throw_axion.py        --save examples/comparison/results/ball_throw_axion.json
-    python examples/comparison/ball_throw/ball_throw_xpbd.py         --save examples/comparison/results/ball_throw_xpbd.json
-    python examples/comparison/ball_throw/ball_throw_featherstone.py --save examples/comparison/results/ball_throw_featherstone.json
-    python examples/comparison/ball_throw/ball_throw_mjx.py          --save examples/comparison/results/ball_throw_mjx.json
-    julia examples/comparison/ball_throw/ball_throw_dojo.jl          --save examples/comparison/results/ball_throw_dojo.json
+    python examples/comparison/ball_throw/ball_throw_axion.py          --save examples/comparison/results/ball_throw_axion.json
+    python examples/comparison/ball_throw/ball_throw_xpbd.py           --save examples/comparison/results/ball_throw_xpbd.json
+    python examples/comparison/ball_throw/ball_throw_featherstone.py   --save examples/comparison/results/ball_throw_featherstone.json
+    python examples/comparison/ball_throw/ball_throw_mjx_jacfwd.py     --save examples/comparison/results/ball_throw_mjx_jacfwd.json
+    python examples/comparison/ball_throw/ball_throw_mjx.py            --save examples/comparison/results/ball_throw_mjx_grad.json
+    julia examples/comparison/ball_throw/ball_throw_dojo.jl            --save examples/comparison/results/ball_throw_dojo.json
 
-    python examples/comparison/helhest/helhest_axion.py        --save examples/comparison/results/helhest_axion.json
-    python examples/comparison/helhest/helhest_xpbd.py         --save examples/comparison/results/helhest_xpbd.json
-    python examples/comparison/helhest/helhest_featherstone.py --save examples/comparison/results/helhest_featherstone.json
-    python examples/comparison/helhest/helhest_mjx.py          --save examples/comparison/results/helhest_mjx.json
-    # python examples/comparison/helhest/helhest_nimble.py        --save examples/comparison/results/helhest_nimble.json
-    julia examples/comparison/helhest/helhest_dojo.jl          --save examples/comparison/results/helhest_dojo.json
+    python examples/comparison/helhest/helhest_axion.py          --save examples/comparison/results/helhest_axion.json
+    python examples/comparison/helhest/helhest_xpbd.py           --save examples/comparison/results/helhest_xpbd.json
+    python examples/comparison/helhest/helhest_featherstone.py   --save examples/comparison/results/helhest_featherstone.json
+    python examples/comparison/helhest/helhest_mjx_jacfwd.py     --save examples/comparison/results/helhest_mjx_jacfwd.json
+    python examples/comparison/helhest/helhest_mjx.py            --save examples/comparison/results/helhest_mjx_grad.json
+    # python examples/comparison/helhest/helhest_nimble.py          --save examples/comparison/results/helhest_nimble.json
+    julia examples/comparison/helhest/helhest_dojo.jl            --save examples/comparison/results/helhest_dojo.json
 
     # Then plot:
     python examples/comparison/plot_comparison.py
@@ -35,7 +37,9 @@ STYLES = {
     "Axion": {"color": "#2196F3", "marker": "o", "label": "Axion (Warp, implicit AD)"},
     "XPBD": {"color": "#FF9800", "marker": "v", "label": "XPBD (Warp, BPTT)"},
     "Featherstone": {"color": "#9C27B0", "marker": "D", "label": "Featherstone (Warp, BPTT)"},
-    "MJX": {"color": "#FF5722", "marker": "s", "label": "MJX (JAX, forward-mode AD)"},
+    "MJX-jacfwd": {"color": "#FF5722", "marker": "s", "label": "MJX (JAX, jacfwd)"},
+    "MJX-grad": {"color": "#FF8A65", "marker": "s", "label": "MJX (JAX, jax.grad/scan)"},
+    "MuJoCo-FD": {"color": "#E91E63", "marker": "x", "label": "MuJoCo (CPU, finite diff)"},
     "Dojo": {"color": "#4CAF50", "marker": "^", "label": "Dojo (Julia, BPTT)"},
     "Nimble": {"color": "#795548", "marker": "P", "label": "Nimble (DART, implicit AD)"},
 }

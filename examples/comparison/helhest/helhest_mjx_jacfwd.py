@@ -1,11 +1,7 @@
-"""Helhest trajectory optimization using MuJoCo MJX (JAX-based differentiable physics).
+"""Helhest trajectory optimization using MuJoCo MJX — forward-mode AD (jacfwd).
 
-Comparable to examples/helhest/gradient/trajectory_spline.py.
-
-Optimizes K spline control points (K << T) that are linearly interpolated to
-per-timestep wheel velocities. With K=10, jax.jacfwd needs only K*3=30 forward
-passes per gradient step, making it practical while keeping iterations=10 for
-stable contact resolution.
+Uses jax.jacfwd: K*nu=30 forward passes per gradient step.
+The while_loop in the constraint solver is differentiable in forward mode.
 """
 import argparse
 import json
@@ -25,11 +21,9 @@ import optax
 
 DT = 2e-3
 DURATION = 3.0
-T = int(DURATION / DT)  # 2500 steps
+T = int(DURATION / DT)  # 250 steps
 K = 10  # number of spline control points
 
-# DOF indices: qpos = [x, y, z, qw, qx, qy, qz, theta_l, theta_r, theta_rear]
-# ctrl = [vel_left, vel_right, vel_rear]
 TARGET_CTRL = np.array([1.0, 6.0, 0.0], dtype=np.float32)
 INIT_CTRL = np.array([2.0, 5.0, 0.0], dtype=np.float32)
 
@@ -52,7 +46,6 @@ HELHEST_XML = f"""
       <geom type="box" pos="-0.047 0 0" size="0.13 0.3 0.09"
             rgba="0.5 0.5 0.5 1" contype="0" conaffinity="0"/>
 
-      <!-- Fixed components (no joint = welded to chassis) -->
       <body name="battery" pos="-0.302 0.165 0">
         <inertial mass="2.0" pos="0 0 0" diaginertia="0.00768 0.0164 0.01208"/>
         <geom type="box" size="0.125 0.05 0.095" rgba="0.3 0.3 0.8 0.3"
@@ -84,7 +77,6 @@ HELHEST_XML = f"""
               contype="0" conaffinity="0"/>
       </body>
 
-      <!-- Wheels (hinge joints around Y axis) -->
       <body name="left_wheel" pos="0 0.36 0">
         <joint name="left_wheel_j" type="hinge" axis="0 1 0"/>
         <inertial mass="5.5" pos="0 0 0" diaginertia="0.20045 0.20045 0.3888"/>
@@ -107,7 +99,6 @@ HELHEST_XML = f"""
   </worldbody>
 
   <actuator>
-    <!-- velocity servos: torque = kv * (ctrl - joint_vel), matching k_d=100 -->
     <velocity name="left_act"  joint="left_wheel_j"  kv="100"/>
     <velocity name="right_act" joint="right_wheel_j" kv="100"/>
     <velocity name="rear_act"  joint="rear_wheel_j"  kv="100"/>
@@ -117,7 +108,6 @@ HELHEST_XML = f"""
 
 
 def make_interp_matrix(T: int, K: int) -> np.ndarray:
-    """Build (T, K) linear interpolation matrix. W @ params gives (T, 3) ctrl_traj."""
     W = np.zeros((T, K), dtype=np.float32)
     for t in range(T):
         k_float = t * (K - 1) / max(T - 1, 1)
@@ -130,26 +120,23 @@ def make_interp_matrix(T: int, K: int) -> np.ndarray:
 
 
 def make_init_data(mx, mj_model):
-    """Create initial MJX data with the robot in its default pose."""
     mj_data = mujoco.MjData(mj_model)
     mujoco.mj_forward(mj_model, mj_data)
     return mjx.put_data(mj_model, mj_data)
 
 
 def rollout(mx, dx0, ctrl_traj):
-    """Simulate T steps with per-timestep ctrl_traj (T, 3). Returns (T, 2) chassis xy."""
-
     def step_fn(carry, ctrl_t):
         d = carry.replace(ctrl=ctrl_t)
         d = mjx.step(mx, d)
         return d, d.qpos[:2]
 
     _, xy_traj = jax.lax.scan(step_fn, dx0, ctrl_traj)
-    return xy_traj  # (T, 2)
+    return xy_traj
 
 
 def trajectory_loss(mx, dx0, W, params, target_xy_traj):
-    ctrl_traj = W @ params  # (T, K) @ (K, 3) -> (T, 3)
+    ctrl_traj = W @ params
     xy_traj = rollout(mx, dx0, ctrl_traj)
     delta = xy_traj - target_xy_traj
     traj = TRAJECTORY_WEIGHT / T * jnp.sum(delta**2)
@@ -158,36 +145,9 @@ def trajectory_loss(mx, dx0, W, params, target_xy_traj):
     return traj + smooth + reg
 
 
-def simulate_cpu(mj_model, ctrl_np, print_every=50):
-    """Run on CPU with viewer. ctrl_np: (3,) constant or (T, 3) per-step."""
-    import mujoco.viewer
-    import time as _time
-
-    per_step = ctrl_np.ndim == 2
-    mj_data = mujoco.MjData(mj_model)
-    mujoco.mj_forward(mj_model, mj_data)
-
-    print(f"  {'step':>5}  {'x':>8}  {'y':>8}  {'z':>8}")
-    with mujoco.viewer.launch_passive(mj_model, mj_data) as viewer:
-        viewer.cam.distance = 5.0
-        viewer.cam.elevation = -20.0
-        for step in range(T):
-            step_start = _time.time()
-            mj_data.ctrl[:] = ctrl_np[step] if per_step else ctrl_np
-            mujoco.mj_step(mj_model, mj_data)
-            viewer.sync()
-            if step % print_every == 0 or step == T - 1:
-                x, y, z = mj_data.qpos[0], mj_data.qpos[1], mj_data.qpos[2]
-                print(f"  {step:>5}  {x:>8.3f}  {y:>8.3f}  {z:>8.3f}")
-            if not viewer.is_running():
-                break
-            elapsed = _time.time() - step_start
-            _time.sleep(max(0.0, mj_model.opt.timestep - elapsed))
-
-
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--save", metavar="PATH", help="Save results to JSON and skip CPU viewer")
+    parser.add_argument("--save", metavar="PATH", help="Save results to JSON")
     args = parser.parse_args()
 
     mj_model = mujoco.MjModel.from_xml_string(HELHEST_XML)
@@ -196,27 +156,20 @@ def main():
 
     print(f"T={T}, dt={DT}, K={K} control points, jacfwd passes={K * mj_model.nu}")
 
-    # --- Visualize target episode on CPU ---
-    if not args.save:
-        print("Simulating target episode (CPU)...")
-        simulate_cpu(mj_model, TARGET_CTRL)
-
-    # --- Target trajectory ---
     target_ctrl_traj = jnp.tile(jnp.array(TARGET_CTRL), (T, 1))
     target_xy_traj = jax.jit(rollout)(mx, dx0, target_ctrl_traj)
     target_xy_traj.block_until_ready()
     print(f"Target final xy: ({target_xy_traj[-1, 0]:.3f}, {target_xy_traj[-1, 1]:.3f})")
 
-    # --- Spline setup ---
-    W = jnp.array(make_interp_matrix(T, K))  # (T, K)
-    params = jnp.tile(jnp.array(INIT_CTRL), (K, 1))  # (K, 3)
+    W = jnp.array(make_interp_matrix(T, K))
+    params = jnp.tile(jnp.array(INIT_CTRL), (K, 1))
 
-    # Solver uses _while_loop_scan (scan-based), so jax.grad works. 1 backward pass.
+    # jacfwd works through while_loop. Cost: K*nu forward passes per iteration.
     loss_fn = lambda p: trajectory_loss(mx, dx0, W, p, target_xy_traj)
     value_fn = jax.jit(loss_fn)
-    grad_fn = jax.jit(jax.grad(loss_fn))
+    grad_fn = jax.jit(jax.jacfwd(loss_fn))
 
-    print(f"Compiling value_fn + grad_fn (reverse-mode AD, 1 backward pass)...")
+    print(f"Compiling value_fn + grad_fn ({K * mj_model.nu} forward passes)...")
     t0 = time.perf_counter()
     loss = value_fn(params)
     loss.block_until_ready()
@@ -224,13 +177,12 @@ def main():
     grad.block_until_ready()
     print(f"  compile: {time.perf_counter() - t0:.2f}s\n")
 
-    # --- Adam optimizer ---
     optimizer = optax.adam(learning_rate=0.1)
     opt_state = optimizer.init(params)
 
-    print(f"Optimizing: T={T}, dt={DT}, K={K}, lr=0.1 (Adam, reverse-mode AD)")
+    print(f"Optimizing: T={T}, dt={DT}, K={K}, lr=0.1 (Adam, forward-mode AD)")
     results = {
-        "simulator": "MJX-grad",
+        "simulator": "MJX-jacfwd",
         "problem": "helhest",
         "dt": DT,
         "T": T,
@@ -270,10 +222,6 @@ def main():
         pathlib.Path(args.save).parent.mkdir(parents=True, exist_ok=True)
         pathlib.Path(args.save).write_text(json.dumps(results, indent=2))
         print(f"Saved to {args.save}")
-    else:
-        print("\nSimulating optimized episode (CPU)...")
-        ctrl_traj_np = np.array(W @ params)
-        simulate_cpu(mj_model, ctrl_traj_np)
 
 
 if __name__ == "__main__":

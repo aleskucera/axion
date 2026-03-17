@@ -6,19 +6,31 @@ Optimizes the initial velocity of a free-floating ball to reach a target
 position after T steps of ballistic flight.
 
 Gradient flow:
-  - set_dofs_velocity(v0) at step 0 seeds the initial velocity.
-  - scene._backward() runs Taichi reverse-mode AD through T steps.
-  - process_input_grad() reads velocity gradient from Taichi, calls
-    v0._backward_from_ti() to accumulate v0.grad via PyTorch autograd.
-  - robot.set_pos_grad() injects dLoss/dPos at the final step.
+  - set_dofs_velocity(v0, dofs_idx_local=[0,1,2]) seeds the initial velocity.
+  - scene.step() runs forward; Genesis registers each step as a custom PyTorch
+    autograd Function via the PyTorch-Taichi bridge.
+  - ball.get_state().pos returns a tensor with a grad_fn connected to v0.
+  - loss.backward() propagates through the full rollout back to v0.grad.
 
-KNOWN BUG (Genesis 0.4.1 + Taichi 1.7.3 + CUDA 12.8):
-  scene._backward() hangs indefinitely for any rigid body with requires_grad=True.
-  Root cause: Taichi backward kernels (kernel_step_2.grad,
-  kernel_forward_dynamics_without_qacc.grad) deadlock on GPU.
-  This affects all rigid body scenes regardless of joint type (freejoint, hinge, etc).
-  Filed at: https://github.com/Genesis-Embodied-AI/Genesis/issues
+IMPORTANT: use ball.get_state().pos, NOT ball.get_links_pos()[0].
+  get_links_pos() returns a plain detached tensor with no grad_fn.
+  get_state().pos returns a gs.Tensor that is part of the autograd graph.
+
+Previous approach (now fixed):
+  The original version injected gradients manually via ball.set_pos_grad() and
+  called scene._backward() — this hangs indefinitely on GPU (deadlock in
+  kernel_step_2.grad / kernel_forward_dynamics_without_qacc.grad).
+  Using loss.backward() directly through PyTorch autograd avoids this.
+
+Setup:
+    pip install genesis-world torch
+    python examples/comparison/ball_throw/ball_throw_genesis.py
+    python examples/comparison/ball_throw/ball_throw_genesis.py --save examples/comparison/results/ball_throw_genesis.json
 """
+import argparse
+import json
+import pathlib
+import time
 
 import genesis as gs
 import torch
@@ -26,13 +38,13 @@ import torch
 gs.init(backend=gs.gpu, logging_level="warning")
 
 DT = 3e-2
-T = 50  # 1.5 s of flight
+T = 50  # 1.5 s of ballistic flight
 
-TARGET_V0 = torch.tensor([0.0, 4.0, 7.0])  # target initial velocity
-INIT_V0 = torch.tensor([0.0, 2.0, 1.0])    # initial guess
+TARGET_V0 = [0.0, 4.0, 7.0]
+INIT_V0 = [0.0, 2.0, 1.0]
 
 
-def build_scene(requires_grad: bool):
+def build_scene(requires_grad: bool) -> tuple:
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
             dt=DT,
@@ -46,49 +58,82 @@ def build_scene(requires_grad: bool):
     return scene, ball
 
 
-# --- Compute target final position with a forward-only scene ---
+# --- Compute target position with a forward-only scene ---
 scene_fwd, ball_fwd = build_scene(requires_grad=False)
 print(f"n_dofs={ball_fwd.n_dofs}  (expected 6: freejoint linear+angular vel)")
 
-scene_fwd.reset()
-ball_fwd.set_dofs_velocity(TARGET_V0, dofs_idx_local=[0, 1, 2])
+ball_fwd.set_dofs_velocity(gs.tensor(TARGET_V0), dofs_idx_local=[0, 1, 2])
 for _ in range(T):
     scene_fwd.step()
-target_pos = ball_fwd.get_links_pos()[0].clone()
+# Convert to plain torch tensor before destroying the scene
+target_pos = torch.tensor(ball_fwd.get_state().pos[0].tolist(), device="cuda")
 print(f"Target position: ({target_pos[0]:.3f}, {target_pos[1]:.3f}, {target_pos[2]:.3f})")
 scene_fwd.destroy()
 
-# --- Build differentiable scene for optimization ---
+# --- Build differentiable scene ---
 scene, ball = build_scene(requires_grad=True)
 
-v0 = gs.tensor(INIT_V0.tolist(), requires_grad=True)
-optimizer = torch.optim.Adam([v0], lr=0.5)
+v0 = gs.tensor(INIT_V0, requires_grad=True)
 
-for i in range(100):
-    scene.reset()
-    ball.set_dofs_velocity(v0, dofs_idx_local=[0, 1, 2])
-    for _ in range(T):
-        scene.step()
 
-    pos = ball.get_links_pos()[0]
-    delta = pos - target_pos
-    loss_val = (delta ** 2).sum().item()
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--iters", type=int, default=50)
+    parser.add_argument("--save", metavar="PATH", help="Save results to JSON")
+    args = parser.parse_args()
 
-    # Inject dLoss/dPos into Taichi gradient field
-    pos_grad = torch.zeros(3, device=gs.device)
-    pos_grad[:] = 2.0 * delta
+    optimizer = torch.optim.Adam([v0], lr=0.15)
 
-    optimizer.zero_grad()
-    ball.set_pos_grad(None, False, pos_grad)
-    scene._backward()  # <-- HANGS HERE (see module docstring)
+    print(f"\nOptimizing: T={T}, dt={DT}, lr=0.2 (Adam, Genesis PyTorch autograd)")
+    results = {
+        "simulator": "Genesis",
+        "problem": "ball_throw",
+        "dt": DT,
+        "T": T,
+        "iterations": [],
+        "loss": [],
+        "time_ms": [],
+    }
 
-    print(
-        f"Iter {i:3d}: loss={loss_val:.4f} | "
-        f"v0=({v0[0]:.3f}, {v0[1]:.3f}, {v0[2]:.3f}) | "
-        f"grad=({v0.grad[0]:.3f}, {v0.grad[1]:.3f}, {v0.grad[2]:.3f})"
-    )
-    optimizer.step()
+    for i in range(args.iters):
+        t0 = time.perf_counter()
 
-    if loss_val < 1e-4:
-        print("Converged!")
-        break
+        scene.reset()
+        ball.set_dofs_velocity(v0, dofs_idx_local=[0, 1, 2])
+        for _ in range(T):
+            scene.step()
+
+        pos = ball.get_state().pos[0]  # gs.Tensor with grad_fn — do NOT use get_links_pos()
+        loss = ((pos - target_pos) ** 2).sum()
+
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+
+        t_ms = (time.perf_counter() - t0) * 1000
+        loss_val = float(loss)
+        v0_vals = [round(float(x), 3) for x in v0.detach().tolist()]
+        grad_vals = [round(float(x), 3) for x in v0.grad.tolist()]
+
+        print(
+            f"Iter {i:3d}: loss={loss_val:.4f} | "
+            f"v0={v0_vals} | "
+            f"grad={grad_vals} | "
+            f"t={t_ms:.1f}ms"
+        )
+        results["iterations"].append(i)
+        results["loss"].append(loss_val)
+        results["time_ms"].append(t_ms)
+
+        if loss_val < 1e-4:
+            print("Converged!")
+            break
+
+    if args.save:
+        pathlib.Path(args.save).parent.mkdir(parents=True, exist_ok=True)
+        pathlib.Path(args.save).write_text(json.dumps(results, indent=2))
+        print(f"Saved to {args.save}")
+
+
+if __name__ == "__main__":
+    main()
