@@ -6,14 +6,13 @@ import newton
 import numpy as np
 import warp as wp
 import warp.optim
-from axion import DifferentiableSimulator
+from axion import NewtonDifferentiableSimulator
 from axion import EngineConfig
 from axion import ExecutionConfig
 from axion import LoggingConfig
 from axion import RenderingConfig
 from axion import SimulationConfig
 from newton import Model
-from newton import ModelBuilder
 from omegaconf import DictConfig
 
 os.environ["PYOPENGL_PLATFORM"] = "glx"
@@ -66,11 +65,22 @@ def update_kernel(
     if tid > 0:
         return
 
-    # gradient descent step
-    qd[0] = qd[0] - qd_grad[0] * alpha
+    max_grad = 1e3
+    g = qd_grad[0]
+    g_clamped = wp.spatial_vector(
+        wp.clamp(g[0], -max_grad, max_grad),
+        wp.clamp(g[1], -max_grad, max_grad),
+        wp.clamp(g[2], -max_grad, max_grad),
+        wp.clamp(g[3], -max_grad, max_grad),
+        wp.clamp(g[4], -max_grad, max_grad),
+        wp.clamp(g[5], -max_grad, max_grad),
+    )
+    qd[0] = qd[0] + g_clamped * alpha
+
+    wp.printf("Gradient: [%f %f %f %f %f %f]\n", g[0], g[1], g[2], g[3], g[4], g[5])
 
 
-class BallBounceOptimizer(DifferentiableSimulator):
+class BallBounceOptimizer(NewtonDifferentiableSimulator):
     def __init__(
         self,
         sim_config: SimulationConfig,
@@ -86,35 +96,24 @@ class BallBounceOptimizer(DifferentiableSimulator):
             engine_config,
             logging_config,
         )
-
-        # 2. Optimization Setup
         self.target_pos = wp.vec3(0.0, -2.0, 1.5)
         self.loss = wp.zeros(1, dtype=float, requires_grad=True)
-        self.learning_rate = 0.2
-
+        self.learning_rate = 0.16
         self.frame = 0
 
-        # Initial velocity guessing (w, v) -> v=(0, 5, -5)
-        self.init_vel = wp.spatial_vector(0.0, 5.0, -4.0, 0.0, 0.0, 0.0)
-
-        # 3. Setup Automatic Trajectory Tracking
+        self.init_vel = wp.spatial_vector(0.0, 6.0, -4.0, 0.0, 0.0, 0.0)
         self.track_body(body_idx=0, name="ball", color=(0.0, 1.0, 0.0))
 
+
     def build_model(self) -> Model:
-        shape_config = newton.ModelBuilder.ShapeConfig(
-            ke=1e6,
-            kf=1e3,
-            kd=1e3,
-            mu=0.2,
-            contact_margin=0.3,
-        )
+        shape_config = newton.ModelBuilder.ShapeConfig(ke=1e6, kf=1e2, kd=1e3, mu=0.2)
 
         # Initialize the ball
-        self.builder.add_body(
+        ball = self.builder.add_body(
             xform=wp.transform(wp.vec3(0.0, -0.5, 1.0), wp.quat_identity()),
             mass=1.0,
         )
-        self.builder.add_shape_sphere(body=0, radius=0.2, cfg=shape_config)
+        self.builder.add_shape_sphere(body=ball, radius=0.2, cfg=shape_config)
 
         # Initialize the environment
         self.builder.add_shape_box(
@@ -160,7 +159,7 @@ class BallBounceOptimizer(DifferentiableSimulator):
 
     def render(self, train_iter):
         # Only render every 10 iterations
-        if self.frame > 0 and train_iter % 5 != 0:
+        if self.frame > 0 and train_iter % 10 != 0:
             return
 
         # Update the tracked color dynamically based on loss
@@ -207,7 +206,7 @@ class BallBounceOptimizer(DifferentiableSimulator):
             self.loss.zero_()
 
 
-@hydra.main(version_base=None, config_path=str(CONFIG_PATH), config_name="config_diff")
+@hydra.main(version_base=None, config_path=str(CONFIG_PATH), config_name="config")
 def main(cfg: DictConfig):
     sim_config: SimulationConfig = hydra.utils.instantiate(cfg.simulation)
     render_config: RenderingConfig = hydra.utils.instantiate(cfg.rendering)
@@ -222,7 +221,7 @@ def main(cfg: DictConfig):
         engine_config,
         logging_config,
     )
-    sim.train(iterations=40)
+    sim.train(iterations=60)
 
 
 if __name__ == "__main__":

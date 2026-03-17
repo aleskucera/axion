@@ -13,3 +13,5 @@ class LoggingConfig:
     enable_dataset_logging: bool = False
     dataset_log_file: str = "dataset.h5"
     dataset_simulation_steps: int = 300
+    enable_adjoint_logging: bool = False
+    adjoint_log_file: str = "adjoint.h5"

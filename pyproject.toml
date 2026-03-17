@@ -27,6 +27,16 @@ sim = [
   "mujoco-warp==3.5.0.1",
   "warp-lang==1.11.0",
 ]
+brax = [
+  "brax",
+  "jax[cuda12]",
+]
+genesis = [
+  "genesis-world",
+]
+nimble = [
+  "nimblephysics",
+]
 dev = [
   "axion[sim]",
   "axion[docs]",
@@ -42,6 +52,9 @@ docs = [
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/axion", "examples"]
 
 [tool.uv.workspace]
 members = ["third_party/newton"]

@@ -38,8 +38,8 @@ class SimulationClock:
 
         self._resolve_timing_parameters()
 
-        print(f"Num segments {self.num_segments}")
-        print(f"Total sim steps {self.total_sim_steps}")
+        # print(f"Num segments {self.num_segments}")
+        # print(f"Total sim steps {self.total_sim_steps}")
 
     @property
     def time(self) -> float:

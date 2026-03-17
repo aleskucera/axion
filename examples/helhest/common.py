@@ -19,7 +19,6 @@ class HelhestConfig:
     CHASSIS_SIZE = [0.26, 0.6, 0.18]
     CHASSIS_MASS = 85.0
     CHASSIS_OFFSET = wp.vec3(-0.047, 0.0, 0.0)
-    CHASSIS_I = wp.mat33(0.6213, 0.0, 0.0, 0.0, 0.1583, 0.0, 0.0, 0.0, 0.6770)
 
     # Wheels
     WHEEL_RADIUS = 0.36
@@ -34,47 +33,41 @@ class HelhestConfig:
     REAR_WHEEL_POS = wp.vec3(-0.697, 0.0, 0.0)
 
     # Joint Control
-    TARGET_KE = 50.0
-    TARGET_KD = 0.1
+    TARGET_KE = 150.0
+    TARGET_KD = 0.0
 
     # Fixed Components Configuration
-    # Format: name: (position, size, mass, inertia_diagonal)
+    # Format: name: (position, size, mass)
     FIXED_COMPONENTS = {
         "battery": (
             wp.vec3(-0.302, 0.165, 0.0),
             [0.25, 0.1, 0.19],
             2.0,
-            [0.00768, 0.0164, 0.01208],
         ),
         "left_motor": (
             wp.vec3(-0.09, 0.14, 0.0),
             [0.085, 0.24, 0.085],
             7.0,
-            [0.0378, 0.0084, 0.0378],
         ),
         "right_motor": (
             wp.vec3(-0.09, -0.14, 0.0),
             [0.085, 0.24, 0.085],
             7.0,
-            [0.0378, 0.0084, 0.0378],
         ),
         "rear_motor": (
             wp.vec3(-0.22, -0.04, 0.0),
             [0.085, 0.24, 0.085],
             7.0,
-            [0.0378, 0.0084, 0.0378],
         ),
         "left_wheel_holder": (
             wp.vec3(-0.477, 0.095, 0.0),
             [0.6, 0.04, 0.18],
             3.0,
-            [0.0085, 0.0981, 0.0904],
         ),
         "right_wheel_holder": (
             wp.vec3(-0.477, -0.095, 0.0),
             [0.6, 0.04, 0.18],
             3.0,
-            [0.0085, 0.0981, 0.0904],
         ),
     }
 
@@ -89,15 +82,17 @@ def _load_wheel_mesh():
 
 
 def _add_chassis(builder: newton.ModelBuilder, xform: wp.transform, is_visible: bool) -> int:
-    """Adds the chassis link and shape."""
+    """Adds the chassis link with all fixed component shapes attached directly."""
     chassis = builder.add_link(
         xform=xform,
         label="chassis",
-        mass=HelhestConfig.CHASSIS_MASS,
-        inertia=HelhestConfig.CHASSIS_I,
-        com=HelhestConfig.CHASSIS_OFFSET,
     )
 
+    chassis_volume = (
+        HelhestConfig.CHASSIS_SIZE[0]
+        * HelhestConfig.CHASSIS_SIZE[1]
+        * HelhestConfig.CHASSIS_SIZE[2]
+    )
     builder.add_shape_box(
         body=chassis,
         xform=wp.transform(HelhestConfig.CHASSIS_OFFSET, wp.quat_identity()),
@@ -105,11 +100,27 @@ def _add_chassis(builder: newton.ModelBuilder, xform: wp.transform, is_visible: 
         hy=HelhestConfig.CHASSIS_SIZE[1] / 2.0,
         hz=HelhestConfig.CHASSIS_SIZE[2] / 2.0,
         cfg=newton.ModelBuilder.ShapeConfig(
-            density=0.0,
+            density=HelhestConfig.CHASSIS_MASS / chassis_volume,
             is_visible=is_visible,
             collision_group=-1,
         ),
     )
+
+    for name, (pos, size, mass) in HelhestConfig.FIXED_COMPONENTS.items():
+        volume = size[0] * size[1] * size[2]
+        builder.add_shape_box(
+            body=chassis,
+            xform=wp.transform(pos, wp.quat_identity()),
+            hx=size[0] / 2.0,
+            hy=size[1] / 2.0,
+            hz=size[2] / 2.0,
+            cfg=newton.ModelBuilder.ShapeConfig(
+                density=mass / volume,
+                is_visible=is_visible,
+                collision_group=0,
+            ),
+        )
+
     return chassis
 
 
@@ -122,6 +133,9 @@ def _add_wheel(
     wheel_mesh: newton.Mesh,
     is_visible: bool,
     mesh_rotation: wp.quat = wp.quat_identity(),
+    ke: float = None,
+    kd: float = None,
+    kf: float = None,
 ) -> int:
     """Adds a wheel link, shapes, and returns the link index."""
     pos_world = wp.transform_point(parent_xform, pos_local)
@@ -148,70 +162,28 @@ def _add_wheel(
     )
 
     # Collision Shape
+    collision_cfg_kwargs = {
+        "density": 0.0,
+        "is_visible": False,
+        "collision_group": -1,
+        "mu": mu,
+        "mu_rolling": 0.7,
+    }
+    if ke is not None:
+        collision_cfg_kwargs["ke"] = ke
+    if kd is not None:
+        collision_cfg_kwargs["kd"] = kd
+    if kf is not None:
+        collision_cfg_kwargs["kf"] = kf
+
     builder.add_shape_cylinder(
         body=wheel_link,
         xform=wp.transform(wp.vec3(0.0, 0.0, 0.0), HelhestConfig.WHEEL_ROT),
         radius=HelhestConfig.WHEEL_RADIUS,
         half_height=HelhestConfig.WHEEL_WIDTH / 2.0,
-        cfg=newton.ModelBuilder.ShapeConfig(
-            density=0.0,
-            is_visible=False,
-            collision_group=-1,
-            mu=mu,
-        ),
+        cfg=newton.ModelBuilder.ShapeConfig(**collision_cfg_kwargs),
     )
     return wheel_link
-
-
-def _add_fixed_component(
-    builder: newton.ModelBuilder,
-    parent_body: int,
-    parent_xform: wp.transform,
-    name: str,
-    params: Tuple,
-    is_visible: bool,
-) -> int:
-    """Adds a fixed component and its joint to the chassis."""
-    pos, size, mass, inertia_diag = params
-
-    # Calculate world transform
-    pos_world = wp.transform_point(parent_xform, pos)
-    rot_world = parent_xform.q
-
-    inertia_tensor = wp.mat33(
-        inertia_diag[0], 0.0, 0.0, 0.0, inertia_diag[1], 0.0, 0.0, 0.0, inertia_diag[2]
-    )
-
-    link = builder.add_link(
-        xform=wp.transform(pos_world, rot_world),
-        label=name,
-        mass=mass,
-        inertia=inertia_tensor,
-        com=wp.vec3(0.0, 0.0, 0.0),
-    )
-
-    builder.add_shape_box(
-        body=link,
-        xform=wp.transform_identity(),
-        hx=size[0] / 2.0,
-        hy=size[1] / 2.0,
-        hz=size[2] / 2.0,
-        cfg=newton.ModelBuilder.ShapeConfig(
-            density=0.0,
-            is_visible=is_visible,
-            collision_group=0,
-        ),
-    )
-
-    joint = builder.add_joint_fixed(
-        parent=parent_body,
-        child=link,
-        parent_xform=wp.transform(pos, wp.quat_identity()),
-        child_xform=wp.transform_identity(),
-        label=f"{name}_j",
-    )
-
-    return joint
 
 
 def create_helhest_model(
@@ -223,6 +195,9 @@ def create_helhest_model(
     k_d: float = 0.1,
     friction_left_right: float = 0.7,
     friction_rear: float = 0.4,
+    ke: float = None,
+    kd: float = None,
+    kf: float = None,
 ):
     """
     Creates a Helhest robot model using physical parameters from the URDF
@@ -254,6 +229,9 @@ def create_helhest_model(
         friction_left_right,
         wheel_mesh_render,
         is_visible,
+        ke=ke,
+        kd=kd,
+        kf=kf,
     )
     right_wheel = _add_wheel(
         builder,
@@ -263,6 +241,9 @@ def create_helhest_model(
         friction_left_right,
         wheel_mesh_render,
         is_visible,
+        ke=ke,
+        kd=kd,
+        kf=kf,
     )
     rear_wheel = _add_wheel(
         builder,
@@ -272,6 +253,9 @@ def create_helhest_model(
         friction_rear,
         wheel_mesh_render,
         is_visible,
+        ke=ke,
+        kd=kd,
+        kf=kf,
     )
 
     # 3. Wheel Joints
@@ -321,13 +305,7 @@ def create_helhest_model(
         },
     )
 
-    # 4. Fixed Components
-    fixed_joints = []
-    for name, params in HelhestConfig.FIXED_COMPONENTS.items():
-        j_fixed = _add_fixed_component(builder, chassis, xform, name, params, is_visible)
-        fixed_joints.append(j_fixed)
-
-    # 5. Articulation
-    builder.add_articulation([j_base, j_left, j_right, j_rear] + fixed_joints, label="helhest")
+    # 4. Articulation
+    builder.add_articulation([j_base, j_left, j_right, j_rear], label="helhest")
 
     return chassis, [left_wheel]
