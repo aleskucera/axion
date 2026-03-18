@@ -1,10 +1,10 @@
-"""Test compute_constr_forces_from_state.
+"""Test compute_warm_start_forces.
 
 Strategy:
   1. Settle a box on the ground for a few steps.
   2. Cold-start reference solve: record converged λ* and Newton iteration count.
   3. Feed the converged (q*, u*) as a "perfect prediction" to
-     compute_constr_forces_from_state → get λ^0.
+     compute_warm_start_forces → get λ^0.
   4. Assert λ^0 ≈ λ*  (correctness of the projection / linear solve).
   5. Re-run the same step with λ^0 as warm start → assert fewer Newton iterations
      than the cold start (utility).
@@ -83,7 +83,7 @@ def test_linear_residual_is_small():
     engine.load_data(state_in, control, contacts, DT)
     wp.copy(dest=engine.data.body_pose, src=q_star)
     wp.copy(dest=engine.data.body_vel, src=qd_star)
-    engine.compute_constr_forces_from_state()
+    engine.compute_warm_start_forces()
 
     # PCR solver tracks the final residual ||A λ^0 - b||^2
     residual_sq = engine.cr_solver.r_sq.numpy().copy()   # shape: (num_worlds,)
@@ -131,14 +131,14 @@ def test_warm_start_reduces_iterations():
     engine.load_data(state_in, control, contacts, DT)
     wp.copy(dest=engine.data.body_pose, src=q_star)
     wp.copy(dest=engine.data.body_vel, src=qd_star)
-    engine.compute_constr_forces_from_state()
+    engine.compute_warm_start_forces()
     # constr_force is now λ^0; load_data below will NOT zero it
 
     # --- Warm-started solve from the original state ---
     engine.load_data(state_in, control, contacts, DT)
     wp.copy(dest=engine.data.body_pose, src=state_in.body_q)
     wp.copy(dest=engine.data.body_vel, src=state_in.body_qd)
-    # λ = λ^0 is preserved from compute_constr_forces_from_state
+    # λ = λ^0 is preserved from compute_warm_start_forces
     engine._solve()
 
     iters_warm = engine.data.iter_count.numpy()[0]

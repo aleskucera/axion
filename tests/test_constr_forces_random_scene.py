@@ -1,4 +1,4 @@
-"""Test compute_constr_forces_from_state on realistic random scenes.
+"""Test compute_warm_start_forces on realistic random scenes.
 
 Uses SceneGenerator to build scenes with multiple bodies of mixed shape types
 (boxes, spheres, capsules, cylinders) touching the ground and each other.
@@ -7,7 +7,7 @@ across different shape combinations.
 
 Tests:
   1. Linear system residual ||Aλ^0 - b|| / ||b|| is small after
-     compute_constr_forces_from_state with a perfect velocity prediction.
+     compute_warm_start_forces with a perfect velocity prediction.
   2. Warm-started Newton solve converges in fewer iterations than cold start.
 """
 
@@ -89,7 +89,7 @@ def test_linear_residual_random_scene(seed):
     engine.load_data(state_in, control, contacts, DT)
     wp.copy(dest=engine.data.body_pose, src=q_star)
     wp.copy(dest=engine.data.body_vel, src=qd_star)
-    engine.compute_constr_forces_from_state()
+    engine.compute_warm_start_forces()
 
     residual_sq = engine.cr_solver.r_sq.numpy().copy()
     rhs_norm_sq = np.sum(engine.data.rhs.numpy() ** 2, axis=-1)
@@ -144,7 +144,7 @@ def test_warm_start_iterations_random_scene(seed):
     engine.load_data(state_in, control, contacts, DT)
     wp.copy(dest=engine.data.body_pose, src=q_star)
     wp.copy(dest=engine.data.body_vel, src=qd_star)
-    engine.compute_constr_forces_from_state()
+    engine.compute_warm_start_forces()
 
     # Warm-started solve from original state (λ preserved)
     engine.load_data(state_in, control, contacts, DT)
