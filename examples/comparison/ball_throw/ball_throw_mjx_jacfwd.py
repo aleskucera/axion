@@ -19,7 +19,7 @@ import mujoco.mjx as mjx
 import numpy as np
 
 DT = 3e-2
-DURATION = 3.0
+DURATION = 1.5
 T = int(DURATION / DT)  # 50 steps
 
 INIT_VEL = np.array([0.0, 2.0, 1.0], dtype=np.float32)

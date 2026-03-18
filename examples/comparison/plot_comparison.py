@@ -33,15 +33,36 @@ import numpy as np
 
 RESULTS_DIR = pathlib.Path(__file__).parent / "results"
 
+SIM_ORDER = [
+    "Nimble",
+    "Axion",
+    "Dojo",
+    "MuJoCo-FD",
+    "MJX-jacfwd",
+    "MJX-grad",
+    "Genesis",
+]
+
+
+def sort_sims(keys):
+    def key(s):
+        try:
+            return SIM_ORDER.index(s)
+        except ValueError:
+            return len(SIM_ORDER)
+
+    return sorted(keys, key=key)
+
+
 STYLES = {
+    "Nimble": {"color": "#795548", "marker": "P", "label": "Nimble (DART, implicit AD)"},
     "Axion": {"color": "#2196F3", "marker": "o", "label": "Axion (Warp, implicit AD)"},
+    "MuJoCo-FD": {"color": "#E91E63", "marker": "x", "label": "MuJoCo (CPU, finite diff)"},
     "XPBD": {"color": "#FF9800", "marker": "v", "label": "XPBD (Warp, BPTT)"},
     "Featherstone": {"color": "#9C27B0", "marker": "D", "label": "Featherstone (Warp, BPTT)"},
     "MJX-jacfwd": {"color": "#FF5722", "marker": "s", "label": "MJX (JAX, jacfwd)"},
     "MJX-grad": {"color": "#FF8A65", "marker": "s", "label": "MJX (JAX, jax.grad/scan)"},
-    "MuJoCo-FD": {"color": "#E91E63", "marker": "x", "label": "MuJoCo (CPU, finite diff)"},
     "Dojo": {"color": "#4CAF50", "marker": "^", "label": "Dojo (Julia, BPTT)"},
-    "Nimble": {"color": "#795548", "marker": "P", "label": "Nimble (DART, implicit AD)"},
 }
 
 
@@ -55,7 +76,7 @@ def load_results(problem: str) -> dict:
 
 
 def plot_loss(ax, results: dict, title: str):
-    for sim, data in sorted(results.items()):
+    for sim, data in [(s, results[s]) for s in sort_sims(results)]:
         style = STYLES.get(sim, {"color": "gray", "marker": ".", "label": sim})
         iters = data["iterations"]
         loss = data["loss"]
@@ -78,7 +99,7 @@ def plot_loss(ax, results: dict, title: str):
 
 
 def plot_timing(ax, results: dict, title: str):
-    sims = sorted(results.keys())
+    sims = sort_sims(results.keys())
     colors = [STYLES.get(s, {"color": "gray"})["color"] for s in sims]
     labels = [STYLES.get(s, {"label": s})["label"] for s in sims]
 

@@ -163,7 +163,7 @@ mutable struct SplineAdam
     m::Matrix{Float64}; v::Matrix{Float64}; t::Int
 end
 
-SplineAdam(K::Int, n::Int; lr=30.0, beta1=0.7, beta2=0.999, eps=1e-8, clip_grad=1000.0) =
+SplineAdam(K::Int, n::Int; lr=40.0, beta1=0.5, beta2=0.999, eps=1e-8, clip_grad=200.0) =
     SplineAdam(lr, beta1, beta2, eps, clip_grad, zeros(K, n), zeros(K, n), 0)
 
 function adam_step!(opt::SplineAdam, params::Matrix, grad::Matrix)
@@ -239,16 +239,19 @@ function loss_and_grad(zs, Jzs, Jus, target_xy, ctrl_traj, W, col_sums)
         adj = Jzs[t]' * adj
     end
 
-    # Regularization on ctrl_traj
+    # Convert BPTT gradient from u-space to ctrl-space:
+    # u_wheels = KV * ctrl_traj  →  ∂L/∂ctrl_t = KV * ∂L/∂u_t
+    grad_ctrl = grad_u_wheels .* KV   # (T, 3)
+
+    # Add regularization gradient directly in ctrl-space
     for t in 1:T_STEPS
         L += REGULARIZATION_WEIGHT * dot(ctrl_traj[t, :], ctrl_traj[t, :])
-        grad_u_wheels[t, :] .+= 2 * REGULARIZATION_WEIGHT .* ctrl_traj[t, :]
+        grad_ctrl[t, :] .+= 2 * REGULARIZATION_WEIGHT .* ctrl_traj[t, :]
     end
 
     # Contract gradient from ctrl_traj space to spline params θ:
     # ctrl_traj = W @ θ  →  ∂L/∂θ = W' @ (∂L/∂ctrl_traj) ./ col_sums
-    # Also: u_wheels = KV * ctrl_traj  →  ∂L/∂ctrl_traj = grad_u_wheels / KV
-    grad_theta = (W' * (grad_u_wheels ./ KV)) ./ col_sums
+    grad_theta = (W' * grad_ctrl) ./ col_sums
 
     return L, grad_theta
 end
@@ -287,8 +290,9 @@ function main()
     theta = repeat(INIT_CTRL', K)   # (K, 3) initial control points
     opt   = SplineAdam(K, NUM_WHEEL_DOFS, lr=0.3)
 
+
     # --- Optimization loop ---
-    println("\nOptimizing: lr=0.1 (Adam)")
+    println("\nOptimizing: lr=0.15 (Adam, beta1=0.5, clip=100)")
     iters_log = Int[]
     loss_log  = Float64[]
     time_log  = Float64[]
