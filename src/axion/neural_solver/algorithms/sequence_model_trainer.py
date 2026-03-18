@@ -143,7 +143,7 @@ class SequenceModelTrainer:
 
             # create logger
             self.logger = Logger()
-            self.logger.init_wandb()
+            self.logger.init_wandb(config=algo_cfg)
                 
             # other logging params
             self.save_interval = cli_cfg.get("save_interval", 50)

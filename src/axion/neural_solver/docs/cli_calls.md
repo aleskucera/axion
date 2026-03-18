@@ -2,18 +2,23 @@
 
 ### States only
 ```
-python src/axion/neural_solver/generate/simple_generate_dataset_pendulum.py --env-name Pendulum --num-transitions 10000 --dataset-name pendulumDatasetName.hdf5 --trajectory-length 100 --num-envs 2 --seed 0 --passive
+python src/axion/neural_solver/generate/simple_generate_dataset_pendulum.py --env-name Pendulum --num-transitions 10000 --dataset-name pendulumDatasetName.hdf5 --trajectory-length 100 --num-envs 2 --seed 0 --passive --device cuda:1
 ```
 ### States + contacts
 ```
-python src/axion/neural_solver/generate/generate_dataset_pendulum.py --env-name Pendulum --num-transitions 10000 --dataset-name pendulumDatasetName.hdf5 --trajectory-length 100 --num-envs 2 --seed 0 --passive
+python src/axion/neural_solver/generate/generate_dataset_pendulum.py --env-name Pendulum --num-transitions 10000 --dataset-name pendulumDatasetName.hdf5 --trajectory-length 100 --num-envs 2 --seed 0 --passive --device cuda:1
 ```
 
 ## Training
 
 ### Begin training (example)
 ```
-python src/axion/neural_solver/train/train.py --cfg src/axion/neural_solver/train/cfg/Pendulum/transformer.yaml --logdir src/axion/neural_solver/train/trained_models/ 
+python src/axion/neural_solver/train/train.py --cfg src/axion/neural_solver/train/cfg/Pendulum/transformer.yaml --logdir src/axion/neural_solver/train/trained_models/
+```
+optionally: --device cuda:1
+
+```
+python src/axion/neural_solver/train/train.py --cfg src/axion/neural_solver/train/cfg/Pendulum/transformer.yaml --logdir src/axion/neural_solver/train/trained_models/ --device cuda:1
 ```
 
 ### Visualize training (wandb)
@@ -30,7 +35,6 @@ Run a cli testing script that loads the model.pt into NeuralPredictor class and 
 ```
 python src/axion/neural_solver/standalone/test_trained_model_cli.py --model-path src/axion/neural_solver/train/trained_models/02-23-2026-23-24-29/nn/best_eval_model.pt --cfg-path src/axion/neural_solver/train/trained_models/02-23-2026-23-24-29/cfg.yaml 
 ```
-
 
 ## Misc
 
@@ -52,6 +56,10 @@ nvidia-smi
 continuous monitoring
 ```
 watch -n 1 nvidia-smi
+```
+
+```
+nvtop?
 ```
 
 cpu continuous monitoring

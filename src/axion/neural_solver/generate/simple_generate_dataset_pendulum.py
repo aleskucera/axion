@@ -23,8 +23,9 @@ import os
 # when run as: python src/axion/neural_solver/generate/generate_dataset_pendulum.py
 _script_dir = os.path.dirname(os.path.abspath(__file__))
 _project_root = os.path.abspath(os.path.join(_script_dir, "..", "..", "..", ".."))
-if _project_root not in sys.path:
-    sys.path.insert(0, _project_root)
+_src_root = os.path.join(_project_root, "src")
+if _src_root not in sys.path:
+    sys.path.insert(0, _src_root)
 
 # Default directory for generated datasets (inside project)
 _DEFAULT_DATASET_DIR = os.path.join(_project_root, "src/axion/neural_solver/datasets")
@@ -50,6 +51,7 @@ def collect_dataset(
     trajectory_length, 
     contact_prob, 
     dataset_path, 
+    device: str = "cuda:0",
     passive = False,
     seed = 0, 
     render = False,
@@ -67,6 +69,7 @@ def collect_dataset(
         utils_provider_cfg = {},
         neural_model = None,
         default_env_mode = "ground-truth",
+        device = device,
         warp_env_cfg = {
             "seed": seed,
         },
@@ -185,6 +188,12 @@ if __name__ == '__main__':
                         type=int,
                         default=0,
                         help='The random seed for sampling.')
+    parser.add_argument(
+        '--device',
+        type=str,
+        default='cuda:0',
+        help="Simulation device (e.g. 'cuda:0', 'cuda:1', or 'cpu').",
+    )
     parser.add_argument('--render',
                         action='store_true',
                         help='Whether to render the simulation.')
@@ -213,6 +222,7 @@ if __name__ == '__main__':
         trajectory_length=args.trajectory_length,
         contact_prob=args.contact_prob,
         dataset_path=dataset_path,
+        device=args.device,
         passive=args.passive,
         seed=args.seed,
         render=args.render,
