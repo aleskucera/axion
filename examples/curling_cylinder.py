@@ -43,7 +43,7 @@ class CurlingSimulator(InteractiveSimulator):
 
         # Use friction that allows sliding (e.g., 0.05 for ice-like behavior)
         shape_config = newton.ModelBuilder.ShapeConfig(
-            ke=1e5, kd=1e2, kf=1e3, mu=0.05, contact_margin=0.3, density=10.0
+            ke=1e5, kd=1e2, kf=1e3, mu=0.05, density=10.0
         )
 
         # 1. The Stone (Cylinder)

@@ -1,7 +1,8 @@
 """Compare gradient-based optimization across differentiable simulators.
 
 Reads benchmark results from examples/comparison/results/*.json and generates
-a 2×2 figure: loss curves and per-iteration timing for ball throw and helhest.
+a 2×3 figure: loss curves and per-iteration timing for ball throw, helhest,
+and curling box.
 
 Usage:
     # First collect data (one command per simulator):
@@ -19,6 +20,13 @@ Usage:
     python examples/comparison/helhest/helhest_mjx.py            --save examples/comparison/results/helhest_mjx_grad.json
     # python examples/comparison/helhest/helhest_nimble.py          --save examples/comparison/results/helhest_nimble.json
     julia examples/comparison/helhest/helhest_dojo.jl            --save examples/comparison/results/helhest_dojo.json
+
+    python examples/comparison/curling_box/curling_box_axion.py      --save examples/comparison/results/curling_box_axion.json
+    python examples/comparison/curling_box/curling_box_mjx_jacfwd.py --save examples/comparison/results/curling_box_mjx_jacfwd.json
+    python examples/comparison/curling_box/curling_box_mjx.py        --save examples/comparison/results/curling_box_mjx_grad.json
+    python examples/comparison/curling_box/curling_box_mjfd.py       --save examples/comparison/results/curling_box_mjfd.json
+    python examples/comparison/curling_box/curling_box_genesis.py    --save examples/comparison/results/curling_box_genesis.json
+    julia examples/comparison/curling_box/curling_box_dojo.jl        --save examples/comparison/results/curling_box_dojo.json
 
     # Then plot:
     python examples/comparison/plot_comparison.py
@@ -154,12 +162,13 @@ def main():
 
     ball_results = load_results("ball_throw")
     helhest_results = load_results("helhest")
+    curling_results = load_results("curling_box")
 
-    if not ball_results and not helhest_results:
+    if not ball_results and not helhest_results and not curling_results:
         print("No results found. Run the benchmark scripts first (see module docstring).")
         return
 
-    fig, axes = plt.subplots(2, 2, figsize=(13, 8))
+    fig, axes = plt.subplots(2, 3, figsize=(19, 8))
     fig.suptitle("Differentiable Simulator Comparison", fontsize=14, fontweight="bold")
 
     if ball_results:
@@ -167,22 +176,12 @@ def main():
         plot_timing(axes[1, 0], ball_results, "Ball Throw — Time per Iteration")
     else:
         axes[0, 0].text(
-            0.5,
-            0.5,
-            "No ball_throw results",
-            ha="center",
-            va="center",
-            transform=axes[0, 0].transAxes,
-            color="gray",
+            0.5, 0.5, "No ball_throw results",
+            ha="center", va="center", transform=axes[0, 0].transAxes, color="gray",
         )
         axes[1, 0].text(
-            0.5,
-            0.5,
-            "No ball_throw results",
-            ha="center",
-            va="center",
-            transform=axes[1, 0].transAxes,
-            color="gray",
+            0.5, 0.5, "No ball_throw results",
+            ha="center", va="center", transform=axes[1, 0].transAxes, color="gray",
         )
 
     if helhest_results:
@@ -190,22 +189,25 @@ def main():
         plot_timing(axes[1, 1], helhest_results, "Helhest — Time per Iteration")
     else:
         axes[0, 1].text(
-            0.5,
-            0.5,
-            "No helhest results",
-            ha="center",
-            va="center",
-            transform=axes[0, 1].transAxes,
-            color="gray",
+            0.5, 0.5, "No helhest results",
+            ha="center", va="center", transform=axes[0, 1].transAxes, color="gray",
         )
         axes[1, 1].text(
-            0.5,
-            0.5,
-            "No helhest results",
-            ha="center",
-            va="center",
-            transform=axes[1, 1].transAxes,
-            color="gray",
+            0.5, 0.5, "No helhest results",
+            ha="center", va="center", transform=axes[1, 1].transAxes, color="gray",
+        )
+
+    if curling_results:
+        plot_loss(axes[0, 2], curling_results, "Curling Box — Loss vs Iterations")
+        plot_timing(axes[1, 2], curling_results, "Curling Box — Time per Iteration")
+    else:
+        axes[0, 2].text(
+            0.5, 0.5, "No curling_box results",
+            ha="center", va="center", transform=axes[0, 2].transAxes, color="gray",
+        )
+        axes[1, 2].text(
+            0.5, 0.5, "No curling_box results",
+            ha="center", va="center", transform=axes[1, 2].transAxes, color="gray",
         )
 
     plt.tight_layout()
