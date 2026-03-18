@@ -1,4 +1,5 @@
-
+import os
+import pathlib
 from importlib.resources import files
 from typing import override
 import pathlib
@@ -6,21 +7,20 @@ import pathlib
 import hydra
 import newton
 import warp as wp
-from axion import InteractiveSimulator
 from axion import EngineConfig
 from axion import ExecutionConfig
+from axion import InteractiveSimulator
 from axion import LoggingConfig
 from axion import RenderingConfig
 from axion import SimulationConfig
 from omegaconf import DictConfig
-from pendulum_articulation_definition import build_pendulum_model, PENDULUM_HEIGHT
-from pendulum_utils import generalized_to_maximal, set_tilted_plane_from_coefficients
-#from axion.core.control_utils import JointMode
+from pendulum_articulation_definition import PENDULUM_HEIGHT
+from pendulum_articulation_definition import build_pendulum_model
+from pendulum_utils import generalized_to_maximal
+from pendulum_utils import set_tilted_plane_from_coefficients
+# from axion.core.control_utils import JointMode
 
-import os
-os.environ['PYOPENGL_PLATFORM'] = 'glx'
-
-CONFIG_PATH = CONFIG_PATH = pathlib.Path(__file__).parent.parent.joinpath("conf")
+CONFIG_PATH = pathlib.Path(__file__).parent.parent.joinpath("conf")
 
 class Simulator(InteractiveSimulator):
     def __init__(

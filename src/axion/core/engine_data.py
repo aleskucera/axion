@@ -12,7 +12,7 @@ from .history_group import HistoryGroup
 from .model import AxionModel
 
 
-def _compute_linesearch_step_size_array(config: EngineConfig) -> wp.array:
+def _compute_linesearch_step_size_array(config: EngineConfig, device: wp.Device) -> wp.array:
     # --- 1. Conservative Steps (Logarithmic) ---
     # "I don't trust the solver, let's try tiny steps."
     steps_conservative = np.logspace(
@@ -162,7 +162,7 @@ class EngineData:
             step_count = config.linesearch_conservative_step_count
             step_count += config.linesearch_optimistic_step_count
 
-            self.linesearch_step_size = _compute_linesearch_step_size_array(config)
+            self.linesearch_step_size = _compute_linesearch_step_size_array(config, device)
 
             self.linesearch_body_pose = _alloc_buffer(step_count, self.body_pose)
             self.linesearch_body_vel = _alloc_buffer(step_count, self.body_vel)

@@ -44,7 +44,7 @@ class LogReader:
             return []
         return sorted([k for k in self.file[step_key].keys() if k.startswith("newton_iteration_")])
 
-    def get_world_count(self, step_key):
+    def get_num_worlds(self, step_key):
         if not self.file or step_key not in self.file:
             return 0
         try:
@@ -217,7 +217,7 @@ st.sidebar.markdown("---")
 st.sidebar.header("3. World")
 
 with LogReader(st.session_state.loaded_file) as log:
-    num_worlds = log.get_world_count(sel_step_key)
+    num_worlds = log.get_num_worlds(sel_step_key)
 
 default_world = int(suggested_world) if int(suggested_world) >= 0 else 0
 max_world_idx = max(0, num_worlds - 1)

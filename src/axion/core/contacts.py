@@ -310,7 +310,11 @@ class AxionContacts:
         return "\n".join(lines)
 
     def load_contact_data(
-        self, contacts: Contacts, axion_model: AxionModel, data: EngineData, dims: EngineDimensions
+        self,
+        contacts: Contacts,
+        axion_model: AxionModel,
+        data: EngineData | None = None,
+        dims: EngineDimensions | None = None,
     ):
         self.contact_count.zero_()
 

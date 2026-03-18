@@ -78,7 +78,7 @@ def build_pendulum_model(
         armature=0.1,
     )
 
-    builder.add_articulation([j0, j1], key="pendulum")
+    builder.add_articulation([j0, j1], label="pendulum")
     builder.add_ground_plane()
 
     # Add a plane shape for contacts (plane equation: nx*x + ny*y + nz*z + d = 0)
@@ -86,7 +86,7 @@ def build_pendulum_model(
         plane=plane_coefficients,
         width=0.0,
         length=0.0,
-        key="tilted_plane",
+        label="tilted_plane",
     )
 
     return builder.finalize_replicated(
