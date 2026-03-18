@@ -198,7 +198,6 @@ class AxionModelBuilder(newton.ModelBuilder):
         self,
         num_worlds: int,
         gravity: float = -9.81,
-        device=None,
         requires_grad: bool = False,
         global_builder: "newton.ModelBuilder | None" = None,
         **kwargs,

@@ -1,5 +1,3 @@
-from enum import IntEnum
-
 from .engine import AxionEngine
 from .engine_config import AdjointConfig
 from .engine_config import AxionEngineConfig
@@ -20,7 +18,6 @@ from .logging_config import DatasetLoggingConfig
 from .logging_config import HDF5LoggingConfig
 from .engine_config import NeuralEngineConfig
 from .engine_config import HybridEngineConfig
-from .joint_types import JointMode
 from .logging_config import LoggingConfig
 from .types import JointMode
 

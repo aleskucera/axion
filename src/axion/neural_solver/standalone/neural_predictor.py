@@ -154,7 +154,7 @@ class NeuralPredictor:
         """
         # Batch Newton's flat 1D contacts into per-world 2D arrays
         axion_contacts = AxionContacts(model= self.robot_model, max_contacts_per_world= PENDULUM_MAX_NUM_CONTACTS_PER_ROBOT_MODEL)
-        axion_contacts.load_contact_data(newton_contacts)
+        axion_contacts.load_contact_data(newton_contacts, self.robot_model)
 
         # Reorder batched contacts such that points_0 are on body and points_1 are ground
         num_shapes_per_world = self.robot_model.shape_count // self.num_worlds

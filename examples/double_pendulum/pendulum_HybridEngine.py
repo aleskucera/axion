@@ -1,25 +1,24 @@
+import os
+import pathlib
 from importlib.resources import files
 from typing import override
-import pathlib
 
 import hydra
 import numpy as np
 import newton
 import warp as wp
-from axion import InteractiveSimulator
 from axion import EngineConfig
 from axion import ExecutionConfig
+from axion import InteractiveSimulator
 from axion import LoggingConfig
 from axion import RenderingConfig
 from axion import SimulationConfig
 from omegaconf import DictConfig
-from pendulum_articulation_definition import build_pendulum_model, PENDULUM_HEIGHT
+from pendulum_articulation_definition import PENDULUM_HEIGHT
+from pendulum_articulation_definition import build_pendulum_model
 from pendulum_utils import set_tilted_plane_from_coefficients
 
-import os
-os.environ['PYOPENGL_PLATFORM'] = 'glx'
-
-CONFIG_PATH = CONFIG_PATH = pathlib.Path(__file__).parent.parent.joinpath("conf")
+CONFIG_PATH = pathlib.Path(__file__).parent.parent.joinpath("conf")
 
 # ---------------------------------------------------------------------------
 # Helper: generalized → maximal coordinate conversion

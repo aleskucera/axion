@@ -533,8 +533,11 @@ class NeuralEngineConfig(EngineConfig):
     def create_engine(
         self,
         model: Any,
+        sim_steps: Optional[int] = None,
         init_state_fn: Optional[Callable] = None,
         logging_config: Optional[Any] = None,
+        differentiable_simulation: bool = False,
+        **kwargs,
     ) -> Any:
         from axion.logging import HDF5Logger
         from axion.logging import NullLogger
@@ -569,8 +572,11 @@ class HybridEngineConfig(AxionEngineConfig):
     def create_engine(
         self,
         model: Any,
+        sim_steps: Optional[int] = None,
         init_state_fn: Optional[Callable] = None,
         logging_config: Optional[Any] = None,
+        differentiable_simulation: bool = False,
+        **kwargs,
     ) -> Any:
         from axion.logging import HDF5Logger
         from axion.logging import NullLogger
@@ -582,14 +588,15 @@ class HybridEngineConfig(AxionEngineConfig):
         ):
             logger = HDF5Logger(filepath=logging_config.hdf5_log_file)
             logger.open()
+            _logging_cfg = logging_config
         else:
             logger = NullLogger()
+            _logging_cfg = logging_config
 
         return HybridEngine(
             model=model,
-            # HybridEngine owns its default init_state_fn (in `hybrid_engine.py`).
-            # We intentionally do not forward `init_state_fn` from generic callers.
-            init_state_fn=None,
-            logging_config=logging_config,
+            sim_steps=int(sim_steps or 0),
             config=self,
+            logging_config=_logging_cfg,
+            differentiable_simulation=differentiable_simulation,
         )
