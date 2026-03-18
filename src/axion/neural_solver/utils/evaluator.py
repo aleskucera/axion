@@ -160,21 +160,23 @@ class NeuralSimEvaluator:
                 self.trajectory_dataset[index] for index in indices
             ])
 
+            # Use neural_env's device so tensors match the simulator (e.g. cuda:1 when using --device cuda:1).
+            _device = self.neural_env.torch_device
             trajectories['states'] = (
-                trajectories['states'].transpose(0, 1).to(self.device)
+                trajectories['states'].transpose(0, 1).to(_device)
             ) #  to (T, B, state_dim)
             trajectories['next_states'] = (
-                trajectories['next_states'].transpose(0, 1).to(self.device)
+                trajectories['next_states'].transpose(0, 1).to(_device)
             )
             # Plane coefficients (n_x, n_y, n_z, d) per trajectory, constant along T
             if 'plane_coefficients' in trajectories:
                 # (num_traj, T, 4) -> use first timestep -> (num_traj, 4)
                 trajectories['plane_coefficients'] = (
-                    trajectories['plane_coefficients'][:, 0, :].to(self.device)
+                    trajectories['plane_coefficients'][:, 0, :].to(_device)
                 )
             if 'actions' in trajectories:
                 trajectories['actions'] = (
-                    trajectories['actions'].transpose(0, 1).to(self.device)
+                    trajectories['actions'].transpose(0, 1).to(_device)
                 )
             else:
                 # if self.neural_env.action_dim == self.neural_env.joint_act_dim:
@@ -193,7 +195,7 @@ class NeuralSimEvaluator:
                 # Assume zero actions
                 trajectories['actions'] = torch.zeros(
                     (self.eval_horizon, num_traj, self.neural_env.action_dim),
-                    device = self.device)
+                    device = _device)
         else:
             raise NotImplementedError
         

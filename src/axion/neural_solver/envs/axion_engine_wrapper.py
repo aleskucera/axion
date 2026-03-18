@@ -33,13 +33,13 @@ class AxionEngineWrapper:
         self,
         env_name: str,
         num_worlds: int,
-        device: wp.Device,
+        device,
         requires_grad: bool,
         ):
-        
+        # Resolve device so the model is built on the intended GPU (e.g. cuda:1 when given "cuda:1").
+        self.device = wp.get_device(device) if isinstance(device, str) else device
         self.env_name = env_name
         self.num_worlds = num_worlds
-        self.device = wp.get_device(device)
         self.requires_grad = requires_grad
         self.robot_name: str = self.env_name    # for compatibility with nn_training_interface
         
@@ -212,6 +212,11 @@ class AxionEngineWrapper:
         """
         assert plane_normals.shape == (self.num_worlds, 3)
 
+        # Ensure inputs are on the same device as model transforms
+        plane_normals = plane_normals.to(self._torch_device)
+        if plane_d_coefficients is not None:
+            plane_d_coefficients = plane_d_coefficients.to(self._torch_device)
+
         transforms = wp.to_torch(self.model.shape_transform).to(
             self._torch_device
         )
@@ -231,7 +236,9 @@ class AxionEngineWrapper:
             if plane_d_coefficients is not None:
                 d = plane_d_coefficients[world_idx].item()
                 # Plane n·x + d = 0: a point on the plane is -d*n
-                transforms[shape_idx, 0:3] = (-d * n).to(transforms.dtype)
+                transforms[shape_idx, 0:3] = (-d * n).to(
+                    device=transforms.device, dtype=transforms.dtype
+                )
 
         self.model.shape_transform.assign(
             wp.from_torch(transforms, dtype=wp.transform)

@@ -174,6 +174,7 @@ class AxionModelBuilder(newton.ModelBuilder):
         num_worlds: int,
         gravity: float = -9.81,
         requires_grad: bool = False,
+        device=None,
         **kwargs,
     ) -> newton.Model:
         """
@@ -184,4 +185,7 @@ class AxionModelBuilder(newton.ModelBuilder):
         for k, v in kwargs.items():
             setattr(final_builder, k, v)
         final_builder.replicate(self, world_count=num_worlds)
-        return final_builder.finalize(requires_grad=requires_grad)
+        finalize_kwargs = {"requires_grad": requires_grad}
+        if device is not None:
+            finalize_kwargs["device"] = device
+        return final_builder.finalize(**finalize_kwargs)
