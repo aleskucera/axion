@@ -66,6 +66,7 @@ def _assign_joint_acts_from_actions(
         ) * control_gains[i]
 
 def assign_states_from_torch(warp_env, torch_states):
+    """Copy torch state matrix into warp env's joint_q/joint_qd. Tensors are moved to warp_env's device."""
     assert torch_states.shape[0] <= warp_env.num_envs
     target_torch_device = wp.device_to_torch(warp_env.device)
     torch_states = torch_states.to(target_torch_device)
@@ -85,7 +86,10 @@ def assign_states_from_torch(warp_env, torch_states):
     )
 
 def acquire_states_to_torch(warp_env, torch_states):
+    """Read warp env's joint_q/joint_qd into torch. Output buffer is moved to warp_env's device."""
     assert torch_states.shape[0] == warp_env.num_envs
+    target_torch_device = wp.device_to_torch(warp_env.device)
+    torch_states = torch_states.to(target_torch_device)
     wp.launch(
         _acquire_states,
         dim = torch_states.shape[0],
@@ -100,7 +104,9 @@ def acquire_states_to_torch(warp_env, torch_states):
     )
 
 def assign_joint_acts_from_actions_torch(warp_env, actions):
+    """Write action tensor into warp env's joint_act. Tensors are moved to warp_env's device."""
     assert actions.shape[0] == warp_env.num_envs
+    actions = actions.to(wp.device_to_torch(warp_env.device))
     wp.launch(
         _assign_joint_acts_from_actions,
         dim = actions.shape[0],

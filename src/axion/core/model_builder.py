@@ -200,6 +200,7 @@ class AxionModelBuilder(newton.ModelBuilder):
         gravity: float = -9.81,
         requires_grad: bool = False,
         global_builder: "newton.ModelBuilder | None" = None,
+        device=None,
         **kwargs,
     ) -> newton.Model:
         """

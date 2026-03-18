@@ -73,14 +73,14 @@ class NnTrainingInterface:
             warp_env_cfg = {**warp_env_cfg, "custom_articulation_builder": custom_articulation_builder}
 
         # Resolve device so warp env and all state buffers use the requested device.
-        warp_device = wp.get_device(device) if isinstance(device, str) else device
-        device_str = str(device) if isinstance(device, str) else str(wp.device_to_torch(warp_device))
+        # Pass device (string or warp.Device) to the wrapper so it resolves once and builds the model on the correct GPU.
+        device_str = str(device) if isinstance(device, str) else str(wp.device_to_torch(device))
 
         # Use AxionEngineWrapper as backend, preserving (most of) the public API contract.
         self.simulator_wrapper = AxionEngineWrapper(
             env_name = env_name,
             num_worlds= num_envs,
-            device = warp_device,
+            device = device,
             requires_grad= False # Check if true
         )
 
@@ -209,6 +209,9 @@ class NnTrainingInterface:
                 warp_utils.eval_ik(self.simulator_wrapper.model, self.simulator_wrapper.state)
             warp_utils.acquire_states_to_torch(self.simulator_wrapper, self.states)
         else:
+            # Ensure both buffers are on the simulator device (e.g. cuda:1) to avoid cross-device kernel errors.
+            states = states.to(self.torch_device)
+            self.states = self.states.to(self.torch_device)
             self.states.copy_(states)
             warp_utils.assign_states_from_torch(self.simulator_wrapper, self.states)
             warp_utils.eval_fk(self.simulator_wrapper.model, self.simulator_wrapper.state)
