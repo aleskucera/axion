@@ -52,7 +52,7 @@ class DatasetHDF5Logger:
             return dest_array
 
         # =========================================================================
-        # 1. Body State (Dynamic)
+        # 1. Body State
         # =========================================================================
         self.ext_force = _register_log("ext_force", data.ext_force)
         self.body_pose = _register_log("body_pose", data.body_pose)
@@ -63,7 +63,7 @@ class DatasetHDF5Logger:
         self.joint_target_vel = _register_log("joint_target_vel", data.joint_target_vel)
 
         # =========================================================================
-        # 2. Constraints (Dynamic)
+        # 2. Constraints
         # =========================================================================
         self._constr_force = _register_log("_constr_force", data._constr_force)
         self._constr_body_idx = _register_log("_constr_body_idx", data._constr_body_idx)
@@ -74,7 +74,7 @@ class DatasetHDF5Logger:
         self.constr_active_mask = ConstraintView(self._constr_active_mask, dims)
 
         # =========================================================================
-        # 3. Contact Data (Dynamic)
+        # 3. Contact Data
         # =========================================================================
         self.contact_count = _register_log("contact_count", contacts.contact_count)
         self.contact_point0 = _register_log("contact_point0", contacts.contact_point0)

@@ -1,6 +1,5 @@
 from dataclasses import dataclass
 from typing import Any
-from typing import Callable
 from typing import Optional
 
 
@@ -14,8 +13,9 @@ class EngineConfig:
     def create_engine(
         self,
         model: Any,
-        init_state_fn: Optional[Callable] = None,
+        sim_steps: Optional[int] = None,
         logging_config: Optional[Any] = None,
+        differentiable_simulation: bool = False,
     ) -> Any:
         """
         Factory method to create the appropriate solver instance.
@@ -109,21 +109,18 @@ class AxionEngineConfig(EngineConfig):
     def create_engine(
         self,
         model: Any,
-        init_state_fn: Optional[Callable] = None,
+        sim_steps: Optional[int] = None,
         logging_config: Optional[Any] = None,
+        differentiable_simulation: bool = False,
     ):
-        # Import internally to avoid circular imports
         from axion.core.engine import AxionEngine
 
-        if init_state_fn is None:
-            raise ValueError("AxionEngine requires an init_state_fn.")
-
-        # Pass the separate config objects to the constructor
         return AxionEngine(
             model=model,
-            init_state_fn=init_state_fn,
+            sim_steps=sim_steps,
             config=self,
             logging_config=logging_config,
+            differentiable_simulation=differentiable_simulation,
         )
 
     def __post_init__(self):

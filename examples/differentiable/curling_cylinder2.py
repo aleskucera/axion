@@ -131,9 +131,7 @@ class CurlingOptimizer(DifferentiableSimulator):
 
     def build_model(self) -> Model:
         # Use moderate friction (mu=0.1) to allow sliding
-        shape_config = newton.ModelBuilder.ShapeConfig(
-            ke=1e5, kd=1e2, kf=1e3, mu=1.0, contact_margin=0.3, density=10.0
-        )
+        shape_config = newton.ModelBuilder.ShapeConfig(ke=1e5, kd=1e2, kf=1e3, mu=1.0, density=10.0)
 
         # 1. The Stone (Box)
         self.builder.add_body(
