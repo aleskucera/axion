@@ -78,6 +78,60 @@ def init_backward_counter_kernel(
     backward_timestep[0] = forward_timestep[0] - 1
 
 
+@wp.kernel
+def _clamp_initial_lambda_kernel(
+    constr_force_n: wp.array(dtype=wp.float32, ndim=2),
+    constr_force_f: wp.array(dtype=wp.float32, ndim=2),
+    shape_body: wp.array(dtype=wp.int32, ndim=2),
+    shape_material_mu: wp.array(dtype=wp.float32, ndim=2),
+    # Contact properties
+    contact_count: wp.array(dtype=wp.int32, ndim=1),
+    contact_shape0: wp.array(dtype=wp.int32, ndim=2),
+    contact_shape1: wp.array(dtype=wp.int32, ndim=2),
+):
+    world_idx, contact_idx = wp.tid()
+    friction_idx0 = 2 * contact_idx
+    friction_idx1 = 2 * contact_idx + 1
+
+    if contact_idx >= contact_count[world_idx]:
+        constr_force_n[world_idx, contact_idx] = 0.0
+        constr_force_f[world_idx, friction_idx0] = 0.0
+        constr_force_f[world_idx, friction_idx1] = 0.0
+        return
+
+    shape0 = contact_shape0[world_idx, contact_idx]
+    shape1 = contact_shape1[world_idx, contact_idx]
+
+    if shape0 == shape1:
+        constr_force_n[world_idx, contact_idx] = 0.0
+        constr_force_f[world_idx, friction_idx0] = 0.0
+        constr_force_f[world_idx, friction_idx1] = 0.0
+        return
+
+    mu = (shape_material_mu[world_idx, shape0] + shape_material_mu[world_idx, shape1]) * 0.5
+
+    # Signorini: clamp normal force to non-negative
+    force_n = wp.max(constr_force_n[world_idx, contact_idx], 0.0)
+    constr_force_n[world_idx, contact_idx] = force_n
+
+    if force_n <= 0.0:
+        constr_force_f[world_idx, friction_idx0] = 0.0
+        constr_force_f[world_idx, friction_idx1] = 0.0
+        return
+
+    force_f = wp.vec2(
+        constr_force_f[world_idx, friction_idx0],
+        constr_force_f[world_idx, friction_idx1],
+    )
+
+    # Coulomb cone: project friction onto cone boundary if outside
+    f_norm = wp.length(force_f)
+    if f_norm > mu * force_n:
+        scale = mu * force_n / f_norm
+        constr_force_f[world_idx, friction_idx0] = constr_force_f[world_idx, friction_idx0] * scale
+        constr_force_f[world_idx, friction_idx1] = constr_force_f[world_idx, friction_idx1] * scale
+
+
 class AxionEngineBase(SolverBase):
     def __init__(
         self,
@@ -241,6 +295,43 @@ class AxionEngineBase(SolverBase):
             self.data,
             self.dims,
         )
+
+    def compute_constr_forces_from_state(self):
+        self.data._constr_force.zero_()
+        self.data._constr_force_prev_iter.zero_()
+
+        compute_linear_system(
+            self.axion_model, self.axion_contacts, self.data, self.config, self.dims
+        )
+        self.data.C_values.zero_()
+        self.preconditioner.update()
+
+        self.cr_solver.solve(
+            A=self.A_op,
+            b=self.data.rhs,
+            x=self.data._constr_force,
+            preconditioner=self.preconditioner,
+            iters=self.config.max_linear_iters,
+            tol=self.config.linear_tol,
+            atol=self.config.linear_atol,
+            log=False,
+        )
+        wp.launch(
+            kernel=_clamp_initial_lambda_kernel,
+            dim=(self.dims.num_worlds, self.dims.contact_count),
+            inputs=[
+                self.data.constr_force.n,
+                self.data.constr_force.f,
+                self.axion_model.shape_body,
+                self.axion_model.shape_material_mu,
+                self.axion_contacts.contact_count,
+                self.axion_contacts.contact_shape0,
+                self.axion_contacts.contact_shape1,
+            ],
+            device=self.device,
+        )
+        # Copy lambda^0 so the friction cone W block knows it is allowed to use friction!
+        wp.copy(dest=self.data._constr_force_prev_iter, src=self.data._constr_force)
 
     def _solve(self):
         # =========================================================================
