@@ -99,8 +99,7 @@ class TransformerNeuralModelUtilsProvider:
         self.prediction_type = prediction_type
         self.states_embedding_type = states_embedding_type
 
-        num_worlds = int(getattr(self.robot_model, "num_worlds", 1))
-        self.num_worlds = num_worlds
+        self.num_worlds = self.robot_model.world_count
 
         joint_coord_count = int(getattr(self.robot_model, "joint_coord_count", 0))
         joint_dof_count = int(getattr(self.robot_model, "joint_dof_count", 0))

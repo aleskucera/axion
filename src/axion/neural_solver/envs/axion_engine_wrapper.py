@@ -67,10 +67,7 @@ class AxionEngineWrapper:
             linesearch_min_step=1e-6,
             linesearch_optimistic_step_count=48,
             linesearch_optimistic_window=0.4,
-            joint_stabilization_factor=0.01,
-            contact_stabilization_factor=0.02,
             joint_compliance=6e-8,
-            equality_compliance=1e-7,
             contact_compliance=1e-6,
             friction_compliance=1e-6,
             regularization=1e-6,
@@ -84,17 +81,17 @@ class AxionEngineWrapper:
         )
         self.engine = AxionEngine(
             model=self.model,
-            init_state_fn=self._engine_init_state_fn,
+            sim_steps=1,
             config=self.engine_cfg,
         )
 
         # number of DOF info
-        self.dof_q_per_world= int(self.model.joint_coord_count / self.model.num_worlds)  # 2 for planar double pendulum
-        self.dof_qd_per_world= int(self.model.joint_dof_count / self.model.num_worlds)   # 2 for planar double pendulum
-        self.bodies_per_world= int(self.model.body_count / self.model.num_worlds)
+        self.dof_q_per_world= int(self.model.joint_coord_count / self.model.world_count)  # 2 for planar double pendulum
+        self.dof_qd_per_world= int(self.model.joint_dof_count / self.model.world_count)   # 2 for planar double pendulum
+        self.bodies_per_world= int(self.model.body_count / self.model.world_count)
         
         # joint type info
-        self.num_joints_per_world= int(self.model.joint_count / self.model.num_worlds)
+        self.num_joints_per_world= int(self.model.joint_count / self.model.world_count)
         self._torch_device = device_to_torch(self.model.device)
         self.joint_types = wp.to_torch(self.model.joint_type).to(
             self._torch_device

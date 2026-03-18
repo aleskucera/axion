@@ -1,4 +1,4 @@
-*Note: This markdown file was written by hand, old-fashioned style.*
+*Note: This markdown file was written by hand, old-fashioned style. Well, most of it at least.*
 
 # Training of the transformer Torch module
 This file describes each necessary file that is used during the training process.
@@ -39,6 +39,9 @@ Computes the mean and std of the input and output of the dataset.
 
 - **`preprocess_data_batch`**<br>
 Ensures the model inputs have correct shape (B,T,dim) and that the angles get wrapped, via `utils_provider`'s `process_neural_model_inputs(...)` method. Also converts next_states to desired model predictions (= state differences).
+
+- **`compute_rollout_loss(...)`**<br>
+Differentiable autoregressive rollout loss. Unrolls the model for `rollout_loss_horizon` steps from the first GT state. At each step the model receives its own predicted state (plus GT auxiliary inputs like contacts and gravity), so gradients flow through the full chain via BPTT. Returns MSE between the predicted rollout and GT next_states. Enabled with `use_rollout_loss: true` in config; controlled by `rollout_loss_weight` and `rollout_loss_horizon`.
 
 - **`compute_loss(...)`**<br>
 
