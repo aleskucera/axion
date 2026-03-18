@@ -23,14 +23,15 @@ class Logger:
         self.wandb = None
         self.wandb_logs = {}
 
-    def init_wandb(self, wandb_project=project, wandb_name=None):
+    def init_wandb(self, wandb_project=project, wandb_name=None, config=None):
         self.wandb = wandb.init(
             project=wandb_project,
-            name=wandb_name
+            name=wandb_name,
+            config=config,
         )
 
     def init_epoch(self, epoch):
-        self.wandb_logs = {"step": epoch}
+        self.wandb_logs = {"epoch index": epoch}
 
     def add_scalar(self, name, value, step):
         if self.wandb:
