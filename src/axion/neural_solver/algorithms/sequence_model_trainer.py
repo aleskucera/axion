@@ -58,6 +58,9 @@ class SequenceModelTrainer:
         self.seed = algo_cfg.get('seed', 0)
         self.device = device
         self.use_energy_loss = bool(algo_cfg.get('use_energy_loss', False))
+        self.use_rollout_loss = bool(algo_cfg.get('use_rollout_loss', False))
+        self.rollout_loss_weight = float(algo_cfg.get('rollout_loss_weight', 1.0))
+        self.rollout_loss_horizon = int(algo_cfg.get('rollout_loss_horizon', 5))
 
         set_random_seed(self.seed)
 
@@ -106,6 +109,12 @@ class SequenceModelTrainer:
         self.valid_datasets = {}
         self.collate_fn = None
         self.get_datasets(train_dataset_path, valid_datasets_cfg)
+
+        if self.use_rollout_loss:
+            assert self.sample_sequence_length >= self.rollout_loss_horizon, (
+                f"sample_sequence_length ({self.sample_sequence_length}) must be "
+                f">= rollout_loss_horizon ({self.rollout_loss_horizon})"
+            )
 
         """ Parameters only used for training """
         if cli_cfg['train']:
@@ -297,6 +306,58 @@ class SequenceModelTrainer:
 
         return data
 
+    def compute_rollout_loss(self, data, rollout_horizon):
+        """
+        Differentiable autoregressive rollout loss.
+
+        Unrolls the model for ``rollout_horizon`` steps starting from the
+        first GT state.  At each step the model is fed its own predicted
+        state (plus GT auxiliary inputs such as contacts and gravity), so
+        gradients flow through the entire chain via standard BPTT.
+
+        Returns the mean-squared error between the predicted rollout
+        trajectory and the ground-truth next_states.
+        """
+        B, T, state_dim = data['states'].shape
+        H = min(rollout_horizon, T)
+
+        gt_next_states = data['next_states'][:, :H, :]
+
+        aux_keys = [
+            k for k in data
+            if k not in ('states', 'states_embedding', 'next_states', 'target')
+            and isinstance(data[k], torch.Tensor) and data[k].ndim == 3
+        ]
+
+        current_state = data['states'][:, 0:1, :]
+        state_context = [current_state]
+        predicted_next_states = []
+
+        for step in range(H):
+            ctx = torch.cat(state_context, dim=1)
+            step_data = {
+                'states': ctx,
+                'states_embedding': ctx,
+            }
+            for ak in aux_keys:
+                step_data[ak] = data[ak][:, :step + 1, :]
+
+            prediction = self.neural_model(step_data)
+            pred_last = prediction[:, -1:, :]
+
+            next_state = self.utils_provider.convert_prediction_to_next_states(
+                states=state_context[-1],
+                prediction=pred_last,
+            )
+
+            predicted_next_states.append(next_state)
+
+            if step < H - 1:
+                state_context.append(next_state)
+
+        predicted_rollout = torch.cat(predicted_next_states, dim=1)
+        return torch.nn.MSELoss()(predicted_rollout, gt_next_states)
+
     def compute_loss(self, data, train):
 
         prediction_target = data['target']
@@ -330,6 +391,13 @@ class SequenceModelTrainer:
             loss_energy = torch.nn.MSELoss()(E_next_states_predicted, E_next_states_gt)
             loss = loss + loss_energy
 
+        loss_rollout = None
+        if self.use_rollout_loss:
+            loss_rollout = self.compute_rollout_loss(
+                data, self.rollout_loss_horizon
+            )
+            loss = loss + self.rollout_loss_weight * loss_rollout
+
         # Reported error statistics (no grad)
         with torch.no_grad():
             loss_itemized = {}
@@ -353,6 +421,8 @@ class SequenceModelTrainer:
             ).mean()
             if loss_energy is not None:
                 loss_itemized['energy_MSE'] = loss_energy.detach()
+            if loss_rollout is not None:
+                loss_itemized['rollout_MSE'] = loss_rollout.detach()
 
         return loss, loss_itemized
         

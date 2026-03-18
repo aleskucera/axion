@@ -11,7 +11,10 @@ env:
   
 algorithm:
   name: SequenceModelTrainer
-  use_energy_loss: true
+  use_energy_loss: false
+  use_rollout_loss: true
+  rollout_loss_weight: 0.5
+  rollout_loss_horizon: 5
   num_epochs: 25
   num_iters_per_epoch: 976  # 976 x 1024 = 999 424 (1 M)
   sample_sequence_length: 10 # the length to sample sequence from dataset
