@@ -72,6 +72,9 @@ class EngineData:
         # State of bodies (q - position, u - velocity)
         self.body_pose = _alloc((dims.body_count,), wp.transform)
         self.body_vel = _alloc((dims.body_count,), wp.spatial_vector)
+        # True Newton initial guess for the current step (captured before NR loop starts)
+        self.init_guess_body_pose = _alloc((dims.body_count,), wp.transform)
+        self.init_guess_body_vel = _alloc((dims.body_count,), wp.spatial_vector)
 
         # State at previous timestep
         self.body_pose_prev = _alloc((dims.body_count,), wp.transform, alloc_grad_arrays)
@@ -86,11 +89,13 @@ class EngineData:
         # =========================================================================
         self._constr_force = _alloc((dims.num_constraints,), wp.float32)
         self._constr_force_prev_iter = _alloc((dims.num_constraints,), wp.float32)
+        self._init_guess_constr_force = _alloc((dims.num_constraints,), wp.float32)
         self._constr_body_idx = _alloc((dims.num_constraints, 2), wp.int32)
         self._constr_active_mask = _alloc((dims.num_constraints,), wp.float32)
 
         self.constr_force = ConstraintView(self._constr_force, dims)
         self.constr_force_prev_iter = ConstraintView(self._constr_force_prev_iter, dims)
+        self.init_guess_constr_force = ConstraintView(self._init_guess_constr_force, dims)
         self.constr_body_idx = ConstraintView(self._constr_body_idx, dims, axis=-2)
         self.constr_active_mask = ConstraintView(self._constr_active_mask, dims)
 

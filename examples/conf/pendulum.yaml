@@ -2,7 +2,7 @@ defaults:
   - simulation: pendulum
   - rendering: gl # headless
   - execution: cuda_graph #no_graph  
-  - logging: disabled
+  - logging: hdf5
   - engine: axion
   - _self_
 
