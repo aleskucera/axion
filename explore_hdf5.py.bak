@@ -1,0 +1,88 @@
+#!/usr/bin/env python3
+"""Explore the structure of an HDF5 file."""
+
+import h5py
+import numpy as np
+
+HDF5_PATH = "/home/maros/axion/src/axion/neural_solver/datasets/Pendulum/pendulumContactsValid250klen500envs250seed1.hdf5"
+
+# Max elements to show for "first few values"
+MAX_PREVIEW = 20
+
+
+def explore_group(group, prefix=""):
+    """Recursively explore groups and datasets."""
+    for key in sorted(group.keys()):
+        item = group[key]
+        path = f"{prefix}/{key}" if prefix else key
+
+        if isinstance(item, h5py.Group):
+            print(f"
+{path}/ (Group)")
+            explore_group(item, path)
+        elif isinstance(item, h5py.Dataset):
+            print(f"
+{path} (Dataset)")
+            print(f"  shape: {item.shape}")
+            print(f"  dtype: {item.dtype}")
+            total_elements = np.prod(item.shape)
+            if total_elements <= MAX_PREVIEW:
+                data = item[:]
+                print(f"  values: {data}")
+            elif total_elements > 0:
+                flat = item[:].flatten()
+                preview = flat[:MAX_PREVIEW]
+                print(f"  first {len(preview)} values (flattened): {preview}")
+
+
+def main():
+    print(f"Opening: {HDF5_PATH}
+")
+    print("=" * 60)
+
+    with h5py.File(HDF5_PATH, "r") as f:
+        print("
+--- Top-level structure ---")
+        for key in sorted(f.keys()):
+            item = f[key]
+            if isinstance(item, h5py.Group):
+                print(f"  {key}/ (Group)")
+            else:
+                print(f"  {key} (Dataset)")
+
+        print("
+" + "=" * 60)
+        print("--- Full recursive structure ---")
+        explore_group(f)
+
+        print("
+" + "=" * 60)
+        print("--- Search for initial_states and plane_coefficients ---")
+
+        def find_datasets(group, path=""):
+            results = []
+            for key in group.keys():
+                item = group[key]
+                full_path = f"{path}/{key}" if path else key
+                if isinstance(item, h5py.Group):
+                    results.extend(find_datasets(item, full_path))
+                elif isinstance(item, h5py.Dataset):
+                    if "initial" in key.lower() or "state" in key.lower():
+                        results.append((full_path, item))
+                    if "plane" in key.lower() or "coefficient" in key.lower():
+                        results.append((full_path, item))
+            return results
+
+        found = find_datasets(f)
+        for path, ds in found:
+            print(f"
+  Found: {path}")
+            print(f"    shape: {ds.shape}, dtype: {ds.dtype}")
+            if np.prod(ds.shape) <= 30:
+                print(f"    values: {ds[:]}")
+            else:
+                print(f"    first 10 values: {ds[:].flatten()[:10]}")
+
+
+if __name__ == "__main__":
+    main()
