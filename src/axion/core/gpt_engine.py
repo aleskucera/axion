@@ -14,7 +14,7 @@ from newton.solvers import SolverBase
 from newton import Model
 
 # classic axion
-from .engine_config import NeuralEngineConfig
+from .engine_config import GPTEngineConfig
 from .engine_logger import EngineLogger
 
 # axion - nn prediction
@@ -33,7 +33,7 @@ NN_BASE_PATH = Path.cwd() /"src"/"axion"/"neural_solver"/"train"/"trained_models
 NN_PENDULUM_PT_PATH = NN_BASE_PATH/"nn"/"best_eval_model.pt"
 NN_PENDULUM_CFG_PATH = NN_BASE_PATH/"cfg.yaml"
  
-class NeuralEngine(SolverBase):
+class GPTEngine(SolverBase):
     """
     This class implements a neural physics solver.
     It predicts the next step of the simulation based on 
@@ -45,7 +45,7 @@ class NeuralEngine(SolverBase):
     def __init__(self, 
         model: Model,
         logger: EngineLogger,
-        config: Optional[NeuralEngineConfig] = NeuralEngineConfig(),
+        config: Optional[GPTEngineConfig] = GPTEngineConfig(),
         nn_model_path: Path = NN_PENDULUM_PT_PATH ,
         nn_cfg_path: Path = NN_PENDULUM_CFG_PATH,
         ):
@@ -76,7 +76,7 @@ class NeuralEngine(SolverBase):
         #  Neural network initialization
         #########################################
         
-        print("NeuralEngine is using the device = ", self.device)
+        print("GPTEngine is using the device = ", self.device)
 
         # Load the nn .pt file and .cfg file correctly
         print(f"Loading model from: {nn_model_path}")
@@ -104,8 +104,11 @@ class NeuralEngine(SolverBase):
     ):
 
         # PASS ALL THE INPUTS TO THE NN------------------------------------------------------------
+        # Create AxionContacts object from Newton contacts
+        axion_contacts = self.nn_predictor.create_axion_contacts(contacts)
+
         # Process the inputs (Neural Predictor does this internally using process_inputs)
-        self.nn_predictor.process_inputs(state_in, contacts, dt)
+        self.nn_predictor.process_inputs(state_in, axion_contacts, dt)
 
         # Predict using self.nn_predictor
         state_predicted = self.nn_predictor.predict()

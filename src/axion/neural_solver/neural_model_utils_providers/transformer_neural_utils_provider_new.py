@@ -241,7 +241,7 @@ class TransformerNeuralModelUtilsProvider:
         7.  Apply the contact mask
         """
         # Batch Newton's flat 1D contacts into per-world 2D arrays
-        self.axion_contacts.load_contact_data(newton_contacts)
+        self.axion_contacts.load_contact_data(newton_contacts, self.robot_model)
 
         # Reorder batched contacts such that points_0 are on body and points_1 are ground
         shape = (self.num_worlds, PENDULUM_MAX_NUM_CONTACTS_PER_ROBOT_MODEL)

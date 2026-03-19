@@ -3,7 +3,7 @@ defaults:
   - rendering: gl # headless
   - execution: no_graph # cuda_graph
   - logging: disabled
-  - engine: neural 
+  - engine: gpt 
   - _self_
 
 # Use the recommended hybrid approach for project names
