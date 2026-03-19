@@ -30,6 +30,7 @@ from .residual_utils import compute_residual
 from .residual_utils import compute_residual_gradient
 from .sim_logger import SimulationHDF5Logger
 from .update_utils import apply_stardard_newton_step
+from .warm_start_utils import project_contact_forces_kernel
 
 
 @wp.kernel
@@ -241,6 +242,55 @@ class AxionEngineBase(SolverBase):
             self.data,
             self.dims,
         )
+
+    def compute_warm_start_forces(self):
+        """Compute initial contact forces from the predicted body state.
+
+        Assumes body_pose and body_vel have been set to the predicted state (q*, u*).
+        Back-solves (J M^-1 J^T) f = b for the contact forces that satisfy the
+        linearised momentum balance, then projects onto the feasible set.
+
+        The result is stored in data._constr_force and data._constr_force_prev_iter,
+        ready to warm-start the Newton-Raphson solver.
+        """
+        self.data._constr_force.zero_()
+        self.data._constr_force_prev_iter.zero_()
+
+        compute_linear_system(
+            self.axion_model, self.axion_contacts, self.data, self.config, self.dims
+        )
+
+        # Solve (J M^-1 J^T) f = b  (without compliance)
+        self.data.C_values.zero_()
+        self.preconditioner.update()
+        self.cr_solver.solve(
+            A=self.A_op,
+            b=self.data.rhs,
+            x=self.data._constr_force,
+            preconditioner=self.preconditioner,
+            iters=self.config.max_linear_iters,
+            tol=self.config.linear_tol,
+            atol=self.config.linear_atol,
+            log=False,
+        )
+
+        wp.launch(
+            kernel=project_contact_forces_kernel,
+            dim=(self.dims.num_worlds, self.dims.contact_count),
+            inputs=[
+                self.data.constr_force.n,
+                self.data.constr_force.f,
+                self.axion_model.shape_material_mu,
+                self.axion_contacts.contact_count,
+                self.axion_contacts.contact_shape0,
+                self.axion_contacts.contact_shape1,
+            ],
+            device=self.device,
+        )
+
+        # Expose warm-start forces as "previous iteration" so the friction cone
+        # constraint knows non-zero friction is available from the first NR iteration.
+        wp.copy(dest=self.data._constr_force_prev_iter, src=self.data._constr_force)
 
     def _solve(self):
         # =========================================================================
