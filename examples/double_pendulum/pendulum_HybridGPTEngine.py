@@ -2,9 +2,9 @@ import os
 import pathlib
 from importlib.resources import files
 from typing import override
-import pathlib
 
 import hydra
+import numpy as np
 import newton
 import warp as wp
 from axion import EngineConfig
@@ -16,11 +16,57 @@ from axion import SimulationConfig
 from omegaconf import DictConfig
 from pendulum_articulation_definition import PENDULUM_HEIGHT
 from pendulum_articulation_definition import build_pendulum_model
-from pendulum_utils import generalized_to_maximal
 from pendulum_utils import set_tilted_plane_from_coefficients
-# from axion.core.control_utils import JointMode
 
 CONFIG_PATH = pathlib.Path(__file__).parent.parent.joinpath("conf")
+
+# ---------------------------------------------------------------------------
+# Helper: generalized → maximal coordinate conversion
+# ---------------------------------------------------------------------------
+
+def generalized_to_maximal(
+    model: newton.Model,
+    state: newton.State,
+    q0: float,
+    q1: float,
+    qd0: float = 0.0,
+    qd1: float = 0.0,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Convert generalized pendulum coordinates to maximal coordinates
+    and write them into *state*.
+
+    Uses ``newton.eval_fk`` (forward kinematics) to map joint-space
+    quantities to body-space transforms and spatial velocities.
+
+    Args:
+        model:  The Newton ``Model`` that describes the double pendulum.
+        state:  A ``newton.State`` whose ``joint_q``, ``joint_qd``,
+                ``body_q`` and ``body_qd`` will be **overwritten**.
+        q0:     Joint-0 angle  (revolute, radians).
+        q1:     Joint-1 angle  (revolute, radians).
+        qd0:    Joint-0 angular velocity  (rad/s, default 0).
+        qd1:    Joint-1 angular velocity  (rad/s, default 0).
+
+    Returns:
+        body_q  – ``np.ndarray`` of shape ``(num_bodies, 7)``
+                  ``[x, y, z, qx, qy, qz, qw]`` per body.
+        body_qd – ``np.ndarray`` of shape ``(num_bodies, 6)``
+                  ``[vx, vy, vz, wx, wy, wz]`` per body.
+    """
+    device = state.joint_q.device
+
+    state.joint_q.assign(
+        wp.array([q0, q1], dtype=wp.float32, device=device)
+    )
+    state.joint_qd.assign(
+        wp.array([qd0, qd1], dtype=wp.float32, device=device)
+    )
+
+    newton.eval_fk(model, state.joint_q, state.joint_qd, state)
+
+    body_q_np = state.body_q.numpy().reshape(-1, 7)
+    body_qd_np = state.body_qd.numpy().reshape(-1, 6)
+    return body_q_np, body_qd_np
 
 class Simulator(InteractiveSimulator):
     def __init__(
@@ -41,6 +87,8 @@ class Simulator(InteractiveSimulator):
             engine_config,
             logging_config,
         )
+
+        # --- Apply custom initial conditions (positions AND velocities) ---
         if initial_state is not None:
             q0, q1, qd0, qd1 = initial_state
             generalized_to_maximal(
@@ -50,8 +98,6 @@ class Simulator(InteractiveSimulator):
 
     @override
     def control_policy(self, state: newton.State):
-        # TODO: add later if needed 
-        #wp.copy(self.control.joint_f, wp.array([0.0, 800.0], dtype=wp.float32))
         pass
 
     @override
@@ -63,44 +109,38 @@ class Simulator(InteractiveSimulator):
         self.viewer.log_contacts(self.contacts, self.current_state)
         
         # Draw world axes at origin
-        axis_length = 1.0  # Length of each axis
+        axis_length = 1.0
         origin = wp.vec3(0.0, 0.0, 0.0)
         
-        # Define axis endpoints
-        x_end = wp.vec3(axis_length, 0.0, 0.0)  # X axis (red)
-        y_end = wp.vec3(0.0, axis_length, 0.0)  # Y axis (green)
-        z_end = wp.vec3(0.0, 0.0, axis_length)  # Z axis (blue)
+        x_end = wp.vec3(axis_length, 0.0, 0.0)
+        y_end = wp.vec3(0.0, axis_length, 0.0)
+        z_end = wp.vec3(0.0, 0.0, axis_length)
         
-        # Create arrays for line starts and ends
         device = wp.get_device()
         starts = wp.array([origin, origin, origin], dtype=wp.vec3, device=device)
         ends = wp.array([x_end, y_end, z_end], dtype=wp.vec3, device=device)
         
-        # Colors: red for X, green for Y, blue for Z
         colors = wp.array(
-            [wp.vec3(1.0, 0.0, 0.0),  # Red for X
-             wp.vec3(0.0, 1.0, 0.0),  # Green for Y
-             wp.vec3(0.0, 0.0, 1.0)], # Blue for Z
+            [wp.vec3(1.0, 0.0, 0.0),
+             wp.vec3(0.0, 1.0, 0.0),
+             wp.vec3(0.0, 0.0, 1.0)],
             dtype=wp.vec3,
             device=device
         )
         
-        # Draw the axes
         self.viewer.log_lines("world_axes", starts, ends, colors, width=0.08)
         
         # Draw reference frame at the first pendulum link anchor point
         anchor_x = 0.0
         anchor_y = 0.0
-        anchor_z = PENDULUM_HEIGHT  # Position from parent_xform
-        anchor_axis_length = 0.5  # Slightly shorter than world axes
+        anchor_z = PENDULUM_HEIGHT
+        anchor_axis_length = 0.5
         
-        # Define axis endpoints (absolute positions)
         anchor_point = wp.vec3(anchor_x, anchor_y, anchor_z)
         anchor_x_end = wp.vec3(anchor_x + anchor_axis_length, anchor_y, anchor_z)
         anchor_y_end = wp.vec3(anchor_x, anchor_y + anchor_axis_length, anchor_z)
         anchor_z_end = wp.vec3(anchor_x, anchor_y, anchor_z + anchor_axis_length)
         
-        # Create arrays for anchor frame lines
         anchor_starts = wp.array(
             [anchor_point, anchor_point, anchor_point],
             dtype=wp.vec3,
@@ -112,16 +152,14 @@ class Simulator(InteractiveSimulator):
             device=device
         )
         
-        # Same colors as world axes
         anchor_colors = wp.array(
-            [wp.vec3(1.0, 0.0, 0.0),  # Red for X
-             wp.vec3(0.0, 1.0, 0.0),  # Green for Y
-             wp.vec3(0.0, 0.0, 1.0)], # Blue for Z
+            [wp.vec3(1.0, 0.0, 0.0),
+             wp.vec3(0.0, 1.0, 0.0),
+             wp.vec3(0.0, 0.0, 1.0)],
             dtype=wp.vec3,
             device=device
         )
         
-        # Draw the anchor reference frame
         self.viewer.log_lines("anchor_frame", anchor_starts, anchor_ends, anchor_colors, width=0.08)
         
         self.viewer.end_frame()
@@ -134,9 +172,9 @@ class Simulator(InteractiveSimulator):
         a, b, c, d = self.plane_coefficients
         set_tilted_plane_from_coefficients(model, a, b, c, d, world_idx=0)
         return model
+        
 
-
-@hydra.main(config_path=str(CONFIG_PATH), config_name="neuralPendulum", version_base=None)
+@hydra.main(config_path=str(CONFIG_PATH), config_name="hybrid_gpt_pendulum", version_base=None)
 def basic_pendulum_example(cfg: DictConfig):
     sim_config: SimulationConfig = hydra.utils.instantiate(cfg.simulation)
     render_config: RenderingConfig = hydra.utils.instantiate(cfg.rendering)
@@ -150,7 +188,7 @@ def basic_pendulum_example(cfg: DictConfig):
 
     # Custom initial conditions: (q0, q1, qd0, qd1)
     # Set to None to start from the default rest position.
-    INITIAL_STATE = (-0.5704, 2.8907, -3.6530, -7.6918)  # e.g. (0.5, -0.3, 1.0, -2.0)
+    INITIAL_STATE = (-0.5704, 2.8907, -3.6530, -7.6918)
 
     simulator = Simulator(
         sim_config=sim_config,

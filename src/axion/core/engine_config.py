@@ -273,15 +273,15 @@ class SemiImplicitEngineConfig(EngineConfig):
 
 
 @dataclass(frozen=True)
-class NeuralEngineConfig(EngineConfig):
+class GPTEngineConfig(EngineConfig):
     """
-    Configuration for the NeuralEngine solver (neural-network-based physics).
+    Configuration for the GPTEngine solver (neural-network-based physics).
     """
 
     def _get_solver_class(self):
-        from axion.core.neural_engine import NeuralEngine
+        from axion.core.gpt_engine import GPTEngine
 
-        return NeuralEngine
+        return GPTEngine
 
     def create_engine(
         self,
@@ -295,7 +295,7 @@ class NeuralEngineConfig(EngineConfig):
         from axion.logging import HDF5Logger
         from axion.logging import NullLogger
 
-        from axion.core.neural_engine import NeuralEngine
+        from axion.core.gpt_engine import GPTEngine
 
         if logging_config is not None and getattr(
             logging_config, "enable_hdf5_logging", False
@@ -305,22 +305,22 @@ class NeuralEngineConfig(EngineConfig):
         else:
             logger = NullLogger()
 
-        return NeuralEngine(
+        return GPTEngine(
             model=model,
             logger=logger,
             config=self,
         )
 
 @dataclass(frozen=True)
-class HybridEngineConfig(AxionEngineConfig):
+class HybridGPTEngineConfig(AxionEngineConfig):
     """
-    Configuration for the HybridEngine solver (neural-network-assisted Newton method).
+    Configuration for the HybridGPTEngine solver (neural-network-assisted Newton method).
     """
 
     def _get_solver_class(self):
-        from axion.core.hybrid_engine import HybridEngine
+        from axion.core.hybrid_gpt_engine import HybridGPTEngine
 
-        return HybridEngine
+        return HybridGPTEngine
 
     def create_engine(
         self,
@@ -334,7 +334,7 @@ class HybridEngineConfig(AxionEngineConfig):
         from axion.logging import HDF5Logger
         from axion.logging import NullLogger
 
-        from axion.core.hybrid_engine import HybridEngine
+        from axion.core.hybrid_gpt_engine import HybridGPTEngine
 
         if logging_config is not None and getattr(
             logging_config, "enable_hdf5_logging", False
@@ -346,7 +346,7 @@ class HybridEngineConfig(AxionEngineConfig):
             logger = NullLogger()
             _logging_cfg = logging_config
 
-        return HybridEngine(
+        return HybridGPTEngine(
             model=model,
             sim_steps=int(sim_steps or 0),
             config=self,

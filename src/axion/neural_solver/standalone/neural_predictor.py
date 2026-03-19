@@ -135,26 +135,22 @@ class NeuralPredictor:
         """Reset the history buffer (call at start of new trajectory)."""
         self.states_history.clear()
 
-
+    
     def _convert_newton_contacts_to_contacts_for_nn_model(
         self,
         state_in,
-        newton_contacts,
+        axion_contacts,
         root_body_q: torch.Tensor,
         ):
         """
-        1.  Batch the 1D newton contacts into 2D arrays (world, contact)
-        2.  Reorder the contacts from newton such that points_0 are always on the robot body and
+        1.  Reorder the contacts from newton such that points_0 are always on the robot body and
             points_1 are the corresponding points on the external object (the contact plane)
-        3.  Calculate penetration depth (used for contact masking later)
-        4.  Convert the contact data to torch tensors.
-        5.  Calculate the contact mask (mask that defines active contacts)
-        6.  Convert points_1 and contact normals to the body frame (robot body frame)
-        7.  Apply the contact mask
+        2.  Calculate penetration depth (used for contact masking later)
+        3.  Convert the contact data to torch tensors.
+        4.  Calculate the contact mask (mask that defines active contacts)
+        5.  Convert points_1 and contact normals to the body frame (robot body frame)
+        6.  Apply the contact mask
         """
-        # Batch Newton's flat 1D contacts into per-world 2D arrays
-        axion_contacts = AxionContacts(model= self.robot_model, max_contacts_per_world= PENDULUM_MAX_NUM_CONTACTS_PER_ROBOT_MODEL)
-        axion_contacts.load_contact_data(newton_contacts, self.robot_model)
 
         # Reorder batched contacts such that points_0 are on body and points_1 are ground
         num_shapes_per_world = self.robot_model.shape_count // self.num_worlds
@@ -266,10 +262,18 @@ class NeuralPredictor:
         """
         return convert_gravity_w2b_batched(root_body_q, self.gravity_vector)
 
+    def create_axion_contacts(self, newton_contacts):
+        """
+        Create AxionContacts object from Newton contacts.
+        """
+        axion_contacts = AxionContacts(model= self.robot_model, max_contacts_per_world= PENDULUM_MAX_NUM_CONTACTS_PER_ROBOT_MODEL)
+        axion_contacts.load_contact_data(newton_contacts, self.robot_model)
+        return axion_contacts
+
     def process_inputs(
         self,
         state_in, #newton.State,
-        contacts, #newton.Contacts,
+        axion_contacts, #newton.Contacts,
         dt: float,
     ) -> Dict[str, torch.Tensor]:
         """
@@ -286,7 +290,7 @@ class NeuralPredictor:
         root_body_q = body_q_torch[:, 0, :].to(self.device)  # (num_worlds, 7)
 
         # Process contacts 
-        processed_contacts = self._convert_newton_contacts_to_contacts_for_nn_model(state_in, contacts, root_body_q)
+        processed_contacts = self._convert_newton_contacts_to_contacts_for_nn_model(state_in, axion_contacts, root_body_q)
 
         # Convert gravity
         gravity_in_body = self._convert_gravity_vec_w2b(root_body_q)

@@ -17,7 +17,7 @@ from axion.core.logging_config import LoggingConfig
 from axion.logging import HDF5Logger
 from axion.logging import NullLogger
 
-# Type alias for loggers that can be passed to engines (e.g. NeuralEngine)
+# Type alias for loggers that can be passed to engines (e.g. GPTEngine)
 EngineLogger = Union[HDF5Logger, NullLogger]
 
 
