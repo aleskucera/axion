@@ -1,0 +1,178 @@
+import os
+import pathlib
+from importlib.resources import files
+from typing import override
+
+import hydra
+import numpy as np
+import newton
+import warp as wp
+from axion import EngineConfig
+from axion import ExecutionConfig
+from axion import InteractiveSimulator
+from axion import LoggingConfig
+from axion import RenderingConfig
+from axion import SimulationConfig
+from omegaconf import DictConfig
+from pendulum_articulation_definition import build_pendulum_model, PENDULUM_HEIGHT
+from pendulum_utils import set_tilted_plane_from_coefficients
+
+CONFIG_PATH = pathlib.Path(__file__).parent.parent.joinpath("conf")
+
+
+def generalized_to_maximal(
+    model: newton.Model,
+    state: newton.State,
+    q0: float,
+    q1: float,
+    qd0: float = 0.0,
+    qd1: float = 0.0,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Convert generalized pendulum coordinates to maximal coordinates."""
+    device = state.joint_q.device
+
+    state.joint_q.assign(
+        wp.array([q0, q1], dtype=wp.float32, device=device)
+    )
+    state.joint_qd.assign(
+        wp.array([qd0, qd1], dtype=wp.float32, device=device)
+    )
+
+    # Forward kinematics: joint_q/joint_qd  →  body_q/body_qd
+    newton.eval_fk(model, state.joint_q, state.joint_qd, state)
+
+    body_q_np = state.body_q.numpy().reshape(-1, 7)
+    body_qd_np = state.body_qd.numpy().reshape(-1, 6)
+    return body_q_np, body_qd_np
+
+
+class Simulator(InteractiveSimulator):
+    def __init__(
+        self,
+        sim_config: SimulationConfig,
+        render_config: RenderingConfig,
+        exec_config: ExecutionConfig,
+        engine_config: EngineConfig,
+        logging_config: LoggingConfig,
+        plane_coefficients: tuple[float, float, float, float] = (0.0, 0.0, 1.0, 0.0),
+        initial_state: tuple[float, float, float, float] | None = None,
+    ):
+        self.plane_coefficients = plane_coefficients
+        super().__init__(
+            sim_config,
+            render_config,
+            exec_config,
+            engine_config,
+            logging_config,
+        )
+
+        # --- Apply custom initial conditions (positions AND velocities) ---
+        if initial_state is not None:
+            q0, q1, qd0, qd1 = initial_state
+            generalized_to_maximal(
+                self.model, self.current_state, q0=q0, q1=q1, qd0=qd0, qd1=qd1
+            )
+
+    @override
+    def control_policy(self, state: newton.State):
+        wp.copy(self.control.joint_f, wp.array([0.0, 800.0], dtype=wp.float32))
+
+    @override
+    def _render(self, segment_num: int):
+        """Renders the current state to the appropriate viewers, including world XYZ axes."""
+        sim_time = segment_num * self.steps_per_segment * self.clock.dt
+        self.viewer.begin_frame(sim_time)
+        self.viewer.log_state(self.current_state)
+        self.viewer.log_contacts(self.contacts, self.current_state)
+
+        axis_length = 1.0
+        origin = wp.vec3(0.0, 0.0, 0.0)
+        x_end = wp.vec3(axis_length, 0.0, 0.0)
+        y_end = wp.vec3(0.0, axis_length, 0.0)
+        z_end = wp.vec3(0.0, 0.0, axis_length)
+
+        device = wp.get_device()
+        starts = wp.array([origin, origin, origin], dtype=wp.vec3, device=device)
+        ends = wp.array([x_end, y_end, z_end], dtype=wp.vec3, device=device)
+
+        colors = wp.array(
+            [
+                wp.vec3(1.0, 0.0, 0.0),
+                wp.vec3(0.0, 1.0, 0.0),
+                wp.vec3(0.0, 0.0, 1.0),
+            ],
+            dtype=wp.vec3,
+            device=device,
+        )
+
+        self.viewer.log_lines("world_axes", starts, ends, colors, width=0.08)
+
+        # Draw reference frame at the first pendulum link anchor point
+        anchor_x = 0.0
+        anchor_y = 0.0
+        anchor_z = PENDULUM_HEIGHT
+        anchor_axis_length = 0.5
+
+        anchor_point = wp.vec3(anchor_x, anchor_y, anchor_z)
+        anchor_x_end = wp.vec3(anchor_x + anchor_axis_length, anchor_y, anchor_z)
+        anchor_y_end = wp.vec3(anchor_x, anchor_y + anchor_axis_length, anchor_z)
+        anchor_z_end = wp.vec3(anchor_x, anchor_y, anchor_z + anchor_axis_length)
+
+        anchor_starts = wp.array(
+            [anchor_point, anchor_point, anchor_point], dtype=wp.vec3, device=device
+        )
+        anchor_ends = wp.array(
+            [anchor_x_end, anchor_y_end, anchor_z_end], dtype=wp.vec3, device=device
+        )
+        anchor_colors = wp.array(
+            [
+                wp.vec3(1.0, 0.0, 0.0),
+                wp.vec3(0.0, 1.0, 0.0),
+                wp.vec3(0.0, 0.0, 1.0),
+            ],
+            dtype=wp.vec3,
+            device=device,
+        )
+
+        self.viewer.log_lines(
+            "anchor_frame", anchor_starts, anchor_ends, anchor_colors, width=0.08
+        )
+
+        self.viewer.end_frame()
+
+    @override
+    def build_model(self) -> newton.Model:
+        model = build_pendulum_model(num_worlds=1, device="cuda:0")
+        a, b, c, d = self.plane_coefficients
+        set_tilted_plane_from_coefficients(model, a, b, c, d, world_idx=0)
+        return model
+
+
+@hydra.main(config_path=str(CONFIG_PATH), config_name="repeated_pendulum", version_base=None)
+def repeated_pendulum_example(cfg: DictConfig):
+    sim_config: SimulationConfig = hydra.utils.instantiate(cfg.simulation)
+    render_config: RenderingConfig = hydra.utils.instantiate(cfg.rendering)
+    exec_config: ExecutionConfig = hydra.utils.instantiate(cfg.execution)
+    logging_config: LoggingConfig = hydra.utils.instantiate(cfg.logging)
+    engine_config: EngineConfig = hydra.utils.instantiate(cfg.engine)
+
+    plane_coefficients = [-0.2354, -0.0000, 0.9719, -2.3318]
+
+    INITIAL_STATE = (0.5, -0.3, 1.0, -2.0)
+
+    simulator = Simulator(
+        sim_config=sim_config,
+        render_config=render_config,
+        exec_config=exec_config,
+        engine_config=engine_config,
+        logging_config=logging_config,
+        plane_coefficients=plane_coefficients,
+        initial_state=INITIAL_STATE,
+    )
+
+    simulator.run()
+
+
+if __name__ == "__main__":
+    repeated_pendulum_example()
+

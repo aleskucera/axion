@@ -1,12 +1,15 @@
 # @package engine
-_target_: axion.HybridGPTEngineConfig
+_target_: axion.RepeatedAxionEngineConfig
+
+# Uses the same Newton/constraint defaults as `axion.yaml`, but routed
+# through `src/axion/core/repeated_engine.py`.
 max_newton_iters: 16
 max_linear_iters: 16
 backtrack_min_iter: 12
 newton_atol: 1e-3
 linear_atol: 1e-3
 linear_tol: 1e-3
-enable_linesearch: false 
+enable_linesearch: false
 linesearch_conservative_step_count: 16
 linesearch_conservative_upper_bound: 5e-2
 linesearch_min_step: 1e-6

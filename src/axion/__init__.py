@@ -11,6 +11,7 @@ from .simulation import AxionDifferentiableSimulator
 from .simulation import DatasetSimulator
 from .core import GPTEngineConfig
 from .core import HybridGPTEngineConfig
+from .core import RepeatedAxionEngineConfig
 from .simulation import DifferentiableSimulator
 from .simulation import ExecutionConfig
 from .simulation import InteractiveSimulator
@@ -28,6 +29,7 @@ __all__ = [
     "XPBDEngineConfig",
     "GPTEngineConfig",
     "HybridGPTEngineConfig",
+    "RepeatedAxionEngineConfig",
     "InteractiveSimulator",
     "AxionDifferentiableSimulator",
     "DifferentiableSimulator",

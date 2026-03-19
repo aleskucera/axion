@@ -1,0 +1,11 @@
+defaults:
+  - simulation: pendulum
+  - rendering: gl # headless
+  - execution: cuda_graph #no_graph
+  - logging: hdf5
+  - engine: repeated
+  - _self_
+
+# Use the recommended hybrid approach for project names
+project_name: ${hydra:job.name}
+

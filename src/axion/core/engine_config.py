@@ -317,6 +317,10 @@ class HybridGPTEngineConfig(AxionEngineConfig):
     Configuration for the HybridGPTEngine solver (neural-network-assisted Newton method).
     """
 
+    # If True, compute initial contact/constraint forces from the neural prediction
+    # (warm-start Newton-Raphson). If False, use a zero initial guess for forces.
+    use_warm_start_forces: bool = False
+
     def _get_solver_class(self):
         from axion.core.hybrid_gpt_engine import HybridGPTEngine
 
@@ -351,5 +355,34 @@ class HybridGPTEngineConfig(AxionEngineConfig):
             sim_steps=int(sim_steps or 0),
             config=self,
             logging_config=_logging_cfg,
+            differentiable_simulation=differentiable_simulation,
+        )
+
+
+@dataclass(frozen=True)
+class RepeatedAxionEngineConfig(AxionEngineConfig):
+    """
+    Configuration for the `RepeatedAxionEngine` backend.
+
+    This uses the same Newton/constraint parameters as `AxionEngineConfig`,
+    but performs two Newton solves per step (see `src/axion/core/repeated_engine.py`).
+    """
+
+    def create_engine(
+        self,
+        model: Any,
+        sim_steps: Optional[int] = None,
+        init_state_fn: Optional[Callable] = None,
+        logging_config: Optional[Any] = None,
+        differentiable_simulation: bool = False,
+        **kwargs,
+    ) -> Any:
+        from axion.core.repeated_engine import RepeatedAxionEngine
+
+        return RepeatedAxionEngine(
+            model=model,
+            sim_steps=int(sim_steps or 0),
+            config=self,
+            logging_config=logging_config,
             differentiable_simulation=differentiable_simulation,
         )

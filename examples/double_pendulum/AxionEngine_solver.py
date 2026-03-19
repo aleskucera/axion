@@ -96,6 +96,13 @@ class Simulator(InteractiveSimulator):
             logging_config,
         )
 
+        print(f"Num joints: {self.solver.dims.N_j}")
+        print(f"Num controls: {self.solver.dims.N_ctrl}")
+        print(f"Num contacts: {self.solver.dims.N_n}")
+        print(f"Num forces: {self.solver.dims.N_f}")
+        print(f"Num constraints: {self.solver.dims.num_constraints}")
+        print(f"Num constraints: {self.solver.dims.num_constraints}")
+
         # --- Apply custom initial conditions (positions AND velocities) ---
         if initial_state is not None:
             q0, q1, qd0, qd1 = initial_state

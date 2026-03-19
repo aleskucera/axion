@@ -7,6 +7,7 @@ from .engine_config import SemiImplicitEngineConfig
 from .engine_config import XPBDEngineConfig
 from .engine_config import GPTEngineConfig
 from .engine_config import HybridGPTEngineConfig
+from .engine_config import RepeatedAxionEngineConfig
 from .logging_config import LoggingConfig
 from .types import JointMode
 
@@ -21,6 +22,7 @@ __all__ = [
     "XPBDEngineConfig",
     "GPTEngineConfig",
     "HybridGPTEngineConfig",
+    "RepeatedAxionEngineConfig",
     "JointMode",
     "LoggingConfig",
 ]
