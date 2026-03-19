@@ -89,9 +89,7 @@ class HybridGPTEngine(AxionEngineBase):
         wp.copy(dest=self.data.body_vel, src=state_out.body_qd)
 
         # Inititial guess of lambda (constraint forces)
-        self.data._constr_force.zero_()
-        self.data._constr_force_prev_iter.zero_()
-    
+        self.compute_warm_start_forces()
 
     def step(
         self,

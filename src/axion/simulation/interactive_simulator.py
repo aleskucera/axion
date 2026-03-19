@@ -87,9 +87,11 @@ class InteractiveSimulator(BaseSimulator, ABC):
         finally:
             pbar.close()
 
-            if isinstance(self.solver, AxionEngine):
+            # Flush logs for any solver that supports save_logs()
+            save_logs_fn = getattr(self.solver, "save_logs", None)
+            if callable(save_logs_fn):
                 # self.solver.events.print_timings()
-                self.solver.save_logs()
+                save_logs_fn()
 
             if self.rendering_config.vis_type == "usd":
                 self.viewer.close()

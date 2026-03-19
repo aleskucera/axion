@@ -321,6 +321,11 @@ class AxionEngineBase(SolverBase):
         # =========================================================================
         # Solve non-linear system with Newton-Raphson (NR) method
         # =========================================================================
+        # Capture the true Newton initial guess for this step (before any NR update).
+        wp.copy(dest=self.data.init_guess_body_pose, src=self.data.body_pose)
+        wp.copy(dest=self.data.init_guess_body_vel, src=self.data.body_vel)
+        wp.copy(dest=self.data._init_guess_constr_force, src=self.data._constr_force)
+
         def nr_loop():
             self.data.keep_running.zero_()
             # Linearize

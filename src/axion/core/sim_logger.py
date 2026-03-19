@@ -53,6 +53,8 @@ class SimulationHDF5Logger:
         self.ext_force = _register_log("ext_force", data.ext_force)
         self.body_pose = _register_log("body_pose", data.body_pose)
         self.body_vel = _register_log("body_vel", data.body_vel)
+        self.init_guess_body_pose = _register_log("init_guess_body_pose", data.init_guess_body_pose)
+        self.init_guess_body_vel = _register_log("init_guess_body_vel", data.init_guess_body_vel)
         self.body_pose_prev = _register_log("body_pose_prev", data.body_pose_prev)
         self.body_vel_prev = _register_log("body_vel_prev", data.body_vel_prev)
         self.joint_target_pos = _register_log("joint_target_pos", data.joint_target_pos)
@@ -62,6 +64,7 @@ class SimulationHDF5Logger:
         # 2. Constraints
         # =========================================================================
         self._constr_force = _register_log("_constr_force", data._constr_force)
+        self._init_guess_constr_force = _register_log("_init_guess_constr_force", data._init_guess_constr_force)
         self._constr_body_idx = _register_log("_constr_body_idx", data._constr_body_idx)
         self._constr_active_mask = _register_log("_constr_active_mask", data._constr_active_mask)
 

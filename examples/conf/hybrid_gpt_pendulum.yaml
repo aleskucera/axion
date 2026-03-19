@@ -2,7 +2,7 @@ defaults:
   - simulation: pendulum
   - rendering: gl # headless
   - execution: no_graph # cuda_graph
-  - logging: disabled
+  - logging: hdf5
   - engine: hybrid
   - _self_
 
