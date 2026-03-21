@@ -76,18 +76,18 @@ For a simplified case with only linear equality constraints (like a perfect hing
 \mathbf{J} \mathbf{u}^{+} = \mathbf{0}
 \]
 
-where \(\mathbf{J}\) is the constraint Jacobian. The optimization problem is now a classic Constrained Quadratic Program. A standard technique to solve this is the **method of Lagrange multipliers**. We introduce a vector of Lagrange multipliers, \(\boldsymbol{\lambda}\), one for each constraint equation. Physically, these multipliers represent the magnitude of the **constraint impulses** needed to enforce the constraints.
+where \(\mathbf{J}\) is the constraint Jacobian. The optimization problem is now a classic Constrained Quadratic Program. A standard technique to solve this is the **method of Lagrange multipliers**. We introduce a vector of Lagrange multipliers, \(\boldsymbol{\lambda}\), one for each constraint equation. Physically, these multipliers represent the magnitude of the **constraint forces** needed to enforce the constraints.
 
 Solving this constrained problem yields a coupled system of linear equations for the unknowns \(\mathbf{u}^+\) and \(\boldsymbol{\lambda}\):
 
 \[
 \begin{align}
-\mathbf{\tilde{M}} \mathbf{u}^{+} + \mathbf{J}^\top \boldsymbol{\lambda} &= \mathbf{\tilde{M}} \mathbf{u}^- + h \mathbf{f_\text{ext}} \quad &(3)\\
-\mathbf{J} \mathbf{u}^{+} &= \mathbf{0} \quad\quad\quad\quad\quad\;\;\; &(4)
+\mathbf{\tilde{M}} \mathbf{u}^{+} + h \mathbf{J}^\top \boldsymbol{\lambda} &= \mathbf{\tilde{M}} \mathbf{u}^- + h \mathbf{f_\text{ext}} \quad &(3)\\
+\mathbf{J} \mathbf{u}^{+} &= \mathbf{0} \quad\quad\quad\quad\quad\quad\quad\;\; &(4)
 \end{align}
 \]
 
-This system is fundamental. Equation (3) is the discretized equation of motion including the constraint impulses (\(\mathbf{J}^\top \boldsymbol{\lambda}\)), and equation (4) is the constraint condition itself. Together, they allow us to solve for the physically correct motion of the system.
+This system is fundamental. Equation (3) is the discretized equation of motion including the constraint forces (\(h \mathbf{J}^\top \boldsymbol{\lambda}\)), and equation (4) is the constraint condition itself. Together, they allow us to solve for the physically correct motion of the system.
 
 ### Summary and Next Steps
 

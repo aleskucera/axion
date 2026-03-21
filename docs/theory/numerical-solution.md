@@ -64,7 +64,7 @@ By applying this substitution to the whole system, we eliminate \(\Delta\mathbf{
 
 ## Schur Complement: A Strategy for Efficiency
 
-Solving the full KKT system directly is still inefficient. The matrix is large, sparse, and indefinite. Axion employs the **Schur complement method** to create an even smaller, better-behaved system to solve. The strategy is to algebraically eliminate the velocity update \(\Delta \mathbf{u}\) and form a system that solves *only* for the constraint impulse update \(\Delta \boldsymbol{\lambda}\).
+Solving the full KKT system directly is still inefficient. The matrix is large, sparse, and indefinite. Axion employs the **Schur complement method** to create an even smaller, better-behaved system to solve. The strategy is to algebraically eliminate the velocity update \(\Delta \mathbf{u}\) and form a system that solves *only* for the constraint force update \(\Delta \boldsymbol{\lambda}\).
 
 From the first block row of the KKT system, we express \(\Delta\mathbf{u}\) in terms of \(\Delta\boldsymbol{\lambda}\):
 
@@ -91,7 +91,7 @@ At the current state \(\mathbf{x_k}\), the solver evaluates all required terms: 
 
 ---
 **Step 2: Solve for Impulse Update (\(\Delta\boldsymbol{\lambda}\))**
-This is the core of the computation. The Schur complement system is formed and solved for the first part of our update vector, \(\Delta\boldsymbol{\lambda}\). This is done using a Preconditioned Conjugate Residual solver with a Jacobi Preconditioner.
+This is the core of the computation. The Schur complement system is formed and solved for the first part of our update vector, \(\Delta\boldsymbol{\lambda}\) (the constraint force update). This is done using a Preconditioned Conjugate Residual solver with a Jacobi Preconditioner.
 
 ---
 **Step 3: Back-substitute for Velocity Update (\(\Delta\mathbf{u}\))**
@@ -118,8 +118,20 @@ With all three components computed, we assemble the **full Newton step vector**:
 This vector represents the complete, linearized search direction for the entire system state.
 
 ---
-**Step 5: Perform Line Search**
-To ensure robust convergence, a line search is performed. This process seeks an optimal step size \(\alpha \in (0, 1]\) by testing trial states of the form \(\mathbf{x_\text{trial}} = \mathbf{x_k} + \alpha \Delta\mathbf{x}\). The goal is to find an \(\alpha\) that guarantees a sufficient decrease in the overall system error, measured by the norm of the full residual vector, \(\|\mathbf{h}(\mathbf{x_\text{trial}})\|\).
+**Step 5 (Optional): Parallel Step-Size Selection**
+
+At each Newton iteration, an optional parallel step-size search can be used to select a better update magnitude than the standard full step. Rather than a sequential backtracking rule, Axion evaluates a discrete set of \(N\) candidate step sizes \(\{\alpha_0, \ldots, \alpha_{N-1}\}\) **simultaneously** in a single GPU pass. For each candidate \(\alpha_i\), a trial state is formed:
+
+\[
+\mathbf{x}_{\text{trial},i} = \mathbf{x_k} + \alpha_i \, \Delta\mathbf{x}
+\]
+
+The residual \(\|\mathbf{h}(\mathbf{x}_{\text{trial},i})\|^2\) is computed for all candidates in parallel, and the step size that minimises it is selected. The candidate set is split into two clusters designed for different situations:
+
+1. **Conservative cluster** — \(N_c\) step sizes logarithmically spaced in \([\alpha_\text{min},\, \alpha_\text{safe}]\) (default: 32 steps in \([10^{-6},\, 0.05]\)). These small steps are safe when Newton overshoots badly.
+2. **Optimistic cluster** — \(N_o\) step sizes linearly spaced in \([1 - \delta,\, 1 + \delta]\) (default: 32 steps with \(\delta = 0.1\), centred around the full Newton step \(\alpha = 1\)). These explore near the standard Newton step when the solver is close to convergence.
+
+The two sets are merged, sorted, and the exact value \(\alpha = 1.0\) is forced to be present so the standard Newton step is always among the candidates.
 
 ---
 **Step 6: Update the Full State Vector**
@@ -139,4 +151,22 @@ This single vector update is equivalent to updating each component individually:
 \end{align}
 \]
 
-This brings us to the end of one Newton iteration. The process repeats from Step 1 with the new state \(\mathbf{x_{k+1}}\) until the norm of the residual vector \(\|\mathbf{h}(\mathbf{x_{k+1}})\|\) falls below a specified tolerance, indicating that a valid physical state has been found.
+This brings us to the end of one Newton iteration. The process repeats from Step 1 with the new state \(\mathbf{x_{k+1}}\) until the norm of the residual vector \(\|\mathbf{h}(\mathbf{x_{k+1}})\|\) falls below a specified tolerance, or the maximum iteration count is reached.
+
+---
+
+## Best-Iterate Backtracking
+
+Newton's method is not monotone — the residual can temporarily increase during intermediate iterations before converging. To guard against accepting a poor final iterate, Axion uses a **best-iterate backtracking** strategy.
+
+After each Newton iteration \(k\), the full state \(\mathbf{x_k}\) and its residual norm \(\|\mathbf{h}(\mathbf{x_k})\|^2\) are saved as candidates. Once the Newton loop finishes, the solver does **not** necessarily keep the final iterate. Instead, it selects the candidate with the **minimum residual norm** from a minimum iteration index \(k_\text{min}\) onwards:
+
+\[
+k^* = \underset{k \geq k_\text{min}}{\arg\min} \; \|\mathbf{h}(\mathbf{x_k})\|^2
+\]
+
+The state is then restored to \(\mathbf{x}_{k^*}\). The threshold \(k_\text{min}\) (default: 5) prevents selecting a very early iterate that may have a low residual only because it is close to the initial guess, not because it is physically correct.
+
+This strategy is especially robust for non-smooth problems where Newton can overshoot in the final steps.
+
+→ **Next**: [Linear Solver](./linear-solver.md)

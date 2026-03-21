@@ -2,7 +2,7 @@
 
 This section details how the optimization problem from [Gauss's Principle of Least Constraint](./gauss-least-constraint.md), combined with the constraint laws from [Constraints Formulation](./constraints.md), is formally expressed as a large, simultaneous system of nonlinear equations. The goal is to find the root of this system, which represents the physically correct state of all bodies at the next time step.
 
-This transformation from a constrained optimization problem to a root-finding problem is achieved by applying the Karush-Kuhn-Tucker (KKT) conditions. The resulting system can be expressed as a single function \(\mathbf{h}(\mathbf{x}^+) = \mathbf{0}\), where the unknown vector \(\mathbf{x}^+ = [\mathbf{q}^+, \mathbf{u}^+, \boldsymbol{\lambda}^+]\) contains the final configurations, velocities, and constraint impulses.
+This transformation from a constrained optimization problem to a root-finding problem is achieved by applying the Karush-Kuhn-Tucker (KKT) conditions. The resulting system can be expressed as a single function \(\mathbf{h}(\mathbf{x}^+) = \mathbf{0}\), where the unknown vector \(\mathbf{x}^+ = [\mathbf{q}^+, \mathbf{u}^+, \boldsymbol{\lambda}^+]\) contains the final configurations, velocities, and constraint forces.
 
 The following sections will deconstruct the residual vector \(\mathbf{h}\) piece by piece, explaining the physical meaning and mathematical formulation of each component before assembling them into the final system.
 
@@ -17,15 +17,15 @@ This residual represents the core equations of motion, a discrete-time-step vers
 The equation is:
 
 \[
-\mathbf{h_\text{dyn}} = \mathbf{\tilde{M}} \cdot (\mathbf{u}^+ - \tilde{\mathbf{u}}) - \mathbf{J}_b^T \boldsymbol{\lambda}_b^+ - \mathbf{J}_n^T \boldsymbol{\lambda}_n^+ - \mathbf{J}_f^T \boldsymbol{\lambda}_f^+ - \mathbf{J}_{\text{ctrl}}^T \boldsymbol{\lambda}_{\text{ctrl}}^+ = \mathbf{0}
+\mathbf{h_\text{dyn}} = \mathbf{\tilde{M}} \cdot (\mathbf{u}^+ - \tilde{\mathbf{u}}) - h \mathbf{J}_b^T \boldsymbol{\lambda}_b^+ - h \mathbf{J}_n^T \boldsymbol{\lambda}_n^+ - h \mathbf{J}_f^T \boldsymbol{\lambda}_f^+ - h \mathbf{J}_{\text{ctrl}}^T \boldsymbol{\lambda}_{\text{ctrl}}^+ = \mathbf{0}
 \]
 
 Breaking this down:
 
 - \(\mathbf{\tilde{M}} \cdot (\mathbf{u}^+ - \tilde{\mathbf{u}})\) is the change in the system's generalized momentum caused by constraints. The term \(\tilde{\mathbf{u}} = \mathbf{u}^- + h \mathbf{\tilde{M}}^{-1} \mathbf{f}_{\text{ext}}\) represents the predicted "unconstrained" velocity—what the velocity *would be* if only external forces like gravity were applied.
-- \(\mathbf{J}_b^T \boldsymbol{\lambda}_b^+ + \mathbf{J}_n^T \boldsymbol{\lambda}_n^+ + \mathbf{J}_f^T \boldsymbol{\lambda}_f^+ + \mathbf{J}_{\text{ctrl}}^T \boldsymbol{\lambda}_{\text{ctrl}}^+\) is the total impulse applied over the time step \(h\) by all constraints (bilateral, normal contact, friction, and control). The Jacobians \(\mathbf{J}^T\) serve to map these impulses from the constraint space back into forces and torques in the generalized coordinate space.
+- \(h(\mathbf{J}_b^T \boldsymbol{\lambda}_b^+ + \mathbf{J}_n^T \boldsymbol{\lambda}_n^+ + \mathbf{J}_f^T \boldsymbol{\lambda}_f^+ + \mathbf{J}_{\text{ctrl}}^T \boldsymbol{\lambda}_{\text{ctrl}}^+)\) is the total impulse applied over the time step \(h\) by all constraint forces (bilateral, normal contact, friction, and control). The factor \(h\) converts the constraint forces to impulses, and the Jacobians \(\mathbf{J}^T\) map them from constraint space back into generalized coordinate space.
 
-In essence, this equation states: "The change in momentum from the unconstrained state to the final state must be exactly equal to the total impulse applied by all constraints."
+In essence, this equation states: "The change in momentum from the unconstrained state to the final state must be exactly equal to the total impulse \(h \mathbf{J}^T \boldsymbol{\lambda}\) applied by all constraint forces."
 
 ### Kinematics: Time Integration (\(\mathbf{h_\text{kin}}\))
 
@@ -150,7 +150,7 @@ Explicitly, the full system of equations is:
 
 \[
 \begin{align*}
-\text{Dynamics:} \quad & \mathbf{\tilde{M}} \cdot (\mathbf{u}^+ - \tilde{\mathbf{u}}) - \mathbf{J}_b^T \boldsymbol{\lambda}_b^+ - \mathbf{J}_n^T \boldsymbol{\lambda}_n^+ - \mathbf{J}_f^T \boldsymbol{\lambda}_f^+ - \mathbf{J}_{\text{ctrl}}^T \boldsymbol{\lambda}_{\text{ctrl}}^+ = \mathbf{0} \\
+\text{Dynamics:} \quad & \mathbf{\tilde{M}} \cdot (\mathbf{u}^+ - \tilde{\mathbf{u}}) - h \mathbf{J}_b^T \boldsymbol{\lambda}_b^+ - h \mathbf{J}_n^T \boldsymbol{\lambda}_n^+ - h \mathbf{J}_f^T \boldsymbol{\lambda}_f^+ - h \mathbf{J}_{\text{ctrl}}^T \boldsymbol{\lambda}_{\text{ctrl}}^+ = \mathbf{0} \\
 \text{Kinematics:} \quad & \mathbf{q}^+ - \mathbf{q}^- - h \cdot \mathbf{G}(\mathbf{q}^+) \cdot \mathbf{u}^+ = \mathbf{0} \\
 \text{Bilateral:} \quad & \mathbf{h_b}^{(\text{pos})} \quad \text{or} \quad \mathbf{h_b}^{(\text{vel})} = \mathbf{0} \\
 \text{Contact:} \quad & \mathbf{h_n}^{(\text{pos})} \quad \text{or} \quad \mathbf{h_n}^{(\text{vel})} = \mathbf{0} \\

@@ -43,11 +43,11 @@ These are the primary variables that the solver calculates at each time step. Th
 | \(\mathbf{q}_i\) | Configuration of object \(i\) | Varies by object type (e.g., \(\mathbb{R}^7\) for rigid bodies, \(\mathbb{R}^3\) for particles) |
 | \(\mathbf{u}\) | **Generalized Velocity** | \(\mathbb{R}^{n_u}\) |
 | \(\mathbf{u}_i\) | Velocity of object \(i\) | Varies by object type (e.g., \(\mathbb{R}^6\) for rigid bodies, \(\mathbb{R}^3\) for particles) |
-| \(\boldsymbol{\lambda}\) | **Constraint Impulses (Lagrange Multipliers)** | \(\mathbb{R}^{n_c}\) |
-| \(\boldsymbol{\lambda}_b\) | Impulses for bilateral constraints (joints) | \(\mathbb{R}^{n_b}\) |
-| \(\boldsymbol{\lambda}_n\) | Impulses for unilateral constraints (contacts) | \(\mathbb{R}^{n_n}\) |
-| \(\boldsymbol{\lambda}_f\) | Impulses for frictional constraints | \(\mathbb{R}^{n_f}\) |
-| \(\boldsymbol{\lambda}_{\text{ctrl}}\) | Impulses for control constraints | \(\mathbb{R}^{n_{\text{ctrl}}}\) |
+| \(\boldsymbol{\lambda}\) | **Constraint Forces (Lagrange Multipliers)** | \(\mathbb{R}^{n_c}\) |
+| \(\boldsymbol{\lambda}_b\) | Forces for bilateral constraints (joints) | \(\mathbb{R}^{n_b}\) |
+| \(\boldsymbol{\lambda}_n\) | Forces for unilateral constraints (contacts) | \(\mathbb{R}^{n_n}\) |
+| \(\boldsymbol{\lambda}_f\) | Forces for frictional constraints | \(\mathbb{R}^{n_f}\) |
+| \(\boldsymbol{\lambda}_{\text{ctrl}}\) | Forces for control constraints | \(\mathbb{R}^{n_{\text{ctrl}}}\) |
 
 ---
 
@@ -196,3 +196,24 @@ Compliance blocks represent the derivative of constraint residuals with respect 
 **Friction Compliance \(\mathbf{C}_f\):** This is the fixed-point iteration matrix \(\mathbf{W}\) used to create a symmetric system for efficient solving. The matrix is diagonal with dimensions \(n_f \times n_f\) and is updated at each Newton iteration. It is carefully designed so that when the Newton method converges, the exact Coulomb friction conditions are satisfied. This formulation enables the use of symmetric solvers like Preconditioned Conjugate Residual (PCR) for computational efficiency.
 
 The complete compliance block assembles these individual blocks in a block-diagonal structure: \(\mathbf{C} = \text{diag}(\mathbf{C}_b, \mathbf{C}_n, \mathbf{C}_f)\).
+
+---
+
+## 6. Differentiable Simulation
+
+These symbols are used in the [Adjoint Method](./adjoint-method.md) section.
+
+| Symbol | Name / Description | Dimensions |
+| :--- | :--- | :--- |
+| \(\mathbf{s}\) | **Full State Vector** \([\mathbf{q}, \mathbf{u}, \boldsymbol{\lambda}]\) | \(\mathbb{R}^{n_q + n_u + n_c}\) |
+| \(\mathbf{s}^-\) | State at the current time step (known) | \(\mathbb{R}^{n_q + n_u + n_c}\) |
+| \(\mathbf{s}^+\) | State at the next time step (solved for) | \(\mathbb{R}^{n_q + n_u + n_c}\) |
+| \(\mathbf{a}\) | **Actuation Vector** (control targets: target positions / velocities) | \(\mathbb{R}^{n_\text{ctrl}}\) |
+| \(\boldsymbol{\theta}\) | **World Parameters** (masses, inertias, friction coefficients, gains, etc.) | \(\mathbb{R}^{n_\theta}\) |
+| \(\mathbf{R}\) | **Implicit Residual** \(\mathbf{R}(\mathbf{s}^+, \mathbf{s}^-, \mathbf{a}^-, \boldsymbol{\theta}) = \mathbf{0}\) | \(\mathbb{R}^{n_q + n_u + n_c}\) |
+| \(\mathcal{L}\) | **Scalar Loss Function** evaluated on the simulation trajectory | \(\mathbb{R}\) |
+| \(\mathbf{w}\) | **Adjoint Vector** \([\mathbf{w}_q, \mathbf{w}_u, \mathbf{w}_\lambda]\) | \(\mathbb{R}^{n_q + n_u + n_c}\) |
+| \(\mathbf{w}_q\) | Adjoint variable for configuration | \(\mathbb{R}^{n_q}\) |
+| \(\mathbf{w}_u\) | Adjoint variable for velocity | \(\mathbb{R}^{n_u}\) |
+| \(\mathbf{w}_\lambda\) | Adjoint variable for constraint forces | \(\mathbb{R}^{n_c}\) |
+| \(\nabla_{\mathbf{s}^+}\mathcal{L}\) | Gradient of the loss with respect to the next state | \(\mathbb{R}^{n_q + n_u + n_c}\) |
