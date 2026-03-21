@@ -189,3 +189,5 @@ pyrightconfig.json
 
 outputs/
 *.ini
+
+examples/comparison/*/results/

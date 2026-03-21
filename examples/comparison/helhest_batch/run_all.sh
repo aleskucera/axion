@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+set -e
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+mkdir -p "$DIR/results"
+
+python "$DIR/axion_sim.py"   --save "$DIR/results/axion.json"
+python "$DIR/mjx.py"         --save "$DIR/results/mjx_grad.json"
+python "$DIR/mjx_jacfwd.py"  --save "$DIR/results/mjx_jacfwd.json"
+python "$DIR/plot_results.py"
