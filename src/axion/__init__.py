@@ -1,5 +1,6 @@
 from .core import AxionEngine
 from .core import AxionEngineConfig
+from .core import GNNEngineConfig
 from .core import EngineConfig
 from .core import FeatherstoneEngineConfig
 from .core import JointMode

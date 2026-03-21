@@ -272,10 +272,22 @@ class SemiImplicitEngineConfig(EngineConfig):
 
 
 @dataclass(frozen=True)
-class GNNEngineConfig(EngineConfig):
+class GNNEngineConfig(AxionEngineConfig):
     model_path: str = "data/gnn_data/models/model.pt"
 
-    def _get_solver_class(self):
+    def create_engine(
+        self,
+        model: Any,
+        sim_steps: Optional[int] = None,
+        logging_config: Optional[Any] = None,
+        differentiable_simulation: bool = False,
+    ):
         from axion.core.gnn_engine import GNNEngine
 
-        return GNNEngine
+        return GNNEngine(
+            model=model,
+            sim_steps=sim_steps,
+            config=self,
+            logging_config=logging_config,
+            differentiable_simulation=differentiable_simulation,
+        )
