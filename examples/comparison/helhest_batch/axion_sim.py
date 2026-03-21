@@ -227,6 +227,7 @@ class HelhestBatchOptimizer(AxionDifferentiableSimulator):
         print(
             f"\nOptimizing: T={T}, dt={self.clock.dt:.4f}, K={self.K}, num_worlds={self.num_worlds}"
         )
+        peak_mem_mb = 0.0
         results = {
             "simulator": "Axion",
             "problem": "helhest_batch",
@@ -237,6 +238,7 @@ class HelhestBatchOptimizer(AxionDifferentiableSimulator):
             "iterations": [],
             "loss": [],
             "time_ms": [],
+            "peak_gpu_mb": None,
         }
         for i in range(iterations):
             t0 = time.perf_counter()
@@ -244,11 +246,16 @@ class HelhestBatchOptimizer(AxionDifferentiableSimulator):
             wp.synchronize()
             t_iter = time.perf_counter() - t0
 
+            used_mb = wp.get_mempool_used_bytes() / 1024**2
+            peak_mem_mb = max(peak_mem_mb, used_mb)
+
             curr_loss = self.loss.numpy()[0]
-            print(f"Iter {i:3d}: loss={curr_loss:.4f} | t={t_iter * 1000:.0f}ms")
+            print(f"Iter {i:3d}: loss={curr_loss:.4f} | t={t_iter * 1000:.0f}ms | mem={used_mb:.0f}MB")
             results["iterations"].append(i)
             results["loss"].append(float(curr_loss))
             results["time_ms"].append(t_iter * 1000)
+
+        results["peak_gpu_mb"] = peak_mem_mb
 
             self.update()
             self.tape.zero()

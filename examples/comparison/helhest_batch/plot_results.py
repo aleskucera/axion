@@ -108,7 +108,9 @@ def main():
 
     for bar, sim, val in zip(bars, sims, medians):
         cy = bar.get_y() + bar.get_height() / 2
-        label = f"{val:.0f}" if val >= 10 else f"{val:.1f}"
+        peak_mb = results[sim].get("peak_gpu_mb")
+        mem_str = f" ({peak_mb:.0f}MB)" if peak_mb is not None else ""
+        label = (f"{val:.0f}" if val >= 10 else f"{val:.1f}") + mem_str
         ax.text(val * 1.5, cy, label, va="center", ha="left", fontsize=7)
 
         if sim != "Axion":

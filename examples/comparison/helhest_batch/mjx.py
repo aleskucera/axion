@@ -188,6 +188,8 @@ def main():
     opt_state = optimizer.init(params)
 
     print(f"Optimizing: T={T}, dt={DT}, K={K}, num_worlds={NUM_WORLDS}, lr=0.1 (Adam)")
+    device = jax.devices()[0]
+    peak_mem_mb = 0.0
     results = {
         "simulator": "MJX-grad",
         "problem": "helhest_batch",
@@ -198,6 +200,7 @@ def main():
         "iterations": [],
         "loss": [],
         "time_ms": [],
+        "peak_gpu_mb": None,
     }
     for i in range(50):
         t0 = time.perf_counter()
@@ -207,13 +210,19 @@ def main():
         grad.block_until_ready()
         t_iter = time.perf_counter() - t0
 
+        mem_stats = device.memory_stats()
+        used_mb = mem_stats["bytes_in_use"] / 1024**2
+        peak_mem_mb = max(peak_mem_mb, mem_stats.get("peak_bytes_in_use", 0) / 1024**2)
+
         updates, opt_state = optimizer.update(grad, opt_state)
         params = optax.apply_updates(params, updates)
 
-        print(f"Iter {i:3d}: loss={float(loss):.4f} | t={t_iter * 1000:.1f}ms")
+        print(f"Iter {i:3d}: loss={float(loss):.4f} | t={t_iter * 1000:.1f}ms | mem={used_mb:.0f}MB")
         results["iterations"].append(i)
         results["loss"].append(float(loss))
         results["time_ms"].append(t_iter * 1000)
+
+    results["peak_gpu_mb"] = peak_mem_mb
 
         if float(loss) < 1e-4:
             print("Converged!")
