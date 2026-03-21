@@ -123,10 +123,12 @@ def make_interp_matrix(T: int, K: int) -> np.ndarray:
 
 def rollout(mx, dx0, ctrl_traj):
     """Simulate T steps. Returns (T, 2) chassis xy."""
+
     def step_fn(carry, ctrl_t):
         d = carry.replace(ctrl=ctrl_t)
         d = mjx.step(mx, d)
         return d, d.qpos[:2]
+
     _, xy_traj = jax.lax.scan(step_fn, dx0, ctrl_traj)
     return xy_traj  # (T, 2)
 
@@ -148,9 +150,7 @@ def main():
     W = jnp.array(make_interp_matrix(T, K))  # (T, K)
 
     # Batch of NUM_WORLDS identical initial states
-    dx_batch = jax.tree_util.tree_map(
-        lambda x: jnp.stack([x] * NUM_WORLDS), dx0
-    )
+    dx_batch = jax.tree_util.tree_map(lambda x: jnp.stack([x] * NUM_WORLDS), dx0)
 
     # Vmapped rollout over worlds; params are shared (not vmapped)
     rollout_batch = jax.vmap(rollout, in_axes=(None, 0, None))

@@ -23,15 +23,21 @@ from axion import LoggingConfig
 from axion import RenderingConfig
 from axion import SimulationConfig
 from axion.simulation.sim_config import SyncMode
+from config import DURATION
+from config import INIT_CTRL
+from config import K
+from config import NUM_WHEEL_DOFS
+from config import NUM_WORLDS
+from config import TARGET_CTRL
+from config import WHEEL_DOF_OFFSET
 from newton import Model
 
 from examples.helhest.common import create_helhest_model
 from examples.helhest.common import HelhestConfig
 
-from config import DT, DURATION, K, NUM_WORLDS, TARGET_CTRL, INIT_CTRL
-from config import WHEEL_DOF_OFFSET, NUM_WHEEL_DOFS
-
 os.environ["PYOPENGL_PLATFORM"] = "glx"
+
+DT = 7e-2
 
 
 def make_interp_matrix(T: int, K: int) -> tuple[np.ndarray, np.ndarray]:
@@ -97,8 +103,16 @@ def regularization_kernel(
 
 
 class HelhestBatchOptimizer(AxionDifferentiableSimulator):
-    def __init__(self, sim_config, render_config, exec_config, engine_config,
-                 logging_config, num_control_points=K, save_path=None):
+    def __init__(
+        self,
+        sim_config,
+        render_config,
+        exec_config,
+        engine_config,
+        logging_config,
+        num_control_points=K,
+        save_path=None,
+    ):
         self.save_path = save_path
         self.K = num_control_points
         self.num_worlds = sim_config.num_worlds
@@ -137,7 +151,7 @@ class HelhestBatchOptimizer(AxionDifferentiableSimulator):
         num_dofs = self.trajectory.joint_target_vel.shape[-1]
         expanded = self._expand(params)  # (T, 3)
         vel_np = np.zeros((T, self.num_worlds, num_dofs), dtype=np.float32)
-        vel_np[:, :, WHEEL_DOF_OFFSET:WHEEL_DOF_OFFSET + NUM_WHEEL_DOFS] = expanded[:, None, :]
+        vel_np[:, :, WHEEL_DOF_OFFSET : WHEEL_DOF_OFFSET + NUM_WHEEL_DOFS] = expanded[:, None, :]
         wp.copy(self.trajectory.joint_target_vel, wp.array(vel_np, dtype=wp.float32))
         for i in range(T):
             wp.copy(self.controls[i].joint_target_vel, self.trajectory.joint_target_vel[i])
@@ -171,8 +185,10 @@ class HelhestBatchOptimizer(AxionDifferentiableSimulator):
     def update(self):
         # Average gradient over worlds before contracting
         grad_v = self.trajectory.joint_target_vel.grad.numpy()[
-            :, :, WHEEL_DOF_OFFSET:WHEEL_DOF_OFFSET + NUM_WHEEL_DOFS
-        ].mean(axis=1)  # (T, 3)
+            :, :, WHEEL_DOF_OFFSET : WHEEL_DOF_OFFSET + NUM_WHEEL_DOFS
+        ].mean(
+            axis=1
+        )  # (T, 3)
         grad_params = self._contract(grad_v)
         self.trajectory.joint_target_vel.grad.zero_()
         self.spline_params = self.spline_adam.step(self.spline_params, grad_params)
@@ -203,10 +219,14 @@ class HelhestBatchOptimizer(AxionDifferentiableSimulator):
         self.spline_params = np.array(
             [[INIT_CTRL[0], INIT_CTRL[1], INIT_CTRL[2]]] * self.K, dtype=np.float64
         )
-        self.spline_adam = SplineAdam(K=self.K, num_dofs=NUM_WHEEL_DOFS, lr=0.15, betas=(0.5, 0.999))
+        self.spline_adam = SplineAdam(
+            K=self.K, num_dofs=NUM_WHEEL_DOFS, lr=0.15, betas=(0.5, 0.999)
+        )
         self._apply_params(self.spline_params)
 
-        print(f"\nOptimizing: T={T}, dt={self.clock.dt:.4f}, K={self.K}, num_worlds={self.num_worlds}")
+        print(
+            f"\nOptimizing: T={T}, dt={self.clock.dt:.4f}, K={self.K}, num_worlds={self.num_worlds}"
+        )
         results = {
             "simulator": "Axion",
             "problem": "helhest_batch",
@@ -279,12 +299,16 @@ def main():
         contact_fb_beta=1.0,
         friction_fb_alpha=1.0,
         friction_fb_beta=1.0,
-        max_contacts_per_world=256,
+        max_contacts_per_world=8,
     )
     logging_config = LoggingConfig(enable_timing=False, enable_hdf5_logging=False)
 
     sim = HelhestBatchOptimizer(
-        sim_config, render_config, exec_config, engine_config, logging_config,
+        sim_config,
+        render_config,
+        exec_config,
+        engine_config,
+        logging_config,
         num_control_points=K,
         save_path=args.save,
     )
