@@ -112,7 +112,6 @@ class AxionDatasetGNN(InMemoryDataset):
         world_indices_tensor = torch.tensor(world_indices, dtype=torch.long)
 
         graph = build_graph(
-            body_vel,
             body_vel_prev,
             body_mass,
             ext_force,
@@ -131,7 +130,8 @@ class AxionDatasetGNN(InMemoryDataset):
             num_bodies,
             device,
             shape_body,
-            world_indices_tensor,
+            body_vel_next=body_vel,
+            world_indices=world_indices_tensor,
         )
 
         return [graph]

@@ -70,7 +70,6 @@ class GNNEngine(AxionEngineBase):
 
         graph = build_graph(
             body_vel,
-            body_vel_prev,
             body_mass,
             ext_force,
             body_pose_prev,
