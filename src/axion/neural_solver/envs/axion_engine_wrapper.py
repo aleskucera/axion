@@ -1,10 +1,12 @@
 import os
 import sys
+from dataclasses import fields
 from typing import Optional
 
 import torch
 import warp as wp
 import newton
+import yaml
 
 # Repo root so that "from examples.*" works when run from any entry point (train.py, generate script, etc.)
 _env_dir = os.path.dirname(os.path.abspath(__file__))
@@ -22,6 +24,7 @@ NUM_CONTACTS_PER_WORLD = 4 # hardcoded for double pendulum
 FRAME_DT = 0.01
 ENGINE_SUBSTEPS = 10
 ENGINE_DT = FRAME_DT/ENGINE_SUBSTEPS
+ENGINE_CONFIG_PATH = os.path.join(_repo_root, "examples", "conf", "engine", "axion.yaml")
 
 class AxionEngineWrapper:
     """
@@ -54,36 +57,17 @@ class AxionEngineWrapper:
         self.next_state: newton.State = self.model.state()
         self.control: newton.Control = self.model.control()
         self.contacts: newton.Contacts = self.model.collide(self.state)
-
-        # integrator (Axion engine):
-        # Use the same config as examples/conf/engine/axion_pos.yaml
-        # so that dataset generation matches the interactive simulator.
-        self.engine_cfg = AxionEngineConfig(
-            max_newton_iters=12,
-            max_linear_iters=16,
-            enable_linesearch=True,
-            linesearch_conservative_step_count=16,
-            linesearch_conservative_upper_bound=5e-2,
-            linesearch_min_step=1e-6,
-            linesearch_optimistic_step_count=48,
-            linesearch_optimistic_window=0.4,
-            joint_compliance=6e-8,
-            contact_compliance=1e-6,
-            friction_compliance=1e-6,
-            regularization=1e-6,
-            contact_fb_alpha=0.5,
-            contact_fb_beta=1.0,
-            friction_fb_alpha=1.0,
-            friction_fb_beta=1.0,
-            max_contacts_per_world=256,
-            joint_constraint_level="pos",
-            contact_constraint_level="pos",
-        )
+        
+        # Integrator (Axion engine): keep this wrapper aligned with examples/conf/engine/axion.yaml.
+        self.engine_cfg = self._load_engine_config_from_yaml(ENGINE_CONFIG_PATH)
         self.engine = AxionEngine(
             model=self.model,
             sim_steps=1,
             config=self.engine_cfg,
         )
+
+        lambda_count = int(self.engine.dims.num_constraints)
+        self.next_lambdas: wp.array = wp.zeros((self.num_worlds, lambda_count), dtype=wp.float32, device=self.device)
 
         # number of DOF info
         self.dof_q_per_world= int(self.model.joint_coord_count / self.model.world_count)  # 2 for planar double pendulum
@@ -171,6 +155,9 @@ class AxionEngineWrapper:
             dt= FRAME_DT
         )
 
+        # Copy lambdas from engine data to self.next_lambdas
+        wp.copy(dest=self.next_lambdas, src=self.engine.data._constr_force)         #   (num_worlds, dims.num_constraints)  -->  (num_worlds, lambda_count)
+        # Swap state and next_state
         self.state, self.next_state = self.next_state, self.state
 
         # AxionEngine is a maximal-coordinate solver: it only writes body_q / body_qd.
@@ -249,6 +236,24 @@ class AxionEngineWrapper:
         return
 
     # "Private" methods:
+    def _load_engine_config_from_yaml(self, yaml_path: str) -> AxionEngineConfig:
+        with open(yaml_path, "r", encoding="utf-8") as f:
+            raw_cfg = yaml.safe_load(f) or {}
+
+        field_types = {f.name: f.type for f in fields(AxionEngineConfig)}
+        cfg_kwargs = {}
+        for key, value in raw_cfg.items():
+            if key not in field_types or key.startswith("_"):
+                continue
+            # yaml.safe_load can return strings for scientific notation (e.g. "1e-3");
+            # cast to the declared dataclass field type when needed.
+            target = field_types[key]
+            if isinstance(value, str) and target in (int, float):
+                value = target(value)
+            cfg_kwargs[key] = value
+        return AxionEngineConfig(**cfg_kwargs)
+
+    
     def _engine_init_state_fn(
         self,
         state: newton.State,

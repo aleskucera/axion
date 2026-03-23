@@ -27,7 +27,6 @@ from axion.neural_solver.envs.nn_training_interface import NnTrainingInterface
 from axion.neural_solver.generate.simulation_sampler import WarpSimDataGenerator, UniformSampler
 
 import torch
-
 """
 Base trajectory-mode dataset generator.
 In this base generator class, we assume the ground is fixed as defined in the env setup, 

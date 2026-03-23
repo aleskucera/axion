@@ -29,10 +29,10 @@ from axion.neural_solver.generate.simulation_sampler import UniformSampler
 from axion.neural_solver.generate.trajectory_sampler import TrajectorySampler
 from examples.double_pendulum.pendulum_articulation_definition import PENDULUM_HEIGHT, LINK_LENGTH
 
-
-
 MAX_ANGLE_WITH_Z_AXIS_RAD = 0.64
 MAX_D_COEFFICIENT_OFFSET_M = 2.5
+PENDULUM_NUM_OF_ALL_LAMBDAS = 22
+
 
 """
 Trajectory-mode dataset generator for Pendulum env.
@@ -188,13 +188,13 @@ class TrajectorySamplerPendulum(TrajectorySampler):
         states = torch.empty(
             trajectory_length, 
             self.num_envs,
-            self.state_dim,
+            self.state_dim + PENDULUM_NUM_OF_ALL_LAMBDAS,
             dtype=torch.float32,
             device=self.torch_device)
         next_states = torch.empty(
             trajectory_length, 
             self.num_envs,
-            self.state_dim,
+            self.state_dim + PENDULUM_NUM_OF_ALL_LAMBDAS,
             dtype=torch.float32,
             device=self.torch_device)
         joint_acts = torch.empty(
@@ -346,13 +346,15 @@ class TrajectorySamplerPendulum(TrajectorySampler):
             for step in range(trajectory_length):
                 
                 root_body_q[step, :, :].copy_(self.env.root_body_q)
-                states[step, :, :].copy_(self.env.states)
-                next_states[step, :, :].copy_(
+                states[step, :, :self.state_dim].copy_(self.env.states)
+                states[step, :, self.state_dim:].copy_(self.env.get_lambdas())
+                next_states[step, :, :self.state_dim].copy_(
                     self.env.step_with_joint_act(
                         joint_acts[step, :, :],
                         env_mode = 'ground-truth'
                     )
                 )
+                next_states[step, :, self.state_dim:].copy_(self.env.get_lambdas())
                 converted_gravity = self.env.get_gravity_dir()
                 gravity_dir[step,:,:].copy_(converted_gravity)
                 converted_contacts = self.env.convert_newton_contacts_to_contacts_for_nn_model()
