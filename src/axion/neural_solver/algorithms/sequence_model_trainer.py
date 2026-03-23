@@ -318,43 +318,57 @@ class SequenceModelTrainer:
         Returns the mean-squared error between the predicted rollout
         trajectory and the ground-truth next_states.
         """
+        # Extract sequence shape (B=batch, T=time, state_dim=flattened state features).
         B, T, state_dim = data['states'].shape
+        # Rollout length must not exceed the available sequence length.
         H = min(rollout_horizon, T)
 
+        # Ground-truth next states for the rollout horizon.
         gt_next_states = data['next_states'][:, :H, :]
 
+        # Determine which (B, time, dim) auxiliary tensors to feed into the model.
         aux_keys = [
             k for k in data
             if k not in ('states', 'states_embedding', 'next_states', 'target')
             and isinstance(data[k], torch.Tensor) and data[k].ndim == 3
         ]
 
+        # Start autoregressive rollout from the first ground-truth state.
         current_state = data['states'][:, 0:1, :]
         state_context = [current_state]
         predicted_next_states = []
 
+        # Autoregressive unroll: at each step, feed the model its previous prediction.
         for step in range(H):
+            # Concatenate context states so far to form the model input window.
             ctx = torch.cat(state_context, dim=1)
+            # Core model inputs (both "states" and "states_embedding" use the same tensor here).
             step_data = {
                 'states': ctx,
                 'states_embedding': ctx,
             }
+            # Add auxiliary inputs, truncated up to the current step.
             for ak in aux_keys:
                 step_data[ak] = data[ak][:, :step + 1, :]
 
+            # Model prediction for the whole context; we only keep the last time index.
             prediction = self.neural_model(step_data)
             pred_last = prediction[:, -1:, :]
 
+            # Convert the model's prediction head output into a physical next state.
             next_state = self.utils_provider.convert_prediction_to_next_states(
                 states=state_context[-1],
                 prediction=pred_last,
             )
 
+            # Accumulate predicted next states for the rollout trajectory loss.
             predicted_next_states.append(next_state)
 
+            # Feed the prediction back into the context for the next rollout step.
             if step < H - 1:
                 state_context.append(next_state)
 
+        # Stack predictions to (B, H, state_dim) and compute rollout MSE loss.
         predicted_rollout = torch.cat(predicted_next_states, dim=1)
         return torch.nn.MSELoss()(predicted_rollout, gt_next_states)
 
