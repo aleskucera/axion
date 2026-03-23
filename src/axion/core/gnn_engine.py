@@ -10,6 +10,7 @@ from newton import Model
 from newton import State
 
 from .base_engine import AxionEngineBase
+from axion.math import integrate_body_pose_kernel
 from .engine_config import GNNEngineConfig
 from .logging_config import LoggingConfig
 from axion.gnn.graph_builder import build_graph
@@ -35,12 +36,14 @@ class GNNEngine(AxionEngineBase):
         self, state_in: State, state_out: State, control: Control, contacts: Contacts, dt: float
     ) -> None:
         self.load_data(state_in, control, contacts, dt)
-
         graph = self.state_to_graph()
         with torch.no_grad():
-            gnn_node_outputs, _ = self.gnn_model(graph)
-        self.graph_to_state(gnn_node_outputs, state_in, state_out, dt)
-
+            gnn_node_outputs, _ = self.gnn_model(
+                graph.x_dict, graph.edge_index_dict, graph.edge_attr_dict
+            )
+        self.graph_to_state(gnn_node_outputs, dt)
+        self.data._constr_force.zero_()
+        self.data._constr_force_prev_iter.zero_()
         self._solve()
         wp.copy(dest=state_out.body_q, src=self.data.body_pose)
         wp.copy(dest=state_out.body_qd, src=self.data.body_vel)
@@ -94,16 +97,58 @@ class GNNEngine(AxionEngineBase):
     def graph_to_state(
         self,
         gnn_node_outputs: Dict[str, torch.Tensor],
-        state_in: State,
-        state_out: State,
         dt: float,
     ) -> None:
         if "object" in gnn_node_outputs:
             pred_vel = gnn_node_outputs["object"]
-            pred_vel_wp = wp.from_torch(pred_vel.contiguous())
-            wp.copy(dest=state_out.body_qd, src=pred_vel_wp)
+            num_bodies = self.dims.body_count
+            num_worlds = self.dims.num_worlds
+            pred_vel = pred_vel.reshape(num_worlds, num_bodies, 6)
+            pred_vel = wp.from_torch(pred_vel.contiguous())
+            wp.copy(dest=self.data.body_vel, src=pred_vel)
 
-            in_pose = wp.to_torch(state_in.body_q)
-            out_pose = wp.to_torch(state_out.body_q)
-            out_pose[:, :3] = in_pose[:, :3] + pred_vel[:, 3:6] * dt
-            out_pose[:, 3:] = in_pose[:, 3:]
+            wp.launch(
+                kernel=integrate_body_pose_kernel,
+                dim=(num_worlds, num_bodies),
+                inputs=[
+                    self.data.body_vel,
+                    self.data.body_pose_prev,
+                    self.axion_model.body_com,
+                    dt,
+                ],
+                outputs=[
+                    self.data.body_pose,
+                ],
+                device=self.device,
+            )
+
+    def _integrate_rotation(
+        self, angular_vel: torch.Tensor, quat_prev: torch.Tensor, dt: float
+    ) -> torch.Tensor:
+        omega_magnitude = torch.norm(angular_vel, dim=-1, keepdim=True)
+        theta = omega_magnitude * dt
+
+        axis = torch.zeros_like(angular_vel)
+        mask = omega_magnitude.squeeze(-1) > 1e-8
+        axis[mask] = angular_vel[mask] / omega_magnitude[mask]
+
+        half_theta = theta / 2
+        dq_xyz = torch.sin(half_theta) * axis
+        dq_w = torch.cos(half_theta)
+        dq = torch.cat([dq_xyz, dq_w], dim=-1)
+
+        quat_new = self._quaternion_multiply(dq, quat_prev)
+        quat_new = quat_new / torch.linalg.norm(quat_new, dim=-1, keepdim=True)
+
+        return quat_new
+
+    def _quaternion_multiply(self, q1: torch.Tensor, q2: torch.Tensor) -> torch.Tensor:
+        x1, y1, z1, w1 = q1[:, 0], q1[:, 1], q1[:, 2], q1[:, 3]
+        x2, y2, z2, w2 = q2[:, 0], q2[:, 1], q2[:, 2], q2[:, 3]
+
+        x = w1 * x2 + x1 * w2 + y1 * z2 - z1 * y2
+        y = w1 * y2 - x1 * z2 + y1 * w2 + z1 * x2
+        z = w1 * z2 + x1 * y2 - y1 * x2 + z1 * w2
+        w = w1 * w2 - x1 * x2 - y1 * y2 - z1 * z2
+
+        return torch.stack([x, y, z, w], dim=-1)
