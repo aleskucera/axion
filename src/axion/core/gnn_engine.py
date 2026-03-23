@@ -42,8 +42,7 @@ class GNNEngine(AxionEngineBase):
                 graph.x_dict, graph.edge_index_dict, graph.edge_attr_dict
             )
         self.graph_to_state(gnn_node_outputs, dt)
-        self.data._constr_force.zero_()
-        self.data._constr_force_prev_iter.zero_()
+        self.compute_warm_start_forces()
         self._solve()
         wp.copy(dest=state_out.body_q, src=self.data.body_pose)
         wp.copy(dest=state_out.body_qd, src=self.data.body_vel)
