@@ -168,9 +168,11 @@ class TrajectorySamplerPendulum(TrajectorySampler):
                 'contact_points_1': [],
                 'contact_thicknesses': []
             },
+            'lambdas': [],
             'joint_acts': [],
             'next_states': [],
-            'plane_coefficients': []
+            'next_lambdas': [],
+            'plane_coefficients': [],
         }
         
         progress = trange(
@@ -188,13 +190,25 @@ class TrajectorySamplerPendulum(TrajectorySampler):
         states = torch.empty(
             trajectory_length, 
             self.num_envs,
-            self.state_dim + PENDULUM_NUM_OF_ALL_LAMBDAS,
+            self.state_dim,
             dtype=torch.float32,
             device=self.torch_device)
         next_states = torch.empty(
             trajectory_length, 
             self.num_envs,
-            self.state_dim + PENDULUM_NUM_OF_ALL_LAMBDAS,
+            self.state_dim,
+            dtype=torch.float32,
+            device=self.torch_device)
+        lambdas =torch.zeros(
+            trajectory_length, 
+            self.num_envs,
+            PENDULUM_NUM_OF_ALL_LAMBDAS,
+            dtype=torch.float32,
+            device=self.torch_device)
+        next_lambdas =torch.zeros(
+            trajectory_length, 
+            self.num_envs,
+            PENDULUM_NUM_OF_ALL_LAMBDAS,
             dtype=torch.float32,
             device=self.torch_device)
         joint_acts = torch.empty(
@@ -346,15 +360,15 @@ class TrajectorySamplerPendulum(TrajectorySampler):
             for step in range(trajectory_length):
                 
                 root_body_q[step, :, :].copy_(self.env.root_body_q)
-                states[step, :, :self.state_dim].copy_(self.env.states)
-                states[step, :, self.state_dim:].copy_(self.env.get_lambdas())
-                next_states[step, :, :self.state_dim].copy_(
+                states[step, :, :].copy_(self.env.states)
+                lambdas[step, :, :].copy_(self.env.get_lambdas())
+                next_states[step, :, :].copy_(
                     self.env.step_with_joint_act(
                         joint_acts[step, :, :],
                         env_mode = 'ground-truth'
                     )
                 )
-                next_states[step, :, self.state_dim:].copy_(self.env.get_lambdas())
+                next_lambdas[step, :, :].copy_(self.env.get_lambdas())
                 converted_gravity = self.env.get_gravity_dir()
                 gravity_dir[step,:,:].copy_(converted_gravity)
                 converted_contacts = self.env.convert_newton_contacts_to_contacts_for_nn_model()
@@ -375,10 +389,9 @@ class TrajectorySamplerPendulum(TrajectorySampler):
             rollout_batches['contacts']['contact_thicknesses'].append(contact_thicknesses.clone())
             rollout_batches['joint_acts'].append(joint_acts.clone())
             rollout_batches['next_states'].append(next_states.clone())
-            #plane_normals_expanded = plane_normals.unsqueeze(0).expand(trajectory_length, -1, -1)
-            #d = torch.zeros(plane_normals_expanded.shape[0], plane_normals_expanded.shape[1], 1, dtype = torch.float32, device = self.torch_device)
-            #plane_coefficients = torch.cat([plane_normals_expanded, d], dim=-1)
             rollout_batches['plane_coefficients'].append(plane_coefficients.clone())
+            rollout_batches['lambdas'].append(lambdas.clone())
+            rollout_batches['next_lambdas'].append(next_lambdas.clone())
 
         print(f'\n\nTotal number of transitions generated: {rounds * self.num_envs * trajectory_length}')
 

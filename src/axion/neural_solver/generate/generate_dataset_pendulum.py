@@ -145,11 +145,20 @@ def collect_dataset(
         name = 'next_states', 
         data = rollouts['next_states'].detach().cpu().numpy()
     )
+    data_grp.create_dataset(
+        name = 'lambdas', 
+        data = rollouts['lambdas'].detach().cpu().numpy()
+    )
+    data_grp.create_dataset(
+        name = 'next_lambdas', 
+        data = rollouts['next_lambdas'].detach().cpu().numpy()
+    )
     data_grp.attrs['state_dim'] = rollouts['states'].shape[-1]
     # data_grp.attrs['contact_prob'] = contact_prob
     data_grp.attrs['num_contacts_per_env'] = rollouts['contacts']['contact_depths'].shape[-1]
     # data_grp.attrs['joint_act_dim'] = rollouts['joint_acts'].shape[-1]
     data_grp.attrs['next_state_dim'] = rollouts['next_states'].shape[-1]
+
     
     data_writer.flush()
     data_writer.close()
