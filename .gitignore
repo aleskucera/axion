@@ -189,3 +189,6 @@ pyrightconfig.json
 
 outputs/
 *.ini
+
+# W&B
+wandb/

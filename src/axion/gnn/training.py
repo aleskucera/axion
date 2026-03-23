@@ -139,7 +139,7 @@ def main(config):
     model.to(config["device"])
     wandb_group_name = config["wandb"].split("/") if not config["wandb"] is None else [""]
     wandb.init(
-        project="sim2d-gnn",
+        project="axion-gnn",
         config=config,
         group=wandb_group_name[0] if len(wandb_group_name) > 1 else None,
         name=wandb_group_name[-1],
