@@ -1,6 +1,7 @@
 from pathlib import Path
 from typing import Union
 import os.path as osp
+import sys
 
 import numpy as np
 from tqdm import tqdm
@@ -182,4 +183,4 @@ def calculate_statistics(graphs: list[HeteroData]) -> dict:
 
 
 if __name__ == "__main__":
-    AxionDatasetGNN(root="data/gnn_data/val_dataset")
+    AxionDatasetGNN(root=sys.argv[1])

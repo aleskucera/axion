@@ -172,7 +172,7 @@ if __name__ == "__main__":
     parser.add_argument("--epochs", type=int, default=300)
 
     parser.add_argument("--device", type=str, default=None)
-    parser.add_argument("--dataset_root", type=Path, default=Path("data/gnn_data/"))
+    parser.add_argument("--dataset_root", type=Path, default=Path("data/gnn_data/dataset"))
     parser.add_argument("--model_name", type=str, default=None)
     parser.add_argument("--wandb", type=str, default=None)
 
