@@ -349,6 +349,13 @@ class NnTrainingInterface:
             self._sync_states()
             return self.states
 
+    def get_lambdas(self):
+        """
+        Call this function after simulation_wrapper.update() to get the lambdas
+        after stepping the engine
+        """
+        return wp.to_torch(self.simulator_wrapper.next_lambdas).to(self.torch_device)
+
     # ---- Contact / gravity helpers (called explicitly by dataset sampler) ----
 
     def convert_newton_contacts_to_contacts_for_nn_model(self):
