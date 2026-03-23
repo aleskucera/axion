@@ -12,7 +12,7 @@ env:
 algorithm:
   name: SequenceModelTrainer
   use_energy_loss: false
-  use_rollout_loss: true
+  use_rollout_loss: false
   rollout_loss_weight: 0.5
   rollout_loss_horizon: 5
   num_epochs: 25
