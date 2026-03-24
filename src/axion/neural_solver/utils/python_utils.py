@@ -17,6 +17,8 @@ import numpy as np
 import random
 import torch
 import sys
+import csv
+from pathlib import Path
 
 # if there's overlap between args_list and commandline input, use commandline input
 def solve_argv_conflict(args_list):
@@ -78,19 +80,73 @@ def handle_cfg_overrides(cfg_overrides, cfg):
         value = overrides[i + 1]
         if not override_cfg_entry(key, value, cfg):
             print_error(f'No key {key} in config to be override')
-            
+
+def format_number(value, precision = 8, scientific_threshold = 1e4):
+    value = float(value)
+    if not np.isfinite(value):
+        return str(value)
+
+    abs_value = abs(value)
+    if abs_value != 0.0 and (
+        abs_value >= scientific_threshold or abs_value < 10 ** (-precision)
+    ):
+        return "{val:.{precision}e}".format(val=value, precision=precision)
+    return "{val:.{precision}f}".format(val=value, precision=precision)
+
+def format_value(value, precision = 8, scientific_threshold = 1e4):
+    if isinstance(value, torch.Tensor):
+        if value.ndim == 0:
+            return format_number(
+                value.detach().cpu().item(),
+                precision = precision,
+                scientific_threshold = scientific_threshold,
+            )
+        array = value.detach().cpu().numpy()
+        return np.array2string(
+            array,
+            precision = precision,
+            separator = ', ',
+            formatter = {
+                'float_kind': lambda x: format_number(
+                    x,
+                    precision = precision,
+                    scientific_threshold = scientific_threshold,
+                )
+            },
+        )
+
+    if isinstance(value, np.ndarray):
+        return np.array2string(
+            value,
+            precision = precision,
+            separator = ', ',
+            formatter = {
+                'float_kind': lambda x: format_number(
+                    x,
+                    precision = precision,
+                    scientific_threshold = scientific_threshold,
+                )
+            },
+        )
+
+    if isinstance(value, np.generic):
+        value = value.item()
+
+    if isinstance(value, (float, int)):
+        return format_number(
+            value,
+            precision = precision,
+            scientific_threshold = scientific_threshold,
+        )
+
+    return str(value)
+
 def format_dict(dict, precision = 8):
     dict_str = "{"
     items_cnt = 0
     for k, v in dict.items():
-        if isinstance(k, float):
-            k_str = "{val:.{precision}f}".format(val=k, precision=precision)
-        else:
-            k_str = str(k)
-        if isinstance(v, float):
-            v_str = "{val:.{precision}f}".format(val=v, precision=precision)
-        else:
-            v_str = str(v)
+        k_str = format_value(k, precision = precision)
+        v_str = format_value(v, precision = precision)
         dict_str += "{}: {}".format(k_str, v_str)
         items_cnt += 1
         if items_cnt < len(dict):
@@ -98,6 +154,46 @@ def format_dict(dict, precision = 8):
     dict_str += "}"
 
     return dict_str
+
+def format_model_name(checkpoint_path: str) -> str:
+    if checkpoint_path is None:
+        return ""
+    p = Path(checkpoint_path)
+    parts = p.parts
+    if "nn" in parts:
+        nn_idx = parts.index("nn")
+        if nn_idx > 0:
+            return str(Path(*parts[nn_idx - 1:]))
+    return p.name
+
+def append_test_results_csv(csv_path: Path, row: dict):
+    file_exists = csv_path.exists()
+    with open(csv_path, "a", newline="") as f:
+        writer = csv.writer(f)
+        if (not file_exists) or csv_path.stat().st_size == 0:
+            writer.writerow([
+                "model_name",
+                "validation_dataset_name",
+                "valid_loss_total",
+                "state_eval_error_total",
+                "lambda_eval_error_total",
+            ])
+        writer.writerow([
+            row["model_name"],
+            row.get("validation_dataset_name", ""),
+            row["valid_loss_total"],
+            row["state_eval_error_total"],
+            row["lambda_eval_error_total"],
+        ])
+
+def get_validation_dataset_name(cfg: dict) -> str:
+    valid_cfg = cfg.get("algorithm", {}).get("dataset", {}).get("valid_datasets", {})
+    dataset_paths = []
+    for _, dataset_path in valid_cfg.items():
+        dataset_paths.append(Path(dataset_path).name)
+    if len(dataset_paths) == 0:
+        return ""
+    return ";".join(dataset_paths)
 
 from datetime import datetime
 

@@ -36,7 +36,7 @@ from axion.neural_solver.utils.evaluator import NeuralSimEvaluator
 from axion.neural_solver.utils.python_utils import (
     set_random_seed, 
     print_info, print_ok, print_white, print_warning,
-    format_dict
+    format_dict, format_value
 )
 from axion.neural_solver.utils.torch_utils import num_params_torch_model, grad_norm
 from axion.neural_solver.utils.running_mean_std import RunningMeanStd
@@ -650,14 +650,14 @@ class SequenceModelTrainer:
                 print_info("-"*100)
                 print_info(f"Epoch {epoch}")
                 if epoch > 0:
-                    print_info("[Train] loss = {:.8f}, itemized = {}".format(
-                        avg_train_loss, 
+                    print_info("[Train] loss = {}, itemized = {}".format(
+                        format_value(avg_train_loss, 8), 
                         format_dict(avg_train_loss_itemized, 8)
                     ))
                 for valid_dataset_name in self.valid_datasets.keys():
-                    print_info("[Valid] dataset [{}]: loss = {:.8f}, itemized = {}".format(
+                    print_info("[Valid] dataset [{}]: loss = {}, itemized = {}".format(
                         valid_dataset_name, 
-                        avg_valid_losses[valid_dataset_name],
+                        format_value(avg_valid_losses[valid_dataset_name], 8),
                         format_dict(avg_valid_losses_itemized[valid_dataset_name], 8)
                     ))
                 print_info("[Time Report] {}".format(time_summary))
@@ -726,10 +726,10 @@ class SequenceModelTrainer:
                             f'saved_best_valid_{valid_dataset_name}_model_epochs.txt'
                         ), 'a') as fp:
                         fp.write(f"{epoch}\n")
-                    print_ok('Save Best Valid {} Model at Epoch {} with loss {:.8f}.'.format(
+                    print_ok('Save Best Valid {} Model at Epoch {} with loss {}.'.format(
                                 valid_dataset_name, 
                                 epoch, 
-                                avg_valid_losses[valid_dataset_name]
+                                format_value(avg_valid_losses[valid_dataset_name], 8)
                             ))
 
         self.save_model("final_model")
@@ -768,15 +768,14 @@ class SequenceModelTrainer:
                 )
         
         print_white(
-            "[Evaluate], Num Rollouts = {}, "
-            "Rollout Length = {}, "
-            "Rollout MSE Error = {:.8f}, "
-            "Rollout MSE Error (joint_q) = {:.8f}"
-            .format(
-                self.num_eval_rollouts, 
-                self.eval_horizon, 
-                error_stats['overall']['error(MSE)'],
-                error_stats['overall']['q_error(MSE)'],
+            "[Evaluate], Num Rollouts = {}, Rollout Length = {}, "
+            "Rollout MSE Error = {}, Rollout MSE Error (joint_q) = {}, "
+            "Rollout MSE Error (lambda) = {}".format(
+                self.num_eval_rollouts,
+                self.eval_horizon,
+                format_value(error_stats['overall']['error(MSE)'], 8),
+                format_value(error_stats['overall']['q_error(MSE)'], 8),
+                format_value(error_stats['overall'].get('lambda_error(MSE)', float('nan')), 8),
             )
         )
 
@@ -824,9 +823,9 @@ class SequenceModelTrainer:
                             dataloader_iter = valid_loader_iters[valid_dataset_name], 
                             num_batches = num_valid_batches,
                             shuffle = False)
-            print_info("Valid dataset [{}]: loss = {:.8f}, itemized = {}".format(
+            print_info("Valid dataset [{}]: loss = {}, itemized = {}".format(
                 valid_dataset_name, 
-                avg_valid_losses[valid_dataset_name],
+                format_value(avg_valid_losses[valid_dataset_name], 8),
                 format_dict(avg_valid_losses_itemized[valid_dataset_name], 8)
             ))
 
@@ -846,18 +845,34 @@ class SequenceModelTrainer:
         print_info("--------------------------------------------------")
         print_info(f"Test Summary:")
         for valid_dataset_name in self.valid_datasets.keys():
-            print_info("Valid dataset [{}]: loss = {:.8f}, itemized = {}".format(
+            print_info("Valid dataset [{}]: loss = {}, itemized = {}".format(
                 valid_dataset_name, 
-                avg_valid_losses[valid_dataset_name],
+                format_value(avg_valid_losses[valid_dataset_name], 8),
                 format_dict(avg_valid_losses_itemized[valid_dataset_name], 8)
             ))
         print_info("--------------------------------------------------")
         print_info("Eval ({} rollouts) Error: {}, Error per step: {}".format(
             num_eval_rollouts, 
-            (eval_error ** 2).mean(), 
-            (eval_error ** 2).mean((-1, -2))
+            format_value((eval_error ** 2).mean(), 8), 
+            format_value((eval_error ** 2).mean((-1, -2)), 8)
         ))
+        if 'lambda_error(MSE)' in error_stats['overall']:
+            print_info(
+                "Eval ({} rollouts) Lambda Error: {}, Lambda Error per step: {}".format(
+                    num_eval_rollouts,
+                    format_value(error_stats['overall']['lambda_error(MSE)'], 8),
+                    format_value(error_stats['step-wise']['lambda_error(MSE)'], 8)
+                )
+            )
         print_info("--------------------------------------------------")
+
+        valid_loss_values = list(avg_valid_losses.values())
+        valid_loss_total = float(np.mean(valid_loss_values)) if len(valid_loss_values) > 0 else float('nan')
+        return {
+            'valid_loss_total': valid_loss_total,
+            'state_eval_error_total': float(error_stats['overall']['error(MSE)']),
+            'lambda_eval_error_total': float(error_stats['overall'].get('lambda_error(MSE)', float('nan'))),
+        }
 
     def save_model(self, filename = None):
         if filename is None:

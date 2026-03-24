@@ -15,11 +15,11 @@ from pendulum_utils import set_tilted_plane_from_coefficients
 HDF5_PATH = (
     pathlib.Path(__file__).resolve().parents[2]
     / "src" / "axion" / "neural_solver" / "datasets" / "Pendulum"
-    / "pendulumLambdas.hdf5"
+    / "pendulumLambdasValid500klen400envs250seed1.hdf5"
 )
 
 DT = 0.01
-TRAJECTORY_INDEX = 0
+TRAJECTORY_INDEX = 2
 PLAYBACK_SPEED = 1.0
 
 def load_trajectory(hdf5_path: pathlib.Path, traj_idx: int):

@@ -16,6 +16,7 @@
 import argparse
 import sys
 import os
+from pathlib import Path
 
 base_dir = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
 sys.path.append(base_dir)
@@ -26,7 +27,13 @@ wp.config.verify_cuda = True
 
 import wandb
 
-from axion.neural_solver.utils.python_utils import get_time_stamp, set_random_seed
+from axion.neural_solver.utils.python_utils import (
+    get_time_stamp,
+    set_random_seed,
+    format_model_name,
+    append_test_results_csv,
+    get_validation_dataset_name,
+)
 from axion.neural_solver.algorithms.sequence_model_trainer import SequenceModelTrainer
 from axion.neural_solver.envs.nn_training_interface import NnTrainingInterface
 
@@ -43,10 +50,12 @@ def _parse_args():
 
 
 if __name__ == '__main__':
-    # Initiate weights and biases logging
-    wandb.login()
-
     args = _parse_args()
+    args.train = not args.test
+
+    # Initiate weights and biases logging only for training runs
+    if args.train:
+        wandb.login()
 
     # Read train/cfg/Pendulum/transformer.yaml for example
     with open(args.cfg, 'r') as f:
@@ -71,8 +80,6 @@ if __name__ == '__main__':
     seed = cfg['algorithm'].get('seed', 0)
     set_random_seed(seed)
     cfg['algorithm']['seed'] = seed
-
-    args.train = not args.test
 
     cfg['cli'] = {
         'logdir': args.logdir,
@@ -99,4 +106,14 @@ if __name__ == '__main__':
         algo.train()
     else:
         print("Begin torch module testing")
-        algo.test()
+        test_results = algo.test()
+        csv_path = Path(__file__).resolve().parent / "lambda_testing_results.csv"
+        csv_row = {
+            "model_name": format_model_name(args.checkpoint),
+            "validation_dataset_name": get_validation_dataset_name(cfg),
+            "valid_loss_total": test_results["valid_loss_total"],
+            "state_eval_error_total": test_results["state_eval_error_total"],
+            "lambda_eval_error_total": test_results["lambda_eval_error_total"],
+        }
+        append_test_results_csv(csv_path, csv_row)
+        print(f"Saved test summary to {csv_path}")
