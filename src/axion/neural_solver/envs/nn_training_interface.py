@@ -104,6 +104,10 @@ class NnTrainingInterface:
             (self.num_envs, self.joint_act_dim),
             device=self.torch_device,
         )
+        self.lambdas = torch.zeros(
+            (self.num_envs, self.utils_provider.lambda_dim),
+            device=self.torch_device,
+        )
         self.root_body_q = wp.to_torch(self.sim_states.body_q)[
             0 :: self.bodies_per_env, :
         ].view(self.num_envs, 7).to(self.torch_device)
@@ -251,6 +255,7 @@ class NnTrainingInterface:
         self.utils_provider.append_current_state_to_history(
             joint_acts=self.joint_acts,
             contacts=contacts,
+            lambdas=self.lambdas,
             gravity_dir_body=gravity_dir_body,
         )
 
@@ -276,18 +281,29 @@ class NnTrainingInterface:
 
         model_inputs = self.utils_provider.get_neural_model_inputs()
         prediction = neural_model(model_inputs)
+        state_prediction = prediction['state']
+        lambda_prediction = prediction['lambda']
 
         current_states = self.states.unsqueeze(1)  # (B, 1, state_dim)
-        if prediction.ndim == 3:
-            prediction = prediction[:, -1:, :]
+        current_lambdas = self.lambdas.unsqueeze(1)  # (B, 1, lambda_dim)
+        if state_prediction.ndim == 3:
+            state_prediction = state_prediction[:, -1:, :]
+        if lambda_prediction.ndim == 3:
+            lambda_prediction = lambda_prediction[:, -1:, :]
 
         next_states = self.utils_provider.convert_prediction_to_next_states(
             states=current_states,
-            prediction=prediction,
+            prediction=state_prediction,
             dt=self.frame_dt,
         ).squeeze(1)  # back to (B, state_dim)
+        next_lambdas = self.utils_provider.convert_prediction_to_next_lambdas(
+            lambdas=current_lambdas,
+            prediction=lambda_prediction,
+        ).squeeze(1)
 
         self._sync_states(next_states)
+        self.lambdas.copy_(next_lambdas)
+        self.utils_provider.lambdas.copy_(self.lambdas)
         self._collide_and_append_to_history()
         return self.states
 
@@ -321,6 +337,8 @@ class NnTrainingInterface:
         else:
             self.simulator_wrapper.update()
             self._sync_states()
+            self.lambdas.copy_(self.get_lambdas())
+            self.utils_provider.lambdas.copy_(self.lambdas)
             return self.states
 
     def step_with_joint_act(
@@ -347,6 +365,8 @@ class NnTrainingInterface:
         else:
             self.simulator_wrapper.update()
             self._sync_states()
+            self.lambdas.copy_(self.get_lambdas())
+            self.utils_provider.lambdas.copy_(self.lambdas)
             return self.states
 
     def get_lambdas(self):
@@ -392,6 +412,8 @@ class NnTrainingInterface:
 
         initial_states = initial_states.to(self.torch_device)
         self._sync_states(initial_states)
+        self.lambdas.zero_()
+        self.utils_provider.lambdas.zero_()
 
     # ---- Reset (neural eval) ----
 
@@ -421,6 +443,8 @@ class NnTrainingInterface:
 
         initial_states = initial_states.to(self.torch_device)
         self._sync_states(initial_states)
+        self.lambdas.zero_()
+        self.utils_provider.lambdas.zero_()
         self._collide_and_append_to_history()
 
     def close(self):

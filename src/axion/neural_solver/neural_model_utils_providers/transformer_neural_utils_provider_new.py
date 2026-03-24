@@ -25,6 +25,7 @@ from axion.neural_solver.standalone.neural_predictor_helpers import (
 )
 
 PENDULUM_MAX_NUM_CONTACTS_PER_ROBOT_MODEL = 4
+PENDULUM_NUM_OF_ALL_LAMBDAS = 22
 
 def _ensure_bt(x: torch.Tensor) -> torch.Tensor:
     """Ensure tensor is (B, T, D). Accepts (B, D) or (B, T, D)."""
@@ -49,6 +50,7 @@ class NeuralModelUtilsProviderCfg:
     prediction_type: str = "relative"  # "relative" or "absolute"
     states_embedding_type: Optional[str] = "identical"  # None/"identical"
     angular_q_indices: Optional[Sequence[int]] = None  # indices in q to wrap; default: all q
+    lambda_dim: Optional[int] = None  # optional override for per-world lambda dimension
 
 
 class TransformerNeuralModelUtilsProvider:
@@ -70,6 +72,7 @@ class TransformerNeuralModelUtilsProvider:
         prediction_type: str = "relative",
         states_embedding_type: Optional[str] = "identical",
         angular_q_indices: Optional[Sequence[int]] = None,
+        lambda_dim: Optional[int] = None,
         device: Optional[str] = None,
         **kwargs,
     ):
@@ -87,6 +90,7 @@ class TransformerNeuralModelUtilsProvider:
             prediction_type = cfg.get("prediction_type", prediction_type)
             states_embedding_type = cfg.get("states_embedding_type", states_embedding_type)
             angular_q_indices = cfg.get("angular_q_indices", angular_q_indices)
+            lambda_dim = cfg.get("lambda_dim", lambda_dim)
 
         if prediction_type not in ("relative", "absolute"):
             raise ValueError(f"prediction_type must be 'relative' or 'absolute', got {prediction_type!r}")
@@ -112,8 +116,11 @@ class TransformerNeuralModelUtilsProvider:
         self.dof_q_per_env = joint_coord_count // self.num_worlds
         self.dof_qd_per_env = joint_dof_count // self.num_worlds
         self.state_dim = self.dof_q_per_env + self.dof_qd_per_env
+        self.lambda_dim = PENDULUM_NUM_OF_ALL_LAMBDAS
 
-        self.prediction_dim = self.state_dim
+        self.state_prediction_dim = self.state_dim
+        self.lambda_prediction_dim = self.lambda_dim
+        self.prediction_dim = self.state_prediction_dim
         self.state_embedding_dim = self.state_dim
 
         if angular_q_indices is None:
@@ -139,6 +146,7 @@ class TransformerNeuralModelUtilsProvider:
         if 0 <= up_axis < 3:
             self.gravity_dir[:, up_axis] = -1.0
         self.states = torch.zeros((self.num_worlds, self.state_dim), device=self.torch_device, dtype=torch.float32)
+        self.lambdas = torch.zeros((self.num_worlds, self.lambda_dim), device=self.torch_device, dtype=torch.float32)
 
         self.neural_model = None
         self.set_neural_model(neural_model)
@@ -167,6 +175,7 @@ class TransformerNeuralModelUtilsProvider:
         *,
         joint_acts: Optional[torch.Tensor] = None,
         contacts: Optional[Dict[str, torch.Tensor]] = None,
+        lambdas: Optional[torch.Tensor] = None,
         gravity_dir_body: Optional[torch.Tensor] = None,
     ):
         """
@@ -183,6 +192,11 @@ class TransformerNeuralModelUtilsProvider:
         entry: Dict[str, torch.Tensor] = {
             "root_body_q": self.root_body_q.clone(),
             "states": self.states.clone(),
+            "lambdas": (
+                lambdas.clone()
+                if lambdas is not None
+                else self.lambdas.clone()
+            ),
             "gravity_dir": (
                 gravity_dir_body.clone()
                 if gravity_dir_body is not None
@@ -384,6 +398,10 @@ class TransformerNeuralModelUtilsProvider:
             model_inputs["root_body_q"] = _ensure_bt(model_inputs["root_body_q"])
         if "gravity_dir" in model_inputs and model_inputs["gravity_dir"] is not None:
             model_inputs["gravity_dir"] = _ensure_bt(model_inputs["gravity_dir"])
+        if "lambdas" in model_inputs and model_inputs["lambdas"] is not None:
+            model_inputs["lambdas"] = _ensure_bt(model_inputs["lambdas"])
+        if "next_lambdas" in model_inputs and model_inputs["next_lambdas"] is not None:
+            model_inputs["next_lambdas"] = _ensure_bt(model_inputs["next_lambdas"])
 
         if self.states_embedding_type in (None, "identical"):
             if "states_embedding" not in model_inputs or model_inputs["states_embedding"] is None:
@@ -412,6 +430,7 @@ class TransformerNeuralModelUtilsProvider:
             processed_model_inputs: Dict[str, torch.Tensor] = {
                 "root_body_q": torch.zeros_like(self.root_body_q).unsqueeze(1),
                 "states": torch.zeros_like(self.states).unsqueeze(1),
+                "lambdas": torch.zeros_like(self.lambdas).unsqueeze(1),
                 "gravity_dir": torch.zeros_like(self.gravity_dir).unsqueeze(1),
                 "contact_normals": torch.zeros(
                                     (self.num_worlds, 1, 3* PENDULUM_MAX_NUM_CONTACTS_PER_ROBOT_MODEL),
@@ -468,6 +487,33 @@ class TransformerNeuralModelUtilsProvider:
             raise RuntimeError("Internal error: pred dim mismatch")
         return pred
 
+    def convert_next_lambdas_to_prediction(
+        self,
+        lambdas: torch.Tensor,
+        next_lambdas: torch.Tensor,
+    ) -> torch.Tensor:
+        """
+        Convert dataset (lambdas, next_lambdas) into a lambda prediction target.
+        Both tensors can be (B,T,D) or (B,D).
+        """
+        lambdas_bt = _ensure_bt(lambdas)
+        next_lambdas_bt = _ensure_bt(next_lambdas)
+
+        if (
+            lambdas_bt.shape[-1] != self.lambda_dim or
+            next_lambdas_bt.shape[-1] != self.lambda_dim
+        ):
+            raise ValueError("lambdas/next_lambdas last dim must equal lambda_dim")
+
+        if self.prediction_type == "absolute":
+            pred = next_lambdas_bt.clone()
+        else:
+            pred = next_lambdas_bt - lambdas_bt
+
+        if pred.shape[-1] != self.lambda_prediction_dim:
+            raise RuntimeError("Internal error: lambda pred dim mismatch")
+        return pred
+
     def convert_prediction_to_next_states(
         self,
         states: torch.Tensor,
@@ -493,6 +539,32 @@ class TransformerNeuralModelUtilsProvider:
 
         self.wrap2PI(next_states)
         return next_states
+
+    def convert_prediction_to_next_lambdas(
+        self,
+        lambdas: torch.Tensor,
+        prediction: torch.Tensor,
+    ) -> torch.Tensor:
+        """
+        Convert lambda prediction back into next_lambdas.
+        Tensors can be (B,T,*) or (B,*).
+        """
+        lambdas_bt = _ensure_bt(lambdas)
+        pred_bt = _ensure_bt(prediction)
+
+        if pred_bt.shape[-1] < self.lambda_prediction_dim:
+            raise ValueError(
+                f"prediction last dim must be at least {self.lambda_prediction_dim}"
+            )
+
+        pred_bt = pred_bt[..., : self.lambda_prediction_dim]
+
+        if self.prediction_type == "absolute":
+            next_lambdas = pred_bt.clone()
+        else:
+            next_lambdas = lambdas_bt + pred_bt
+
+        return next_lambdas
 
     def calculate_total_energy(self, state_min_coords: torch.Tensor) -> torch.Tensor:
         """

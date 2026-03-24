@@ -17,10 +17,6 @@ python src/axion/neural_solver/train/train.py --cfg src/axion/neural_solver/trai
 ```
 optionally: --device cuda:1
 
-```
-python src/axion/neural_solver/train/train.py --cfg src/axion/neural_solver/train/cfg/Pendulum/transformer.yaml --logdir src/axion/neural_solver/train/trained_models/ --device cuda:1
-```
-
 ### Visualize training (wandb)
 View runs at [wandb.ai](https://wandb.ai) in your project (e.g. `neural-solver-transformer`). 
 Ensure `wandb.login()` runs before training (see `train.py`).

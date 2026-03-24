@@ -13,12 +13,13 @@ algorithm:
   name: SequenceModelTrainer
   use_energy_loss: false
   use_rollout_loss: false
+  lambda_loss_weight: 0.1
   rollout_loss_weight: 0.5
   rollout_loss_horizon: 5
   num_epochs: 25
-  num_iters_per_epoch: 976  # 976 x 1024 = 999 424 (1 M)
+  num_iters_per_epoch: 15  # 976 x 1024 = 999 424 (1 M)
   sample_sequence_length: 10 # the length to sample sequence from dataset
-  batch_size: 1024
+  batch_size: 128
   num_valid_batches: 256 # what portion of validation dataset to validate on (num_valid_batches * batch_size)
   truncate_grad: True
   grad_norm: 1.0
@@ -31,9 +32,9 @@ algorithm:
     # Single dataset: train_dataset_path: path/to/one.hdf5
     # Multiple datasets (e.g. len 500 + len 2000): list of paths
     #train_dataset_path: src/axion/neural_solver/datasets/Pendulum/pendulumContactsValid1Mlen2000envs250seed1.hdf5
-    train_dataset_path: [src/axion/neural_solver/datasets/Pendulum/pendulumContactsValid1Mlen2000envs250seed1.hdf5, src/axion/neural_solver/datasets/Pendulum/pendulumContactsValid250klen500envs250seed1.hdf5]
+    train_dataset_path: [src/axion/neural_solver/datasets/Pendulum/pendulumLambdas.hdf5]
     valid_datasets: 
-      valid: src/axion/neural_solver/datasets/Pendulum/pendulumContactsValid250klen500envs250seed1.hdf5
+      valid: src/axion/neural_solver/datasets/Pendulum/pendulumLambdas.hdf5
       #exp_trajectory: PATH/TO/VALID_DATASET_1.hdf5
       #fixed_ground_passive: PATH/TO/VALID_DATASET_2.hdf5
     max_capacity: 100000000
@@ -43,12 +44,13 @@ algorithm:
     mode: dataset
     rollout_horizon: 10
     num_rollouts: 20000
-    dataset_path: src/axion/neural_solver/datasets/Pendulum/pendulumContactsValid250klen500envs250seed1.hdf5
+    dataset_path: src/axion/neural_solver/datasets/Pendulum/pendulumLambdas.hdf5
     passive: True
 
 inputs:
   low_dim: [
     states_embedding,
+    lambdas,
     contact_normals,
     contact_points_1,
     contact_depths,
@@ -77,5 +79,12 @@ network:
     output_tanh: False
     mlp: 
       layer_sizes: [64]
+      activation: relu
+      layernorm: False
+
+  lambda_model:
+    output_tanh: False
+    mlp:
+      layer_sizes: [256]
       activation: relu
       layernorm: False

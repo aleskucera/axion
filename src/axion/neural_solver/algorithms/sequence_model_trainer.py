@@ -59,6 +59,7 @@ class SequenceModelTrainer:
         self.device = device
         self.use_energy_loss = bool(algo_cfg.get('use_energy_loss', False))
         self.use_rollout_loss = bool(algo_cfg.get('use_rollout_loss', False))
+        self.lambda_loss_weight = float(algo_cfg.get('lambda_loss_weight', 0.1))
         self.rollout_loss_weight = float(algo_cfg.get('rollout_loss_weight', 1.0))
         self.rollout_loss_horizon = int(algo_cfg.get('rollout_loss_horizon', 5))
 
@@ -82,6 +83,7 @@ class SequenceModelTrainer:
             self.neural_model = ModelMixedInput(
                 input_sample = input_sample,
                 output_dim = self.utils_provider.prediction_dim,
+                lambda_output_dim = self.utils_provider.lambda_prediction_dim,
                 input_cfg = cfg['inputs'],
                 network_cfg = cfg['network'],
                 device = self.device
@@ -166,7 +168,10 @@ class SequenceModelTrainer:
                 self.compute_dataset_statistics(self.train_dataset)
                 print('Finished computing dataset statistics...')
                 self.neural_model.set_input_rms(self.dataset_rms)
-                self.neural_model.set_output_rms(self.dataset_rms['target'])
+                self.neural_model.set_output_rms(
+                    self.dataset_rms['target'],
+                    self.dataset_rms.get('target_lambda')
+                )
             else:
                 assert model_checkpoint_path is not None, \
                     "model_checkpoint_path is required to skip computing dataset statistics"
@@ -303,118 +308,144 @@ class SequenceModelTrainer:
                             next_states = data['next_states'],
                             dt = self.neural_env.frame_dt
                         )
+        data['target_lambda'] = self.utils_provider.convert_next_lambdas_to_prediction(
+                lambdas = data['lambdas'],
+                next_lambdas = data['next_lambdas'],
+            )
 
         return data
 
-    def compute_rollout_loss(self, data, rollout_horizon):
-        """
-        Differentiable autoregressive rollout loss.
+    # def compute_rollout_loss(self, data, rollout_horizon):
+    #     """
+    #     Differentiable autoregressive rollout loss.
 
-        Unrolls the model for ``rollout_horizon`` steps starting from the
-        first GT state.  At each step the model is fed its own predicted
-        state (plus GT auxiliary inputs such as contacts and gravity), so
-        gradients flow through the entire chain via standard BPTT.
+    #     Unrolls the model for ``rollout_horizon`` steps starting from the
+    #     first GT state.  At each step the model is fed its own predicted
+    #     state (plus GT auxiliary inputs such as contacts and gravity), so
+    #     gradients flow through the entire chain via standard BPTT.
 
-        Returns the mean-squared error between the predicted rollout
-        trajectory and the ground-truth next_states.
-        """
-        # Extract sequence shape (B=batch, T=time, state_dim=flattened state features).
-        B, T, state_dim = data['states'].shape
-        # Rollout length must not exceed the available sequence length.
-        H = min(rollout_horizon, T)
+    #     Returns the mean-squared error between the predicted rollout
+    #     trajectory and the ground-truth next_states.
+    #     """
+    #     # Extract sequence shape (B=batch, T=time, state_dim=flattened state features).
+    #     B, T, state_dim = data['states'].shape
+    #     # Rollout length must not exceed the available sequence length.
+    #     H = min(rollout_horizon, T)
 
-        # Ground-truth next states for the rollout horizon.
-        gt_next_states = data['next_states'][:, :H, :]
+    #     # Ground-truth next states for the rollout horizon.
+    #     gt_next_states = data['next_states'][:, :H, :]
 
-        # Determine which (B, time, dim) auxiliary tensors to feed into the model.
-        aux_keys = [
-            k for k in data
-            if k not in ('states', 'states_embedding', 'next_states', 'target')
-            and isinstance(data[k], torch.Tensor) and data[k].ndim == 3
-        ]
+    #     # Determine which (B, time, dim) auxiliary tensors to feed into the model.
+    #     aux_keys = [
+    #         k for k in data
+    #         if k not in (
+    #             'states',
+    #             'states_embedding',
+    #             'next_states',
+    #             'next_lambdas',
+    #             'target',
+    #             'target_lambda',
+    #         )
+    #         and isinstance(data[k], torch.Tensor) and data[k].ndim == 3
+    #     ]
 
-        # Start autoregressive rollout from the first ground-truth state.
-        current_state = data['states'][:, 0:1, :]
-        state_context = [current_state]
-        predicted_next_states = []
+    #     # Start autoregressive rollout from the first ground-truth state.
+    #     current_state = data['states'][:, 0:1, :]
+    #     state_context = [current_state]
+    #     predicted_next_states = []
 
-        # Autoregressive unroll: at each step, feed the model its previous prediction.
-        for step in range(H):
-            # Concatenate context states so far to form the model input window.
-            ctx = torch.cat(state_context, dim=1)
-            # Core model inputs (both "states" and "states_embedding" use the same tensor here).
-            step_data = {
-                'states': ctx,
-                'states_embedding': ctx,
-            }
-            # Add auxiliary inputs, truncated up to the current step.
-            for ak in aux_keys:
-                step_data[ak] = data[ak][:, :step + 1, :]
+    #     # Autoregressive unroll: at each step, feed the model its previous prediction.
+    #     for step in range(H):
+    #         # Concatenate context states so far to form the model input window.
+    #         ctx = torch.cat(state_context, dim=1)
+    #         # Core model inputs (both "states" and "states_embedding" use the same tensor here).
+    #         step_data = {
+    #             'states': ctx,
+    #             'states_embedding': ctx,
+    #         }
+    #         # Add auxiliary inputs, truncated up to the current step.
+    #         for ak in aux_keys:
+    #             step_data[ak] = data[ak][:, :step + 1, :]
 
-            # Model prediction for the whole context; we only keep the last time index.
-            prediction = self.neural_model(step_data)
-            pred_last = prediction[:, -1:, :]
+    #         # Model prediction for the whole context; we only keep the last time index.
+    #         prediction = self.neural_model(step_data)
+    #         pred_last = prediction['state'][:, -1:, :]
 
-            # Convert the model's prediction head output into a physical next state.
-            next_state = self.utils_provider.convert_prediction_to_next_states(
-                states=state_context[-1],
-                prediction=pred_last,
-            )
+    #         # Convert the model's prediction head output into a physical next state.
+    #         next_state = self.utils_provider.convert_prediction_to_next_states(
+    #             states=state_context[-1],
+    #             prediction=pred_last,
+    #         )
 
-            # Accumulate predicted next states for the rollout trajectory loss.
-            predicted_next_states.append(next_state)
+    #         # Accumulate predicted next states for the rollout trajectory loss.
+    #         predicted_next_states.append(next_state)
 
-            # Feed the prediction back into the context for the next rollout step.
-            if step < H - 1:
-                state_context.append(next_state)
+    #         # Feed the prediction back into the context for the next rollout step.
+    #         if step < H - 1:
+    #             state_context.append(next_state)
 
-        # Stack predictions to (B, H, state_dim) and compute rollout MSE loss.
-        predicted_rollout = torch.cat(predicted_next_states, dim=1)
-        return torch.nn.MSELoss()(predicted_rollout, gt_next_states)
+    #     # Stack predictions to (B, H, state_dim) and compute rollout MSE loss.
+    #     predicted_rollout = torch.cat(predicted_next_states, dim=1)
+    #     return torch.nn.MSELoss()(predicted_rollout, gt_next_states)
 
     def compute_loss(self, data, train):
 
         prediction_target = data['target']
+        prediction_target_lambda = data['target_lambda']
         prediction = self.neural_model(data)
+        state_prediction = prediction['state']
+        lambda_prediction = prediction['lambda']
         
         if self.neural_model.normalize_output:
-            loss_weights = 1. / torch.sqrt(self.neural_model.output_rms.var + 1e-5)
+            state_loss_weights = 1. / torch.sqrt(self.neural_model.output_rms.var + 1e-5)
+            lambda_loss_weights = 1. / torch.sqrt(self.neural_model.lambda_output_rms.var + 1e-5)
         else:
-            loss_weights = torch.ones(
-                prediction.shape[-1], 
-                device = prediction.device
-            )
+            state_loss_weights = torch.ones(state_prediction.shape[-1], device = state_prediction.device)
+            lambda_loss_weights = torch.ones(lambda_prediction.shape[-1], device = lambda_prediction.device)
         
-        loss = torch.nn.MSELoss()(
-            prediction * loss_weights,
-            prediction_target * loss_weights
+        state_loss = torch.nn.MSELoss()(
+            state_prediction * state_loss_weights,
+            prediction_target * state_loss_weights
         )
+        lambda_loss = torch.nn.MSELoss()(
+            lambda_prediction * lambda_loss_weights,
+            prediction_target_lambda * lambda_loss_weights
+        )
+
+        # total loss
+        loss = state_loss + self.lambda_loss_weight * lambda_loss
 
         # predicted_next_states: (B, T, state_dim) — needed with grad for energy loss
         predicted_next_states = self.utils_provider.convert_prediction_to_next_states(
             states=data['states'],
-            prediction=prediction
+            prediction=state_prediction
         )
         self.utils_provider.wrap2PI(predicted_next_states)
+        predicted_next_lambdas = self.utils_provider.convert_prediction_to_next_lambdas(
+            lambdas=data['lambdas'],
+            prediction=lambda_prediction
+        )
 
-        loss_energy = None
-        if self.use_energy_loss:
-            # Energy loss: per-sample energies (B, T), then MSE over batch and time
-            E_next_states_gt = self.utils_provider.calculate_total_energy(data['next_states'])
-            E_next_states_predicted = self.utils_provider.calculate_total_energy(predicted_next_states)
-            loss_energy = torch.nn.MSELoss()(E_next_states_predicted, E_next_states_gt)
-            loss = loss + loss_energy
+        # loss_energy = None
+        # if self.use_energy_loss:
+        #     # Energy loss: per-sample energies (B, T), then MSE over batch and time
+        #     E_next_states_gt = self.utils_provider.calculate_total_energy(data['next_states'])
+        #     E_next_states_predicted = self.utils_provider.calculate_total_energy(predicted_next_states)
+        #     loss_energy = torch.nn.MSELoss()(E_next_states_predicted, E_next_states_gt)
+        #     loss = loss + loss_energy
 
-        loss_rollout = None
-        if self.use_rollout_loss:
-            loss_rollout = self.compute_rollout_loss(
-                data, self.rollout_loss_horizon
-            )
-            loss = loss + self.rollout_loss_weight * loss_rollout
+        # loss_rollout = None
+        # if self.use_rollout_loss:
+        #     loss_rollout = self.compute_rollout_loss(
+        #         data, self.rollout_loss_horizon
+        #     )
+        #     loss = loss + self.rollout_loss_weight * loss_rollout
 
         # Reported error statistics (no grad)
         with torch.no_grad():
             loss_itemized = {}
+            loss_itemized['state_prediction_MSE'] = state_loss.detach()
+            loss_itemized['lambda_prediction_MSE'] = lambda_loss.detach()
             for i in range(predicted_next_states.shape[-1]):
                 loss_itemized[f'state_{i}'] = ((
                     predicted_next_states[..., i] - data['next_states'][..., i]
@@ -433,10 +464,14 @@ class SequenceModelTrainer:
                 - data['next_states'][..., self.utils_provider.dof_q_per_env:],
                 dim=-1
             ).mean()
-            if loss_energy is not None:
-                loss_itemized['energy_MSE'] = loss_energy.detach()
-            if loss_rollout is not None:
-                loss_itemized['rollout_MSE'] = loss_rollout.detach()
+            loss_itemized['lambda_MSE'] = torch.nn.MSELoss()(
+                predicted_next_lambdas,
+                data['next_lambdas']
+            )
+            # if loss_energy is not None:
+            #     loss_itemized['energy_MSE'] = loss_energy.detach()
+            # if loss_rollout is not None:
+            #     loss_itemized['rollout_MSE'] = loss_rollout.detach()
 
         return loss, loss_itemized
         

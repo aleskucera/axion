@@ -109,6 +109,8 @@ class NeuralPredictor:
         self.nn_model = nn_model
         self.nn_model.to(device)
         self.nn_model.eval()
+        self.lambda_dim = int(self.nn_model.lambda_model.output_net.out_features)
+        self.lambdas = torch.zeros((self.num_worlds, self.lambda_dim), device=self.device)
 
         # Load NN model configuration
         self.neural_integrator_cfg = nn_cfg.get('env', {}).get('neural_integrator_cfg', {})
@@ -134,6 +136,7 @@ class NeuralPredictor:
     def reset(self):
         """Reset the history buffer (call at start of new trajectory)."""
         self.states_history.clear()
+        self.lambdas.zero_()
 
     
     def _convert_newton_contacts_to_contacts_for_nn_model(
@@ -299,6 +302,7 @@ class NeuralPredictor:
         history_entry = {
             "root_body_q": root_body_q.clone(),
             "states": states.clone(),
+            "lambdas": self.lambdas.clone(),
             "gravity_dir": gravity_in_body.clone(),
             "contact_normals": processed_contacts['contact_normals'].clone(),
             "contact_depths": processed_contacts['contact_depths'].clone(), 
@@ -354,15 +358,24 @@ class NeuralPredictor:
         # Run model inference
         with torch.no_grad():
             prediction = self.nn_model.evaluate(self.nn_model_inputs)  # (num_envs, 1, pred_dim)
+            state_prediction = prediction['state']
+            lambda_prediction = prediction['lambda']
             # Take prediction from last timestep
-            if prediction.shape[1] > 1:
-                prediction = prediction[:, -1, :]  # (num_envs, pred_dim)
+            if state_prediction.shape[1] > 1:
+                state_prediction = state_prediction[:, -1, :]  # (num_envs, pred_dim)
             else:
-                prediction = prediction.squeeze(1)  # (num_envs, pred_dim)
+                state_prediction = state_prediction.squeeze(1)  # (num_envs, pred_dim)
+            if lambda_prediction.shape[1] > 1:
+                lambda_prediction = lambda_prediction[:, -1, :]
+            else:
+                lambda_prediction = lambda_prediction.squeeze(1)
         
         # Convert prediction to next states
         cur_states = self.nn_model_inputs["states"][:, -1, :]  # (num_envs, state_dim)
-        next_states = self._convert_prediction_to_next_states(cur_states, prediction)
+        next_states = self._convert_prediction_to_next_states(cur_states, state_prediction)
+        cur_lambdas = self.nn_model_inputs["lambdas"][:, -1, :]
+        next_lambdas = self._convert_prediction_to_next_lambdas(cur_lambdas, lambda_prediction)
+        self.lambdas.copy_(next_lambdas)
         
         # Convert back to world frame if needed
         #print("After _convert_prediction_to_next_states", next_states)
@@ -455,6 +468,24 @@ class NeuralPredictor:
             raise NotImplementedError
 
         return next_states
+
+    def _convert_prediction_to_next_lambdas(self, lambdas, prediction):
+        """
+        Convert model prediction to next lambdas.
+
+        Args:
+            lambdas: (num_envs, lambda_dim)
+            prediction: (num_envs, lambda_dim)
+
+        Returns:
+            next_lambdas: (num_envs, lambda_dim)
+        """
+        if self.prediction_type == "absolute":
+            return prediction.clone()
+        elif self.prediction_type == "relative":
+            return lambdas + prediction
+        else:
+            raise NotImplementedError
 
     def _convert_states_back_to_world(self, root_body_q, states):
         """
