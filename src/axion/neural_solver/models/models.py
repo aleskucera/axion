@@ -57,6 +57,7 @@ class ModelMixedInput(nn.Module):
         self,
         input_sample,
         output_dim,
+        lambda_output_dim,
         input_cfg,
         network_cfg,
         device = 'cuda:0'
@@ -66,10 +67,12 @@ class ModelMixedInput(nn.Module):
 
         self.device = device
         self.model = None
+        self.lambda_model = None
         
         self.input_rms = None
         self.normalize_input = network_cfg.get('normalize_input', False)
         self.output_rms = None
+        self.lambda_output_rms = None
         self.normalize_output = network_cfg.get('normalize_output', False)
 
         self.encoders, self.feature_dim = self.construct_input_encoders(
@@ -101,6 +104,7 @@ class ModelMixedInput(nn.Module):
         else:
             NotImplementedError
 
+        # State prediction head
         if self.model is None:
             self.model = MLPDeterministic(
                 (self.feature_dim, ), 
@@ -108,8 +112,17 @@ class ModelMixedInput(nn.Module):
                 network_cfg['model'], 
                 device = device
             )
+        # Lambda prediction head
+        if self.lambda_model is None:
+            self.lambda_model = MLPDeterministic(
+                (self.feature_dim, ),
+                lambda_output_dim,
+                network_cfg['lambda_model'],
+                device = device
+            )
         
         self.output_tanh = network_cfg.get('output_tanh', False)
+        self.lambda_output_tanh = network_cfg.get('lambda_model', {}).get('output_tanh', False)
     
     def construct_input_encoders(
         self,
@@ -154,8 +167,9 @@ class ModelMixedInput(nn.Module):
             else:
                 self.input_rms[input_name] = data_rms[input_name]
     
-    def set_output_rms(self, output_rms):
+    def set_output_rms(self, output_rms, lambda_output_rms = None):
         self.output_rms = output_rms
+        self.lambda_output_rms = lambda_output_rms
 
     def extract_input_features(self, input_dict): # input can be in shape (B, input_dim) or (T, B, input_dim)
         features = []
@@ -180,16 +194,22 @@ class ModelMixedInput(nn.Module):
 
         if self.is_transformer:
             features = self.transformer_model(features)
-                    
-        output = self.model(features, deterministic = deterministic)
+        state_output = self.model(features, deterministic = deterministic)
+        lambda_output = self.lambda_model(features, deterministic = deterministic)
 
         if self.output_tanh:
-            output = torch.tanh(output)
-
+            state_output = torch.tanh(state_output)
         if self.normalize_output:
-            output = self.output_rms.normalize(output, un_norm = True)
+            state_output = self.output_rms.normalize(state_output, un_norm = True)
+        if self.lambda_output_tanh:
+            lambda_output = torch.tanh(lambda_output)
+        if self.normalize_output and self.lambda_output_rms is not None:
+            lambda_output = self.lambda_output_rms.normalize(lambda_output, un_norm = True)
 
-        return output[:, -1:, :]
+        # Create output dictionary
+        output = {'state': state_output[:, -1:, :]}
+        output['lambda'] = lambda_output[:, -1:, :]
+        return output
 
     def forward(self, input_dict, deterministic = False, inject_noise = False): # Multi-step sequence forward, input in shape (B, T, input_dim)
         if self.normalize_input:
@@ -210,15 +230,25 @@ class ModelMixedInput(nn.Module):
 
         B, T, feature_dim = features.shape
         features_flatten = features.contiguous().view(-1, feature_dim)
-        output_flatten = self.model(features_flatten, deterministic = deterministic)
-        output = output_flatten.view(B, T, -1)
+        state_output_flatten = self.model(features_flatten, deterministic = deterministic)
+        lambda_output_flatten = self.lambda_model(features_flatten, deterministic = deterministic)
+        state_output = state_output_flatten.view(B, T, -1)
 
         if self.output_tanh:
-            output = torch.tanh(output)
+            state_output = torch.tanh(state_output)
 
         if self.normalize_output:
-            output = self.output_rms.normalize(output, un_norm = True)
-            
+            state_output = self.output_rms.normalize(state_output, un_norm = True)
+
+        lambda_output = lambda_output_flatten.view(B, T, -1)
+        if self.lambda_output_tanh:
+            lambda_output = torch.tanh(lambda_output)
+        if self.normalize_output and self.lambda_output_rms is not None:
+            lambda_output = self.lambda_output_rms.normalize(lambda_output, un_norm = True)
+
+        # Create output dictionary
+        output = {'state': state_output}
+        output['lambda'] = lambda_output
         return output
         
     def to(self, device):
@@ -229,11 +259,11 @@ class ModelMixedInput(nn.Module):
             self.transformer_model.to(device)
 
         self.model.to(device)
+        self.lambda_model.to(device)
         if self.input_rms is not None:
             for k in self.input_rms:
                 self.input_rms[k] = self.input_rms[k].to(device)
         if self.output_rms is not None:
             self.output_rms = self.output_rms.to(device)
-        
-    def reset(self, batch_size):
-        self.init_rnn(batch_size)
+        if self.lambda_output_rms is not None:
+            self.lambda_output_rms = self.lambda_output_rms.to(device)
