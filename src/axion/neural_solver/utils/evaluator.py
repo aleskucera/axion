@@ -33,7 +33,7 @@ from axion.neural_solver.utils.datasets import TrajectoryDataset
 from axion.neural_solver.utils.python_utils import print_warning
 from axion.neural_solver.utils import torch_utils
 
-torch.set_printoptions(precision=6)
+torch.set_printoptions(precision=6, sci_mode=True)
 
 class NeuralSimEvaluator:
     def __init__(
@@ -196,6 +196,10 @@ class NeuralSimEvaluator:
                 trajectories['actions'] = torch.zeros(
                     (self.eval_horizon, num_traj, self.neural_env.action_dim),
                     device = _device)
+            if 'next_lambdas' in trajectories:
+                trajectories['next_lambdas'] = (
+                    trajectories['next_lambdas'].transpose(0, 1).to(_device)
+                )
         else:
             raise NotImplementedError
         
@@ -204,10 +208,16 @@ class NeuralSimEvaluator:
         initial_states = trajectories['states'][0, :total_traj, :]
         actions = trajectories['actions'][:, :total_traj, :]
         target_next_states = trajectories['next_states'][:, :total_traj, :]
+        target_next_lambdas = trajectories['next_lambdas'].to(self.neural_env.torch_device)
+        target_next_lambdas = target_next_lambdas[:, :total_traj, :]
 
         # rollout with neural_env                  
         rollout_states = torch.zeros(
             (self.eval_horizon + 1, total_traj, self.neural_env.state_dim), 
+            device = self.neural_env.torch_device
+        )
+        rollout_lambdas = torch.zeros(
+            (self.eval_horizon, total_traj, self.neural_env.utils_provider.lambda_dim),
             device = self.neural_env.torch_device
         )
 
@@ -272,6 +282,9 @@ class NeuralSimEvaluator:
                         env_mode = env_mode
                     )
                 )
+                rollout_lambdas[step, start_id: end_id, :].copy_(
+                    self.neural_env.lambdas
+                )
 
                 if render:
                     self.neural_env.render()
@@ -292,7 +305,9 @@ class NeuralSimEvaluator:
         # calculate error and error statistics
         next_states_diff, error_stats = self.calculate_error(
             target_next_states,
-            rollout_states[1:]
+            rollout_states[1:],
+            target_next_lambdas=target_next_lambdas,
+            rollout_lambdas=rollout_lambdas,
         )
         
         # return results
@@ -309,7 +324,9 @@ class NeuralSimEvaluator:
     def calculate_error(
         self, 
         target_next_states, # (T - 1, B, state_dim)
-        rollout_states # (T - 1, B, state_dim)
+        rollout_states, # (T - 1, B, state_dim)
+        target_next_lambdas = None,
+        rollout_lambdas = None,
     ):
         next_states_diff = target_next_states - rollout_states
         self.neural_env.wrap2PI(next_states_diff)  
@@ -373,5 +390,11 @@ class NeuralSimEvaluator:
         error_stats['step-wise']['error(L2)'] = L2_error_per_step
         error_stats['step-wise']['q_error(L2)'] = q_L2_error_per_step
         error_stats['step-wise']['qd_error(L2)'] = qd_L2_error_per_step
+
+        lambda_diff = target_next_lambdas - rollout_lambdas
+        lambda_MSE_error_per_step = (lambda_diff ** 2).mean((-1, -2))
+        lambda_MSE_error = lambda_MSE_error_per_step.mean()
+        error_stats['overall']['lambda_error(MSE)'] = lambda_MSE_error
+        error_stats['step-wise']['lambda_error(MSE)'] = lambda_MSE_error_per_step
         
         return next_states_diff, error_stats
