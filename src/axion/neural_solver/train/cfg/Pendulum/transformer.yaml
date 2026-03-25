@@ -12,10 +12,7 @@ env:
 algorithm:
   name: SequenceModelTrainer
   use_energy_loss: false
-  use_rollout_loss: false
   lambda_loss_weight: 0.1
-  rollout_loss_weight: 0.5
-  rollout_loss_horizon: 5
   num_epochs: 25
   num_iters_per_epoch: 15  # 976 x 1024 = 999 424 (1 M)
   sample_sequence_length: 10 # the length to sample sequence from dataset
@@ -24,10 +21,11 @@ algorithm:
   truncate_grad: True
   grad_norm: 1.0
   optimizer:
+    name: adam   # adam | adamw
     lr_start: 1e-3
     lr_end: 1e-4
     lr_schedule: linear
-    weight_decay: 3e-4
+    weight_decay: 0.0 # 0.0 was default for adam
 
   dataset:
     # Single dataset: train_dataset_path: path/to/one.hdf5
