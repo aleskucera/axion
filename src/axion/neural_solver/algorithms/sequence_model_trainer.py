@@ -109,7 +109,7 @@ class SequenceModelTrainer:
         self.train_dataset = None
         self.valid_datasets = {}
         self.collate_fn = None
-        self.get_datasets(train_dataset_path, valid_datasets_cfg)
+        self.get_datasets(train_dataset_path, valid_datasets_cfg, require_train_dataset=bool(cli_cfg.get('train', True)))
 
         """ Parameters only used for training """
         if cli_cfg['train']:
@@ -234,24 +234,33 @@ class SequenceModelTrainer:
                             device = self.device
                         )
     
-    def get_datasets(self, train_dataset_path, valid_datasets_cfg):
-        # Support single path (str) or multiple paths (list) for training
-        if isinstance(train_dataset_path, (list, tuple)):
-            train_datasets = [
-                TrajectoryDataset(
+    def get_datasets(self, train_dataset_path, valid_datasets_cfg, require_train_dataset: bool = True):
+        # Training dataset is optional for `--test` runs.
+        if train_dataset_path is None:
+            if require_train_dataset:
+                raise ValueError(
+                    "Missing algorithm.dataset.train_dataset_path in config. "
+                    "This is required for training runs."
+                )
+            self.train_dataset = None
+        else:
+            # Support single path (str) or multiple paths (list) for training
+            if isinstance(train_dataset_path, (list, tuple)):
+                train_datasets = [
+                    TrajectoryDataset(
+                        sample_sequence_length=self.sample_sequence_length,
+                        hdf5_dataset_path=path,
+                        max_capacity=self.dataset_max_capacity,
+                    )
+                    for path in train_dataset_path
+                ]
+                self.train_dataset = ConcatDataset(train_datasets)
+            else:
+                self.train_dataset = TrajectoryDataset(
                     sample_sequence_length=self.sample_sequence_length,
-                    hdf5_dataset_path=path,
+                    hdf5_dataset_path=train_dataset_path,
                     max_capacity=self.dataset_max_capacity,
                 )
-                for path in train_dataset_path
-            ]
-            self.train_dataset = ConcatDataset(train_datasets)
-        else:
-            self.train_dataset = TrajectoryDataset(
-                sample_sequence_length=self.sample_sequence_length,
-                hdf5_dataset_path=train_dataset_path,
-                max_capacity=self.dataset_max_capacity,
-            )
         valid_cfg = valid_datasets_cfg or {}
         for valid_dataset_name in valid_cfg.keys():
             self.valid_datasets[valid_dataset_name] = TrajectoryDataset(
@@ -330,118 +339,39 @@ class SequenceModelTrainer:
 
         return data
 
-    def compute_loss(self, data, train):
-        """
-        Compute HuberLoss for state prediction
-        """
-        prediction_target = data['target']
-        prediction = self.neural_model(data)
-        state_prediction = prediction['state']
-        
-        if self.neural_model.normalize_output:
-            state_loss_weights = 1. / torch.sqrt(self.neural_model.output_rms.var + 1e-5)
-        else:
-            state_loss_weights = torch.ones(state_prediction.shape[-1], device = state_prediction.device)
-        
-        huber_delta = 1.0
-        loss = torch.nn.HuberLoss(delta= huber_delta)(
-            state_prediction * state_loss_weights,
-            prediction_target * state_loss_weights,
-        )
-        
-        predicted_next_states = self.utils_provider.convert_prediction_to_next_states(
-            states=data['states'],
-            prediction=state_prediction
-        )
-        self.utils_provider.wrap2PI(predicted_next_states)
-
-        with torch.no_grad():
-            loss_itemized = {}
-            loss_itemized['state_prediction_HUBER'] = loss.detach()
-            for i in range(predicted_next_states.shape[-1]):
-                loss_itemized[f'state_{i}'] = ((
-                    predicted_next_states[..., i] - data['next_states'][..., i]
-                ) ** 2).mean()
-            loss_itemized['state_HUBER'] = torch.nn.HuberLoss(delta=huber_delta)(
-                predicted_next_states,
-                data['next_states']
-            )
-            loss_itemized['q_error_norm'] = torch.norm(
-                predicted_next_states[..., :self.utils_provider.dof_q_per_env]
-                - data['next_states'][..., :self.utils_provider.dof_q_per_env],
-                dim=-1
-            ).mean()
-            loss_itemized['qd_error_norm'] = torch.norm(
-                predicted_next_states[..., self.utils_provider.dof_q_per_env:]
-                - data['next_states'][..., self.utils_provider.dof_q_per_env:],
-                dim=-1
-            ).mean()
-
-        return loss, loss_itemized
-
     # def compute_loss(self, data, train):
-
+    #     """
+    #     Compute HuberLoss for state prediction
+    #     """
     #     prediction_target = data['target']
     #     prediction = self.neural_model(data)
     #     state_prediction = prediction['state']
-    #     lambda_prediction = prediction['lambda']
         
     #     if self.neural_model.normalize_output:
     #         state_loss_weights = 1. / torch.sqrt(self.neural_model.output_rms.var + 1e-5)
     #     else:
     #         state_loss_weights = torch.ones(state_prediction.shape[-1], device = state_prediction.device)
         
-    #     state_loss = torch.nn.MSELoss()(
+    #     huber_delta = 1.0
+    #     loss = torch.nn.HuberLoss(delta= huber_delta)(
     #         state_prediction * state_loss_weights,
-    #         prediction_target * state_loss_weights
+    #         prediction_target * state_loss_weights,
     #     )
-
-    #     loss = state_loss
-
-    #     if self.has_lambda_head:
-    #         prediction_target_lambda = data['target_lambda']
-    #         if self.neural_model.normalize_output:
-    #             lambda_loss_weights = 1. / torch.sqrt(self.neural_model.lambda_output_rms.var + 1e-5)
-    #         else:
-    #             lambda_loss_weights = torch.ones(lambda_prediction.shape[-1], device = lambda_prediction.device)
-    #         lambda_loss = torch.nn.MSELoss()(
-    #             lambda_prediction * lambda_loss_weights,
-    #             prediction_target_lambda * lambda_loss_weights
-    #         )
-    #         loss = loss + self.lambda_loss_weight * lambda_loss
-
-    #     # predicted_next_states: (B, T, state_dim) — needed with grad for energy loss
+        
     #     predicted_next_states = self.utils_provider.convert_prediction_to_next_states(
     #         states=data['states'],
     #         prediction=state_prediction
     #     )
     #     self.utils_provider.wrap2PI(predicted_next_states)
 
-    #     if self.has_lambda_head:
-    #         predicted_next_lambdas = self.utils_provider.convert_prediction_to_next_lambdas(
-    #             lambdas=data['lambdas'],
-    #             prediction=lambda_prediction
-    #         )
-
-    #     # loss_energy = None
-    #     # if self.use_energy_loss:
-    #     #     # Energy loss: per-sample energies (B, T), then MSE over batch and time
-    #     #     E_next_states_gt = self.utils_provider.calculate_total_energy(data['next_states'])
-    #     #     E_next_states_predicted = self.utils_provider.calculate_total_energy(predicted_next_states)
-    #     #     loss_energy = torch.nn.MSELoss()(E_next_states_predicted, E_next_states_gt)
-    #     #     loss = loss + loss_energy
-
-    #     # Reported error statistics (no grad)
     #     with torch.no_grad():
     #         loss_itemized = {}
-    #         loss_itemized['state_prediction_MSE'] = state_loss.detach()
-    #         if self.has_lambda_head:
-    #             loss_itemized['lambda_prediction_MSE'] = lambda_loss.detach()
+    #         loss_itemized['state_prediction_HUBER'] = loss.detach()
     #         for i in range(predicted_next_states.shape[-1]):
     #             loss_itemized[f'state_{i}'] = ((
     #                 predicted_next_states[..., i] - data['next_states'][..., i]
     #             ) ** 2).mean()
-    #         loss_itemized['state_MSE'] = torch.nn.MSELoss()(
+    #         loss_itemized['state_HUBER'] = torch.nn.HuberLoss(delta=huber_delta)(
     #             predicted_next_states,
     #             data['next_states']
     #         )
@@ -455,14 +385,103 @@ class SequenceModelTrainer:
     #             - data['next_states'][..., self.utils_provider.dof_q_per_env:],
     #             dim=-1
     #         ).mean()
-    #         if self.has_lambda_head:
-    #             loss_itemized['lambda_MSE'] = torch.nn.MSELoss()(
-    #                 predicted_next_lambdas,
-    #                 data['next_lambdas']
-    #             )
-    #         # if loss_energy is not None:
-    #         #     loss_itemized['energy_MSE'] = loss_energy.detach()
+
     #     return loss, loss_itemized
+
+    def compute_loss(self, data, train):
+
+        prediction_target = data['target']
+        prediction = self.neural_model(data)
+        state_prediction = prediction['state']
+        lambda_prediction = prediction['lambda']
+        
+        if self.neural_model.normalize_output:
+            state_loss_weights = 1. / torch.sqrt(self.neural_model.output_rms.var + 1e-5)
+        else:
+            state_loss_weights = torch.ones(state_prediction.shape[-1], device = state_prediction.device)
+        
+        position_loss = torch.nn.MSELoss()(
+            state_prediction[..., :self.utils_provider.dof_q_per_env] * state_loss_weights[:self.utils_provider.dof_q_per_env],
+            prediction_target[..., :self.utils_provider.dof_q_per_env] * state_loss_weights[:self.utils_provider.dof_q_per_env]
+        )
+
+        velocity_loss = torch.nn.MSELoss()(
+            state_prediction[..., self.utils_provider.dof_q_per_env:] * state_loss_weights[self.utils_provider.dof_q_per_env:],
+            prediction_target[..., self.utils_provider.dof_q_per_env:] * state_loss_weights[self.utils_provider.dof_q_per_env:]
+        )
+
+        w_q, w_qd = 1.0, 2.0
+        loss = w_q * position_loss + w_qd * velocity_loss
+
+        if self.has_lambda_head:
+            prediction_target_lambda = data['target_lambda']
+            if self.neural_model.normalize_output:
+                lambda_loss_weights = 1. / torch.sqrt(self.neural_model.lambda_output_rms.var + 1e-5)
+            else:
+                lambda_loss_weights = torch.ones(lambda_prediction.shape[-1], device = lambda_prediction.device)
+            lambda_loss = torch.nn.MSELoss()(
+                lambda_prediction * lambda_loss_weights,
+                prediction_target_lambda * lambda_loss_weights
+            )
+            loss = loss + self.lambda_loss_weight * lambda_loss
+
+        # predicted_next_states: (B, T, state_dim) — needed with grad for energy loss
+        predicted_next_states = self.utils_provider.convert_prediction_to_next_states(
+            states=data['states'],
+            prediction=state_prediction
+        )
+        self.utils_provider.wrap2PI(predicted_next_states)
+
+        if self.has_lambda_head:
+            predicted_next_lambdas = self.utils_provider.convert_prediction_to_next_lambdas(
+                lambdas=data['lambdas'],
+                prediction=lambda_prediction
+            )
+
+        # loss_energy = None
+        # if self.use_energy_loss:
+        #     # Energy loss: per-sample energies (B, T), then MSE over batch and time
+        #     E_next_states_gt = self.utils_provider.calculate_total_energy(data['next_states'])
+        #     E_next_states_predicted = self.utils_provider.calculate_total_energy(predicted_next_states)
+        #     loss_energy = torch.nn.MSELoss()(E_next_states_predicted, E_next_states_gt)
+        #     loss = loss + loss_energy
+
+        # Reported error statistics (no grad)
+        with torch.no_grad():
+            loss_itemized = {}
+            loss_itemized['state_prediction_MSE'] = loss.detach()
+            if self.has_lambda_head:
+                loss_itemized['lambda_prediction_MSE'] = lambda_loss.detach()
+            for i in range(predicted_next_states.shape[-1]):
+                loss_itemized[f'state_{i}'] = ((
+                    predicted_next_states[..., i] - data['next_states'][..., i]
+                ) ** 2).mean()
+            loss_itemized['position_MSE'] = torch.nn.MSELoss()(
+                predicted_next_states[..., :self.utils_provider.dof_q_per_env],
+                data['next_states'][..., :self.utils_provider.dof_q_per_env]
+            )
+            loss_itemized['velocity_MSE'] = torch.nn.MSELoss()(
+                predicted_next_states[..., self.utils_provider.dof_q_per_env:],
+                data['next_states'][..., self.utils_provider.dof_q_per_env:]
+            )
+            loss_itemized['q_error_norm'] = torch.norm(
+                predicted_next_states[..., :self.utils_provider.dof_q_per_env]
+                - data['next_states'][..., :self.utils_provider.dof_q_per_env],
+                dim=-1
+            ).mean()
+            loss_itemized['qd_error_norm'] = torch.norm(
+                predicted_next_states[..., self.utils_provider.dof_q_per_env:]
+                - data['next_states'][..., self.utils_provider.dof_q_per_env:],
+                dim=-1
+            ).mean()
+            if self.has_lambda_head:
+                loss_itemized['lambda_MSE'] = torch.nn.MSELoss()(
+                    predicted_next_lambdas,
+                    data['next_lambdas']
+                )
+            # if loss_energy is not None:
+            #     loss_itemized['energy_MSE'] = loss_energy.detach()
+        return loss, loss_itemized
 
     def compute_test_loss_reference(self, data):
         """Stable reference loss for `--test` runs: weighted state MSE only.
@@ -575,6 +594,11 @@ class SequenceModelTrainer:
         return avg_loss, avg_loss_itemized, grad_info
             
     def train(self):
+        if self.train_dataset is None:
+            raise ValueError(
+                "Training dataset is not set. Please provide "
+                "`algorithm.dataset.train_dataset_path` in the config."
+            )
         train_loader = DataLoader(
             dataset = self.train_dataset,
             batch_size = self.batch_size,
