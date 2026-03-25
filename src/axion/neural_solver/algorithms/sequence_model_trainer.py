@@ -43,6 +43,8 @@ from axion.neural_solver.utils.running_mean_std import RunningMeanStd
 from axion.neural_solver.utils.time_report import TimeReport, TimeProfiler
 from axion.neural_solver.utils.logger import Logger
 
+TIME_STEP_S = 0.01
+
 class SequenceModelTrainer:
     def __init__(
         self, 
@@ -400,18 +402,18 @@ class SequenceModelTrainer:
         else:
             state_loss_weights = torch.ones(state_prediction.shape[-1], device = state_prediction.device)
         
-        position_loss = torch.nn.MSELoss()(
-            state_prediction[..., :self.utils_provider.dof_q_per_env] * state_loss_weights[:self.utils_provider.dof_q_per_env],
-            prediction_target[..., :self.utils_provider.dof_q_per_env] * state_loss_weights[:self.utils_provider.dof_q_per_env]
+        mse_loss = torch.nn.MSELoss()(
+            state_prediction * state_loss_weights,
+            prediction_target * state_loss_weights
         )
 
-        velocity_loss = torch.nn.MSELoss()(
-            state_prediction[..., self.utils_provider.dof_q_per_env:] * state_loss_weights[self.utils_provider.dof_q_per_env:],
-            prediction_target[..., self.utils_provider.dof_q_per_env:] * state_loss_weights[self.utils_provider.dof_q_per_env:]
+        dof_q = self.utils_provider.dof_q_per_env
+        kinematics_loss = torch.nn.MSELoss()(
+            TIME_STEP_S * (prediction_target[..., dof_q:] + state_prediction[..., dof_q:]),
+            state_prediction[..., :dof_q]
         )
 
-        w_q, w_qd = 1.0, 2.0
-        loss = w_q * position_loss + w_qd * velocity_loss
+        loss = mse_loss + 0.5*kinematics_loss
 
         if self.has_lambda_head:
             prediction_target_lambda = data['target_lambda']
