@@ -32,9 +32,9 @@ algorithm:
     # Single dataset: train_dataset_path: path/to/one.hdf5
     # Multiple datasets (e.g. len 500 + len 2000): list of paths
     #train_dataset_path: src/axion/neural_solver/datasets/Pendulum/pendulumContactsValid1Mlen2000envs250seed1.hdf5
-    train_dataset_path: [src/axion/neural_solver/datasets/Pendulum/pendulumLambdas.hdf5]
+    train_dataset_path: [src/axion/neural_solver/datasets/Pendulum/pendulumContactsValid250klen500envs250seed1.hdf5]
     valid_datasets: 
-      valid: src/axion/neural_solver/datasets/Pendulum/pendulumLambdasValid500klen400envs250seed1.hdf5
+      valid: src/axion/neural_solver/datasets/Pendulum/pendulumContactsValid250klen500envs250seed1.hdf5
       #exp_trajectory: PATH/TO/VALID_DATASET_1.hdf5
       #fixed_ground_passive: PATH/TO/VALID_DATASET_2.hdf5
     max_capacity: 100000000
@@ -44,13 +44,13 @@ algorithm:
     mode: dataset
     rollout_horizon: 10
     num_rollouts: 20000
-    dataset_path: src/axion/neural_solver/datasets/Pendulum/pendulumLambdasValid500klen400envs250seed1.hdf5
+    dataset_path: src/axion/neural_solver/datasets/Pendulum/pendulumContactsValid250klen500envs250seed1.hdf5
     passive: True
 
 inputs:
   low_dim: [
     states_embedding,
-    lambdas,
+    #lambdas,
     contact_normals,
     contact_points_1,
     contact_depths,
@@ -60,6 +60,7 @@ inputs:
 network:
   normalize_input: True
   normalize_output: True
+  enable_lambda_head: False
   
   encoder:
     low_dim:
@@ -72,7 +73,7 @@ network:
     n_layer: 6       # number of transformer blocks
     n_head: 12        # num transformer heads
     n_embd: 192       # size of input embedding
-    dropout: 0.0      # for pretraining 0 is good, for finetuning try 0.1+
+    dropout: 0.1      # for pretraining 0 is good, for finetuning try 0.1+
     bias: False       # do we use bias inside LayerNorm and Linear layers?
 
   model:

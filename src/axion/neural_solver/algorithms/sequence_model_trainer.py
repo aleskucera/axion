@@ -57,9 +57,10 @@ class SequenceModelTrainer:
 
         self.seed = algo_cfg.get('seed', 0)
         self.device = device
+        self.has_lambda_head = cfg['network'].get('enable_lambda_head', True)
         self.use_energy_loss = bool(algo_cfg.get('use_energy_loss', False))
         self.use_rollout_loss = bool(algo_cfg.get('use_rollout_loss', False))
-        self.lambda_loss_weight = float(algo_cfg.get('lambda_loss_weight', 0.1))
+        self.lambda_loss_weight = float(algo_cfg.get('lambda_loss_weight', 0.1)) if self.has_lambda_head else 0.0
         self.rollout_loss_weight = float(algo_cfg.get('rollout_loss_weight', 1.0))
         self.rollout_loss_horizon = int(algo_cfg.get('rollout_loss_horizon', 5))
 
@@ -294,12 +295,6 @@ class SequenceModelTrainer:
             else:
                 data[key] = data[key].to(self.device)
         
-        # compute contact masks
-        # data['contact_masks'] = self.utils_provider.get_contact_masks(
-        #     data['contact_depths'],
-        #     data['contact_thicknesses']
-        # )
-        
         self.utils_provider.process_neural_model_inputs(data)
 
         # calculate prediction target from neural env
@@ -308,10 +303,11 @@ class SequenceModelTrainer:
                             next_states = data['next_states'],
                             dt = self.neural_env.frame_dt
                         )
-        data['target_lambda'] = self.utils_provider.convert_next_lambdas_to_prediction(
-                lambdas = data['lambdas'],
-                next_lambdas = data['next_lambdas'],
-            )
+        if self.has_lambda_head:
+            data['target_lambda'] = self.utils_provider.convert_next_lambdas_to_prediction(
+                    lambdas = data['lambdas'],
+                    next_lambdas = data['next_lambdas'],
+                )
 
         return data
 
@@ -391,29 +387,33 @@ class SequenceModelTrainer:
     def compute_loss(self, data, train):
 
         prediction_target = data['target']
-        prediction_target_lambda = data['target_lambda']
         prediction = self.neural_model(data)
         state_prediction = prediction['state']
         lambda_prediction = prediction['lambda']
         
         if self.neural_model.normalize_output:
             state_loss_weights = 1. / torch.sqrt(self.neural_model.output_rms.var + 1e-5)
-            lambda_loss_weights = 1. / torch.sqrt(self.neural_model.lambda_output_rms.var + 1e-5)
         else:
             state_loss_weights = torch.ones(state_prediction.shape[-1], device = state_prediction.device)
-            lambda_loss_weights = torch.ones(lambda_prediction.shape[-1], device = lambda_prediction.device)
         
         state_loss = torch.nn.MSELoss()(
             state_prediction * state_loss_weights,
             prediction_target * state_loss_weights
         )
-        lambda_loss = torch.nn.MSELoss()(
-            lambda_prediction * lambda_loss_weights,
-            prediction_target_lambda * lambda_loss_weights
-        )
 
-        # total loss
-        loss = state_loss + self.lambda_loss_weight * lambda_loss
+        loss = state_loss
+
+        if self.has_lambda_head:
+            prediction_target_lambda = data['target_lambda']
+            if self.neural_model.normalize_output:
+                lambda_loss_weights = 1. / torch.sqrt(self.neural_model.lambda_output_rms.var + 1e-5)
+            else:
+                lambda_loss_weights = torch.ones(lambda_prediction.shape[-1], device = lambda_prediction.device)
+            lambda_loss = torch.nn.MSELoss()(
+                lambda_prediction * lambda_loss_weights,
+                prediction_target_lambda * lambda_loss_weights
+            )
+            loss = loss + self.lambda_loss_weight * lambda_loss
 
         # predicted_next_states: (B, T, state_dim) — needed with grad for energy loss
         predicted_next_states = self.utils_provider.convert_prediction_to_next_states(
@@ -421,10 +421,12 @@ class SequenceModelTrainer:
             prediction=state_prediction
         )
         self.utils_provider.wrap2PI(predicted_next_states)
-        predicted_next_lambdas = self.utils_provider.convert_prediction_to_next_lambdas(
-            lambdas=data['lambdas'],
-            prediction=lambda_prediction
-        )
+
+        if self.has_lambda_head:
+            predicted_next_lambdas = self.utils_provider.convert_prediction_to_next_lambdas(
+                lambdas=data['lambdas'],
+                prediction=lambda_prediction
+            )
 
         # loss_energy = None
         # if self.use_energy_loss:
@@ -445,7 +447,8 @@ class SequenceModelTrainer:
         with torch.no_grad():
             loss_itemized = {}
             loss_itemized['state_prediction_MSE'] = state_loss.detach()
-            loss_itemized['lambda_prediction_MSE'] = lambda_loss.detach()
+            if self.has_lambda_head:
+                loss_itemized['lambda_prediction_MSE'] = lambda_loss.detach()
             for i in range(predicted_next_states.shape[-1]):
                 loss_itemized[f'state_{i}'] = ((
                     predicted_next_states[..., i] - data['next_states'][..., i]
@@ -464,10 +467,11 @@ class SequenceModelTrainer:
                 - data['next_states'][..., self.utils_provider.dof_q_per_env:],
                 dim=-1
             ).mean()
-            loss_itemized['lambda_MSE'] = torch.nn.MSELoss()(
-                predicted_next_lambdas,
-                data['next_lambdas']
-            )
+            if self.has_lambda_head:
+                loss_itemized['lambda_MSE'] = torch.nn.MSELoss()(
+                    predicted_next_lambdas,
+                    data['next_lambdas']
+                )
             # if loss_energy is not None:
             #     loss_itemized['energy_MSE'] = loss_energy.detach()
             # if loss_rollout is not None:
@@ -767,17 +771,20 @@ class SequenceModelTrainer:
                     epoch
                 )
         
-        print_white(
+        eval_msg = (
             "[Evaluate], Num Rollouts = {}, Rollout Length = {}, "
-            "Rollout MSE Error = {}, Rollout MSE Error (joint_q) = {}, "
-            "Rollout MSE Error (lambda) = {}".format(
+            "Rollout MSE Error = {}, Rollout MSE Error (joint_q) = {}".format(
                 self.num_eval_rollouts,
                 self.eval_horizon,
                 format_value(error_stats['overall']['error(MSE)'], 8),
                 format_value(error_stats['overall']['q_error(MSE)'], 8),
-                format_value(error_stats['overall'].get('lambda_error(MSE)', float('nan')), 8),
             )
         )
+        if self.has_lambda_head:
+            eval_msg += ", Rollout MSE Error (lambda) = {}".format(
+                format_value(error_stats['overall'].get('lambda_error(MSE)', float('nan')), 8),
+            )
+        print_white(eval_msg)
 
         if error_stats['overall']['error(MSE)'] < self.best_eval_error:
             self.best_eval_error = error_stats['overall']['error(MSE)']
@@ -856,7 +863,7 @@ class SequenceModelTrainer:
             format_value((eval_error ** 2).mean(), 8), 
             format_value((eval_error ** 2).mean((-1, -2)), 8)
         ))
-        if 'lambda_error(MSE)' in error_stats['overall']:
+        if self.has_lambda_head and 'lambda_error(MSE)' in error_stats['overall']:
             print_info(
                 "Eval ({} rollouts) Lambda Error: {}, Lambda Error per step: {}".format(
                     num_eval_rollouts,
@@ -868,11 +875,15 @@ class SequenceModelTrainer:
 
         valid_loss_values = list(avg_valid_losses.values())
         valid_loss_total = float(np.mean(valid_loss_values)) if len(valid_loss_values) > 0 else float('nan')
-        return {
+        result = {
             'valid_loss_total': valid_loss_total,
             'state_eval_error_total': float(error_stats['overall']['error(MSE)']),
-            'lambda_eval_error_total': float(error_stats['overall'].get('lambda_error(MSE)', float('nan'))),
         }
+        if self.has_lambda_head:
+            result['lambda_eval_error_total'] = float(
+                error_stats['overall'].get('lambda_error(MSE)', float('nan'))
+            )
+        return result
 
     def save_model(self, filename = None):
         if filename is None:
