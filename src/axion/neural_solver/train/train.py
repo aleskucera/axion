@@ -113,7 +113,7 @@ if __name__ == '__main__':
             "validation_dataset_name": get_validation_dataset_name(cfg),
             "valid_loss_total": test_results["valid_loss_total"],
             "state_eval_error_total": test_results["state_eval_error_total"],
-            "lambda_eval_error_total": test_results["lambda_eval_error_total"],
+            "lambda_eval_error_total": test_results.get("lambda_eval_error_total", float('nan')),
         }
         append_test_results_csv(csv_path, csv_row)
         print(f"Saved test summary to {csv_path}")

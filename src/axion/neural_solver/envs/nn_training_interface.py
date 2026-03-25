@@ -285,25 +285,28 @@ class NnTrainingInterface:
         lambda_prediction = prediction['lambda']
 
         current_states = self.states.unsqueeze(1)  # (B, 1, state_dim)
-        current_lambdas = self.lambdas.unsqueeze(1)  # (B, 1, lambda_dim)
         if state_prediction.ndim == 3:
             state_prediction = state_prediction[:, -1:, :]
-        if lambda_prediction.ndim == 3:
-            lambda_prediction = lambda_prediction[:, -1:, :]
 
         next_states = self.utils_provider.convert_prediction_to_next_states(
             states=current_states,
             prediction=state_prediction,
             dt=self.frame_dt,
         ).squeeze(1)  # back to (B, state_dim)
-        next_lambdas = self.utils_provider.convert_prediction_to_next_lambdas(
-            lambdas=current_lambdas,
-            prediction=lambda_prediction,
-        ).squeeze(1)
 
         self._sync_states(next_states)
-        self.lambdas.copy_(next_lambdas)
-        self.utils_provider.lambdas.copy_(self.lambdas)
+
+        if lambda_prediction is not None:
+            current_lambdas = self.lambdas.unsqueeze(1)  # (B, 1, lambda_dim)
+            if lambda_prediction.ndim == 3:
+                lambda_prediction = lambda_prediction[:, -1:, :]
+            next_lambdas = self.utils_provider.convert_prediction_to_next_lambdas(
+                lambdas=current_lambdas,
+                prediction=lambda_prediction,
+            ).squeeze(1)
+            self.lambdas.copy_(next_lambdas)
+            self.utils_provider.lambdas.copy_(self.lambdas)
+
         self._collide_and_append_to_history()
         return self.states
 
