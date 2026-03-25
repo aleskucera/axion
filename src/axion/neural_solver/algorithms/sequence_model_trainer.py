@@ -129,8 +129,25 @@ class SequenceModelTrainer:
             self.lr_start = float(algo_cfg['optimizer']['lr_start'])
             self.lr_end = float(algo_cfg['optimizer'].get('lr_end', 0.))
             self.lr_schedule = algo_cfg['optimizer']['lr_schedule']
-            self.optimizer = torch.optim.Adam(self.neural_model.parameters(), 
-                                              lr = self.lr_start)
+            self.weight_decay = float(algo_cfg['optimizer'].get('weight_decay', 0.0))
+            # AdamW should typically exclude biases and normalization parameters from weight decay.
+            decay_params = []
+            no_decay_params = []
+            for name, p in self.neural_model.named_parameters():
+                if not p.requires_grad:
+                    continue
+                if name.endswith(".bias") or p.ndim == 1:
+                    no_decay_params.append(p)
+                else:
+                    decay_params.append(p)
+
+            self.optimizer = torch.optim.AdamW(
+                [
+                    {"params": decay_params, "weight_decay": self.weight_decay},
+                    {"params": no_decay_params, "weight_decay": 0.0},
+                ],
+                lr=self.lr_start,
+            )
 
             # load gradient clipping params
             self.truncate_grad = algo_cfg.get('truncate_grad', False)
