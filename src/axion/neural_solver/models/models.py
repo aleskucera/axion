@@ -207,12 +207,15 @@ class ModelMixedInput(nn.Module):
 
         output = {'state': state_output[:, -1:, :]}
 
-        if self.has_lambda_head:
-            lambda_output = self.lambda_model(features, deterministic = deterministic)
+        has_lambda_head = bool(getattr(self, "has_lambda_head", False))
+        lambda_model = getattr(self, "lambda_model", None)
+        if has_lambda_head and (lambda_model is not None):
+            lambda_output = lambda_model(features, deterministic = deterministic)
             if self.lambda_output_tanh:
                 lambda_output = torch.tanh(lambda_output)
-            if self.normalize_output and self.lambda_output_rms is not None:
-                lambda_output = self.lambda_output_rms.normalize(lambda_output, un_norm = True)
+            lambda_output_rms = getattr(self, "lambda_output_rms", None)
+            if self.normalize_output and (lambda_output_rms is not None):
+                lambda_output = lambda_output_rms.normalize(lambda_output, un_norm = True)
             output['lambda'] = lambda_output[:, -1:, :]
         else:
             output['lambda'] = None
@@ -249,13 +252,16 @@ class ModelMixedInput(nn.Module):
 
         output = {'state': state_output}
 
-        if self.has_lambda_head:
-            lambda_output_flatten = self.lambda_model(features_flatten, deterministic = deterministic)
+        has_lambda_head = bool(getattr(self, "has_lambda_head", False))
+        lambda_model = getattr(self, "lambda_model", None)
+        if has_lambda_head and (lambda_model is not None):
+            lambda_output_flatten = lambda_model(features_flatten, deterministic = deterministic)
             lambda_output = lambda_output_flatten.view(B, T, -1)
             if self.lambda_output_tanh:
                 lambda_output = torch.tanh(lambda_output)
-            if self.normalize_output and self.lambda_output_rms is not None:
-                lambda_output = self.lambda_output_rms.normalize(lambda_output, un_norm = True)
+            lambda_output_rms = getattr(self, "lambda_output_rms", None)
+            if self.normalize_output and (lambda_output_rms is not None):
+                lambda_output = lambda_output_rms.normalize(lambda_output, un_norm = True)
             output['lambda'] = lambda_output
         else:
             output['lambda'] = None
@@ -270,12 +276,16 @@ class ModelMixedInput(nn.Module):
             self.transformer_model.to(device)
 
         self.model.to(device)
-        if self.lambda_model is not None:
-            self.lambda_model.to(device)
+        # Backward compatibility: older checkpoints may not have `lambda_model`.
+        lambda_model = getattr(self, "lambda_model", None)
+        if lambda_model is not None:
+            lambda_model.to(device)
         if self.input_rms is not None:
             for k in self.input_rms:
                 self.input_rms[k] = self.input_rms[k].to(device)
         if self.output_rms is not None:
             self.output_rms = self.output_rms.to(device)
-        if self.lambda_output_rms is not None:
-            self.lambda_output_rms = self.lambda_output_rms.to(device)
+        # Backward compatibility: older checkpoints may not have `lambda_output_rms`.
+        lambda_output_rms = getattr(self, "lambda_output_rms", None)
+        if lambda_output_rms is not None:
+            self.lambda_output_rms = lambda_output_rms.to(device)

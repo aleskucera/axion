@@ -13,10 +13,10 @@ algorithm:
   name: SequenceModelTrainer
   use_energy_loss: false
   lambda_loss_weight: 0.1
-  num_epochs: 25
-  num_iters_per_epoch: 15  # 976 x 1024 = 999 424 (1 M)
+  num_epochs: 20
+  num_iters_per_epoch: 976  # 976 x 1024 = 999 424 (1 M)
   sample_sequence_length: 10 # the length to sample sequence from dataset
-  batch_size: 128
+  batch_size: 1024
   num_valid_batches: 256 # what portion of validation dataset to validate on (num_valid_batches * batch_size)
   truncate_grad: True
   grad_norm: 1.0
@@ -72,7 +72,7 @@ network:
     n_layer: 6       # number of transformer blocks
     n_head: 12        # num transformer heads
     n_embd: 192       # size of input embedding
-    dropout: 0.1      # for pretraining 0 is good, for finetuning try 0.1+
+    dropout: 0.0      # for pretraining 0 is good, for finetuning try 0.1+
     bias: False       # do we use bias inside LayerNorm and Linear layers?
 
   model:

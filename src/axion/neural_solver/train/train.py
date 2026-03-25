@@ -108,7 +108,10 @@ if __name__ == '__main__':
     else:
         print("Begin torch module testing")
         # If the checkpoint was trained without a lambda head, avoid lambda metrics/logging.
-        model_has_lambda_head = bool(getattr(algo.neural_model, "has_lambda_head", True))
+        # Backward compatible: older checkpoints might not define `has_lambda_head`.
+        model_has_lambda_head_flag = bool(getattr(algo.neural_model, "has_lambda_head", False))
+        model_has_lambda_module = getattr(algo.neural_model, "lambda_model", None) is not None
+        model_has_lambda_head = model_has_lambda_head_flag and model_has_lambda_module
         if not model_has_lambda_head:
             algo.has_lambda_head = False
         test_results = algo.test()
