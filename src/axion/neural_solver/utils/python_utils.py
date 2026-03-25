@@ -186,6 +186,26 @@ def append_test_results_csv(csv_path: Path, row: dict):
             row["lambda_eval_error_total"],
         ])
 
+
+def append_states_only_test_results_csv(csv_path: Path, row: dict):
+    """Append a test-summary row for models without a lambda head."""
+    file_exists = csv_path.exists()
+    with open(csv_path, "a", newline="") as f:
+        writer = csv.writer(f)
+        if (not file_exists) or csv_path.stat().st_size == 0:
+            writer.writerow([
+                "model_name",
+                "validation_dataset_name",
+                "valid_loss_total",
+                "state_eval_error_total",
+            ])
+        writer.writerow([
+            row["model_name"],
+            row.get("validation_dataset_name", ""),
+            row["valid_loss_total"],
+            row["state_eval_error_total"],
+        ])
+
 def get_validation_dataset_name(cfg: dict) -> str:
     valid_cfg = cfg.get("algorithm", {}).get("dataset", {}).get("valid_datasets", {})
     dataset_paths = []

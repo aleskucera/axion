@@ -27,6 +27,7 @@ algorithm:
     lr_start: 1e-3
     lr_end: 1e-4
     lr_schedule: linear
+    weight_decay: 3e-4
 
   dataset:
     # Single dataset: train_dataset_path: path/to/one.hdf5

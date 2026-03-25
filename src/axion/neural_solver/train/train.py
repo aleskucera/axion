@@ -32,6 +32,7 @@ from axion.neural_solver.utils.python_utils import (
     set_random_seed,
     format_model_name,
     append_test_results_csv,
+    append_states_only_test_results_csv,
     get_validation_dataset_name,
 )
 from axion.neural_solver.algorithms.sequence_model_trainer import SequenceModelTrainer
@@ -106,14 +107,28 @@ if __name__ == '__main__':
         algo.train()
     else:
         print("Begin torch module testing")
+        # If the checkpoint was trained without a lambda head, avoid lambda metrics/logging.
+        model_has_lambda_head = bool(getattr(algo.neural_model, "has_lambda_head", True))
+        if not model_has_lambda_head:
+            algo.has_lambda_head = False
         test_results = algo.test()
-        csv_path = Path(__file__).resolve().parent / "lambda_testing_results.csv"
-        csv_row = {
-            "model_name": format_model_name(args.checkpoint),
-            "validation_dataset_name": get_validation_dataset_name(cfg),
-            "valid_loss_total": test_results["valid_loss_total"],
-            "state_eval_error_total": test_results["state_eval_error_total"],
-            "lambda_eval_error_total": test_results.get("lambda_eval_error_total", float('nan')),
-        }
-        append_test_results_csv(csv_path, csv_row)
+        if model_has_lambda_head:
+            csv_path = Path(__file__).resolve().parent / "lambda_testing_results.csv"
+            csv_row = {
+                "model_name": format_model_name(args.checkpoint),
+                "validation_dataset_name": get_validation_dataset_name(cfg),
+                "valid_loss_total": test_results["valid_loss_total"],
+                "state_eval_error_total": test_results["state_eval_error_total"],
+                "lambda_eval_error_total": test_results.get("lambda_eval_error_total", float('nan')),
+            }
+            append_test_results_csv(csv_path, csv_row)
+        else:
+            csv_path = Path(__file__).resolve().parent / "statesOnly_testing_results.csv"
+            csv_row = {
+                "model_name": format_model_name(args.checkpoint),
+                "validation_dataset_name": get_validation_dataset_name(cfg),
+                "valid_loss_total": test_results["valid_loss_total"],
+                "state_eval_error_total": test_results["state_eval_error_total"],
+            }
+            append_states_only_test_results_csv(csv_path, csv_row)
         print(f"Saved test summary to {csv_path}")
