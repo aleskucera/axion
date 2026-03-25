@@ -210,7 +210,7 @@ def plot_threshold(show: bool):
         )
 
     plt.tight_layout(pad=0.4, rect=(0, 0, 0.76, 1))
-    out = RESULTS_DIR / "control_stability_threshold.png"
+    out = RESULTS_DIR / "pendulum_control_threshold.png"
     plt.savefig(out, dpi=300, bbox_inches="tight")
     print(f"Saved to {out}")
 
@@ -320,7 +320,7 @@ def plot_trajectory(show: bool):
                      va="center", transform=axes[1].transAxes, color="gray")
 
     plt.tight_layout()
-    out = RESULTS_DIR / "control_stability.png"
+    out = RESULTS_DIR / "pendulum_control.png"
     out.parent.mkdir(parents=True, exist_ok=True)
     plt.savefig(out, dpi=150, bbox_inches="tight")
     print(f"Saved to {out}")

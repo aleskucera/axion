@@ -190,4 +190,6 @@ pyrightconfig.json
 outputs/
 *.ini
 
-examples/comparison/*/results/
+examples/comparison_stability/*/results/
+examples/comparison_gradient/*/results/
+examples/comparison_scalability/*/results/
