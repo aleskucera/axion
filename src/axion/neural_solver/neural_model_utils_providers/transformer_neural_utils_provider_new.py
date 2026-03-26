@@ -90,6 +90,7 @@ class TransformerNeuralModelUtilsProvider:
             prediction_type = cfg.get("prediction_type", prediction_type)
             states_embedding_type = cfg.get("states_embedding_type", states_embedding_type)
             angular_q_indices = cfg.get("angular_q_indices", angular_q_indices)
+            prediction_quantity_type = cfg.get("prediction_quantity_type", "full_state")
             lambda_dim = cfg.get("lambda_dim", lambda_dim)
 
         if prediction_type not in ("relative", "absolute"):
@@ -102,7 +103,7 @@ class TransformerNeuralModelUtilsProvider:
 
         self.prediction_type = prediction_type
         self.states_embedding_type = states_embedding_type
-
+        self.prediction_quantity_type = prediction_quantity_type
         self.num_worlds = self.robot_model.world_count
 
         joint_coord_count = int(getattr(self.robot_model, "joint_coord_count", 0))
@@ -118,10 +119,13 @@ class TransformerNeuralModelUtilsProvider:
         self.state_dim = self.dof_q_per_env + self.dof_qd_per_env
         self.lambda_dim = PENDULUM_NUM_OF_ALL_LAMBDAS
 
-        self.state_prediction_dim = self.state_dim
+        if prediction_quantity_type == "full_state":
+            self.state_prediction_dim = self.state_dim
+            self.state_embedding_dim = self.state_dim
+        elif prediction_quantity_type == "velocities_only":
+            self.state_prediction_dim = self.dof_qd_per_env
+            self.state_embedding_dim = self.state_dim
         self.lambda_prediction_dim = self.lambda_dim
-        self.prediction_dim = self.state_prediction_dim
-        self.state_embedding_dim = self.state_dim
 
         if angular_q_indices is None:
             self.angular_q_indices = torch.arange(self.dof_q_per_env, device="cpu")
@@ -477,13 +481,15 @@ class TransformerNeuralModelUtilsProvider:
             pred = next_bt.clone()
         else:
             pred = (next_bt - states_bt)
+            if self.prediction_quantity_type == "full_state":
+                q_delta = pred[..., : self.dof_q_per_env]
+                q_sel = q_delta.index_select(-1, self.angular_q_indices.to(q_delta.device))
+                _wrap_to_pi_(q_sel)
+                q_delta.index_copy_(-1, self.angular_q_indices.to(q_delta.device), q_sel)
+            elif self.prediction_quantity_type == "velocities_only":
+                pred = pred[..., self.dof_q_per_env:]
 
-            q_delta = pred[..., : self.dof_q_per_env]
-            q_sel = q_delta.index_select(-1, self.angular_q_indices.to(q_delta.device))
-            _wrap_to_pi_(q_sel)
-            q_delta.index_copy_(-1, self.angular_q_indices.to(q_delta.device), q_sel)
-
-        if pred.shape[-1] != self.prediction_dim:
+        if pred.shape[-1] != self.state_prediction_dim:
             raise RuntimeError("Internal error: pred dim mismatch")
         return pred
 
@@ -527,17 +533,20 @@ class TransformerNeuralModelUtilsProvider:
         states_bt = _ensure_bt(states)
         pred_bt = _ensure_bt(prediction)
 
-        if pred_bt.shape[-1] < self.prediction_dim:
-            raise ValueError(f"prediction last dim must be at least {self.prediction_dim}")
+        if pred_bt.shape[-1] < self.state_prediction_dim:
+            raise ValueError(f"prediction last dim must be at least {self.state_prediction_dim}")
 
-        pred_bt = pred_bt[..., : self.prediction_dim]
+        pred_bt = pred_bt[..., : self.state_prediction_dim]
 
-        if self.prediction_type == "absolute":
-            next_states = pred_bt.clone()
-        else:
-            next_states = states_bt + pred_bt
+        if self.prediction_quantity_type == "full_state":
+            if self.prediction_type == "absolute":
+                next_states = pred_bt.clone()
+            else:
+                next_states = states_bt + pred_bt
+                self.wrap2PI(next_states)
+        elif self.prediction_quantity_type == "velocities_only":
+            next_states = states_bt[..., self.dof_q_per_env:] + pred_bt
 
-        self.wrap2PI(next_states)
         return next_states
 
     def convert_prediction_to_next_lambdas(
@@ -565,6 +574,19 @@ class TransformerNeuralModelUtilsProvider:
             next_lambdas = lambdas_bt + pred_bt
 
         return next_lambdas
+
+    def compute_next_state_from_qd(
+        self,
+        states: torch.Tensor,
+        qd_next: torch.Tensor,
+        dt: float,
+    ) -> torch.Tensor:
+        """
+        Compute next state from qd via semi-implicit Euler integration.
+        """
+        q = states[..., :self.dof_q_per_env]
+        q_next = q + qd_next * dt
+        return torch.cat([q_next, qd_next], dim=-1)
 
     def calculate_total_energy(self, state_min_coords: torch.Tensor) -> torch.Tensor:
         """

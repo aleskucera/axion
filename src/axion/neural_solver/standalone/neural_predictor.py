@@ -48,6 +48,7 @@ JOINT_FIXED = newton.JointType.FIXED
 JOINT_DISTANCE = newton.JointType.DISTANCE
 
 PENDULUM_MAX_NUM_CONTACTS_PER_ROBOT_MODEL = 4
+DT_FROM_TRAINING = 0.01
 
 class NeuralPredictor:
     """
@@ -109,14 +110,23 @@ class NeuralPredictor:
         self.nn_model = nn_model
         self.nn_model.to(device)
         self.nn_model.eval()
-        self.lambda_dim = int(self.nn_model.lambda_model.output_net.out_features)
-        self.lambdas = torch.zeros((self.num_worlds, self.lambda_dim), device=self.device)
+        lambda_model = getattr(self.nn_model, "lambda_model", None)
+        lambda_output_net = getattr(lambda_model, "output_net", None) if lambda_model is not None else None
+        self.has_lambda_prediction_module = lambda_output_net is not None
+        if self.has_lambda_prediction_module:
+            self.lambda_dim = int(lambda_output_net.out_features)
+            self.lambdas = torch.zeros((self.num_worlds, self.lambda_dim), device=self.device)
+        else:
+            self.lambda_dim = 0
+            self.lambdas = None
 
         # Load NN model configuration
-        self.neural_integrator_cfg = nn_cfg.get('env', {}).get('neural_integrator_cfg', {})
+        env_cfg = nn_cfg.get('env', {})
+        self.neural_integrator_cfg = env_cfg.get('utils_provider_cfg', env_cfg.get('neural_integrator_cfg', {}))
         self.states_frame = self.neural_integrator_cfg.get('states_frame', 'body')
         self.anchor_frame_step = self.neural_integrator_cfg.get('anchor_frame_step', 'every')
         self.prediction_type = self.neural_integrator_cfg.get('prediction_type', 'relative')
+        self.prediction_quantity_type = self.neural_integrator_cfg.get('prediction_quantity_type', 'full_state')
         self.orientation_prediction_parameterization = self.neural_integrator_cfg.get('orientation_prediction_parameterization', 'quaternion')
         self.states_embedding_type = self.neural_integrator_cfg.get('states_embedding_type', None)
         self.num_states_history = self.neural_integrator_cfg.get('num_states_history', 1)   # history window, defaults to 1
@@ -136,7 +146,8 @@ class NeuralPredictor:
     def reset(self):
         """Reset the history buffer (call at start of new trajectory)."""
         self.states_history.clear()
-        self.lambdas.zero_()
+        if self.lambdas is not None:
+            self.lambdas.zero_()
 
     
     def _convert_newton_contacts_to_contacts_for_nn_model(
@@ -302,12 +313,13 @@ class NeuralPredictor:
         history_entry = {
             "root_body_q": root_body_q.clone(),
             "states": states.clone(),
-            "lambdas": self.lambdas.clone(),
             "gravity_dir": gravity_in_body.clone(),
             "contact_normals": processed_contacts['contact_normals'].clone(),
             "contact_depths": processed_contacts['contact_depths'].clone(), 
             "contact_points_1": processed_contacts['contact_points_1'].clone(), 
         }
+        if self.lambdas is not None:
+            history_entry["lambdas"] = self.lambdas.clone()
         self.states_history.append(history_entry)
 
         # Assemble model inputs
@@ -334,7 +346,7 @@ class NeuralPredictor:
         
         return self.nn_model_inputs
     
-    def predict(self) -> torch.Tensor:
+    def predict(self, dt: float) -> torch.Tensor:
         """
         Predict next robot state.
         
@@ -359,29 +371,32 @@ class NeuralPredictor:
         with torch.no_grad():
             prediction = self.nn_model.evaluate(self.nn_model_inputs)  # (num_envs, 1, pred_dim)
             state_prediction = prediction['state']
-            lambda_prediction = prediction['lambda']
+            lambda_prediction = prediction.get('lambda', None)
             # Take prediction from last timestep
             if state_prediction.shape[1] > 1:
                 state_prediction = state_prediction[:, -1, :]  # (num_envs, pred_dim)
             else:
                 state_prediction = state_prediction.squeeze(1)  # (num_envs, pred_dim)
-            if lambda_prediction.shape[1] > 1:
-                lambda_prediction = lambda_prediction[:, -1, :]
-            else:
-                lambda_prediction = lambda_prediction.squeeze(1)
+            if lambda_prediction is not None:
+                if lambda_prediction.shape[1] > 1:
+                    lambda_prediction = lambda_prediction[:, -1, :]
+                else:
+                    lambda_prediction = lambda_prediction.squeeze(1)
         
         # Convert prediction to next states
         cur_states = self.nn_model_inputs["states"][:, -1, :]  # (num_envs, state_dim)
-        next_states = self._convert_prediction_to_next_states(cur_states, state_prediction)
-        cur_lambdas = self.nn_model_inputs["lambdas"][:, -1, :]
-        next_lambdas = self._convert_prediction_to_next_lambdas(cur_lambdas, lambda_prediction)
-        self.lambdas.copy_(next_lambdas)
+        next_states = self._convert_prediction_to_next_states(cur_states, state_prediction, dt)
+        if (self.lambdas is not None) and (lambda_prediction is not None) and ("lambdas" in self.nn_model_inputs):
+            cur_lambdas = self.nn_model_inputs["lambdas"][:, -1, :]
+            next_lambdas = self._convert_prediction_to_next_lambdas(cur_lambdas, lambda_prediction)
+            self.lambdas.copy_(next_lambdas)
         
         # Convert back to world frame if needed
         #print("After _convert_prediction_to_next_states", next_states)
         
         # Wrap continuous DOFs
-        wrap2PI(next_states, self.is_continuous_dof)
+        if self.prediction_quantity_type == "full_state":
+            wrap2PI(next_states, self.is_continuous_dof)
         
         return next_states
     
@@ -400,7 +415,21 @@ class NeuralPredictor:
         else:
             raise NotImplementedError
 
-    def _convert_prediction_to_next_states(self, states, prediction):
+    def compute_next_state_from_qd(
+        self,
+        states: torch.Tensor,
+        qd_next: torch.Tensor,
+        dt: float,
+    ) -> torch.Tensor:
+        """
+        Compute next state from qd via semi-implicit Euler integration.
+        """
+        assert dt == DT_FROM_TRAINING, "dt from Newton must be equal to DT_FROM_TRAINING"
+        q = states[..., :self.dof_q_per_env]
+        q_next = q + qd_next * dt
+        return torch.cat([q_next, qd_next], dim=-1)
+
+    def _convert_prediction_to_next_states(self, states, prediction, dt):
         """
         Convert model prediction to next states.
 
@@ -411,8 +440,18 @@ class NeuralPredictor:
         Returns:
             next_states: (num_envs, state_dim)
         """
-        next_states = torch.empty_like(states)
 
+        # Prediction qunatity type: "velocities_only"
+        if self.prediction_quantity_type == "velocities_only":
+            if self.prediction_type == "absolute":
+                raise NotImplementedError
+            elif self.prediction_type == "relative":
+                qd_next = states[..., self.dof_q_per_env:] + prediction
+                next_states = self.compute_next_state_from_qd(states, qd_next, dt)
+                return next_states
+
+        # Prediction qunatity type: "full_state"
+        next_states = torch.empty_like(states)
         if self.prediction_type in ["absolute", "relative"]:
             prediction_dof_offset = 0
 

@@ -371,11 +371,12 @@ class NeuralSimEvaluator:
         ).mean((-1, -2))
         qd_MSE_error = qd_MSE_error_per_step.mean()
         error_stats['overall']['error(MSE)'] = MSE_error
-        error_stats['overall']['q_error(MSE)'] = q_MSE_error
-        error_stats['overall']['qd_error(MSE)'] = qd_MSE_error
+        # Unit-aware aliases for easier downstream interpretation.
+        error_stats['overall']['position_error_MSE(rad^2)'] = q_MSE_error
+        error_stats['overall']['velocity_error_MSE((rad/s)^2)'] = qd_MSE_error
         error_stats['step-wise']['error(MSE)'] = MSE_error_per_step
-        error_stats['step-wise']['q_error(MSE)'] = q_MSE_error_per_step
-        error_stats['step-wise']['qd_error(MSE)'] = qd_MSE_error_per_step
+        error_stats['step-wise']['position_error_MSE(rad^2)'] = q_MSE_error_per_step
+        error_stats['step-wise']['velocity_error_MSE((rad/s)^2)'] = qd_MSE_error_per_step
         
         # Calculate L2 norm errors
         L2_error_per_step = next_states_diff.norm(dim = -1).mean(-1)

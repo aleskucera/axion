@@ -281,18 +281,31 @@ class NnTrainingInterface:
 
         model_inputs = self.utils_provider.get_neural_model_inputs()
         prediction = neural_model(model_inputs)
-        state_prediction = prediction['state']
+        state_prediction = prediction['state']      # can be either full state or only velocities
         lambda_prediction = prediction['lambda']
 
         current_states = self.states.unsqueeze(1)  # (B, 1, state_dim)
         if state_prediction.ndim == 3:
             state_prediction = state_prediction[:, -1:, :]
 
-        next_states = self.utils_provider.convert_prediction_to_next_states(
+        next_pred = self.utils_provider.convert_prediction_to_next_states(
             states=current_states,
             prediction=state_prediction,
             dt=self.frame_dt,
-        ).squeeze(1)  # back to (B, state_dim)
+        ).squeeze(1)  # back to (B, pred_dim)
+
+        # If the prediction is only the velocities, compute the next states from the velocities
+        if next_pred.shape[-1] == 2:
+            next_states = self.utils_provider.compute_next_state_from_qd(
+                states=current_states.squeeze(1),
+                qd_next=next_pred,
+                dt=self.frame_dt,
+            )
+        else:
+            next_states = next_pred
+
+        assert next_states.shape[-1] == self.state_dim
+        # From this point on, we are sure that the next state has have full dim
 
         self._sync_states(next_states)
 

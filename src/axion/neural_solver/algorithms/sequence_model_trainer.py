@@ -86,7 +86,7 @@ class SequenceModelTrainer:
             input_sample = self.utils_provider.get_neural_model_inputs()
             self.neural_model = ModelMixedInput(
                 input_sample = input_sample,
-                output_dim = self.utils_provider.prediction_dim,
+                output_dim = self.utils_provider.state_prediction_dim,
                 lambda_output_dim = self.utils_provider.lambda_prediction_dim,
                 input_cfg = cfg['inputs'],
                 network_cfg = cfg['network'],
@@ -96,6 +96,22 @@ class SequenceModelTrainer:
             checkpoint = torch.load(model_checkpoint_path, map_location=self.device, weights_only= False)
             self.neural_model = checkpoint[0]
             self.neural_model.to(self.device)
+
+            # Keep config/provider target mode consistent with loaded checkpoint head size.
+            state_head = getattr(getattr(self.neural_model, "model", None), "output_net", None)
+            state_head_dim = int(state_head.out_features)
+            if state_head_dim == self.utils_provider.state_dim:
+                self.utils_provider.prediction_quantity_type = "full_state"
+                self.utils_provider.state_prediction_dim = self.utils_provider.state_dim
+            elif state_head_dim == self.utils_provider.dof_qd_per_env:
+                self.utils_provider.prediction_quantity_type = "velocities_only"
+                self.utils_provider.state_prediction_dim = self.utils_provider.dof_qd_per_env
+            else:
+                raise ValueError(
+                    "Checkpoint state head dim does not match expected full-state or velocity-only dims: "
+                    f"{state_head_dim} vs state_dim={self.utils_provider.state_dim}, "
+                    f"dof_qd={self.utils_provider.dof_qd_per_env}."
+                )
         
         print('Model = \n', self.neural_model)
         print('# Model Parameters = ', num_params_torch_model(self.neural_model))
@@ -410,13 +426,14 @@ class SequenceModelTrainer:
             prediction_target * state_loss_weights,
         )
 
-        dof_q = self.utils_provider.dof_q_per_env
-        kinematics_loss = torch.nn.MSELoss()(
-            TIME_STEP_S * (prediction_target[..., dof_q:] + state_prediction[..., dof_q:]),
-            state_prediction[..., :dof_q]
-        )
+        # dof_q = self.utils_provider.dof_q_per_env
+        # kinematics_loss = torch.nn.MSELoss()(
+        #     TIME_STEP_S * (prediction_target[..., dof_q:] + state_prediction[..., dof_q:]),
+        #     state_prediction[..., :dof_q]
+        # )
 
-        loss = huber_loss + self.kinematics_loss_weight * kinematics_loss
+        loss = huber_loss
+        #loss += self.kinematics_loss_weight * kinematics_loss
 
         if self.has_lambda_head:
             prediction_target_lambda = data['target_lambda']
@@ -429,14 +446,18 @@ class SequenceModelTrainer:
                 prediction_target_lambda * lambda_loss_weights
             )
             loss = loss + self.lambda_loss_weight * lambda_loss
+        else:
+            lambda_loss = torch.zeros_like(huber_loss)
 
         # predicted_next_states: (B, T, state_dim) — needed with grad for energy loss
         predicted_next_states = self.utils_provider.convert_prediction_to_next_states(
             states=data['states'],
             prediction=state_prediction
         )
-        self.utils_provider.wrap2PI(predicted_next_states)
+        if getattr(self.utils_provider, "prediction_quantity_type", "full_state") == "full_state":
+            self.utils_provider.wrap2PI(predicted_next_states)
 
+        predicted_next_lambdas = None
         if self.has_lambda_head:
             predicted_next_lambdas = self.utils_provider.convert_prediction_to_next_lambdas(
                 lambdas=data['lambdas'],
@@ -453,8 +474,24 @@ class SequenceModelTrainer:
 
         # Reported error statistics (no grad)
         with torch.no_grad():
-            loss_itemized = {}
-            loss_itemized['state_prediction_MSE'] = loss.detach()
+            loss_itemized = self.compute_itemized_loss(
+                huber_loss,
+                lambda_loss,
+                predicted_next_states,
+                predicted_next_lambdas,
+                data
+            )
+
+        return loss, loss_itemized
+
+
+    def compute_itemized_loss(self, state_loss, lambda_loss, predicted_next_states, predicted_next_lambdas, data):
+        """
+        Computes the itemized loss for a given prediction dimension.
+        """
+        loss_itemized = {}
+        if predicted_next_states.shape[-1] == 4:
+            loss_itemized['state_prediction_MSE'] = state_loss.detach()
             if self.has_lambda_head:
                 loss_itemized['lambda_prediction_MSE'] = lambda_loss.detach()
             for i in range(predicted_next_states.shape[-1]):
@@ -486,7 +523,20 @@ class SequenceModelTrainer:
                 )
             # if loss_energy is not None:
             #     loss_itemized['energy_MSE'] = loss_energy.detach()
-        return loss, loss_itemized
+        else:
+            loss_itemized['state_prediction_MSE'] = state_loss.detach()
+            for i in range(predicted_next_states.shape[-1]):
+                loss_itemized[f'state_{i}'] = ((
+                    predicted_next_states[..., i] - data['next_states'][..., i+2]
+                ) ** 2).mean()
+            loss_itemized['qd_error_norm'] = torch.norm(
+                predicted_next_states
+                - data['next_states'][..., self.utils_provider.dof_q_per_env:],
+                dim=-1
+            ).mean()
+
+        return loss_itemized
+
 
     def compute_test_loss_reference(self, data):
         """Stable reference loss for `--test` runs: weighted state MSE only.
@@ -500,6 +550,7 @@ class SequenceModelTrainer:
 
         if self.neural_model.normalize_output:
             state_loss_weights = 1. / torch.sqrt(self.neural_model.output_rms.var + 1e-5)
+            state_loss_weights = state_loss_weights[..., :state_prediction.shape[-1]]
         else:
             state_loss_weights = torch.ones(state_prediction.shape[-1], device=state_prediction.device)
 
@@ -903,6 +954,26 @@ class SequenceModelTrainer:
             format_value((eval_error ** 2).mean(), 8), 
             format_value((eval_error ** 2).mean((-1, -2)), 8)
         ))
+        position_mse = error_stats['overall'].get(
+            'position_error_MSE(rad^2)',
+            error_stats['overall'].get('q_error(MSE)', float('nan'))
+        )
+        velocity_mse = error_stats['overall'].get(
+            'velocity_error_MSE((rad/s)^2)',
+            error_stats['overall'].get('qd_error(MSE)', float('nan'))
+        )
+        print_info(
+            "Eval ({} rollouts) Position MSE [rad^2]: {}".format(
+                num_eval_rollouts,
+                format_value(position_mse, 8),
+            )
+        )
+        print_info(
+            "Eval ({} rollouts) Velocity MSE [(rad/s)^2]: {}".format(
+                num_eval_rollouts,
+                format_value(velocity_mse, 8),
+            )
+        )
         if self.has_lambda_head and 'lambda_error(MSE)' in error_stats['overall']:
             print_info(
                 "Eval ({} rollouts) Lambda Error: {}, Lambda Error per step: {}".format(

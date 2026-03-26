@@ -7,6 +7,7 @@ env:
     anchor_frame_step: every
     states_embedding_type: identical
     prediction_type: relative
+    prediction_quantity_type: velocities_only # full_state
     num_states_history: 10     # number of states and actions to pass into model. Default: 1 means use current state and action
   
 algorithm:
