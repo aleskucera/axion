@@ -8,6 +8,7 @@ from .core import LoggingConfig
 from .core import MuJoCoEngineConfig
 from .core import SemiImplicitEngineConfig
 from .core import XPBDEngineConfig
+from .core import RepeatedAxionEngineConfig
 from .simulation import AxionDifferentiableSimulator
 from .simulation import DatasetSimulator
 from .simulation import DifferentiableSimulator
@@ -26,6 +27,7 @@ __all__ = [
     "SemiImplicitEngineConfig",
     "XPBDEngineConfig",
     "GNNEngineConfig",
+    "RepeatedAxionEngineConfig",
     "InteractiveSimulator",
     "AxionDifferentiableSimulator",
     "DifferentiableSimulator",

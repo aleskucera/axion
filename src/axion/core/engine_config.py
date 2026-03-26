@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from typing import Any
+from typing import Callable
 from typing import Optional
 
 
@@ -287,6 +288,35 @@ class GNNEngineConfig(AxionEngineConfig):
         return GNNEngine(
             model=model,
             sim_steps=sim_steps,
+            config=self,
+            logging_config=logging_config,
+            differentiable_simulation=differentiable_simulation,
+        )
+
+
+@dataclass(frozen=True)
+class RepeatedAxionEngineConfig(AxionEngineConfig):
+    """
+    Configuration for the `RepeatedAxionEngine` backend.
+
+    This uses the same Newton/constraint parameters as `AxionEngineConfig`,
+    but performs two Newton solves per step (see `src/axion/core/repeated_engine.py`).
+    """
+
+    def create_engine(
+        self,
+        model: Any,
+        sim_steps: Optional[int] = None,
+        init_state_fn: Optional[Callable] = None,
+        logging_config: Optional[Any] = None,
+        differentiable_simulation: bool = False,
+        **kwargs,
+    ) -> Any:
+        from axion.core.repeated_engine import RepeatedAxionEngine
+
+        return RepeatedAxionEngine(
+            model=model,
+            sim_steps=int(sim_steps or 0),
             config=self,
             logging_config=logging_config,
             differentiable_simulation=differentiable_simulation,
