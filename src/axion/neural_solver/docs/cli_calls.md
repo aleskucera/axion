@@ -21,6 +21,22 @@ optionally: --device cuda:1
 View runs at [wandb.ai](https://wandb.ai) in your project (e.g. `neural-solver-transformer`). 
 Ensure `wandb.login()` runs before training (see `train.py`).
 
+### W&B sweeps
+Create a new sweep and start an agent:
+```
+python src/axion/neural_solver/train/sweep_train.py --cfg src/axion/neural_solver/train/cfg/Pendulum/transformer.yaml --logdir src/axion/neural_solver/train/trained_models/ --project neural-solver-transformer
+```
+
+Join an existing sweep (replace `<SWEEP_ID>`):
+```
+python src/axion/neural_solver/train/sweep_train.py --cfg src/axion/neural_solver/train/cfg/Pendulum/transformer.yaml --logdir src/axion/neural_solver/train/trained_models/ --project neural-solver-transformer --sweep_id <SWEEP_ID>
+```
+
+Limit how many runs this agent executes:
+```
+python src/axion/neural_solver/train/sweep_train.py --cfg src/axion/neural_solver/train/cfg/Pendulum/transformer.yaml --logdir src/axion/neural_solver/train/trained_models/ --project neural-solver-transformer --sweep_id <SWEEP_ID> --count 10
+```
+
 ## Testing
 Test a neural module that has already undergone training:
 ```

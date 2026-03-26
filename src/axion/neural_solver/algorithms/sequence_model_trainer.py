@@ -63,6 +63,9 @@ class SequenceModelTrainer:
         self.has_lambda_head = cfg['network'].get('enable_lambda_head', True)
         self.use_energy_loss = bool(algo_cfg.get('use_energy_loss', False))
         self.lambda_loss_weight = float(algo_cfg.get('lambda_loss_weight', 0.1)) if self.has_lambda_head else 0.0
+        loss_cfg = algo_cfg.get('loss', {}) or {}
+        self.huber_delta = float(loss_cfg.get('huber_delta', 1.0))
+        self.kinematics_loss_weight = float(loss_cfg.get('kinematics_loss_weight', 0.5))
 
         set_random_seed(self.seed)
 
@@ -402,9 +405,9 @@ class SequenceModelTrainer:
         else:
             state_loss_weights = torch.ones(state_prediction.shape[-1], device = state_prediction.device)
         
-        mse_loss = torch.nn.MSELoss()(
+        huber_loss = torch.nn.HuberLoss(delta=self.huber_delta)(
             state_prediction * state_loss_weights,
-            prediction_target * state_loss_weights
+            prediction_target * state_loss_weights,
         )
 
         dof_q = self.utils_provider.dof_q_per_env
@@ -413,7 +416,7 @@ class SequenceModelTrainer:
             state_prediction[..., :dof_q]
         )
 
-        loss = mse_loss + 0.5*kinematics_loss
+        loss = huber_loss + self.kinematics_loss_weight * kinematics_loss
 
         if self.has_lambda_head:
             prediction_target_lambda = data['target_lambda']
