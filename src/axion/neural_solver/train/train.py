@@ -21,7 +21,6 @@ from pathlib import Path
 base_dir = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
 sys.path.append(base_dir)
 
-import yaml
 import warp as wp
 wp.config.verify_cuda = True
 
@@ -37,6 +36,11 @@ from axion.neural_solver.utils.python_utils import (
 )
 from axion.neural_solver.algorithms.sequence_model_trainer import SequenceModelTrainer
 from axion.neural_solver.envs.nn_training_interface import NnTrainingInterface
+from axion.neural_solver.train.config_builder import (
+    build_cli_cfg,
+    load_default_cfg,
+    validate_cfg,
+)
 
 
 def _parse_args():
@@ -58,22 +62,8 @@ if __name__ == '__main__':
     if args.train:
         wandb.login()
 
-    # Read train/cfg/Pendulum/transformer.yaml for example
-    with open(args.cfg, 'r') as f:
-        cfg = yaml.load(f, Loader=yaml.SafeLoader)
-
-    # Require transformer config
-    assert 'transformer' in cfg['network'], "Only transformer model is supported; config must define network.transformer"
-    utils_provider_name = cfg['env']['utils_provider_cfg']['name']
-    assert utils_provider_name == 'TransformerNeuralModelUtilsProvider', (
-        "Only TransformerNeuralModelUtilsProvider is supported. Got: " + utils_provider_name
-    )
-    assert (
-        cfg['env']['utils_provider_cfg'].get('num_states_history') ==
-        cfg['algorithm']['sample_sequence_length']
-    ), (
-        "'num_states_history' must equal 'sample_sequence_length' for the transformer."
-    )
+    cfg = load_default_cfg(args.cfg)
+    validate_cfg(cfg)
 
     if not args.no_time_stamp:
         args.logdir = os.path.join(args.logdir, get_time_stamp())
@@ -82,15 +72,12 @@ if __name__ == '__main__':
     set_random_seed(seed)
     cfg['algorithm']['seed'] = seed
 
-    cfg['cli'] = {
-        'logdir': args.logdir,
-        'train': args.train,
-        'render': cfg['env'].get('render', False),
-        'save_interval': cfg['algorithm'].get('save_interval', 50),
-        'log_interval': cfg['algorithm'].get('log_interval', 1),
-        'eval_interval': cfg['algorithm'].get('eval_interval', 1),
-        'skip_check_log_override': False,
-    }
+    cfg['cli'] = build_cli_cfg(
+        logdir=args.logdir,
+        train=args.train,
+        cfg=cfg,
+        skip_check_log_override=False,
+    )
 
     print(f"Device = {args.device}")
     neural_env = NnTrainingInterface(**cfg['env'], device=args.device)

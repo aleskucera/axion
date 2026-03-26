@@ -24,11 +24,19 @@ class Logger:
         self.wandb_logs = {}
 
     def init_wandb(self, wandb_project=project, wandb_name=None, config=None):
-        self.wandb = wandb.init(
-            project=wandb_project,
-            name=wandb_name,
-            config=config,
-        )
+        # Sweep agents typically call `wandb.init()` before constructing the trainer.
+        # Reuse that run to avoid "You must call wandb.init() before wandb.log()" or double-init issues.
+        if wandb.run is not None:
+            self.wandb = wandb.run
+            if config is not None:
+                try:
+                    wandb.config.update(dict(config), allow_val_change=True)
+                except Exception:
+                    # Best-effort: don't fail training if config update is rejected
+                    pass
+            return
+
+        self.wandb = wandb.init(project=wandb_project, name=wandb_name, config=config)
 
     def init_epoch(self, epoch):
         self.wandb_logs = {"epoch index": epoch}
