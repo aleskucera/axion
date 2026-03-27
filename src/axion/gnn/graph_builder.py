@@ -178,7 +178,8 @@ def add_objects(
     # Add to graph
     graph["object"].x = x_object.reshape(W * B, NODE_FEATURE_DIMS["object"])
     if body_vel_next is not None:
-        graph["object"].y = body_vel_next.reshape(W * B, OUTPUT_FEATURE_DIMS["object"])
+        acceleration = body_vel_next - body_vel
+        graph["object"].y = acceleration.reshape(W * B, OUTPUT_FEATURE_DIMS["object"])
     graph["object"].world = torch.repeat_interleave(world_indices, B)
 
 

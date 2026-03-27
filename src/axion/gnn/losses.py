@@ -14,6 +14,8 @@ class LossGNN(torch.nn.Module):
         self.device = device
         if loss_name == "l1_loss":
             self.loss = self.l1_loss
+        elif loss_name == "mse_loss":
+            self.loss = self.mse_loss
         elif loss_name == "weighted_l1_loss":
             self.loss = self.weighted_l1_loss
         elif loss_name == "residue_loss":
@@ -23,6 +25,18 @@ class LossGNN(torch.nn.Module):
 
     def forward(self, data, object_states, lambdas_dict):
         return self.loss(data, object_states, lambdas_dict)
+
+    def mse_loss(self, data, object_states, lambdas_dict) -> Dict[str, torch.Tensor]:
+        gt_values = torch.tensor([], device=self.device)
+        pred_values = torch.tensor([], device=self.device)
+        for key in OUTPUT_FEATURE_DIMS.keys():
+            if isinstance(key, str) and key in data.node_types and key in object_states:
+                gt_values = torch.cat([gt_values, data[key].y.flatten()])
+                pred_values = torch.cat([pred_values, object_states[key].flatten()])
+            elif key in data.edge_types and key in lambdas_dict:
+                gt_values = torch.cat([gt_values, data[key].y.flatten()])
+                pred_values = torch.cat([pred_values, lambdas_dict[key].flatten()])
+        return {"total_loss": (F.mse_loss(pred_values, gt_values), gt_values.shape[0])}
 
     def l1_loss(self, data, object_states, lambdas_dict) -> Dict[str, torch.Tensor]:
         gt_values = torch.tensor([], device=self.device)

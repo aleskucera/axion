@@ -51,7 +51,6 @@ class GNNEngine(AxionEngineBase):
         device = self._torch_device
         num_bodies = self.dims.body_count
 
-        body_vel = wp.to_torch(self.data.body_vel)
         body_vel_prev = wp.to_torch(self.data.body_vel_prev)
         body_pose_prev = wp.to_torch(self.data.body_pose_prev)
         ext_force = wp.to_torch(self.data.ext_force)
@@ -71,7 +70,7 @@ class GNNEngine(AxionEngineBase):
         shape_body = wp.to_torch(self.axion_model.shape_body).to(torch.long)
 
         graph = build_graph(
-            body_vel,
+            body_vel_prev,
             body_mass,
             ext_force,
             body_pose_prev,
@@ -99,10 +98,12 @@ class GNNEngine(AxionEngineBase):
         dt: float,
     ) -> None:
         if "object" in gnn_node_outputs:
-            pred_vel = gnn_node_outputs["object"]
+            pred_accel = gnn_node_outputs["object"]
             num_bodies = self.dims.body_count
             num_worlds = self.dims.num_worlds
-            pred_vel = pred_vel.reshape(num_worlds, num_bodies, 6)
+            pred_accel = pred_accel.reshape(num_worlds, num_bodies, 6)
+            current_vel = wp.to_torch(self.data.body_vel_prev)
+            pred_vel = current_vel + pred_accel
             pred_vel = wp.from_torch(pred_vel.contiguous())
             wp.copy(dest=self.data.body_vel, src=pred_vel)
 

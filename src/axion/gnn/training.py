@@ -14,6 +14,14 @@ from axion.gnn import AxionGNN
 from axion.gnn import AxionDatasetGNN
 
 
+def inject_training_noise(data: HeteroData, noise_std: float):
+    if noise_std <= 0.0 or "object" not in data.node_types:
+        return
+    vel_dims = 6
+    noise = torch.randn_like(data["object"].x[:, :vel_dims]) * noise_std
+    data["object"].x[:, :vel_dims] += noise
+
+
 def train_epoch(
     model: AxionGNN,
     loss_fn: LossGNN,
@@ -22,6 +30,7 @@ def train_epoch(
     device: str,
     epoch: int,
     total_epochs: int,
+    noise_std: float = 0.0,
 ):
     model.train()
     total_losses = defaultdict(float)
@@ -29,6 +38,8 @@ def train_epoch(
     pbar = tqdm(loader, desc=f"Epoch {epoch+1}/{total_epochs}")
     for i, data in enumerate(pbar, 1):
         data: HeteroData = data.to(device)
+        if noise_std > 0.0:
+            inject_training_noise(data, noise_std)
         optimizer.zero_grad()
         states, lambdas = model(data.x_dict, data.edge_index_dict, data.edge_attr_dict)
         loss_dict = loss_fn(data, states, lambdas)
@@ -86,6 +97,7 @@ def train(
             config["device"],
             epoch,
             config["epochs"],
+            noise_std=config["noise_std"],
         )
         val_loss = validate_epoch(
             model,
@@ -129,13 +141,13 @@ def main(config):
         config["hidden_layers"],
         config["normalize"],
         stats=train_dataset.stats if config["normalize_input"] else None,
+        repetitions=config["repetitions"],
     )
     train_loader = DataLoader(train_dataset, batch_size=config["batch_size"], shuffle=True)
     val_loader = DataLoader(val_dataset, batch_size=config["batch_size"], shuffle=False)
     optimizer = torch.optim.AdamW(model.parameters(), lr=config["lr_init"])
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-        optimizer, T_max=config["epochs"], eta_min=1e-6
-    )
+    gamma = (config["lr_final"] / config["lr_init"]) ** (1.0 / config["epochs"])
+    scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=gamma)
     model.to(config["device"])
     wandb_group_name = config["wandb"].split("/") if not config["wandb"] is None else [""]
     wandb.init(
@@ -160,14 +172,19 @@ def main(config):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train GNN Sim2D")
 
-    parser.add_argument("--message_passes", type=int, default=5)
+    parser.add_argument("--message_passes", type=int, default=10)
+    parser.add_argument("--repetitions", type=int, default=1)
     parser.add_argument("--hidden_layers", type=int, default=2)
     parser.add_argument("--hidden_dims", type=int, default=128)
-    parser.add_argument("--normalize", action="store_true", default=False)
-    parser.add_argument("--normalize_input", action="store_true", default=False)
+    parser.add_argument("--normalize", action="store_true", default=True)
+    parser.add_argument("--no_normalize", action="store_false", dest="normalize")
+    parser.add_argument("--normalize_input", action="store_true", default=True)
+    parser.add_argument("--no_normalize_input", action="store_false", dest="normalize_input")
 
-    parser.add_argument("--loss_type", type=str, default="l1_loss")
-    parser.add_argument("--lr_init", type=float, default=1e-3)
+    parser.add_argument("--noise_std", type=float, default=3e-4)
+    parser.add_argument("--loss_type", type=str, default="mse_loss")
+    parser.add_argument("--lr_init", type=float, default=1e-4)
+    parser.add_argument("--lr_final", type=float, default=1e-6)
     parser.add_argument("--batch_size", type=int, default=1)
     parser.add_argument("--epochs", type=int, default=300)
 

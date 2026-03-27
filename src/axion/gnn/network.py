@@ -170,8 +170,16 @@ class InteractionNetwork(MessagePassing):
 
 
 class Processor(nn.Module):
-    def __init__(self, message_passes: int, hidden_dims: int, hidden_layers: int, normalize: bool):
+    def __init__(
+        self,
+        message_passes: int,
+        hidden_dims: int,
+        hidden_layers: int,
+        normalize: bool,
+        repetitions: int = 1,
+    ):
         super().__init__()
+        self.repetitions = repetitions
         self.processor_layers = nn.ModuleList()
         for _ in range(message_passes):
             layer_dict = nn.ModuleDict()
@@ -181,7 +189,7 @@ class Processor(nn.Module):
                 )
             self.processor_layers.append(layer_dict)
 
-    def forward(
+    def _run_layers(
         self,
         x_dict: Dict[str, torch.Tensor],
         edge_index_dict: Dict[Tuple[str], torch.Tensor],
@@ -206,6 +214,16 @@ class Processor(nn.Module):
                 x_dict[node_type] = x_dict[node_type] + res_aggr
         return x_dict, edge_attr_dict
 
+    def forward(
+        self,
+        x_dict: Dict[str, torch.Tensor],
+        edge_index_dict: Dict[Tuple[str], torch.Tensor],
+        edge_attr_dict: Dict[Tuple[str], torch.Tensor],
+    ):
+        for _ in range(self.repetitions):
+            x_dict, edge_attr_dict = self._run_layers(x_dict, edge_index_dict, edge_attr_dict)
+        return x_dict, edge_attr_dict
+
 
 class AxionGNN(nn.Module):
     def __init__(
@@ -215,10 +233,13 @@ class AxionGNN(nn.Module):
         hidden_layers: int,
         normalize: bool,
         stats: Dict[str, Any] = None,
+        repetitions: int = 1,
     ):
         super().__init__()
         self.encoder = Encoder(hidden_dims, hidden_layers, normalize, stats=stats)
-        self.processor = Processor(message_passes, hidden_dims, hidden_layers, normalize)
+        self.processor = Processor(
+            message_passes, hidden_dims, hidden_layers, normalize, repetitions
+        )
         self.decoder = Decoder(hidden_dims, hidden_layers)
 
     def forward(self, x_dict, edge_index_dict, edge_attr_dict):

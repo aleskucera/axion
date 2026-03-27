@@ -171,10 +171,12 @@ def per_world_features():
             nodes = np.concatenate(
                 [body_vel_prev, body_mass[:, np.newaxis], ext_force, toi_arr], axis=1
             )
+            # Target is acceleration (delta-v), not absolute next velocity
+            acceleration = body_vel - body_vel_prev
             results.append(
                 (
                     torch.tensor(nodes, dtype=torch.float32),
-                    torch.tensor(body_vel, dtype=torch.float32),
+                    torch.tensor(acceleration, dtype=torch.float32),
                 )
             )
     return results
