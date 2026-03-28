@@ -23,6 +23,7 @@ from typing import Optional
 
 import warp as wp
 import torch
+import torch.nn.functional as F
 from torch.utils.data import DataLoader, ConcatDataset
 from torch.nn.utils.clip_grad import clip_grad_norm_
 import yaml
@@ -61,11 +62,17 @@ class SequenceModelTrainer:
         self.device = device
         self.is_test_mode = not bool(cli_cfg.get('train', True))
         self.has_lambda_head = cfg['network'].get('enable_lambda_head', True)
+        self.has_state_head = cfg['network'].get('enable_state_head', True)
+        if not self.has_lambda_head and not self.has_state_head:
+            raise ValueError(
+                "At least one of network.enable_lambda_head or network.enable_state_head must be True."
+            )
         self.use_energy_loss = bool(algo_cfg.get('use_energy_loss', False))
-        self.lambda_loss_weight = float(algo_cfg.get('lambda_loss_weight', 0.1)) if self.has_lambda_head else 0.0
+        self.lambda_loss_weight = float(algo_cfg.get('lambda_loss_weight', 1.0)) if self.has_lambda_head else 0.0
         loss_cfg = algo_cfg.get('loss', {}) or {}
         self.huber_delta = float(loss_cfg.get('huber_delta', 1.0))
         self.kinematics_loss_weight = float(loss_cfg.get('kinematics_loss_weight', 0.5))
+        self.lambda_loss_type = str(loss_cfg.get('lambda_loss_type', 'mse')).lower()
 
         set_random_seed(self.seed)
 
@@ -97,20 +104,42 @@ class SequenceModelTrainer:
             self.neural_model = checkpoint[0]
             self.neural_model.to(self.device)
 
+            if not hasattr(self.neural_model, 'has_state_head'):
+                self.neural_model.has_state_head = self.neural_model.model is not None
+            if not hasattr(self.neural_model, 'has_lambda_head'):
+                self.neural_model.has_lambda_head = (
+                    getattr(self.neural_model, 'lambda_model', None) is not None
+                )
+
             # Keep config/provider target mode consistent with loaded checkpoint head size.
             state_head = getattr(getattr(self.neural_model, "model", None), "output_net", None)
-            state_head_dim = int(state_head.out_features)
-            if state_head_dim == self.utils_provider.state_dim:
-                self.utils_provider.prediction_quantity_type = "full_state"
-                self.utils_provider.state_prediction_dim = self.utils_provider.state_dim
-            elif state_head_dim == self.utils_provider.dof_qd_per_env:
-                self.utils_provider.prediction_quantity_type = "velocities_only"
-                self.utils_provider.state_prediction_dim = self.utils_provider.dof_qd_per_env
-            else:
+            if state_head is not None:
+                state_head_dim = int(state_head.out_features)
+                if state_head_dim == self.utils_provider.state_dim:
+                    self.utils_provider.prediction_quantity_type = "full_state"
+                    self.utils_provider.state_prediction_dim = self.utils_provider.state_dim
+                elif state_head_dim == self.utils_provider.dof_qd_per_env:
+                    self.utils_provider.prediction_quantity_type = "velocities_only"
+                    self.utils_provider.state_prediction_dim = self.utils_provider.dof_qd_per_env
+                else:
+                    raise ValueError(
+                        "Checkpoint state head dim does not match expected full-state or velocity-only dims: "
+                        f"{state_head_dim} vs state_dim={self.utils_provider.state_dim}, "
+                        f"dof_qd={self.utils_provider.dof_qd_per_env}."
+                    )
+            elif self.has_state_head:
                 raise ValueError(
-                    "Checkpoint state head dim does not match expected full-state or velocity-only dims: "
-                    f"{state_head_dim} vs state_dim={self.utils_provider.state_dim}, "
-                    f"dof_qd={self.utils_provider.dof_qd_per_env}."
+                    "Checkpoint has no state head but config has enable_state_head: True."
+                )
+
+            self.neural_model.has_state_head = self.has_state_head
+            self.neural_model.has_lambda_head = self.has_lambda_head
+            if not self.has_state_head and self.neural_model.model is not None:
+                for p in self.neural_model.model.parameters():
+                    p.requires_grad = False
+            if self.has_lambda_head and getattr(self.neural_model, 'lambda_model', None) is None:
+                raise ValueError(
+                    "Config enables lambda head but checkpoint has no lambda_model."
                 )
         
         print('Model = \n', self.neural_model)
@@ -210,8 +239,8 @@ class SequenceModelTrainer:
                 print('Finished computing dataset statistics...')
                 self.neural_model.set_input_rms(self.dataset_rms)
                 self.neural_model.set_output_rms(
-                    self.dataset_rms['target'],
-                    self.dataset_rms.get('target_lambda')
+                    self.dataset_rms.get('target') if self.has_state_head else None,
+                    self.dataset_rms.get('target_lambda') if self.has_lambda_head else None,
                 )
             else:
                 assert model_checkpoint_path is not None, \
@@ -254,6 +283,14 @@ class SequenceModelTrainer:
                             eval_horizon = self.eval_horizon,
                             device = self.device
                         )
+
+        self.eval_primary_metric = algo_cfg.get('eval_primary_metric')
+        if self.eval_primary_metric is None:
+            self.eval_primary_metric = (
+                'lambda_error(MSE)'
+                if (not self.has_state_head and self.has_lambda_head)
+                else 'error(MSE)'
+            )
     
     def get_datasets(self, train_dataset_path, valid_datasets_cfg, require_train_dataset: bool = True):
         # Training dataset is optional for `--test` runs.
@@ -347,11 +384,12 @@ class SequenceModelTrainer:
         self.utils_provider.process_neural_model_inputs(data)
 
         # calculate prediction target from neural env
-        data['target'] = self.utils_provider.convert_next_states_to_prediction(
-                            states = data['states'], 
-                            next_states = data['next_states'],
-                            dt = self.neural_env.frame_dt
-                        )
+        if self.has_state_head:
+            data['target'] = self.utils_provider.convert_next_states_to_prediction(
+                states=data['states'],
+                next_states=data['next_states'],
+                dt=self.neural_env.frame_dt,
+            )
         if self.has_lambda_head:
             data['target_lambda'] = self.utils_provider.convert_next_lambdas_to_prediction(
                     lambdas = data['lambdas'],
@@ -360,126 +398,91 @@ class SequenceModelTrainer:
 
         return data
 
-    # def compute_loss(self, data, train):
-    #     """
-    #     Compute HuberLoss for state prediction
-    #     """
-    #     prediction_target = data['target']
-    #     prediction = self.neural_model(data)
-    #     state_prediction = prediction['state']
-        
-    #     if self.neural_model.normalize_output:
-    #         state_loss_weights = 1. / torch.sqrt(self.neural_model.output_rms.var + 1e-5)
-    #     else:
-    #         state_loss_weights = torch.ones(state_prediction.shape[-1], device = state_prediction.device)
-        
-    #     huber_delta = 1.0
-    #     loss = torch.nn.HuberLoss(delta= huber_delta)(
-    #         state_prediction * state_loss_weights,
-    #         prediction_target * state_loss_weights,
-    #     )
-        
-    #     predicted_next_states = self.utils_provider.convert_prediction_to_next_states(
-    #         states=data['states'],
-    #         prediction=state_prediction
-    #     )
-    #     self.utils_provider.wrap2PI(predicted_next_states)
-
-    #     with torch.no_grad():
-    #         loss_itemized = {}
-    #         loss_itemized['state_prediction_HUBER'] = loss.detach()
-    #         for i in range(predicted_next_states.shape[-1]):
-    #             loss_itemized[f'state_{i}'] = ((
-    #                 predicted_next_states[..., i] - data['next_states'][..., i]
-    #             ) ** 2).mean()
-    #         loss_itemized['state_HUBER'] = torch.nn.HuberLoss(delta=huber_delta)(
-    #             predicted_next_states,
-    #             data['next_states']
-    #         )
-    #         loss_itemized['q_error_norm'] = torch.norm(
-    #             predicted_next_states[..., :self.utils_provider.dof_q_per_env]
-    #             - data['next_states'][..., :self.utils_provider.dof_q_per_env],
-    #             dim=-1
-    #         ).mean()
-    #         loss_itemized['qd_error_norm'] = torch.norm(
-    #             predicted_next_states[..., self.utils_provider.dof_q_per_env:]
-    #             - data['next_states'][..., self.utils_provider.dof_q_per_env:],
-    #             dim=-1
-    #         ).mean()
-
-    #     return loss, loss_itemized
+    def _weighted_lambda_regression_loss(
+        self,
+        pred: torch.Tensor,
+        target: torch.Tensor,
+        weights: torch.Tensor,
+    ) -> torch.Tensor:
+        wp = pred * weights
+        wt = target * weights
+        if self.lambda_loss_type == 'mse':
+            return F.mse_loss(wp, wt)
+        if self.lambda_loss_type == 'l1':
+            return F.l1_loss(wp, wt)
+        if self.lambda_loss_type == 'huber':
+            return F.huber_loss(wp, wt, delta=self.huber_delta, reduction='mean')
+        raise RuntimeError(f'Unhandled lambda_loss_type {self.lambda_loss_type!r}')
 
     def compute_loss(self, data, train):
 
-        prediction_target = data['target']
         prediction = self.neural_model(data)
         state_prediction = prediction['state']
         lambda_prediction = prediction['lambda']
-        
-        if self.neural_model.normalize_output:
-            state_loss_weights = 1. / torch.sqrt(self.neural_model.output_rms.var + 1e-5)
+
+        if self.has_state_head:
+            prediction_target = data['target']
+            if self.neural_model.normalize_output and self.neural_model.output_rms is not None:
+                state_loss_weights = 1. / torch.sqrt(self.neural_model.output_rms.var + 1e-5)
+            else:
+                state_loss_weights = torch.ones(
+                    state_prediction.shape[-1], device=state_prediction.device
+                )
+            huber_loss = torch.nn.HuberLoss(delta=self.huber_delta)(
+                state_prediction * state_loss_weights,
+                prediction_target * state_loss_weights,
+            )
+            loss = huber_loss
         else:
-            state_loss_weights = torch.ones(state_prediction.shape[-1], device = state_prediction.device)
-        
-        huber_loss = torch.nn.HuberLoss(delta=self.huber_delta)(
-            state_prediction * state_loss_weights,
-            prediction_target * state_loss_weights,
-        )
-
-        # dof_q = self.utils_provider.dof_q_per_env
-        # kinematics_loss = torch.nn.MSELoss()(
-        #     TIME_STEP_S * (prediction_target[..., dof_q:] + state_prediction[..., dof_q:]),
-        #     state_prediction[..., :dof_q]
-        # )
-
-        loss = huber_loss
-        #loss += self.kinematics_loss_weight * kinematics_loss
+            huber_loss = None
+            loss = None
 
         if self.has_lambda_head:
             prediction_target_lambda = data['target_lambda']
-            if self.neural_model.normalize_output:
-                lambda_loss_weights = 1. / torch.sqrt(self.neural_model.lambda_output_rms.var + 1e-5)
+            if self.neural_model.normalize_output and self.neural_model.lambda_output_rms is not None:
+                lambda_loss_weights = 1. / torch.sqrt(
+                    self.neural_model.lambda_output_rms.var + 1e-5
+                )
             else:
-                lambda_loss_weights = torch.ones(lambda_prediction.shape[-1], device = lambda_prediction.device)
-            lambda_loss = torch.nn.MSELoss()(
-                lambda_prediction * lambda_loss_weights,
-                prediction_target_lambda * lambda_loss_weights
+                lambda_loss_weights = torch.ones(
+                    lambda_prediction.shape[-1], device=lambda_prediction.device
+                )
+            lambda_loss = self._weighted_lambda_regression_loss(
+                lambda_prediction,
+                prediction_target_lambda,
+                lambda_loss_weights,
             )
-            loss = loss + self.lambda_loss_weight * lambda_loss
+            if loss is None:
+                loss = lambda_loss
+            else:
+                loss = loss + self.lambda_loss_weight * lambda_loss
         else:
-            lambda_loss = torch.zeros_like(huber_loss)
+            lambda_loss = torch.zeros((), device=data['states'].device, dtype=data['states'].dtype)
 
-        # predicted_next_states: (B, T, state_dim) — needed with grad for energy loss
-        predicted_next_states = self.utils_provider.convert_prediction_to_next_states(
-            states=data['states'],
-            prediction=state_prediction
-        )
-        if getattr(self.utils_provider, "prediction_quantity_type", "full_state") == "full_state":
-            self.utils_provider.wrap2PI(predicted_next_states)
+        if self.has_state_head:
+            predicted_next_states = self.utils_provider.convert_prediction_to_next_states(
+                states=data['states'],
+                prediction=state_prediction,
+            )
+            if getattr(self.utils_provider, 'prediction_quantity_type', 'full_state') == 'full_state':
+                self.utils_provider.wrap2PI(predicted_next_states)
+        else:
+            predicted_next_states = None
 
         predicted_next_lambdas = None
         if self.has_lambda_head:
             predicted_next_lambdas = self.utils_provider.convert_prediction_to_next_lambdas(
                 lambdas=data['lambdas'],
-                prediction=lambda_prediction
+                prediction=lambda_prediction,
             )
 
-        # loss_energy = None
-        # if self.use_energy_loss:
-        #     # Energy loss: per-sample energies (B, T), then MSE over batch and time
-        #     E_next_states_gt = self.utils_provider.calculate_total_energy(data['next_states'])
-        #     E_next_states_predicted = self.utils_provider.calculate_total_energy(predicted_next_states)
-        #     loss_energy = torch.nn.MSELoss()(E_next_states_predicted, E_next_states_gt)
-        #     loss = loss + loss_energy
-
-        # Reported error statistics (no grad)
         with torch.no_grad():
             loss_itemized = self.compute_itemized_loss(
                 huber_loss,
                 lambda_loss,
                 predicted_next_states,
                 predicted_next_lambdas,
-                data
+                data,
             )
 
         return loss, loss_itemized
@@ -490,76 +493,99 @@ class SequenceModelTrainer:
         Computes the itemized loss for a given prediction dimension.
         """
         loss_itemized = {}
-        if predicted_next_states.shape[-1] == 4:
+        if self.has_lambda_head:
+            loss_itemized['lambda_prediction_loss'] = lambda_loss.detach()
+            loss_itemized['lambda_MSE'] = torch.nn.MSELoss()(
+                predicted_next_lambdas,
+                data['next_lambdas'],
+            )
+        if predicted_next_states is None:
+            return loss_itemized
+
+        if state_loss is not None:
             loss_itemized['state_prediction_MSE'] = state_loss.detach()
-            if self.has_lambda_head:
-                loss_itemized['lambda_prediction_MSE'] = lambda_loss.detach()
+        if predicted_next_states.shape[-1] == 4:
             for i in range(predicted_next_states.shape[-1]):
                 loss_itemized[f'state_{i}'] = ((
                     predicted_next_states[..., i] - data['next_states'][..., i]
                 ) ** 2).mean()
             loss_itemized['position_MSE'] = torch.nn.MSELoss()(
                 predicted_next_states[..., :self.utils_provider.dof_q_per_env],
-                data['next_states'][..., :self.utils_provider.dof_q_per_env]
+                data['next_states'][..., :self.utils_provider.dof_q_per_env],
             )
             loss_itemized['velocity_MSE'] = torch.nn.MSELoss()(
                 predicted_next_states[..., self.utils_provider.dof_q_per_env:],
-                data['next_states'][..., self.utils_provider.dof_q_per_env:]
+                data['next_states'][..., self.utils_provider.dof_q_per_env:],
             )
             loss_itemized['q_error_norm'] = torch.norm(
                 predicted_next_states[..., :self.utils_provider.dof_q_per_env]
                 - data['next_states'][..., :self.utils_provider.dof_q_per_env],
-                dim=-1
+                dim=-1,
             ).mean()
             loss_itemized['qd_error_norm'] = torch.norm(
                 predicted_next_states[..., self.utils_provider.dof_q_per_env:]
                 - data['next_states'][..., self.utils_provider.dof_q_per_env:],
-                dim=-1
+                dim=-1,
             ).mean()
-            if self.has_lambda_head:
-                loss_itemized['lambda_MSE'] = torch.nn.MSELoss()(
-                    predicted_next_lambdas,
-                    data['next_lambdas']
-                )
-            # if loss_energy is not None:
-            #     loss_itemized['energy_MSE'] = loss_energy.detach()
         else:
-            loss_itemized['state_prediction_MSE'] = state_loss.detach()
             for i in range(predicted_next_states.shape[-1]):
                 loss_itemized[f'state_{i}'] = ((
-                    predicted_next_states[..., i] - data['next_states'][..., i+2]
+                    predicted_next_states[..., i] - data['next_states'][..., i + 2]
                 ) ** 2).mean()
             loss_itemized['qd_error_norm'] = torch.norm(
                 predicted_next_states
                 - data['next_states'][..., self.utils_provider.dof_q_per_env:],
-                dim=-1
+                dim=-1,
             ).mean()
 
         return loss_itemized
 
 
     def compute_test_loss_reference(self, data):
-        """Stable reference loss for `--test` runs: weighted state MSE only.
+        """Stable reference loss for `--test` runs: weighted state MSE, or lambda MSE if no state head.
 
         This is intentionally kept independent from `compute_loss()` so training-loss
         experiments don't change the reported test-time validation loss.
         """
-        prediction_target = data['target']
         prediction = self.neural_model(data)
         state_prediction = prediction['state']
+        lambda_prediction = prediction['lambda']
 
-        if self.neural_model.normalize_output:
-            state_loss_weights = 1. / torch.sqrt(self.neural_model.output_rms.var + 1e-5)
-            state_loss_weights = state_loss_weights[..., :state_prediction.shape[-1]]
+        if self.has_state_head:
+            prediction_target = data['target']
+            if self.neural_model.normalize_output and self.neural_model.output_rms is not None:
+                state_loss_weights = 1. / torch.sqrt(self.neural_model.output_rms.var + 1e-5)
+                state_loss_weights = state_loss_weights[..., : state_prediction.shape[-1]]
+            else:
+                state_loss_weights = torch.ones(
+                    state_prediction.shape[-1], device=state_prediction.device
+                )
+            loss = torch.nn.MSELoss()(
+                state_prediction * state_loss_weights,
+                prediction_target * state_loss_weights,
+            )
+            with torch.no_grad():
+                loss_itemized = {'state_prediction_MSE': loss.detach()}
+            return loss, loss_itemized
+
+        if not self.has_lambda_head:
+            raise RuntimeError('compute_test_loss_reference requires a state or lambda head.')
+
+        prediction_target_lambda = data['target_lambda']
+        if self.neural_model.normalize_output and self.neural_model.lambda_output_rms is not None:
+            lambda_loss_weights = 1. / torch.sqrt(
+                self.neural_model.lambda_output_rms.var + 1e-5
+            )
         else:
-            state_loss_weights = torch.ones(state_prediction.shape[-1], device=state_prediction.device)
-
+            lambda_loss_weights = torch.ones(
+                lambda_prediction.shape[-1], device=lambda_prediction.device
+            )
         loss = torch.nn.MSELoss()(
-            state_prediction * state_loss_weights,
-            prediction_target * state_loss_weights,
+            lambda_prediction * lambda_loss_weights,
+            prediction_target_lambda * lambda_loss_weights,
         )
         with torch.no_grad():
-            loss_itemized = {'state_prediction_MSE': loss.detach()}
+            loss_itemized = {'lambda_prediction_MSE': loss.detach()}
         return loss, loss_itemized
         
     def one_epoch(
@@ -862,13 +888,18 @@ class SequenceModelTrainer:
                     epoch
                 )
         
+        # Evaluator uses unit-aware aliases; older code used q_error(MSE) / qd_error(MSE).
+        position_mse = error_stats['overall'].get(
+            'position_error_MSE(rad^2)',
+            error_stats['overall'].get('q_error(MSE)', float('nan')),
+        )
         eval_msg = (
             "[Evaluate], Num Rollouts = {}, Rollout Length = {}, "
             "Rollout MSE Error = {}, Rollout MSE Error (joint_q) = {}".format(
                 self.num_eval_rollouts,
                 self.eval_horizon,
                 format_value(error_stats['overall']['error(MSE)'], 8),
-                format_value(error_stats['overall']['q_error(MSE)'], 8),
+                format_value(position_mse, 8),
             )
         )
         if self.has_lambda_head:
@@ -877,12 +908,13 @@ class SequenceModelTrainer:
             )
         print_white(eval_msg)
 
-        if error_stats['overall']['error(MSE)'] < self.best_eval_error:
-            self.best_eval_error = error_stats['overall']['error(MSE)']
+        primary = float(error_stats['overall'][self.eval_primary_metric])
+        if primary < self.best_eval_error:
+            self.best_eval_error = primary
             self.save_model('best_eval_model')
             print_ok(
-                'Save Best Eval Model at Epoch {} with MSE error {}.'
-                .format(epoch, error_stats['overall']['error(MSE)'])
+                'Save Best Eval Model at Epoch {} with {} = {}.'
+                .format(epoch, self.eval_primary_metric, format_value(primary, 8))
             )
             with open(os.path.join(self.model_log_dir, 'saved_best_eval_model_epochs.txt'), 'a') as fp:
                 fp.write(f"{epoch}\n")

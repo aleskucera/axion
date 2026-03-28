@@ -6,27 +6,33 @@ env:
     states_frame: body
     anchor_frame_step: every
     states_embedding_type: identical
-    prediction_type: relative
-    prediction_quantity_type: velocities_only # full_state
+    state_prediction_type: relative
+    lambda_prediction_type: relative
+    prediction_quantity_type: full_state # full_state
     num_states_history: 10     # number of states and actions to pass into model. Default: 1 means use current state and action
   
 algorithm:
   name: SequenceModelTrainer
   use_energy_loss: false
-  lambda_loss_weight: 0.1
-  num_epochs: 15
+  lambda_loss_weight: 1.0
+  num_epochs: 20
   num_iters_per_epoch: -1  # 976 x 1024 = 999 424 (1 M)
   sample_sequence_length: 10 # the length to sample sequence from dataset
   batch_size: 1024
   num_valid_batches: 256 # what portion of validation dataset to validate on (num_valid_batches * batch_size)
   truncate_grad: True
   grad_norm: 1.0
+  loss:
+    huber_delta: 1.0
+    lambda_loss_type: mse  # mse | l1 | huber
+    kinematics_loss_weight: 0.5
+
   optimizer:
-    name: adam   # adam | adamw
-    lr_start: 1e-3
+    name: adamw   # adam | adamw
+    lr_start: 5e-3
     lr_end: 1e-4
-    lr_schedule: linear
-    weight_decay: 0.0 # 0.0 was default for adam
+    lr_schedule: cosine
+    weight_decay: 8e-4 # 0.0 was default for adam
 
   dataset:
     # Single dataset: train_dataset_path: path/to/one.hdf5
@@ -50,7 +56,7 @@ algorithm:
 inputs:
   low_dim: [
     states_embedding,
-    #lambdas,
+    lambdas,
     contact_normals,
     contact_points_1,
     contact_depths,
@@ -60,7 +66,8 @@ inputs:
 network:
   normalize_input: True
   normalize_output: True
-  enable_lambda_head: False
+  enable_state_head: False   
+  enable_lambda_head: True
   
   encoder:
     low_dim:
@@ -84,6 +91,8 @@ network:
       layernorm: False
 
   lambda_model:
+    # Residual into lambda head only: lambda_in = transformer_out + Linear(concat(all inputs.low_dim)).
+    state_skip: false
     output_tanh: False
     mlp:
       layer_sizes: [256]
