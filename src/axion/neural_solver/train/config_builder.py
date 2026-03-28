@@ -100,6 +100,11 @@ def apply_sweep_overrides(cfg: Mapping[str, Any], sweep: Mapping[str, Any]) -> d
         "normalize_output": ["network", "normalize_output"],
         "huber_delta": ["algorithm", "loss", "huber_delta"],
         "kinematics_loss_weight": ["algorithm", "loss", "kinematics_loss_weight"],
+        "lambda_prediction_type": ["env", "utils_provider_cfg", "lambda_prediction_type"],
+        "skip_connection": ["network", "lambda_model", "state_skip"],
+        "layer_norm": ["network", "lambda_model", "mlp", "layernorm"],
+        "lambda_head_size": ["network", "lambda_model", "mlp", "layer_sizes"],
+        "loss_type": ["algorithm", "loss", "lambda_loss_type"],
     }
 
     for sweep_key, cfg_path in mapping.items():

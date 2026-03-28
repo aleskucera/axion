@@ -24,7 +24,7 @@ Ensure `wandb.login()` runs before training (see `train.py`).
 ### W&B sweeps
 Create a new sweep and start an agent:
 ```
-python src/axion/neural_solver/train/sweep_train.py --cfg src/axion/neural_solver/train/cfg/Pendulum/transformer.yaml --logdir src/axion/neural_solver/train/trained_models/ --project neural-solver-transformer
+python src/axion/neural_solver/train/sweep_train.py --cfg src/axion/neural_solver/train/cfg/Pendulum/transformer.yaml --logdir src/axion/neural_solver/train/trained_models/sweep1 --project neural-solver-transformer
 ```
 
 Join an existing sweep (replace `<SWEEP_ID>`):

@@ -45,9 +45,37 @@ def _wrap_to_pi_(angles: torch.Tensor) -> torch.Tensor:
     return angles
 
 
+def _resolve_state_and_lambda_prediction_types(
+    cfg: Optional[dict],
+    kwargs: dict,
+    *,
+    ctor_prediction_type: str = "relative",
+) -> tuple[str, str]:
+    """
+    Legacy ``prediction_type`` sets the default for both when the specific keys are omitted.
+    Precedence per key: kwargs override cfg; each key falls back to legacy then 'relative'.
+    """
+    legacy = ctor_prediction_type
+    if cfg is not None and "prediction_type" in cfg:
+        legacy = cfg["prediction_type"]
+    if "prediction_type" in kwargs:
+        legacy = kwargs["prediction_type"]
+    fallback = legacy if legacy is not None else "relative"
+    state_pt = fallback
+    lambda_pt = fallback
+    if cfg is not None:
+        state_pt = cfg.get("state_prediction_type", state_pt)
+        lambda_pt = cfg.get("lambda_prediction_type", lambda_pt)
+    state_pt = kwargs.get("state_prediction_type", state_pt)
+    lambda_pt = kwargs.get("lambda_prediction_type", lambda_pt)
+    return state_pt, lambda_pt
+
+
 @dataclass
 class NeuralModelUtilsProviderCfg:
-    prediction_type: str = "relative"  # "relative" or "absolute"
+    prediction_type: str = "relative"  # legacy default for both state and lambda
+    state_prediction_type: str = "relative"  # "relative" or "absolute"
+    lambda_prediction_type: str = "relative"  # "relative" or "absolute"
     states_embedding_type: Optional[str] = "identical"  # None/"identical"
     angular_q_indices: Optional[Sequence[int]] = None  # indices in q to wrap; default: all q
     lambda_dim: Optional[int] = None  # optional override for per-world lambda dimension
@@ -86,22 +114,34 @@ class TransformerNeuralModelUtilsProvider:
                 wp.device_to_torch(model_wp_device) if model_wp_device is not None else torch.device("cpu")
             )
 
+        prediction_quantity_type = "full_state"
         if cfg is not None:
-            prediction_type = cfg.get("prediction_type", prediction_type)
             states_embedding_type = cfg.get("states_embedding_type", states_embedding_type)
             angular_q_indices = cfg.get("angular_q_indices", angular_q_indices)
-            prediction_quantity_type = cfg.get("prediction_quantity_type", "full_state")
+            prediction_quantity_type = cfg.get("prediction_quantity_type", prediction_quantity_type)
             lambda_dim = cfg.get("lambda_dim", lambda_dim)
 
-        if prediction_type not in ("relative", "absolute"):
-            raise ValueError(f"prediction_type must be 'relative' or 'absolute', got {prediction_type!r}")
+        state_prediction_type, lambda_prediction_type = _resolve_state_and_lambda_prediction_types(
+            cfg, kwargs, ctor_prediction_type=prediction_type
+        )
+        if state_prediction_type not in ("relative", "absolute"):
+            raise ValueError(
+                f"state_prediction_type must be 'relative' or 'absolute', got {state_prediction_type!r}"
+            )
+        if lambda_prediction_type not in ("relative", "absolute"):
+            raise ValueError(
+                f"lambda_prediction_type must be 'relative' or 'absolute', got {lambda_prediction_type!r}"
+            )
         if states_embedding_type not in (None, "identical"):
             raise ValueError(
                 "states_embedding_type must be None or 'identical'. "
                 f"Got {states_embedding_type!r}"
             )
 
-        self.prediction_type = prediction_type
+        self.state_prediction_type = state_prediction_type
+        self.lambda_prediction_type = lambda_prediction_type
+        # Deprecated: mirrors state path; use state_prediction_type / lambda_prediction_type.
+        self.prediction_type = state_prediction_type
         self.states_embedding_type = states_embedding_type
         self.prediction_quantity_type = prediction_quantity_type
         self.num_worlds = self.robot_model.world_count
@@ -477,7 +517,7 @@ class TransformerNeuralModelUtilsProvider:
         if states_bt.shape[-1] != self.state_dim or next_bt.shape[-1] != self.state_dim:
             raise ValueError("states/next_states last dim must equal state_dim")
 
-        if self.prediction_type == "absolute":
+        if self.state_prediction_type == "absolute":
             pred = next_bt.clone()
         else:
             pred = (next_bt - states_bt)
@@ -511,7 +551,7 @@ class TransformerNeuralModelUtilsProvider:
         ):
             raise ValueError("lambdas/next_lambdas last dim must equal lambda_dim")
 
-        if self.prediction_type == "absolute":
+        if self.lambda_prediction_type == "absolute":
             pred = next_lambdas_bt.clone()
         else:
             pred = next_lambdas_bt - lambdas_bt
@@ -539,7 +579,7 @@ class TransformerNeuralModelUtilsProvider:
         pred_bt = pred_bt[..., : self.state_prediction_dim]
 
         if self.prediction_quantity_type == "full_state":
-            if self.prediction_type == "absolute":
+            if self.state_prediction_type == "absolute":
                 next_states = pred_bt.clone()
             else:
                 next_states = states_bt + pred_bt
@@ -568,7 +608,7 @@ class TransformerNeuralModelUtilsProvider:
 
         pred_bt = pred_bt[..., : self.lambda_prediction_dim]
 
-        if self.prediction_type == "absolute":
+        if self.lambda_prediction_type == "absolute":
             next_lambdas = pred_bt.clone()
         else:
             next_lambdas = lambdas_bt + pred_bt

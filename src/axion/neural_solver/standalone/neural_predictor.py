@@ -13,6 +13,9 @@ from typing import Dict, Optional
 from collections import deque
 
 try:
+    from src.axion.neural_solver.neural_model_utils_providers.transformer_neural_utils_provider_new import (
+        _resolve_state_and_lambda_prediction_types,
+    )
     from src.axion.neural_solver.standalone.neural_predictor_helpers import (
         wrap2PI,
         convert_prediction_to_next_states_orientation_dofs,
@@ -26,6 +29,9 @@ try:
     from src.axion.types import reorder_ground_contacts_kernel, contact_penetration_depth_kernel
     from src.axion.core.contacts import AxionContacts
 except ModuleNotFoundError:
+    from axion.neural_solver.neural_model_utils_providers.transformer_neural_utils_provider_new import (
+        _resolve_state_and_lambda_prediction_types,
+    )
     from axion.neural_solver.standalone.neural_predictor_helpers import (
         wrap2PI,
         convert_prediction_to_next_states_orientation_dofs,
@@ -125,7 +131,12 @@ class NeuralPredictor:
         self.neural_integrator_cfg = env_cfg.get('utils_provider_cfg', env_cfg.get('neural_integrator_cfg', {}))
         self.states_frame = self.neural_integrator_cfg.get('states_frame', 'body')
         self.anchor_frame_step = self.neural_integrator_cfg.get('anchor_frame_step', 'every')
-        self.prediction_type = self.neural_integrator_cfg.get('prediction_type', 'relative')
+        _cfg = dict(self.neural_integrator_cfg)
+        self.state_prediction_type, self.lambda_prediction_type = (
+            _resolve_state_and_lambda_prediction_types(_cfg, {}, ctor_prediction_type="relative")
+        )
+        # Deprecated: mirrors state path; use state_prediction_type / lambda_prediction_type.
+        self.prediction_type = self.state_prediction_type
         self.prediction_quantity_type = self.neural_integrator_cfg.get('prediction_quantity_type', 'full_state')
         self.orientation_prediction_parameterization = self.neural_integrator_cfg.get('orientation_prediction_parameterization', 'quaternion')
         self.states_embedding_type = self.neural_integrator_cfg.get('states_embedding_type', None)
@@ -443,16 +454,16 @@ class NeuralPredictor:
 
         # Prediction qunatity type: "velocities_only"
         if self.prediction_quantity_type == "velocities_only":
-            if self.prediction_type == "absolute":
+            if self.state_prediction_type == "absolute":
                 raise NotImplementedError
-            elif self.prediction_type == "relative":
+            elif self.state_prediction_type == "relative":
                 qd_next = states[..., self.dof_q_per_env:] + prediction
                 next_states = self.compute_next_state_from_qd(states, qd_next, dt)
                 return next_states
 
         # Prediction qunatity type: "full_state"
         next_states = torch.empty_like(states)
-        if self.prediction_type in ["absolute", "relative"]:
+        if self.state_prediction_type in ["absolute", "relative"]:
             prediction_dof_offset = 0
 
             # Compute position components of the next states for each joint individually
@@ -464,14 +475,14 @@ class NeuralPredictor:
                         states[..., joint_dof_start:joint_dof_start + 3],
                         prediction[..., prediction_dof_offset:],
                         next_states[..., joint_dof_start:joint_dof_start + 3],
-                        self.prediction_type
+                        self.state_prediction_type
                     )
                     # 3d orientation dofs
                     prediction_dof_offset += convert_prediction_to_next_states_orientation_dofs(
                         states[..., joint_dof_start + 3:joint_dof_start + 7],
                         prediction[..., prediction_dof_offset:],
                         next_states[..., joint_dof_start + 3:joint_dof_start + 7],
-                        self.prediction_type,
+                        self.state_prediction_type,
                         self.orientation_prediction_parameterization
                     )
                 elif self.joint_types[joint_id] == JOINT_BALL:
@@ -479,7 +490,7 @@ class NeuralPredictor:
                         states[..., joint_dof_start:joint_dof_start + 4],
                         prediction[..., prediction_dof_offset:],
                         next_states[..., joint_dof_start:joint_dof_start + 4],
-                        self.prediction_type,
+                        self.state_prediction_type,
                         self.orientation_prediction_parameterization
                     )
                 else:
@@ -488,15 +499,15 @@ class NeuralPredictor:
                         states[..., joint_dof_start:joint_dof_end],
                         prediction[..., prediction_dof_offset:],
                         next_states[..., joint_dof_start:joint_dof_end],
-                        self.prediction_type
+                        self.state_prediction_type
                     )
 
             # Compute velocity components of the next states
-            if self.prediction_type == "absolute":
+            if self.state_prediction_type == "absolute":
                 next_states[..., self.dof_q_per_env:].copy_(
                     prediction[..., prediction_dof_offset:]
                 )
-            elif self.prediction_type == "relative":
+            elif self.state_prediction_type == "relative":
                 next_states[..., self.dof_q_per_env:] = (
                     states[..., self.dof_q_per_env:]
                     + prediction[..., prediction_dof_offset:]
@@ -519,9 +530,9 @@ class NeuralPredictor:
         Returns:
             next_lambdas: (num_envs, lambda_dim)
         """
-        if self.prediction_type == "absolute":
+        if self.lambda_prediction_type == "absolute":
             return prediction.clone()
-        elif self.prediction_type == "relative":
+        elif self.lambda_prediction_type == "relative":
             return lambdas + prediction
         else:
             raise NotImplementedError

@@ -11,7 +11,7 @@ from axion.neural_solver.train.config_builder import (
     validate_cfg,
 )
 from axion.neural_solver.utils.python_utils import set_random_seed
-
+from axion.neural_solver.train.sweep_configurations import sweep_config_0, sweep_config_1
 
 def _parse_args():
     p = argparse.ArgumentParser(description="Run W&B sweep training.")
@@ -60,24 +60,7 @@ def _make_sweep_train_fn(args):
 
 
 if __name__ == "__main__":
-    sweep_configuration = {
-        "method": "bayes",
-        "name": "neural-solver-transformer-sweep-0",
-        "metric": {"goal": "minimize", "name": "eval_10-steps/error(MSE)/epoch"},
-        "early_terminate": {"type": "hyperband", "min_iter": 5, "eta": 3},
-        "parameters": {
-            "lr_start": {"max": 1e-2, "min": 1e-4},
-            "lr_schedule": {"values": ["linear", "cosine", "constant"]},
-            "dropout": {"values": [0.0, 0.01, 0.02, 0.03, 0.04, 0.05, 0.06, 0.07, 0.08, 0.09, 0.1, 0.11, 0.12, 0.13, 0.14, 0.15, 0.16, 0.17, 0.18, 0.19, 0.2]},
-            "batch_size": {"values": [512, 1024, 2048, 4096]},
-            "normalize_input": {"values": [True, False]},
-            "normalize_output": {"values": [True, False]},
-            "optimizer": {"values": ["adam", "adamw"]},
-            "weight_decay": {"max": 1e-3, "min": 1e-5},
-            "huber_delta": {"max": 2.0, "min": 0.25},
-            "kinematics_loss_weight": {"max": 1.5, "min": 0.0},
-        },
-    }
+    sweep_configuration = sweep_config_1
     args = _parse_args()
     wandb.login()
 

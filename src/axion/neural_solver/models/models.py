@@ -69,6 +69,11 @@ class ModelMixedInput(nn.Module):
         self.model = None
         self.lambda_model = None
         self.has_lambda_head = network_cfg.get('enable_lambda_head', True)
+        self.has_state_head = network_cfg.get('enable_state_head', True)
+        if not self.has_lambda_head and not self.has_state_head:
+            raise ValueError(
+                "At least one of enable_lambda_head or enable_state_head must be True."
+            )
         
         self.input_rms = None
         self.normalize_input = network_cfg.get('normalize_input', False)
@@ -105,15 +110,17 @@ class ModelMixedInput(nn.Module):
         else:
             NotImplementedError
 
-        # State prediction head
-        if self.model is None:
+        # State prediction head (optional)
+        if self.has_state_head and self.model is None:
             self.model = MLPDeterministic(
-                (self.feature_dim, ), 
-                output_dim, 
-                network_cfg['model'], 
-                device = device
+                (self.feature_dim, ),
+                output_dim,
+                network_cfg['model'],
+                device=device,
             )
         # Lambda prediction head (optional)
+        lambda_cfg = network_cfg.get('lambda_model', {})
+        self.lambda_state_skip_proj = None
         if self.has_lambda_head and self.lambda_model is None:
             self.lambda_model = MLPDeterministic(
                 (self.feature_dim, ),
@@ -121,7 +128,19 @@ class ModelMixedInput(nn.Module):
                 network_cfg['lambda_model'],
                 device = device
             )
-        
+        if self.has_lambda_head and bool(lambda_cfg.get('state_skip', False)):
+            d_skip = sum( int(input_sample[n].shape[-1]) for n in self.low_dim_input_names)
+            for n in self.low_dim_input_names:
+                if n not in input_sample:
+                    raise ValueError(
+                        f"state_skip: input_sample missing key {n!r} (expected all inputs.low_dim keys)"
+                    )
+            self.lambda_state_skip_proj = nn.Linear(
+                d_skip, self.feature_dim, device=device
+            )
+            nn.init.zeros_(self.lambda_state_skip_proj.weight)
+            nn.init.zeros_(self.lambda_state_skip_proj.bias)
+
         self.output_tanh = network_cfg.get('output_tanh', False)
         self.lambda_output_tanh = (
             network_cfg.get('lambda_model', {}).get('output_tanh', False)
@@ -172,7 +191,7 @@ class ModelMixedInput(nn.Module):
                 self.input_rms[input_name] = data_rms[input_name]
     
     def set_output_rms(self, output_rms, lambda_output_rms = None):
-        self.output_rms = output_rms
+        self.output_rms = output_rms if self.has_state_head else None
         self.lambda_output_rms = lambda_output_rms if self.has_lambda_head else None
 
     def extract_input_features(self, input_dict): # input can be in shape (B, input_dim) or (T, B, input_dim)
@@ -189,6 +208,11 @@ class ModelMixedInput(nn.Module):
         features = torch.cat(features, dim = -1)
         return features
 
+    def _concat_raw_low_dim(self, input_dict):
+        """Same tensor order as the low_dim encoder input: cat(inputs.low_dim) on the last dim."""
+        parts = [input_dict[name] for name in self.low_dim_input_names]
+        return torch.cat(parts, dim=-1)
+
     def evaluate(self, input_dict, deterministic = False): # Single-step forward, input in shape (B, T, input_dim), T = 1 for non-transformer models
         if self.normalize_input:
             for obs_key in self.input_rms.keys():
@@ -198,19 +222,25 @@ class ModelMixedInput(nn.Module):
 
         if self.is_transformer:
             features = self.transformer_model(features)
-        state_output = self.model(features, deterministic = deterministic)
-
-        if self.output_tanh:
-            state_output = torch.tanh(state_output)
-        if self.normalize_output:
-            state_output = self.output_rms.normalize(state_output, un_norm = True)
-
-        output = {'state': state_output[:, -1:, :]}
+        if self.has_state_head and self.model is not None:
+            state_output = self.model(features, deterministic=deterministic)
+            if self.output_tanh:
+                state_output = torch.tanh(state_output)
+            if self.normalize_output and self.output_rms is not None:
+                state_output = self.output_rms.normalize(state_output, un_norm=True)
+            output = {'state': state_output[:, -1:, :]}
+        else:
+            output = {'state': None}
 
         has_lambda_head = bool(getattr(self, "has_lambda_head", False))
         lambda_model = getattr(self, "lambda_model", None)
+        skip_proj = getattr(self, "lambda_state_skip_proj", None)
         if has_lambda_head and (lambda_model is not None):
-            lambda_output = lambda_model(features, deterministic = deterministic)
+            lambda_features = features
+            if skip_proj is not None:
+                skip = skip_proj(self._concat_raw_low_dim(input_dict))
+                lambda_features = lambda_features + skip
+            lambda_output = lambda_model(lambda_features, deterministic = deterministic)
             if self.lambda_output_tanh:
                 lambda_output = torch.tanh(lambda_output)
             lambda_output_rms = getattr(self, "lambda_output_rms", None)
@@ -241,21 +271,29 @@ class ModelMixedInput(nn.Module):
 
         B, T, feature_dim = features.shape
         features_flatten = features.contiguous().view(-1, feature_dim)
-        state_output_flatten = self.model(features_flatten, deterministic = deterministic)
-        state_output = state_output_flatten.view(B, T, -1)
-
-        if self.output_tanh:
-            state_output = torch.tanh(state_output)
-
-        if self.normalize_output:
-            state_output = self.output_rms.normalize(state_output, un_norm = True)
-
-        output = {'state': state_output}
+        if self.has_state_head and self.model is not None:
+            state_output_flatten = self.model(features_flatten, deterministic=deterministic)
+            state_output = state_output_flatten.view(B, T, -1)
+            if self.output_tanh:
+                state_output = torch.tanh(state_output)
+            if self.normalize_output and self.output_rms is not None:
+                state_output = self.output_rms.normalize(state_output, un_norm=True)
+            output = {'state': state_output}
+        else:
+            output = {'state': None}
 
         has_lambda_head = bool(getattr(self, "has_lambda_head", False))
         lambda_model = getattr(self, "lambda_model", None)
+        skip_proj = getattr(self, "lambda_state_skip_proj", None)
         if has_lambda_head and (lambda_model is not None):
-            lambda_output_flatten = lambda_model(features_flatten, deterministic = deterministic)
+            lambda_features_flatten = features_flatten
+            if skip_proj is not None:
+                skip_full = self._concat_raw_low_dim(input_dict)
+                skip_in = skip_full.reshape(-1, skip_full.shape[-1])
+                lambda_features_flatten = lambda_features_flatten + skip_proj(skip_in)
+            lambda_output_flatten = lambda_model(
+                lambda_features_flatten, deterministic = deterministic
+            )
             lambda_output = lambda_output_flatten.view(B, T, -1)
             if self.lambda_output_tanh:
                 lambda_output = torch.tanh(lambda_output)
@@ -275,11 +313,15 @@ class ModelMixedInput(nn.Module):
         if self.transformer_model is not None:
             self.transformer_model.to(device)
 
-        self.model.to(device)
+        if self.model is not None:
+            self.model.to(device)
         # Backward compatibility: older checkpoints may not have `lambda_model`.
         lambda_model = getattr(self, "lambda_model", None)
         if lambda_model is not None:
             lambda_model.to(device)
+        skip_proj = getattr(self, "lambda_state_skip_proj", None)
+        if skip_proj is not None:
+            skip_proj.to(device)
         if self.input_rms is not None:
             for k in self.input_rms:
                 self.input_rms[k] = self.input_rms[k].to(device)

@@ -284,32 +284,14 @@ class NnTrainingInterface:
         state_prediction = prediction['state']      # can be either full state or only velocities
         lambda_prediction = prediction['lambda']
 
-        current_states = self.states.unsqueeze(1)  # (B, 1, state_dim)
-        if state_prediction.ndim == 3:
-            state_prediction = state_prediction[:, -1:, :]
-
-        next_pred = self.utils_provider.convert_prediction_to_next_states(
-            states=current_states,
-            prediction=state_prediction,
-            dt=self.frame_dt,
-        ).squeeze(1)  # back to (B, pred_dim)
-
-        # If the prediction is only the velocities, compute the next states from the velocities
-        if next_pred.shape[-1] == 2:
-            next_states = self.utils_provider.compute_next_state_from_qd(
-                states=current_states.squeeze(1),
-                qd_next=next_pred,
-                dt=self.frame_dt,
-            )
-        else:
-            next_states = next_pred
-
-        assert next_states.shape[-1] == self.state_dim
-        # From this point on, we are sure that the next state has have full dim
-
-        self._sync_states(next_states)
-
-        if lambda_prediction is not None:
+        # Lambda-only models: advance state with ground-truth physics, lambdas from the network.
+        if state_prediction is None:
+            if lambda_prediction is None:
+                raise RuntimeError(
+                    "Neural step requires a state prediction and/or a lambda prediction."
+                )
+            self.simulator_wrapper.update()
+            self._sync_states()
             current_lambdas = self.lambdas.unsqueeze(1)  # (B, 1, lambda_dim)
             if lambda_prediction.ndim == 3:
                 lambda_prediction = lambda_prediction[:, -1:, :]
@@ -319,9 +301,49 @@ class NnTrainingInterface:
             ).squeeze(1)
             self.lambdas.copy_(next_lambdas)
             self.utils_provider.lambdas.copy_(self.lambdas)
+            self._collide_and_append_to_history()
+            return self.states
 
-        self._collide_and_append_to_history()
-        return self.states
+        # State-only or mixed models:
+        else:
+            current_states = self.states.unsqueeze(1)  # (B, 1, state_dim)
+            if state_prediction.ndim == 3:
+                state_prediction = state_prediction[:, -1:, :]
+
+            next_pred = self.utils_provider.convert_prediction_to_next_states(
+                states=current_states,
+                prediction=state_prediction,
+                dt=self.frame_dt,
+            ).squeeze(1)  # back to (B, pred_dim)
+
+            # If the prediction is only the velocities, compute the next states from the velocities
+            if next_pred.shape[-1] == 2:
+                next_states = self.utils_provider.compute_next_state_from_qd(
+                    states=current_states.squeeze(1),
+                    qd_next=next_pred,
+                    dt=self.frame_dt,
+                )
+            else:
+                next_states = next_pred
+
+            assert next_states.shape[-1] == self.state_dim
+            # From this point on, we are sure that the next state has have full dim
+
+            self._sync_states(next_states)
+
+            if lambda_prediction is not None:
+                current_lambdas = self.lambdas.unsqueeze(1)  # (B, 1, lambda_dim)
+                if lambda_prediction.ndim == 3:
+                    lambda_prediction = lambda_prediction[:, -1:, :]
+                next_lambdas = self.utils_provider.convert_prediction_to_next_lambdas(
+                    lambdas=current_lambdas,
+                    prediction=lambda_prediction,
+                ).squeeze(1)
+                self.lambdas.copy_(next_lambdas)
+                self.utils_provider.lambdas.copy_(self.lambdas)
+
+            self._collide_and_append_to_history()
+            return self.states
 
     # ---- Ground-truth stepping (dataset generation) ----
 
