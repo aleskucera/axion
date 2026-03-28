@@ -44,6 +44,7 @@ class AxionResidualAD(torch.autograd.Function):
         wp.copy(data._constr_force, cf_src)
         wp.copy(data._constr_force_prev_iter, cf_src)
         data._constr_force.requires_grad = True
+        data._constr_force_prev_iter.requires_grad = True
 
         # Enable grad on outputs
         data._res.requires_grad = True
@@ -92,9 +93,12 @@ class AxionResidualAD(torch.autograd.Function):
         # Backpropagate through the tape
         tape.backward()
 
-        # Extract gradients
+        # Extract gradients — both _constr_force and _constr_force_prev_iter
+        # come from the same input, so sum their gradients
         grad_vel = wp.to_torch(vel_wp.grad).reshape(dims.num_worlds, dims.N_u).clone()
         grad_cf = wp.to_torch(data._constr_force.grad).clone()
+        if data._constr_force_prev_iter.grad is not None:
+            grad_cf = grad_cf + wp.to_torch(data._constr_force_prev_iter.grad).clone()
 
         # Zero the tape to avoid accumulation on next call
         tape.zero()
