@@ -151,6 +151,6 @@ def test_warm_start_reduces_iterations():
 
 
 if __name__ == "__main__":
-    test_lambda_close_to_converged()
+    test_linear_residual_is_small()
     test_warm_start_reduces_iterations()
     print("\nAll tests passed.")
