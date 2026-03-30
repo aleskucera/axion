@@ -17,6 +17,8 @@ nav:
     - Gauss's Principle of Least Constraint: theory/gauss-least-constraint.md
     - Nonlinear System of Equations: theory/non-linear-system.md
     - Numerical Solution: theory/numerical-solution.md
+    - Linear Solver: theory/linear-solver.md
+    - Adjoint Method: theory/adjoint-method.md
   - Implementation:
     - Engine Overview: implementation/engine.md
     - Configurable Parameters: implementation/parameters.md

@@ -142,20 +142,23 @@ class HelhestTrajectorySplineSurfaceOptimizer(AxionDifferentiableSimulator):
         self.frame = 0
 
         # Initial guess (Left, Right, Rear)
-        self.init_wheel_vel = (4.0, 3.0, 0.0)
+        self.init_wheel_vel = (4.0, 5.0, 0.0)
 
         self.track_body(body_idx=0, name="chassis", color=(0.0, 0.5, 1.0))
 
     def build_model(self) -> Model:
         self.builder.rigid_gap = 0.1
+        # Joint Control
+        TARGET_KE = 250.0
+        TARGET_KD = 0.0
 
         create_helhest_model(
             self.builder,
             xform=wp.transform(wp.vec3(0.0, 0.0, 2.0), wp.quat_identity()),
             control_mode="velocity",
-            k_p=HelhestConfig.TARGET_KE,
-            k_d=HelhestConfig.TARGET_KD,
-            friction_left_right=0.7,
+            k_p=TARGET_KE,
+            k_d=TARGET_KD,
+            friction_left_right=0.8,
             friction_rear=0.35,
         )
 
@@ -315,9 +318,9 @@ class HelhestTrajectorySplineSurfaceOptimizer(AxionDifferentiableSimulator):
 
         for i in range(T):
             target_ctrl = np.zeros(num_dofs, dtype=np.float32)
-            target_ctrl[WHEEL_DOF_OFFSET + 0] = 4.0
-            target_ctrl[WHEEL_DOF_OFFSET + 1] = 1.0
-            target_ctrl[WHEEL_DOF_OFFSET + 2] = 1.0
+            target_ctrl[WHEEL_DOF_OFFSET + 0] = 2.0
+            target_ctrl[WHEEL_DOF_OFFSET + 1] = 5.0
+            target_ctrl[WHEEL_DOF_OFFSET + 2] = 2.0
 
             target_ctrl_wp = wp.array(target_ctrl, dtype=wp.float32, device=self.model.device)
             wp.copy(self.target_controls[i].joint_target_vel, target_ctrl_wp)
