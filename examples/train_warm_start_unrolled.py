@@ -1,14 +1,12 @@
-"""Preconditioned gradient descent for raw tensor overfitting.
+"""Warm-start training with direct residual loss (Option B, fixed gradients).
 
-Uses the physics solver's own preconditioner (Jacobi = diag(A)⁻¹ for constraints,
-M⁻¹ for velocities) to scale the gradient before the optimizer step.
-This accounts for the vel/cf scale mismatch naturally.
+Trains a WarmStartNet on multiple timesteps using ||residual||^2 loss
+with exact gradients via AxionResidualAD (with corrected friction gradient).
 
 Usage:
     python examples/train_warm_start_unrolled.py rendering=headless execution.use_cuda_graph=false
 """
 import pathlib
-import time
 
 import hydra
 import newton
@@ -19,17 +17,21 @@ from axion import AxionEngine
 from axion import EngineConfig
 from axion import LoggingConfig
 from axion import SimulationConfig
-from axion.core.linear_utils import compute_linear_system
 from axion.core.model_builder import AxionModelBuilder
 from axion.generation.scene_generator_new import SceneGenerator
 from axion.learning.torch_residual_ad import AxionResidualAD
-from axion.math import integrate_body_pose_kernel
+from axion.learning.warm_start_net import WarmStartNet
 from omegaconf import DictConfig
 
 CONFIG_PATH = pathlib.Path(__file__).parent.joinpath("conf")
 
-WARMUP_STEPS = 10
+WARMUP_STEPS = 15
+NUM_TRAIN_STEPS = 50
 NUM_EPOCHS = 500
+LR = 1e-2
+HIDDEN_DIM = 256
+NUM_HIDDEN_LAYERS = 3
+GRAD_CLIP = 1.0
 SEED = 42
 
 
@@ -51,6 +53,14 @@ def build_random_model(num_worlds: int = 1, seed: int = SEED) -> newton.Model:
     return builder.finalize_replicated(num_worlds=num_worlds)
 
 
+def get_state_tensor(engine: AxionEngine) -> torch.Tensor:
+    pose = wp.to_torch(engine.data.body_pose_prev).clone()
+    vel = wp.to_torch(engine.data.body_vel_prev).clone()
+    pose_flat = pose.reshape(engine.dims.num_worlds, -1).float()
+    vel_flat = vel.reshape(engine.dims.num_worlds, -1).float()
+    return torch.cat([pose_flat, vel_flat], dim=-1)
+
+
 def count_solver_iters(engine, dims, init_vel, init_cf):
     vel_wp = wp.from_torch(
         init_vel.detach().reshape(dims.num_worlds, dims.body_count, 6).contiguous(),
@@ -69,87 +79,6 @@ def count_solver_iters(engine, dims, init_vel, init_cf):
     return iters, res_sq
 
 
-def compute_loss(engine, body_vel_param, constr_force_param):
-    residual = AxionResidualAD.apply(
-        engine.axion_model,
-        engine.axion_contacts,
-        engine.data,
-        engine.config,
-        engine.dims,
-        body_vel_param,
-        constr_force_param,
-    )
-    return torch.sum(residual**2)
-
-
-def get_preconditioner_diag(engine):
-    """Extract the Jacobi preconditioner diagonal (diag(A)⁻¹) as a torch tensor.
-
-    This must be called after compute_linear_system + preconditioner.update().
-    """
-    return wp.to_torch(engine.preconditioner._P_inv_diag).clone()
-
-
-def get_mass_inv_diag(engine):
-    """Build a per-DOF inverse mass diagonal for body velocities.
-
-    Each body has 6 DOFs (3 angular + 3 linear). We use:
-    - Angular DOFs: scale by ||I⁻¹|| (Frobenius norm of inverse inertia)
-    - Linear DOFs: scale by 1/m (scalar inverse mass)
-
-    Returns tensor of shape (num_worlds, N_u).
-    """
-    dims = engine.dims
-    # Scalar inverse mass per body: (num_worlds, num_bodies)
-    inv_mass = wp.to_torch(engine.axion_model.body_inv_mass).clone()
-    # Inverse inertia: (num_worlds, num_bodies, 3, 3)
-    inv_inertia = wp.to_torch(engine.data.world_inv_inertia).clone()
-
-    # Build per-DOF diagonal: (num_worlds, num_bodies, 6)
-    diag = torch.zeros(dims.num_worlds, dims.body_count, 6, device=inv_mass.device)
-
-    # Angular DOFs (0:3): use Frobenius norm of inv_inertia as scale
-    inv_inertia_scale = torch.norm(inv_inertia, dim=(-2, -1))  # (num_worlds, num_bodies)
-    diag[:, :, 0:3] = inv_inertia_scale.unsqueeze(-1)
-
-    # Linear DOFs (3:6): use scalar inverse mass
-    diag[:, :, 3:6] = inv_mass.unsqueeze(-1)
-
-    return diag.reshape(dims.num_worlds, dims.N_u)
-
-
-def setup_linearization(engine, body_vel, constr_force):
-    """Write state into engine and run linearization to update preconditioner."""
-    dims = engine.dims
-    v_reshaped = body_vel.detach().reshape(dims.num_worlds, dims.body_count, 6).contiguous()
-    engine.data.body_vel = wp.from_torch(v_reshaped, dtype=wp.spatial_vector, requires_grad=False)
-
-    cf_wp = wp.from_torch(constr_force.detach().contiguous(), requires_grad=False)
-    wp.copy(engine.data._constr_force, cf_wp)
-    wp.copy(engine.data._constr_force_prev_iter, cf_wp)
-
-    wp.launch(
-        kernel=integrate_body_pose_kernel,
-        dim=(dims.num_worlds, dims.body_count),
-        inputs=[
-            engine.data.body_vel,
-            engine.data.body_pose_prev,
-            engine.axion_model.body_com,
-            engine.data.dt,
-        ],
-        outputs=[engine.data.body_pose],
-        device=engine.data.device,
-    )
-    compute_linear_system(
-        engine.axion_model,
-        engine.axion_contacts,
-        engine.data,
-        engine.config,
-        engine.dims,
-    )
-    engine.preconditioner.update()
-
-
 @hydra.main(config_path=str(CONFIG_PATH), config_name="config", version_base=None)
 def main(cfg: DictConfig):
     wp.init()
@@ -162,10 +91,11 @@ def main(cfg: DictConfig):
 
     engine = engine_config.create_engine(
         model=model,
-        sim_steps=WARMUP_STEPS + 10,
+        sim_steps=WARMUP_STEPS + NUM_TRAIN_STEPS + 1,
         logging_config=LoggingConfig(),
     )
     dims = engine.dims
+    torch_device = wp.device_to_torch(engine.data.device)
 
     state_cur = model.state()
     state_next = model.state()
@@ -173,9 +103,11 @@ def main(cfg: DictConfig):
     newton.eval_fk(model, model.joint_q, model.joint_qd, state_cur)
 
     print(f"Scene: {dims.body_count} bodies, {dims.num_constraints} constraints")
+    print(f"NN input: {7 * dims.body_count + 6 * dims.body_count}, "
+          f"output: {dims.N_u + dims.num_constraints}")
 
-    # === Warm up physics ===
-    print(f"Warming up for {WARMUP_STEPS} steps...")
+    # === Phase 1: Warm up physics ===
+    print(f"\nWarming up for {WARMUP_STEPS} steps...")
     for step in range(WARMUP_STEPS):
         contacts = model.collide(state_cur)
         engine.load_data(state_cur, control, contacts, dt)
@@ -188,181 +120,102 @@ def main(cfg: DictConfig):
         wp.copy(dest=state_next.body_qd, src=engine.data.body_vel)
         state_cur, state_next = state_next, state_cur
 
-    # === Snapshot one timestep ===
-    contacts = model.collide(state_cur)
-    engine.load_data(state_cur, control, contacts, dt)
-    saved_q = state_cur.body_q.numpy().copy()
-    saved_qd = state_cur.body_qd.numpy().copy()
+    # === Phase 2: Collect timestep snapshots for training ===
+    print(f"Collecting {NUM_TRAIN_STEPS} timesteps...")
+    timestep_data = []
 
-    # Default solver baseline
-    wp.copy(dest=engine.data.body_pose, src=state_cur.body_q)
-    wp.copy(dest=engine.data.body_vel, src=state_cur.body_qd)
-    engine.data._constr_force.zero_()
-    engine.data._constr_force_prev_iter.zero_()
-    engine._solve()
-    default_iters = engine.data.iter_count.numpy()[0]
-    default_res = wp.to_torch(engine.data.res_norm_sq).sum().item()
-
-    sol_vel = wp.to_torch(engine.data.body_vel).reshape(dims.num_worlds, dims.N_u).clone()
-    sol_cf = wp.to_torch(engine.data._constr_force).clone()
-    print(f"Default solver: {default_iters} iters, ||r||^2 = {default_res:.4e}")
-    print(f"  sol_vel norm: {torch.norm(sol_vel).item():.4f}")
-    print(f"  sol_cf norm:  {torch.norm(sol_cf).item():.4f}")
-
-    torch_device = wp.device_to_torch(engine.data.device)
-
-    # === Define optimizer configs ===
-    configs = {
-        "Adam (no precond)": {
-            "precond": False,
-            "lr": 1e-2,
-            "cf_lr_mult": 100.0,
-        },
-        "Adam + physics precond": {
-            "precond": True,
-            "lr": 1e-2,
-            "cf_lr_mult": 1.0,  # preconditioner handles scaling
-        },
-        "SGD + physics precond": {
-            "precond": True,
-            "lr": 0.1,
-            "cf_lr_mult": 1.0,
-            "optimizer": "sgd",
-        },
-        "RMSprop + physics precond": {
-            "precond": True,
-            "lr": 1e-2,
-            "cf_lr_mult": 1.0,
-            "optimizer": "rmsprop",
-        },
-    }
-
-    results = {}
-
-    for name, cfg_opt in configs.items():
-        print(f"\n{'='*60}")
-        print(f"  {name}")
-        print(f"{'='*60}")
-
-        # Fresh parameters from same init
-        torch.manual_seed(SEED)
-        init_vel = sol_vel + 0.5 * torch.randn_like(sol_vel)
-        init_cf = sol_cf + 50.0 * torch.randn_like(sol_cf)
-
-        body_vel_param = torch.nn.Parameter(init_vel.clone())
-        constr_force_param = torch.nn.Parameter(init_cf.clone())
-
-        lr = cfg_opt["lr"]
-        cf_mult = cfg_opt["cf_lr_mult"]
-        opt_type = cfg_opt.get("optimizer", "adam")
-
-        if opt_type == "sgd":
-            optimizer = torch.optim.SGD(
-                [
-                    {"params": [body_vel_param], "lr": lr},
-                    {"params": [constr_force_param], "lr": lr * cf_mult},
-                ],
-                momentum=0.9,
-            )
-        elif opt_type == "rmsprop":
-            optimizer = torch.optim.RMSprop(
-                [
-                    {"params": [body_vel_param], "lr": lr},
-                    {"params": [constr_force_param], "lr": lr * cf_mult},
-                ],
-            )
-        else:
-            optimizer = torch.optim.Adam(
-                [
-                    {"params": [body_vel_param], "lr": lr},
-                    {"params": [constr_force_param], "lr": lr * cf_mult},
-                ],
-            )
-
-        use_precond = cfg_opt["precond"]
-        losses = []
-        t0 = time.time()
-
-        for epoch in range(NUM_EPOCHS):
-            wp.copy(dest=state_cur.body_q, src=wp.from_numpy(saved_q, dtype=wp.transform))
-            wp.copy(dest=state_cur.body_qd, src=wp.from_numpy(saved_qd, dtype=wp.spatial_vector))
-            engine.load_data(state_cur, control, contacts, dt)
-
-            optimizer.zero_grad()
-            loss = compute_loss(engine, body_vel_param, constr_force_param)
-            loss.backward()
-
-            # Apply physics preconditioner to gradients
-            if use_precond and body_vel_param.grad is not None:
-                # Linearize at current point to get fresh preconditioner
-                setup_linearization(engine, body_vel_param, constr_force_param)
-
-                # Precondition cf gradient: multiply by diag(A)⁻¹
-                P_inv = get_preconditioner_diag(engine)
-                constr_force_param.grad.data.mul_(P_inv.clamp(min=1e-10))
-
-                # Precondition vel gradient: multiply by M⁻¹ diagonal
-                M_inv = get_mass_inv_diag(engine)
-                body_vel_param.grad.data.mul_(M_inv.clamp(min=1e-10))
-
-            optimizer.step()
-
-            loss_val = loss.item()
-            losses.append(loss_val)
-
-            if epoch % 50 == 0 or epoch == NUM_EPOCHS - 1:
-                dist_vel = torch.norm(body_vel_param.data - sol_vel).item()
-                dist_cf = torch.norm(constr_force_param.data - sol_cf).item()
-                grad_vel = (
-                    body_vel_param.grad.norm().item() if body_vel_param.grad is not None else 0
-                )
-                grad_cf = (
-                    constr_force_param.grad.norm().item()
-                    if constr_force_param.grad is not None
-                    else 0
-                )
-                print(
-                    f"    epoch {epoch:4d} | loss: {loss_val:.4e} | "
-                    f"d_vel: {dist_vel:.4f} | d_cf: {dist_cf:.4f} | "
-                    f"g_vel: {grad_vel:.2e} | g_cf: {grad_cf:.2e}"
-                )
-
-        elapsed = time.time() - t0
-
-        # Evaluate
-        wp.copy(dest=state_cur.body_q, src=wp.from_numpy(saved_q, dtype=wp.transform))
-        wp.copy(dest=state_cur.body_qd, src=wp.from_numpy(saved_qd, dtype=wp.spatial_vector))
+    for step in range(NUM_TRAIN_STEPS):
+        contacts = model.collide(state_cur)
         engine.load_data(state_cur, control, contacts, dt)
+        state_tensor = get_state_tensor(engine)
 
-        nn_iters, nn_res = count_solver_iters(engine, dims, body_vel_param, constr_force_param)
-        dist_vel = torch.norm(body_vel_param.data - sol_vel).item()
-        dist_cf = torch.norm(constr_force_param.data - sol_cf).item()
+        wp.copy(dest=engine.data.body_pose, src=state_cur.body_q)
+        wp.copy(dest=engine.data.body_vel, src=state_cur.body_qd)
+        engine.data._constr_force.zero_()
+        engine.data._constr_force_prev_iter.zero_()
+        engine._solve()
+        default_iters = engine.data.iter_count.numpy()[0]
+        default_res = wp.to_torch(engine.data.res_norm_sq).sum().item()
 
-        results[name] = {
-            "final_loss": losses[-1],
-            "best_loss": min(losses),
-            "iters": nn_iters,
-            "res_sq": nn_res,
-            "dist_vel": dist_vel,
-            "dist_cf": dist_cf,
-            "time": elapsed,
-        }
+        timestep_data.append({
+            "state_tensor": state_tensor,
+            "contacts": contacts,
+            "state_q": state_cur.body_q.numpy().copy(),
+            "state_qd": state_cur.body_qd.numpy().copy(),
+            "default_iters": default_iters,
+            "default_res": default_res,
+        })
 
-    # === Summary ===
-    print(f"\n{'='*90}")
-    print(f"  SUMMARY  (default: {default_iters} iters, ||r||^2 = {default_res:.4e})")
-    print(f"{'='*90}")
-    print(
-        f"  {'Optimizer':<30s} {'Final loss':>12s} {'Best loss':>12s} "
-        f"{'Iters':>6s} {'||r||^2':>10s} {'dist_vel':>10s} {'dist_cf':>10s} {'Time':>8s}"
-    )
-    print(f"  {'-'*30} {'-'*12} {'-'*12} {'-'*6} {'-'*10} {'-'*10} {'-'*10} {'-'*8}")
-    for opt_name, r in results.items():
-        print(
-            f"  {opt_name:<30s} {r['final_loss']:12.4e} {r['best_loss']:12.4e} "
-            f"{r['iters']:6d} {r['res_sq']:10.4e} {r['dist_vel']:10.4f} {r['dist_cf']:10.4f} "
-            f"{r['time']:7.1f}s"
-        )
+        if step % 10 == 0:
+            print(f"  step {step:3d} | default: {default_iters} iters, ||r||^2: {default_res:.4e}")
+
+        wp.copy(dest=state_next.body_q, src=engine.data.body_pose)
+        wp.copy(dest=state_next.body_qd, src=engine.data.body_vel)
+        state_cur, state_next = state_next, state_cur
+
+    avg_default = np.mean([t["default_iters"] for t in timestep_data])
+    print(f"\nDefault warm-start: avg {avg_default:.1f} iters/step")
+
+    # === Phase 3: Train NN ===
+    net = WarmStartNet(dims, hidden_dim=HIDDEN_DIM, num_hidden_layers=NUM_HIDDEN_LAYERS).to(torch_device)
+    num_params = sum(p.numel() for p in net.parameters())
+    print(f"\nNN: {NUM_HIDDEN_LAYERS} hidden layers, {HIDDEN_DIM} wide, {num_params:,} parameters")
+    print(f"Training for {NUM_EPOCHS} epochs, Adam lr={LR}\n")
+
+    optimizer = torch.optim.Adam(net.parameters(), lr=LR)
+
+    for epoch in range(NUM_EPOCHS):
+        epoch_loss = 0.0
+        optimizer.zero_grad()
+
+        for t in timestep_data:
+            wp.copy(dest=state_cur.body_q, src=wp.from_numpy(t["state_q"], dtype=wp.transform))
+            wp.copy(dest=state_cur.body_qd, src=wp.from_numpy(t["state_qd"], dtype=wp.spatial_vector))
+            engine.load_data(state_cur, control, t["contacts"], dt)
+
+            body_vel, constr_force = net(t["state_tensor"])
+            residual = AxionResidualAD.apply(
+                engine.axion_model, engine.axion_contacts, engine.data,
+                engine.config, engine.dims, body_vel, constr_force,
+            )
+            loss = torch.sum(residual ** 2)
+            loss.backward()
+            epoch_loss += loss.item()
+
+        torch.nn.utils.clip_grad_norm_(net.parameters(), GRAD_CLIP)
+        optimizer.step()
+
+        if epoch % 20 == 0 or epoch == NUM_EPOCHS - 1:
+            print(f"  epoch {epoch:4d} | avg loss: {epoch_loss / NUM_TRAIN_STEPS:.4e}")
+
+    # === Phase 4: Evaluate ===
+    print(f"\n{'='*60}")
+    print("Evaluation: NN warm-start vs default (v=v_prev, cf=0)")
+    print(f"{'='*60}")
+
+    net.eval()
+    nn_total_iters = 0
+
+    for step_idx, t in enumerate(timestep_data):
+        wp.copy(dest=state_cur.body_q, src=wp.from_numpy(t["state_q"], dtype=wp.transform))
+        wp.copy(dest=state_cur.body_qd, src=wp.from_numpy(t["state_qd"], dtype=wp.spatial_vector))
+        engine.load_data(state_cur, control, t["contacts"], dt)
+
+        with torch.no_grad():
+            pred_vel, pred_cf = net(t["state_tensor"])
+
+        nn_iters, nn_res = count_solver_iters(engine, dims, pred_vel, pred_cf)
+        nn_total_iters += nn_iters
+
+        if step_idx % 10 == 0:
+            saved = t["default_iters"] - nn_iters
+            print(f"  step {step_idx:3d} | default: {t['default_iters']} iters"
+                  f" | NN: {nn_iters} iters (||r||^2={nn_res:.4e})"
+                  f" | saved: {saved:+d}")
+
+    avg_nn = nn_total_iters / NUM_TRAIN_STEPS
+    print(f"\n  Average: default={avg_default:.1f}, NN={avg_nn:.1f}, "
+          f"saved={avg_default - avg_nn:.1f} ({(avg_default - avg_nn) / avg_default * 100:.0f}%)")
 
 
 if __name__ == "__main__":

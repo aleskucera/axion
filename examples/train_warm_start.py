@@ -20,9 +20,9 @@ from axion import EngineConfig
 from axion import LoggingConfig
 from axion import SimulationConfig
 from axion.core.model_builder import AxionModelBuilder
+from axion.generation.scene_generator_new import SceneGenerator
 from axion.learning.torch_residual_ad import AxionResidualAD
 from axion.learning.warm_start_net import WarmStartNet
-from axion.generation.scene_generator_new import SceneGenerator
 from omegaconf import DictConfig
 
 CONFIG_PATH = pathlib.Path(__file__).parent.joinpath("conf")
@@ -30,10 +30,10 @@ CONFIG_PATH = pathlib.Path(__file__).parent.joinpath("conf")
 # --- Experiment settings ---
 WARMUP_STEPS = 15
 NUM_TRAIN_STEPS = 50
-NUM_EPOCHS = 200
+NUM_EPOCHS = 2000
 LR = 1e-3
 HIDDEN_DIM = 256
-NUM_HIDDEN_LAYERS = 3
+NUM_HIDDEN_LAYERS = 2
 GRAD_CLIP = 1.0
 SEED = 42
 
@@ -68,8 +68,13 @@ def get_state_tensor(engine: AxionEngine) -> torch.Tensor:
 def compute_residual_loss(engine, body_vel, constr_force):
     """Compute ||residual||^2 with exact autodiff gradients."""
     residual = AxionResidualAD.apply(
-        engine.axion_model, engine.axion_contacts, engine.data,
-        engine.config, engine.dims, body_vel, constr_force,
+        engine.axion_model,
+        engine.axion_contacts,
+        engine.data,
+        engine.config,
+        engine.dims,
+        body_vel,
+        constr_force,
     )
     return torch.sum(residual**2)
 
@@ -120,8 +125,10 @@ def main(cfg: DictConfig):
     newton.eval_fk(model, model.joint_q, model.joint_qd, state_cur)
 
     print(f"Scene: {dims.body_count} bodies, {dims.num_constraints} constraints")
-    print(f"NN input: {7 * dims.body_count + 6 * dims.body_count}, "
-          f"output: {dims.N_u + dims.num_constraints}")
+    print(
+        f"NN input: {7 * dims.body_count + 6 * dims.body_count}, "
+        f"output: {dims.N_u + dims.num_constraints}"
+    )
 
     # === Phase 1: Warm up physics ===
     print(f"\nWarming up for {WARMUP_STEPS} steps...")
@@ -155,14 +162,16 @@ def main(cfg: DictConfig):
         default_iters = engine.data.iter_count.numpy()[0]
         default_res = wp.to_torch(engine.data.res_norm_sq).sum().item()
 
-        timestep_data.append({
-            "state_tensor": state_tensor,
-            "contacts": contacts,
-            "state_q": state_cur.body_q.numpy().copy(),
-            "state_qd": state_cur.body_qd.numpy().copy(),
-            "default_iters": default_iters,
-            "default_res": default_res,
-        })
+        timestep_data.append(
+            {
+                "state_tensor": state_tensor,
+                "contacts": contacts,
+                "state_q": state_cur.body_q.numpy().copy(),
+                "state_qd": state_cur.body_qd.numpy().copy(),
+                "default_iters": default_iters,
+                "default_res": default_res,
+            }
+        )
 
         if step % 10 == 0:
             print(f"  step {step:3d} | default: {default_iters} iters, ||r||^2: {default_res:.4e}")
@@ -176,7 +185,9 @@ def main(cfg: DictConfig):
     print(f"\nDefault warm-start: avg {avg_default:.1f} iters/step")
 
     # === Phase 3: Train NN with residual loss ===
-    net = WarmStartNet(dims, hidden_dim=HIDDEN_DIM, num_hidden_layers=NUM_HIDDEN_LAYERS).to(torch_device)
+    net = WarmStartNet(dims, hidden_dim=HIDDEN_DIM, num_hidden_layers=NUM_HIDDEN_LAYERS).to(
+        torch_device
+    )
     num_params = sum(p.numel() for p in net.parameters())
     print(f"\nNN: {NUM_HIDDEN_LAYERS} hidden layers, {HIDDEN_DIM} wide, {num_params:,} parameters")
     print(f"Training for {NUM_EPOCHS} epochs with residual loss...\n")
@@ -191,7 +202,9 @@ def main(cfg: DictConfig):
         for t in timestep_data:
             # Restore engine state for this timestep
             wp.copy(dest=state_cur.body_q, src=wp.from_numpy(t["state_q"], dtype=wp.transform))
-            wp.copy(dest=state_cur.body_qd, src=wp.from_numpy(t["state_qd"], dtype=wp.spatial_vector))
+            wp.copy(
+                dest=state_cur.body_qd, src=wp.from_numpy(t["state_qd"], dtype=wp.spatial_vector)
+            )
             engine.load_data(state_cur, control, t["contacts"], dt)
 
             # NN prediction
@@ -228,13 +241,17 @@ def main(cfg: DictConfig):
 
         if step_idx % 10 == 0:
             saved = t["default_iters"] - nn_iters
-            print(f"  step {step_idx:3d} | default: {t['default_iters']} iters"
-                  f" | NN: {nn_iters} iters (||r||^2={nn_res:.4e})"
-                  f" | saved: {saved:+d}")
+            print(
+                f"  step {step_idx:3d} | default: {t['default_iters']} iters"
+                f" | NN: {nn_iters} iters (||r||^2={nn_res:.4e})"
+                f" | saved: {saved:+d}"
+            )
 
     avg_nn = nn_total_iters / NUM_TRAIN_STEPS
-    print(f"\n  Average: default={avg_default:.1f}, NN={avg_nn:.1f}, "
-          f"saved={avg_default - avg_nn:.1f} ({(avg_default - avg_nn)/avg_default*100:.0f}%)")
+    print(
+        f"\n  Average: default={avg_default:.1f}, NN={avg_nn:.1f}, "
+        f"saved={avg_default - avg_nn:.1f} ({(avg_default - avg_nn)/avg_default*100:.0f}%)"
+    )
 
 
 if __name__ == "__main__":
