@@ -184,4 +184,4 @@ def calculate_statistics(graphs: list[HeteroData]) -> dict:
 
 
 if __name__ == "__main__":
-    AxionDatasetGNN(root="data/gnn_data/fall_dataset/train_dataset")
+    AxionDatasetGNN(root=sys.argv[1])
