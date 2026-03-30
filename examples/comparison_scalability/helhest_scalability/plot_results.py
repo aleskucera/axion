@@ -28,14 +28,18 @@ plt.rcParams.update({
 })
 
 STYLES = {
-    "Axion":      {"color": "#2196F3", "marker": "o", "lw": 2.0, "zorder": 5},
-    "MJX-jacfwd": {"color": "#FF5722", "marker": "s", "lw": 1.5, "zorder": 3},
-    "MJX-grad":   {"color": "#FF8A65", "marker": "^", "lw": 1.5, "zorder": 3},
+    "Axion":        {"color": "#2196F3", "marker": "o", "lw": 2.0, "zorder": 5},
+    "MJX-jacfwd":   {"color": "#FF5722", "marker": "s", "lw": 1.5, "zorder": 3},
+    "MJX-grad":     {"color": "#FF8A65", "marker": "^", "lw": 1.5, "zorder": 3},
+    "TinyDiffSim":  {"color": "#607D8B", "marker": "D", "lw": 1.5, "zorder": 3},
+    "Brax":         {"color": "#009688", "marker": "v", "lw": 1.5, "zorder": 3},
 }
 LABELS = {
-    "Axion":      r"\textbf{Axion}",
-    "MJX-jacfwd": "MJX-jacfwd",
-    "MJX-grad":   "MJX-grad",
+    "Axion":        r"\textbf{Axion}",
+    "MJX-jacfwd":   "MJX-jacfwd",
+    "MJX-grad":     "MJX-grad",
+    "TinyDiffSim":  "TinyDiffSim",
+    "Brax":         "Brax",
 }
 SIM_ORDER = list(STYLES.keys())
 
@@ -78,12 +82,16 @@ def main():
         label = LABELS[sim]
 
         times = [data_by_worlds[n]["median_time_ms"] for n in worlds]
-        mems  = [data_by_worlds[n]["peak_gpu_mb"] for n in worlds]
+        mems_raw = [data_by_worlds[n].get("peak_gpu_mb") for n in worlds]
 
         ax_time.plot(worlds, times, color=style["color"], marker=style["marker"],
                      linewidth=style["lw"], markersize=5, label=label, zorder=style["zorder"])
-        ax_mem.plot(worlds, mems, color=style["color"], marker=style["marker"],
-                    linewidth=style["lw"], markersize=5, label=label, zorder=style["zorder"])
+
+        mem_worlds = [w for w, m in zip(worlds, mems_raw) if m is not None]
+        mems = [m for m in mems_raw if m is not None]
+        if mems:
+            ax_mem.plot(mem_worlds, mems, color=style["color"], marker=style["marker"],
+                        linewidth=style["lw"], markersize=5, label=label, zorder=style["zorder"])
 
     for ax in (ax_time, ax_mem):
         ax.set_xscale("log")
@@ -96,8 +104,8 @@ def main():
     ax_time.set_ylabel("Median time per iteration (ms)")
     ax_time.set_title("Wall-clock time vs worlds", pad=4)
 
-    ax_mem.set_ylabel("Peak GPU memory (MB)")
-    ax_mem.set_title("GPU memory vs worlds", pad=4)
+    ax_mem.set_ylabel("Peak memory (MB)")
+    ax_mem.set_title("Memory vs worlds", pad=4)
 
     handles, labels = ax_time.get_legend_handles_labels()
     fig.legend(handles, labels, loc="lower center", ncol=len(handles),

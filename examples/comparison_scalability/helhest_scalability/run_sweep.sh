@@ -41,6 +41,14 @@ for N in "${WORLDS[@]}"; do
     run_sim "$DIR/mjx_jacfwd.py"  "MJX-jacfwd" "$N" "$DIR/results/mjx_jacfwd_${N}.json"
 done
 
+for N in "${WORLDS[@]}"; do
+    run_sim "$DIR/tinydiffsim.py" "TinyDiffSim" "$N" "$DIR/results/tinydiffsim_${N}.json"
+done
+
+for N in "${WORLDS[@]}"; do
+    run_sim "$DIR/brax_sim.py"        "Brax"        "$N" "$DIR/results/brax_${N}.json"
+done
+
 echo ""
 echo "Sweep complete. Plotting..."
 python "$DIR/plot_results.py"

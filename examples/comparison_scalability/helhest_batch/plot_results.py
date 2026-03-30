@@ -28,14 +28,18 @@ plt.rcParams.update({
 })
 
 STYLES = {
-    "Axion":      {"color": "#2196F3"},
-    "MJX-jacfwd": {"color": "#FF5722"},
-    "MJX-grad":   {"color": "#FF8A65"},
+    "Axion":        {"color": "#2196F3"},
+    "MJX-jacfwd":   {"color": "#FF5722"},
+    "MJX-grad":     {"color": "#FF8A65"},
+    "TinyDiffSim":  {"color": "#607D8B"},
+    "Brax":         {"color": "#009688"},
 }
 LABELS = {
-    "Axion":      r"\textbf{Axion}",
-    "MJX-jacfwd": "MJX-jacfwd",
-    "MJX-grad":   "MJX-grad",
+    "Axion":        r"\textbf{Axion}",
+    "MJX-jacfwd":   "MJX-jacfwd",
+    "MJX-grad":     "MJX-grad",
+    "TinyDiffSim":  "TinyDiffSim",
+    "Brax":         "Brax",
 }
 AXION_COLOR = "#2196F3"
 
