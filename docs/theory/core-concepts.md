@@ -13,10 +13,10 @@ Axion's physics engine is built on a unified mathematical framework that treats 
 Axion represents articulated body systems using generalized coordinates and velocities that describe the system's configuration and motion. The dynamics are governed by:
 
 \[
-\mathbf{\tilde{M}}(\mathbf{q}) \Delta\mathbf{u} = \mathbf{f}_{\text{ext}} h + \mathbf{J}^T(\mathbf{q}) \boldsymbol{\lambda}
+\mathbf{\tilde{M}}(\mathbf{q}) \Delta\mathbf{u} = h \mathbf{f}_{\text{ext}} + h \mathbf{J}^T(\mathbf{q}) \boldsymbol{\lambda}
 \]
 
-This captures how velocity changes result from external forces and constraint impulses. The meaning and derivation of these constraint impulses will be explained in [Gauss's Principle of Least Constraint](./gauss-least-constraint.md).
+This captures how velocity changes result from external forces and constraint forces. The meaning and derivation of these constraint impulses will be explained in [Gauss's Principle of Least Constraint](./gauss-least-constraint.md).
 
 !!! note "Mathematical Notation"
     For detailed definitions of all symbols (\(\mathbf{q}\), \(\mathbf{u}\), \(\mathbf{\tilde{M}}\), \(\mathbf{J}\), \(\boldsymbol{\lambda}\), etc.), see the [Notation](./notation.md) page.
@@ -57,9 +57,15 @@ The optimization principle, combined with time discretization, leads to a large 
 
 ### 4. Numerical Solution
 
-Finally, we numerically solve this nonlinear system using a specialized Newton-type method designed to handle the non-smooth nature of contact and friction.
+We numerically solve this nonlinear system using a specialized Newton-type method designed to handle the non-smooth nature of contact and friction, with a GPU-parallel linear solver at its core.
 
-→ **Next**: [Numerical Solution](./linear-system.md)
+→ **Next**: [Numerical Solution](./numerical-solution.md)
+
+### 5. Differentiable Simulation
+
+Because each time step is defined by an implicit equation \(\mathbf{R}(\mathbf{s}^+, \mathbf{s}^-, \mathbf{a}^-, \boldsymbol{\theta}) = \mathbf{0}\), the implicit function theorem provides exact gradients of any loss with respect to initial conditions, controls, or physical parameters — without unrolling the solver. The adjoint method makes this computation as cheap as one additional linear solve per time step.
+
+→ **Next**: [Adjoint Method](./adjoint-method.md)
 
 ---
 

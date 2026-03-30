@@ -247,8 +247,13 @@ class AxionEngineBase(SolverBase):
         """Compute initial contact forces from the predicted body state.
 
         Assumes body_pose and body_vel have been set to the predicted state (q*, u*).
-        Back-solves (J M^-1 J^T) f = b for the contact forces that satisfy the
-        linearised momentum balance, then projects onto the feasible set.
+        Uses a two-pass solve to warm-start both normal and friction forces:
+
+        Pass 1: Solve for normal + joint forces (friction inactive because
+                constr_force_prev_iter is zero, so friction Jacobians are not assembled).
+                Copy result to constr_force_prev_iter so friction sees nonzero normals.
+
+        Pass 2: Re-solve with friction now active, giving a coupled warm-start.
 
         The result is stored in data._constr_force and data._constr_force_prev_iter,
         ready to warm-start the Newton-Raphson solver.
@@ -256,11 +261,33 @@ class AxionEngineBase(SolverBase):
         self.data._constr_force.zero_()
         self.data._constr_force_prev_iter.zero_()
 
+        # --- Pass 1: normal + joint forces only (friction inactive) ---
         compute_linear_system(
             self.axion_model, self.axion_contacts, self.data, self.config, self.dims
         )
+        self.data.C_values.zero_()
+        self.preconditioner.update()
+        self.cr_solver.solve(
+            A=self.A_op,
+            b=self.data.rhs,
+            x=self.data._constr_force,
+            preconditioner=self.preconditioner,
+            iters=self.config.max_linear_iters,
+            tol=self.config.linear_tol,
+            atol=self.config.linear_atol,
+            log=False,
+        )
 
-        # Solve (J M^-1 J^T) f = b  (without compliance)
+        # Expose pass-1 normal forces so the friction kernel activates in pass 2.
+        # No projection needed: the friction kernel's early exit (mu * f_n <= 1e-6)
+        # already treats negative normals as inactive contacts.
+        wp.copy(dest=self.data._constr_force_prev_iter, src=self.data._constr_force)
+
+        # --- Pass 2: re-solve with friction active ---
+        self.data._constr_force.zero_()
+        compute_linear_system(
+            self.axion_model, self.axion_contacts, self.data, self.config, self.dims
+        )
         self.data.C_values.zero_()
         self.preconditioner.update()
         self.cr_solver.solve(
@@ -288,8 +315,6 @@ class AxionEngineBase(SolverBase):
             device=self.device,
         )
 
-        # Expose warm-start forces as "previous iteration" so the friction cone
-        # constraint knows non-zero friction is available from the first NR iteration.
         wp.copy(dest=self.data._constr_force_prev_iter, src=self.data._constr_force)
 
     def _solve(self):

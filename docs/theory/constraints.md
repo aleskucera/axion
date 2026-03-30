@@ -105,10 +105,10 @@ The contact constraint is formulated as a **Nonlinear Complementarity Problem (N
 
 This mathematical relationship captures the essential physics:
 
-* **Non-negativity**: Contact impulses are repulsive (\(\lambda_n \geq 0\)) and no penetration occurs (\(\mathbf{c}(\mathbf{q}) \geq 0\))  
+* **Non-negativity**: Contact forces are repulsive (\(\lambda_n \geq 0\)) and no penetration occurs (\(\mathbf{c}(\mathbf{q}) \geq 0\))
 * **Complementarity**: Either bodies are separated (\(\mathbf{c}(\mathbf{q}) > 0\), \(\lambda_n = 0\)) or in contact (\(\mathbf{c}(\mathbf{q}) = 0\), \(\lambda_n \geq 0\))
 
-By solving this position-level problem directly, Axion finds the exact impulses required to satisfy the non-penetration constraint, resulting in stable simulation without drift.
+By solving this position-level problem directly, Axion finds the exact forces required to satisfy the non-penetration constraint, resulting in stable simulation without drift.
 
 ### Velocity-Level Formulation (Alternative)
 
@@ -124,11 +124,11 @@ This forms a **Linear Complementarity Problem (LCP)** that ensures bodies don't 
 
 ## 3. Friction Constraints
 
-Friction constraints apply tangential impulses that resist sliding motion between contacting bodies. Axion uses the smooth, isotropic Coulomb friction model derived from the **principle of maximal dissipation**.
+Friction constraints apply tangential forces that resist sliding motion between contacting bodies. Axion uses the smooth, isotropic Coulomb friction model derived from the **principle of maximal dissipation**.
 
 ### Mathematical Formulation
 
-The principle of maximal dissipation states that the friction impulse **λ**<sub>t</sub> will remove the maximum amount of kinetic energy from the system, subject to the Coulomb constraint that its magnitude is limited by the normal impulse **λ**<sub>n</sub> and the coefficient of friction **μ**:
+The principle of maximal dissipation states that the friction force **λ**<sub>t</sub> will remove the maximum amount of kinetic energy from the system, subject to the Coulomb constraint that its magnitude is limited by the normal force **λ**<sub>n</sub> and the coefficient of friction **μ**:
 
 \[
 \|\boldsymbol{\lambda}_t\| \leq \mu \cdot \lambda_n
@@ -136,8 +136,8 @@ The principle of maximal dissipation states that the friction impulse **λ**<sub
 
 The Karush-Kuhn-Tucker (KKT) conditions for this model precisely describe the friction behavior:
 
-1. **Sliding**: If there is relative tangential velocity (\(\mathbf{v}_t \neq \mathbf{0}\)), the friction impulse opposes it at maximum magnitude: \(\boldsymbol{\lambda}_t = -\mu\lambda_n \mathbf{v}_t/\|\mathbf{v}_t\|\)
-2. **Sticking**: If there is no relative tangential velocity (\(\mathbf{v}_t = \mathbf{0}\)), the friction impulse is whatever is necessary to prevent motion, up to the maximum limit: \(\|\boldsymbol{\lambda}_t\| \leq \mu\lambda_n\)
+1. **Sliding**: If there is relative tangential velocity (\(\mathbf{v}_t \neq \mathbf{0}\)), the friction force opposes it at maximum magnitude: \(\boldsymbol{\lambda}_t = -\mu\lambda_n \mathbf{v}_t/\|\mathbf{v}_t\|\)
+2. **Sticking**: If there is no relative tangential velocity (\(\mathbf{v}_t = \mathbf{0}\)), the friction force is whatever is necessary to prevent motion, up to the maximum limit: \(\|\boldsymbol{\lambda}_t\| \leq \mu\lambda_n\)
 
 This principle-based formulation is implemented using an NCP-function and a fixed-point iteration, which recasts the friction model into a symmetric system that fits seamlessly into the non-smooth Newton solver covered in [Nonlinear System](./non-linear-system.md).
 
@@ -147,7 +147,7 @@ This principle-based formulation is implemented using an NCP-function and a fixe
 
 Joints connect bodies and restrict their relative motion. In Axion, joints are implemented using the same unified constraint framework as contacts and friction. The engine employs a **constraints-based** (or **full-coordinate**) approach, where each rigid body retains its full 6 degrees of freedom (DOFs), and the solver computes the exact joint impulses required to enforce the desired motion restriction.
 
-Currently, the primary joint type implemented in Axion is the **Revolute Joint**.
+Axion currently supports four joint types: **Revolute**, **Prismatic**, **Ball**, and **Fixed**.
 
 #### Mathematical Model
 
@@ -163,7 +163,7 @@ The constraint functions \(\mathbf{c}(q)\) are defined to be zero when the joint
 
 2. **Hinge Axes Collinear (2 DOFs):** The designated axes on each body must remain aligned.
 
-The solver finds the joint impulses \(\boldsymbol{\lambda}_j\) required to enforce \(\mathbf{c}(q) = \mathbf{0}\). Because Axion solves the position-level equation directly via its non-smooth Newton method, any numerical error that would cause the joint to separate is corrected automatically.
+The solver finds the joint forces \(\boldsymbol{\lambda}_j\) required to enforce \(\mathbf{c}(q) = \mathbf{0}\). Because Axion solves the position-level equation directly via its non-smooth Newton method, any numerical error that would cause the joint to separate is corrected automatically.
 
 **Alternative: Velocity-Level Formulation**
 
@@ -189,7 +189,7 @@ A control constraint introduces a new residual equation that relates the joint s
 \text{Error}(\mathbf{q}^+, \mathbf{u}^+) + \alpha \cdot \boldsymbol{\lambda}_{\text{ctrl}} \cdot h = 0
 \]
 
-where \(\boldsymbol{\lambda}_{\text{ctrl}}\) is the actuation impulse computed by the solver, \(h\) is the time step, and \(\alpha\) is a compliance parameter derived from the control gains.
+where \(\boldsymbol{\lambda}_{\text{ctrl}}\) is the actuation force computed by the solver, \(h\) is the time step, and \(\alpha\) is a compliance parameter derived from the control gains.
 
 Axion supports two primary control modes:
 
@@ -225,7 +225,7 @@ The compliance term depends on the stiffness gain (acting as a velocity gain her
 
 This acts as a velocity servo or a viscous damper.
 
-By solving for the actuation impulse \(\boldsymbol{\lambda}_{\text{ctrl}}\) implicitly, Axion avoids the instability often associated with explicit PD controllers in physics simulations.
+By solving for the actuation force \(\boldsymbol{\lambda}_{\text{ctrl}}\) implicitly, Axion avoids the instability often associated with explicit PD controllers in physics simulations.
 
 ---
 
@@ -233,7 +233,7 @@ By solving for the actuation impulse \(\boldsymbol{\lambda}_{\text{ctrl}}\) impl
 
 The constraint formulations presented in this section—position/velocity-level approaches, contact complementarity, friction stick-slip behavior, and joint restrictions—create a complex system mixing equalities and inequalities that must be satisfied simultaneously.
 
-The key question becomes: **How do we determine the constraint impulses λ that enforce all these constraints while respecting the system dynamics?**
+The key question becomes: **How do we determine the constraint forces λ that enforce all these constraints while respecting the system dynamics?**
 
 This challenge is addressed through **Gauss's Principle of Least Constraint**, which provides a principled optimization framework for determining these impulses. The principle transforms the constraint enforcement problem into an optimization problem that can be solved numerically.
 
