@@ -8,6 +8,7 @@ python "$DIR/mujoco_sim.py"       --save "$DIR/results/mujoco.json"
 python "$DIR/genesis_sim.py"      --save "$DIR/results/genesis.json"
 python "$DIR/mjx.py"          --save "$DIR/results/mjx.json"
 python "$DIR/xpbd.py"         --save "$DIR/results/xpbd.json"
-python "$DIR/featherstone.py" --save "$DIR/results/featherstone.json"
+python "$DIR/featherstone.py"  --save "$DIR/results/featherstone.json"
+python "$DIR/tinydiffsim.py"  --save "$DIR/results/tinydiffsim.json"
 
 python "$DIR/plot_results.py"

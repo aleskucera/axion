@@ -19,6 +19,9 @@ python "$DIR/genesis_sim.py" --experiment binary_search --save "$DIR/results/gen
 # MJX — binary_search only
 python "$DIR/mjx.py" --experiment binary_search --save "$DIR/results/mjx_threshold.json"
 
+# TinyDiffSim — binary_search only
+python "$DIR/tinydiffsim.py" --experiment binary_search --save "$DIR/results/tinydiffsim_threshold.json"
+
 # Plot threshold comparison
 python "$DIR/plot_results.py" --mode threshold
 

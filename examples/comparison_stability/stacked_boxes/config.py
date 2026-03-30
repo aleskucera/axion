@@ -1,11 +1,11 @@
 """Shared constants for stacked_boxes stability benchmark."""
 
 DURATION = 3.0
-DENSITY = 1500.0
+DENSITY = 500.0
 
-HX1 = 0.2
-HX2 = 0.8
-HX3 = 1.6
+HX1 = 0.3
+HX2 = 0.6
+HX3 = 1.2
 
 Z1 = HX1
 Z2 = 2 * HX1 + HX2

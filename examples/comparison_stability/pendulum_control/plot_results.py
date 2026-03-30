@@ -42,6 +42,7 @@ THRESHOLD_STYLES = {
     "Genesis":      {"color": "#4CAF50"},
     "MJX":          {"color": "#FF5722"},
     "MuJoCo":       {"color": "#E91E63"},
+    "TinyDiffSim":  {"color": "#9C27B0"},
     "Axion":        {"color": "#2196F3"},
 }
 THRESHOLD_SIM_ORDER = list(THRESHOLD_STYLES.keys())
@@ -52,6 +53,7 @@ THRESHOLD_LABELS = {
     "Genesis":      "Genesis",
     "MJX":          "MJX",
     "MuJoCo":       "MuJoCo",
+    "TinyDiffSim":  "TinyDiffSim",
     "Axion":        r"\textbf{Axion}",
 }
 
@@ -65,6 +67,7 @@ _NAME_MAP = {
     "Genesis":        "Genesis",
     "Featherstone":   "Featherstone",
     "XPBD":           "XPBD",
+    "TinyDiffSim":    "TinyDiffSim",
 }
 _FILE_MAP = {
     "axion":        "Axion",
@@ -73,6 +76,7 @@ _FILE_MAP = {
     "genesis":      "Genesis",
     "featherstone": "Featherstone",
     "xpbd":         "XPBD",
+    "tinydiffsim":  "TinyDiffSim",
 }
 
 # ─── trajectory mode style ───────────────────────────────────────────────────

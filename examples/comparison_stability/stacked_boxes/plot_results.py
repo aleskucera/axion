@@ -39,6 +39,7 @@ STYLES = {
     "Genesis":      {"color": "#4CAF50"},
     "MuJoCo":       {"color": "#E91E63"},
     "MJX":          {"color": "#FF5722"},
+    "TinyDiffSim":  {"color": "#9C27B0"},
     "Axion":        {"color": "#2196F3"},
 }
 SIM_ORDER = list(STYLES.keys())
@@ -49,6 +50,7 @@ LABELS = {
     "Genesis":      "Genesis",
     "MuJoCo":       "MuJoCo",
     "MJX":          "MJX",
+    "TinyDiffSim":  "TinyDiffSim",
     "Axion":        r"\textbf{Axion}",
 }
 
@@ -92,6 +94,10 @@ def main():
     sims = [s for s in SIM_ORDER if s in thresholds]
     if not sims:
         sims = sorted(thresholds.keys())
+
+    # Separate simulators that are never stable (max_stable_dt == 0)
+    never_stable = {s for s in sims if thresholds[s]["max_stable_dt"] == 0}
+    sims = [s for s in sims if s not in never_stable]
 
     # Sort ascending so the strongest simulator (Axion) is at the top
     sims = sorted(sims, key=lambda s: thresholds[s]["max_stable_dt"])
@@ -158,6 +164,15 @@ def main():
             r"${}^+$ search limit; true threshold may be higher",
             transform=ax.transAxes,
             fontsize=6, ha="right", va="bottom", color="gray",
+        )
+
+    if never_stable:
+        names = ", ".join(LABELS.get(s, s).replace(r"\textbf{", "").replace("}", "") for s in sorted(never_stable))
+        ax.text(
+            0.02, 0.98,
+            rf"$\dagger$ {names}: never stable (solver limitation)",
+            transform=ax.transAxes,
+            fontsize=6, ha="left", va="top", color="gray",
         )
 
     # Reserve right margin in the figure for the ×N column
