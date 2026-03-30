@@ -22,6 +22,13 @@ Previous approach (now fixed):
   kernel_step_2.grad / kernel_forward_dynamics_without_qacc.grad).
   Using loss.backward() directly through PyTorch autograd avoids this.
 
+IMPORTANT: rebuild the scene each iteration.
+  Genesis accumulates the differentiation tape inside the scene object across
+  calls. Even with a fresh gs.tensor for v0, the scene retains the full
+  computational graph from all previous rollouts, causing backward() to propagate
+  through stale states (gradient magnitudes grow unbounded across iterations).
+  Fix: call build_scene(requires_grad=True) at the top of each loop iteration.
+
 Setup:
     pip install genesis-world torch
     python examples/comparison/ball_throw/genesis.py
@@ -53,7 +60,7 @@ def build_scene(requires_grad: bool) -> tuple:
         ),
         show_viewer=False,
     )
-    ball = scene.add_entity(gs.morphs.Sphere(radius=0.1, pos=(0.0, 0.0, 1.0)))
+    ball = scene.add_entity(gs.morphs.Sphere(radius=0.2, pos=(0.0, 0.0, 1.0)))
     scene.build()
     return scene, ball
 
@@ -63,17 +70,19 @@ scene_fwd, ball_fwd = build_scene(requires_grad=False)
 print(f"n_dofs={ball_fwd.n_dofs}  (expected 6: freejoint linear+angular vel)")
 
 ball_fwd.set_dofs_velocity(gs.tensor(TARGET_V0), dofs_idx_local=[0, 1, 2])
+target_traj = []
 for _ in range(T):
     scene_fwd.step()
-# Convert to plain torch tensor before destroying the scene
-target_pos = torch.tensor(ball_fwd.get_state().pos[0].tolist(), device="cuda")
-print(f"Target position: ({target_pos[0]:.3f}, {target_pos[1]:.3f}, {target_pos[2]:.3f})")
+    target_traj.append(torch.tensor(ball_fwd.get_state().pos[0].tolist(), device="cuda"))
+target_traj = torch.stack(target_traj)  # (T, 3), plain tensors — no grad needed
+print(f"Target final pos: ({target_traj[-1, 0]:.3f}, {target_traj[-1, 1]:.3f}, {target_traj[-1, 2]:.3f})")
 scene_fwd.destroy()
 
-# --- Build differentiable scene ---
-scene, ball = build_scene(requires_grad=True)
+LEARNING_RATE = 2e-2
+MAX_GRAD = 100.0
 
-v0 = gs.tensor(INIT_V0, requires_grad=True)
+# Current velocity values (plain Python list, updated each iteration)
+_vel = list(INIT_V0)
 
 
 def main():
@@ -82,9 +91,7 @@ def main():
     parser.add_argument("--save", metavar="PATH", help="Save results to JSON")
     args = parser.parse_args()
 
-    optimizer = torch.optim.Adam([v0], lr=0.15)
-
-    print(f"\nOptimizing: T={T}, dt={DT}, lr=0.2 (Adam, Genesis PyTorch autograd)")
+    print(f"\nOptimizing: T={T}, dt={DT}, lr={LEARNING_RATE} (gradient descent, Genesis PyTorch autograd)")
     results = {
         "simulator": "Genesis",
         "problem": "ball_throw",
@@ -98,22 +105,31 @@ def main():
     for i in range(args.iters):
         t0 = time.perf_counter()
 
-        scene.reset()
+        # Rebuild the scene each iteration to clear Genesis's internal tape.
+        # Genesis accumulates the full computational graph inside the scene object;
+        # scene.reset() only resets physical state, not the differentiation tape.
+        # Rebuilding ensures backward() sees only the current rollout.
+        scene, ball = build_scene(requires_grad=True)
+        v0 = gs.tensor(_vel, requires_grad=True)
+
         ball.set_dofs_velocity(v0, dofs_idx_local=[0, 1, 2])
-        for _ in range(T):
+        traj = []
+        for t in range(T):
             scene.step()
+            traj.append(ball.get_state().pos[0])  # gs.Tensor with grad_fn — do NOT use get_links_pos()
 
-        pos = ball.get_state().pos[0]  # gs.Tensor with grad_fn — do NOT use get_links_pos()
-        loss = ((pos - target_pos) ** 2).sum()
-
-        optimizer.zero_grad()
+        loss = sum(((traj[t] - target_traj[t]) ** 2).sum() for t in range(T))
         loss.backward()
-        optimizer.step()
 
         t_ms = (time.perf_counter() - t0) * 1000
         loss_val = float(loss)
-        v0_vals = [round(float(x), 3) for x in v0.detach().tolist()]
-        grad_vals = [round(float(x), 3) for x in v0.grad.tolist()]
+        grad = [float(g) for g in v0.grad.tolist()]
+        grad_clamped = [max(-MAX_GRAD, min(MAX_GRAD, g)) for g in grad]
+        for j in range(3):
+            _vel[j] -= LEARNING_RATE * grad_clamped[j]
+
+        v0_vals = [round(v, 3) for v in _vel]
+        grad_vals = [round(g, 3) for g in grad]
 
         print(
             f"Iter {i:3d}: loss={loss_val:.4f} | "

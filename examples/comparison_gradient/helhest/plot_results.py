@@ -29,22 +29,26 @@ plt.rcParams.update({
 })
 
 STYLES = {
-    "Nimble":     {"color": "#795548"},
-    "Dojo":       {"color": "#4CAF50"},
-    "Genesis":    {"color": "#9C27B0"},
-    "MuJoCo-FD":  {"color": "#E91E63"},
-    "MJX-jacfwd": {"color": "#FF5722"},
-    "MJX-grad":   {"color": "#FF8A65"},
-    "Axion":      {"color": "#2196F3"},
+    "Nimble":       {"color": "#795548"},
+    "Dojo":         {"color": "#4CAF50"},
+    "Genesis":      {"color": "#9C27B0"},
+    "MuJoCo-FD":    {"color": "#E91E63"},
+    "MJX-jacfwd":   {"color": "#FF5722"},
+    "MJX-grad":     {"color": "#FF8A65"},
+    "TinyDiffSim":  {"color": "#607D8B"},
+    "Brax":         {"color": "#009688"},
+    "Axion":        {"color": "#2196F3"},
 }
 LABELS = {
-    "Nimble":     "Nimble",
-    "Dojo":       "Dojo",
-    "Genesis":    "Genesis",
-    "MuJoCo-FD":  "MuJoCo-FD",
-    "MJX-jacfwd": "MJX-jacfwd",
-    "MJX-grad":   "MJX-grad",
-    "Axion":      r"\textbf{Axion}",
+    "Nimble":       "Nimble",
+    "Dojo":         "Dojo",
+    "Genesis":      "Genesis",
+    "MuJoCo-FD":    "MuJoCo-FD",
+    "MJX-jacfwd":   "MJX-jacfwd",
+    "MJX-grad":     "MJX-grad",
+    "TinyDiffSim":  "TinyDiffSim",
+    "Brax":         "Brax",
+    "Axion":        r"\textbf{Axion}",
 }
 SIM_ORDER = list(STYLES.keys())
 AXION_COLOR = "#2196F3"

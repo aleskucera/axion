@@ -151,7 +151,7 @@ class BallThrowFeatherstoneOptimizer(NewtonDifferentiableSimulator):
             t_ms = (time.perf_counter() - t0) * 1000
 
             curr_loss = self.loss.numpy()[0]
-            vel = self.states[0].body_qd.numpy()[0][3:6]  # linear velocity
+            vel = self.states[0].body_qd.numpy()[0][0:3]  # linear velocity
             print(
                 f"Iter {i:3d}: loss={curr_loss:.4f} | "
                 f"vel=({vel[0]:.3f},{vel[1]:.3f},{vel[2]:.3f}) | t={t_ms:.0f}ms"
