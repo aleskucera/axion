@@ -78,6 +78,8 @@ def build_graph(
     shape_body: torch.Tensor,
     body_vel_next: torch.Tensor | None = None,
     world_indices: torch.Tensor | None = None,
+    contact_dist_threshold: float | None = None,
+    contact_grid_tol: float = 1e-3,
 ) -> HeteroData:
     """Build complete HeteroData graph from batched state and contact data.
     Args:
@@ -98,6 +100,8 @@ def build_graph(
         body_vel_next: optional [W, B, 6] next body velocities (used as targets during training)
         world_indices: optional [W] original world indices for .world attributes
                       (if None, use 0..W-1)
+        contact_dist_threshold: optional float maximal distance of contact detection,
+        contact_grid_tol: optional float contact point grid tolerance,
     Returns:
         HeteroData graph with world batch structure
     """
@@ -139,6 +143,8 @@ def build_graph(
         num_bodies,
         world_indices,
         device,
+        contact_dist_threshold,
+        contact_grid_tol,
     )
     add_joints(
         graph,
@@ -216,6 +222,8 @@ def add_contacts(
     num_bodies: int,
     world_indices: torch.Tensor,
     device: torch.device,
+    contact_dist_threshold: float | None = None,
+    contact_grid_tol: float = 1e-3,
 ) -> None:
 
     W = world_indices.shape[0]
@@ -245,8 +253,15 @@ def add_contacts(
     pts_flat = local_points.reshape(-1, 3)
     point_global = (torch.einsum("bij,bj->bi", R_flat, pts_flat) + trans_flat).reshape(W, C, 2, 3)
 
-    tol = 1e-3
-    grid = torch.round(point_global / tol).to(torch.long)
+    normals = torch.stack([contact_normal, -contact_normal], dim=2)
+    thickness = torch.stack([contact_thickness0, contact_thickness1], dim=2)
+    point_adj = point_global - thickness[..., None] * normals
+
+    dist = torch.einsum("wci,wci->wc", contact_normal, point_adj[:, :, 0] - point_adj[:, :, 1])
+    if contact_dist_threshold is not None:
+        valid = valid & (dist < contact_dist_threshold)
+
+    grid = torch.round(point_adj / contact_grid_tol).to(torch.long)
     keys = torch.zeros((W, C, 2, 5), dtype=torch.long, device=device)
     keys[:, :, :, 0] = world_indices[:, None, None]
     keys[:, :, :, 1] = body_idx
@@ -261,9 +276,6 @@ def add_contacts(
     cp_worlds = unique_keys[:, 0]
     total_cp = len(unique_keys)
 
-    normals = torch.stack([contact_normal, -contact_normal], dim=2)
-    thickness = torch.stack([contact_thickness0, contact_thickness1], dim=2)
-    point_adj = point_global - thickness[..., None] * normals
     com_gathered = body_com[wi2, body_idx]
     com_floor = torch.zeros_like(com_gathered)
     com_gathered = torch.where(body_idx_is_object[..., None], com_gathered, com_floor)
@@ -305,7 +317,6 @@ def add_contacts(
     mu0 = shape_material_mu[wi1, contact_shape0]
     mu1 = shape_material_mu[wi1, contact_shape1]
     mu_avg = (mu0 + mu1) / 2
-    dist = torch.einsum("wci,wci->wc", contact_normal, point_adj[:, :, 0] - point_adj[:, :, 1])
     cc_extra = torch.stack([dist, mu_avg], dim=2)
     cc_attr_fwd = torch.cat([contact_normal, cc_extra], dim=2)
     cc_attr_bwd = torch.cat([-contact_normal, cc_extra], dim=2)

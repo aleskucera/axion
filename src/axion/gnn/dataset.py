@@ -133,6 +133,7 @@ class AxionDatasetGNN(InMemoryDataset):
             shape_body,
             body_vel_next=body_vel,
             world_indices=world_indices_tensor,
+            contact_dist_threshold=0.5,
         )
 
         return [graph]
@@ -183,4 +184,4 @@ def calculate_statistics(graphs: list[HeteroData]) -> dict:
 
 
 if __name__ == "__main__":
-    AxionDatasetGNN(root=sys.argv[1])
+    AxionDatasetGNN(root="data/gnn_data/fall_dataset/train_dataset")

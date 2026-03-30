@@ -43,7 +43,7 @@ class GNNEngine(AxionEngineBase):
             )
         self.graph_to_state(gnn_node_outputs, dt)
         self.compute_warm_start_forces()
-        self._solve()
+        # self._solve()
         wp.copy(dest=state_out.body_q, src=self.data.body_pose)
         wp.copy(dest=state_out.body_qd, src=self.data.body_vel)
 
@@ -88,6 +88,7 @@ class GNNEngine(AxionEngineBase):
             num_bodies,
             device,
             shape_body,
+            contact_dist_threshold=0.5,
         )
 
         return graph
