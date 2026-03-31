@@ -48,6 +48,12 @@ Run a cli testing script that loads the model.pt into NeuralPredictor class and 
 python src/axion/neural_solver/standalone/test_trained_model_cli.py --model-path src/axion/neural_solver/train/trained_models/02-23-2026-23-24-29/nn/best_eval_model.pt --cfg-path src/axion/neural_solver/train/trained_models/02-23-2026-23-24-29/cfg.yaml 
 ```
 
+## Dataset postprocessing
+### Add lambda activity labels
+```
+python src/axion/neural_solver/utils/add_lambda_activity_labels.py --input src/axion/neural_solver/datasets/Pendulum/pendulumLambdasValid500klen400envs250seed1.hdf5 --output src/axion/neural_solver/datasets/Pendulum/pendulumLambdasValid500klen400envs250seed1_with_activity.hdf5
+```
+
 ## Misc
 
 ### Copy from remote to local
