@@ -70,6 +70,7 @@ class NeuralPredictor:
         nn_model: torch.nn.Module,
         nn_cfg: dict,
         device: str = 'cuda:0',
+        lambda_prediction_only: bool = False,
         # Robot-specific configuration that would be too cumbersome to infer
         joint_q_end=[1, 2],                 # Joint DOF end indices in q vector
         is_angular_dof=[True, True, True, True],      # Which DOFs are angular (for state embedding)
@@ -116,6 +117,7 @@ class NeuralPredictor:
         self.nn_model = nn_model
         self.nn_model.to(device)
         self.nn_model.eval()
+        self.lambda_prediction_only = lambda_prediction_only
         lambda_model = getattr(self.nn_model, "lambda_model", None)
         lambda_output_net = getattr(lambda_model, "output_net", None) if lambda_model is not None else None
         self.has_lambda_prediction_module = lambda_output_net is not None
@@ -135,6 +137,7 @@ class NeuralPredictor:
         self.state_prediction_type, self.lambda_prediction_type = (
             _resolve_state_and_lambda_prediction_types(_cfg, {}, ctor_prediction_type="relative")
         )
+        print("Lambda_prediction_type: ", self.lambda_prediction_type)
         # Deprecated: mirrors state path; use state_prediction_type / lambda_prediction_type.
         self.prediction_type = self.state_prediction_type
         self.prediction_quantity_type = self.neural_integrator_cfg.get('prediction_quantity_type', 'full_state')
@@ -410,6 +413,24 @@ class NeuralPredictor:
             wrap2PI(next_states, self.is_continuous_dof)
         
         return next_states
+
+    def predict_lambdas_only(self, dt: float) -> torch.Tensor:
+        """
+        Predict next lambdas only
+        """
+        assert self.lambda_prediction_only, "lambda_prediction_only must be True"
+
+        #predict    
+        with torch.no_grad():
+            out = self.nn_model.evaluate(self.nn_model_inputs)  # (num_envs, 1, pred_dim)
+            lambda_prediction = out['lambda'][:, -1, :]
+
+        # Convert prediction to next lambdas
+        cur_lambdas = self.nn_model_inputs["lambdas"][:, -1, :]
+        next_lambdas = self._convert_prediction_to_next_lambdas(cur_lambdas, lambda_prediction)
+        self.lambdas.copy_(next_lambdas)    
+        
+        return next_lambdas
     
     def _embed_states(self, states):
         """

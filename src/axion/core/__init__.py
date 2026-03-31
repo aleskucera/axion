@@ -8,6 +8,7 @@ from .engine_config import XPBDEngineConfig
 from .engine_config import GPTEngineConfig
 from .engine_config import HybridGPTEngineConfig
 from .engine_config import RepeatedAxionEngineConfig
+from .engine_config import AxionEngineWithNeuralLambdasConfig
 from .logging_config import LoggingConfig
 from .types import JointMode
 
@@ -23,6 +24,7 @@ __all__ = [
     "GPTEngineConfig",
     "HybridGPTEngineConfig",
     "RepeatedAxionEngineConfig",
+    "AxionEngineWithNeuralLambdasConfig",
     "JointMode",
     "LoggingConfig",
 ]

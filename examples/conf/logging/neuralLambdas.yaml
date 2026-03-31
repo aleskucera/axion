@@ -1,0 +1,8 @@
+# @package logging
+_target_: axion.LoggingConfig
+enable_timing: false
+enable_hdf5_logging: false 
+enable_dataset_logging: false
+enable_neural_lambdas_logging: true
+neural_lambdas_log_file: "data/logs/${project_name}_${now:%Y-%m-%d_%H-%M-%S}.h5"
+neural_lambdas_simulation_steps: 300

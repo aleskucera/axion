@@ -386,3 +386,32 @@ class RepeatedAxionEngineConfig(AxionEngineConfig):
             logging_config=logging_config,
             differentiable_simulation=differentiable_simulation,
         )
+
+
+@dataclass(frozen=True)
+class AxionEngineWithNeuralLambdasConfig(AxionEngineConfig):
+    """
+    Configuration for AxionEngineWithNeuralLambdas backend.
+
+    Uses Axion's Newton solver flow, but injects neural lambda predictions
+    before solve.
+    """
+
+    def create_engine(
+        self,
+        model: Any,
+        sim_steps: Optional[int] = None,
+        init_state_fn: Optional[Callable] = None,
+        logging_config: Optional[Any] = None,
+        differentiable_simulation: bool = False,
+        **kwargs,
+    ) -> Any:
+        from axion.core.axion_engine_with_neural_lambdas import AxionEngineWithNeuralLambdas
+
+        return AxionEngineWithNeuralLambdas(
+            model=model,
+            sim_steps=int(sim_steps or 0),
+            config=self,
+            logging_config=logging_config,
+            differentiable_simulation=differentiable_simulation,
+        )
