@@ -17,6 +17,12 @@ python src/axion/neural_solver/train/train.py --cfg src/axion/neural_solver/trai
 ```
 optionally: --device cuda:1
 
+### Begin lambda classifier training (example)
+```
+python src/axion/neural_solver/train/train_lambda_network.py --cfg src/axion/neural_solver/train/cfg/Pendulum/lambdaNetwork.yaml --logdir src/axion/neural_solver/train/trained_models/lambda_classifier
+```
+optionally: --device cuda:1
+
 ### Visualize training (wandb)
 View runs at [wandb.ai](https://wandb.ai) in your project (e.g. `neural-solver-transformer`). 
 Ensure `wandb.login()` runs before training (see `train.py`).
