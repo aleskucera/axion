@@ -14,6 +14,7 @@
 # limitations under the License.
 
 import sys, os
+
 base_dir = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '../'))
 sys.path.append(base_dir)
 
@@ -32,6 +33,7 @@ from tqdm import tqdm
 
 from axion.neural_solver.envs.nn_training_interface import NnTrainingInterface
 from axion.neural_solver.models.models import ModelMixedInput
+from axion.neural_solver.models.lambda_models import LambdaClassificationModel
 from axion.neural_solver.utils.datasets import TrajectoryDataset
 from axion.neural_solver.utils.evaluator import NeuralSimEvaluator
 from axion.neural_solver.utils.python_utils import (
@@ -91,14 +93,25 @@ class SequenceModelTrainer:
         # create neural sim model
         if model_checkpoint_path is None:
             input_sample = self.utils_provider.get_neural_model_inputs()
-            self.neural_model = ModelMixedInput(
-                input_sample = input_sample,
-                output_dim = self.utils_provider.state_prediction_dim,
-                lambda_output_dim = self.utils_provider.lambda_prediction_dim,
-                input_cfg = cfg['inputs'],
-                network_cfg = cfg['network'],
-                device = self.device
-            )
+            model_impl = str(cfg['network'].get('model_impl', 'default')).lower()
+            if model_impl in ('lambda_classification', 'lambda_models', 'classification_head'):
+
+                self.neural_model = LambdaClassificationModel(
+                    input_sample=input_sample,
+                    output_dim=self.utils_provider.lambda_prediction_dim,
+                    input_cfg=cfg['inputs'],
+                    network_cfg=cfg['network'],
+                    device=self.device,
+                )
+            else:
+                self.neural_model = ModelMixedInput(
+                    input_sample = input_sample,
+                    output_dim = self.utils_provider.state_prediction_dim,
+                    lambda_output_dim = self.utils_provider.lambda_prediction_dim,
+                    input_cfg = cfg['inputs'],
+                    network_cfg = cfg['network'],
+                    device = self.device
+                )
         else:
             checkpoint = torch.load(model_checkpoint_path, map_location=self.device, weights_only= False)
             self.neural_model = checkpoint[0]
