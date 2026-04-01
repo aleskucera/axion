@@ -33,9 +33,10 @@ class NeuralLambdaHDF5Logger:
         contact_thicknesses: np.ndarray,
         lambdas: Optional[np.ndarray],
         next_lambdas: np.ndarray,
-        predicted_next_lambdas: np.ndarray,
         gravity_dir: np.ndarray,
         root_body_q: np.ndarray,
+        predicted_next_lambdas: Optional[np.ndarray] = None,
+        lambda_activity: Optional[np.ndarray] = None,
     ) -> None:
         step_payload = {
             "states": states,
@@ -46,12 +47,15 @@ class NeuralLambdaHDF5Logger:
             "contact_points_1": contact_points_1,
             "contact_thicknesses": contact_thicknesses,
             "next_lambdas": next_lambdas,
-            "predicted_next_lambdas": predicted_next_lambdas,
             "gravity_dir": gravity_dir,
             "root_body_q": root_body_q,
         }
         if lambdas is not None:
             step_payload["lambdas"] = lambdas
+        if predicted_next_lambdas is not None:
+            step_payload["predicted_next_lambdas"] = predicted_next_lambdas
+        if lambda_activity is not None:
+            step_payload["lambda_activity"] = lambda_activity
 
         for key, value in step_payload.items():
             arr = np.asarray(value)

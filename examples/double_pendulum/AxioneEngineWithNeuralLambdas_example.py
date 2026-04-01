@@ -142,6 +142,9 @@ def basic_pendulum_example(cfg: DictConfig):
     exec_config: ExecutionConfig = hydra.utils.instantiate(cfg.execution)
     logging_config: LoggingConfig = hydra.utils.instantiate(cfg.logging)
     engine_config: EngineConfig = hydra.utils.instantiate(cfg.engine)
+    # Engine checkpoint compatibility:
+    # - ModelMixedInput checkpoints log `predicted_next_lambdas`
+    # - LambdaClassificationModel checkpoints log binary `lambda_activity`
 
     # Plane equation: nx*x + ny*y + nz*z + d = 0 (default: horizontal z=0)
     plane_coefficients = [0.0, 0.0, 1.0, 0.0]
