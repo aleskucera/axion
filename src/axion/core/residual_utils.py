@@ -221,12 +221,29 @@ def control_target_grad_kernel(
     w_lambda = w_ctrl[world_idx, ctrl_offset]
 
     if mode == JointMode.TARGET_POSITION:
-        # gradient = w_lambda * (-1.0 / dt)
+        # IFT: dL/d(target) = w_lambda * dR_c/d(target) where R_c = (q-target)/h + α·λ·h
+        # so dR_c/d(target) = -1/h, giving: gradient = w_lambda * (-1/dt)
         wp.atomic_add(target_pos_grad, world_idx, qd_start_idx, w_lambda * (-1.0 / dt))
 
     elif mode == JointMode.TARGET_VELOCITY:
-        # gradient = w_lambda * (-1.0)
+        # IFT: R_c = (qd - target_vel) + α·λ·h, so dR_c/d(target_vel) = -1
         wp.atomic_add(target_vel_grad, world_idx, qd_start_idx, w_lambda * (-1.0))
+
+
+@wp.kernel
+def body_pose_prev_grad_kernel(
+    body_pose_grad: wp.array(dtype=wp.transform, ndim=2),
+    # --- Output ---
+    body_pose_prev_grad: wp.array(dtype=wp.transform, ndim=2),
+):
+    world_idx, body_idx = wp.tid()
+    if body_idx >= body_pose_grad.shape[1]:
+        return
+
+    # Kinematic propagation: q_{i+1} = Integrate(q_i, u_{i+1})
+    # To a first approximation, dq_{i+1}/dq_i = I
+    # We should ideally differentiate Integrate, but Identity is a good start.
+    wp.atomic_add(body_pose_prev_grad, world_idx, body_idx, body_pose_grad[world_idx, body_idx])
 
 
 def compute_residual_gradient(
