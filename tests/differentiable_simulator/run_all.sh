@@ -9,12 +9,14 @@ cd "$(dirname "$0")"
 TESTS=(
     test_zero_gradient.py
     test_velocity_gradient.py
-    test_control_gradient.py
     test_multi_step_gradient.py
     test_pose_gradient.py
+    test_position_loss.py
     test_optimization.py
     test_symmetry.py
     test_contact_boundary.py
+    test_cartpole_gradient.py
+    test_wheeled_robot.py
 )
 
 PASSED=0
