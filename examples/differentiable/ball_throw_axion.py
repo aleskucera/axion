@@ -101,7 +101,7 @@ class BallThrowOptimizerImplicit(AxionDifferentiableSimulator):
         # 2. Optimization Setup
         self.target_pos = wp.vec3(0.0, 5.0, 1.0)
         self.loss = wp.zeros(1, dtype=float, requires_grad=True)
-        self.learning_rate = 1.0
+        self.learning_rate = 1e-1
 
         self.frame = 0
 
