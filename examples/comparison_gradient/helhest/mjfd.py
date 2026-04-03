@@ -163,6 +163,7 @@ def adam_step(grad, m, v, t, lr=0.01, beta1=0.9, beta2=0.999, eps=1e-8):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--save", metavar="PATH", help="Save results to JSON")
+    parser.add_argument("--target-only", action="store_true", help="Only compute and save the target trajectory, skip optimization")
     args = parser.parse_args()
 
     mj_model = mujoco.MjModel.from_xml_string(HELHEST_XML)
@@ -174,6 +175,20 @@ def main():
     target_ctrl_traj = np.tile(TARGET_CTRL, (T, 1))
     target_xy = rollout(mj_model, target_ctrl_traj)
     print(f"Target final xy: ({target_xy[-1, 0]:.3f}, {target_xy[-1, 1]:.3f})")
+
+    if args.target_only:
+        traj_result = {
+            "simulator": "MuJoCo-FD",
+            "problem": "helhest",
+            "dt": DT,
+            "T": T,
+            "target_trajectory": target_xy.tolist(),
+        }
+        if args.save:
+            pathlib.Path(args.save).parent.mkdir(parents=True, exist_ok=True)
+            pathlib.Path(args.save).write_text(json.dumps(traj_result, indent=2))
+            print(f"Saved to {args.save}")
+        return
 
     params = np.tile(INIT_CTRL, (K, 1))
     m_adam = np.zeros_like(params)

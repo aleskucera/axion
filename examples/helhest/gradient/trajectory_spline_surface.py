@@ -238,7 +238,7 @@ class HelhestTrajectorySplineSurfaceOptimizer(AxionDifferentiableSimulator):
             inputs=[
                 self.trajectory.joint_target_vel,
                 WHEEL_DOF_OFFSET,
-                self.regularization_weight,
+                self.regularization_weight / num_steps,
             ],
             outputs=[self.loss],
             device=self.solver.model.device,

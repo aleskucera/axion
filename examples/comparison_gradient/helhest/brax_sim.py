@@ -139,13 +139,15 @@ def main():
                         help="Baumgarte ERP contact correction rate (default: pipeline default)")
     parser.add_argument("--elasticity", type=float, default=None,
                         help="Contact elasticity 0–1 (default: pipeline default)")
-    parser.add_argument("--duration", type=float, default=0.5,
-                        help="Simulated duration in seconds (default: 0.5). "
+    parser.add_argument("--duration", type=float, default=DURATION,
+                        help=f"Simulated duration in seconds (default: {DURATION}). "
                              "Longer = more JIT time.")
     parser.add_argument("--lr", type=float, default=0.01,
                         help="Adam learning rate (default: 0.01)")
     parser.add_argument("--iters", type=int, default=50,
                         help="Number of optimization iterations (default: 50)")
+    parser.add_argument("--target-only", action="store_true",
+                        help="Only compute and save the target trajectory, skip optimization")
     args = parser.parse_args()
 
     # ── pipeline defaults ──
@@ -175,6 +177,20 @@ def main():
     target_xy = jax.jit(rollout)(target_params)
     jax.block_until_ready(target_xy)
     print(f"Target final xy: ({float(target_xy[-1, 0]):.3f}, {float(target_xy[-1, 1]):.3f})")
+
+    if args.target_only:
+        traj_result = {
+            "simulator": f"Brax ({args.pipeline})",
+            "problem": "helhest",
+            "dt": dt,
+            "T": T,
+            "target_trajectory": np.array(target_xy).tolist(),
+        }
+        if args.save:
+            pathlib.Path(args.save).parent.mkdir(parents=True, exist_ok=True)
+            pathlib.Path(args.save).write_text(json.dumps(traj_result, indent=2))
+            print(f"Saved to {args.save}")
+        return
 
     # ── gradient function ──
     @jax.jit

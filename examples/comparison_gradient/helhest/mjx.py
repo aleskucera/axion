@@ -188,6 +188,7 @@ def simulate_cpu(mj_model, ctrl_np, print_every=50):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--save", metavar="PATH", help="Save results to JSON and skip CPU viewer")
+    parser.add_argument("--target-only", action="store_true", help="Only compute and save the target trajectory, skip optimization")
     args = parser.parse_args()
 
     mj_model = mujoco.MjModel.from_xml_string(HELHEST_XML)
@@ -206,6 +207,20 @@ def main():
     target_xy_traj = jax.jit(rollout)(mx, dx0, target_ctrl_traj)
     target_xy_traj.block_until_ready()
     print(f"Target final xy: ({target_xy_traj[-1, 0]:.3f}, {target_xy_traj[-1, 1]:.3f})")
+
+    if args.target_only:
+        traj_result = {
+            "simulator": "MJX-grad",
+            "problem": "helhest",
+            "dt": DT,
+            "T": T,
+            "target_trajectory": np.array(target_xy_traj).tolist(),
+        }
+        if args.save:
+            pathlib.Path(args.save).parent.mkdir(parents=True, exist_ok=True)
+            pathlib.Path(args.save).write_text(json.dumps(traj_result, indent=2))
+            print(f"Saved to {args.save}")
+        return
 
     # --- Spline setup ---
     W = jnp.array(make_interp_matrix(T, K))  # (T, K)
@@ -265,6 +280,12 @@ def main():
         if loss < 1e-4:
             print("Converged!")
             break
+
+    # Save target and optimized trajectories
+    results["target_trajectory"] = np.array(target_xy_traj).tolist()
+    optimized_ctrl_traj = W @ params
+    optimized_xy = jax.jit(rollout)(mx, dx0, optimized_ctrl_traj)
+    results["optimized_trajectory"] = np.array(optimized_xy).tolist()
 
     if args.save:
         pathlib.Path(args.save).parent.mkdir(parents=True, exist_ok=True)

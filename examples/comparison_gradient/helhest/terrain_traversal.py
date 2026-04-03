@@ -1,9 +1,16 @@
-"""Helhest trajectory optimization using Axion (Newton/Warp, implicit differentiation).
+"""Terrain traversal benchmark — Axion only.
 
-Comparable to examples/comparison/helhest_mjx.py.
+Optimises K=10 spline control knots for the Helhest robot to follow a target
+trajectory over a triangle mesh surface. This task is inaccessible to all
+evaluated baselines because none support differentiable mesh collision.
 
-Optimizes K spline control points linearly interpolated to per-timestep wheel
-velocities. Gradients flow through Axion's custom implicit backward pass.
+Reports per-iteration time (forward + backward) and loss curve.
+
+Usage:
+    python examples/comparison_gradient/helhest/terrain_traversal.py \
+        --save results/terrain_traversal.json
+    python examples/comparison_gradient/helhest/terrain_traversal.py \
+        --duration 10.0 --save results/terrain_traversal_10s.json
 """
 import argparse
 import json
@@ -13,6 +20,7 @@ import time
 
 import newton
 import numpy as np
+import openmesh
 import warp as wp
 from axion import AxionDifferentiableSimulator
 from axion import AxionEngineConfig
@@ -27,21 +35,15 @@ from examples.helhest.common import create_helhest_model
 from examples.helhest.common import HelhestConfig
 
 os.environ["PYOPENGL_PLATFORM"] = "glx"
+ASSETS_DIR = pathlib.Path(__file__).parent.parent.parent.joinpath("assets")
 
-DT = 5e-2
-DURATION = 3.0
-K = 30  # number of spline control points
-
-# DOF layout: [0..5] = free base joint, [6] = left wheel, [7] = right wheel, [8] = rear wheel
 WHEEL_DOF_OFFSET = 6
 NUM_WHEEL_DOFS = 3
 
-TARGET_CTRL = (1.0, 6.0, 0.0)
-INIT_CTRL = (2.0, 5.0, 0.0)
+DT = 6e-2
 
 
-def make_interp_matrix(T: int, K: int) -> tuple[np.ndarray, np.ndarray]:
-    """Build (T, K) linear interpolation matrix and per-column normalization."""
+def make_interp_matrix(T: int, K: int):
     W = np.zeros((T, K), dtype=np.float32)
     for t in range(T):
         k_float = t * (K - 1) / max(T - 1, 1)
@@ -55,26 +57,19 @@ def make_interp_matrix(T: int, K: int) -> tuple[np.ndarray, np.ndarray]:
 
 
 class SplineAdam:
-    """Adam optimizer for a (K, num_dofs) numpy parameter array."""
-
-    def __init__(
-        self, K: int, num_dofs: int, lr: float, betas=(0.9, 0.999), eps=1e-8, clip_grad=100.0
-    ):
-        self.lr = lr
+    def __init__(self, K, num_dofs, lr, betas=(0.9, 0.999), eps=1e-8):
+        self.lr, self.eps = lr, eps
         self.beta1, self.beta2 = betas
-        self.eps = eps
-        self.clip_grad = clip_grad
         self.m = np.zeros((K, num_dofs), dtype=np.float64)
         self.v = np.zeros((K, num_dofs), dtype=np.float64)
         self.t = 0
 
-    def step(self, params: np.ndarray, grad: np.ndarray) -> np.ndarray:
+    def step(self, params, grad):
         self.t += 1
-        grad = np.clip(grad, -self.clip_grad, self.clip_grad)
-        self.m = self.beta1 * self.m + (1.0 - self.beta1) * grad
-        self.v = self.beta2 * self.v + (1.0 - self.beta2) * grad**2
-        m_hat = self.m / (1.0 - self.beta1**self.t)
-        v_hat = self.v / (1.0 - self.beta2**self.t)
+        self.m = self.beta1 * self.m + (1 - self.beta1) * grad
+        self.v = self.beta2 * self.v + (1 - self.beta2) * grad**2
+        m_hat = self.m / (1 - self.beta1**self.t)
+        v_hat = self.v / (1 - self.beta2**self.t)
         return params - self.lr * m_hat / (np.sqrt(v_hat) + self.eps)
 
 
@@ -85,12 +80,27 @@ def loss_kernel(
     weight: float,
     loss: wp.array(dtype=wp.float32),
 ):
-    """L2 distance between chassis position summed over all timesteps."""
     t = wp.tid()
     pos = wp.transform_get_translation(body_pose[t, 0, 0])
     target_pos = wp.transform_get_translation(target_body_pose[t, 0, 0])
     delta = pos - target_pos
     wp.atomic_add(loss, 0, weight * wp.dot(delta, delta))
+
+
+@wp.kernel
+def yaw_loss_kernel(
+    body_pose: wp.array(dtype=wp.transform, ndim=3),
+    target_body_pose: wp.array(dtype=wp.transform, ndim=3),
+    weight: float,
+    loss: wp.array(dtype=wp.float32),
+):
+    t = wp.tid()
+    q = wp.transform_get_rotation(body_pose[t, 0, 0])
+    q_target = wp.transform_get_rotation(target_body_pose[t, 0, 0])
+    fwd = wp.quat_rotate(q, wp.vec3(1.0, 0.0, 0.0))
+    fwd_target = wp.quat_rotate(q_target, wp.vec3(1.0, 0.0, 0.0))
+    dot_fwd = wp.dot(fwd, fwd_target)
+    wp.atomic_add(loss, 0, weight * (1.0 - dot_fwd * dot_fwd))
 
 
 @wp.kernel
@@ -100,60 +110,79 @@ def regularization_kernel(
     weight: float,
     loss: wp.array(dtype=wp.float32),
 ):
-    """L2 magnitude regularization: weight * Σ_t ||v_t||² over wheel DOFs."""
     sim_step, wheel_idx = wp.tid()
     dof_idx = wheel_dof_offset + wheel_idx
     v = target_vel[sim_step, 0, dof_idx]
     wp.atomic_add(loss, 0, weight * v * v)
 
 
-class HelhestTrajectorySplineOptimizer(AxionDifferentiableSimulator):
+class TerrainTraversalOptimizer(AxionDifferentiableSimulator):
     def __init__(
         self,
-        sim_config: SimulationConfig,
-        render_config: RenderingConfig,
-        exec_config: ExecutionConfig,
-        engine_config: AxionEngineConfig,
-        logging_config: LoggingConfig,
-        num_control_points: int = K,
-        save_path: str = None,
+        sim_config,
+        render_config,
+        exec_config,
+        engine_config,
+        logging_config,
+        num_control_points=10,
+        save_path=None,
+        target_ctrl=(2.0, 5.0, 2.0),
+        init_ctrl=(4.0, 5.0, 0.0),
     ):
-        super().__init__(sim_config, render_config, exec_config, engine_config, logging_config)
-
         self.save_path = save_path
         self.K = num_control_points
+        self._target_ctrl = target_ctrl
+        self._init_ctrl = init_ctrl
+        super().__init__(sim_config, render_config, exec_config, engine_config, logging_config)
         self.loss = wp.zeros(1, dtype=float, requires_grad=True)
         self.trajectory_weight = 10.0
+        self.yaw_weight = 5.0
         self.regularization_weight = 1e-7
-        self.frame = 0
-
         self.track_body(body_idx=0, name="chassis", color=(0.0, 0.5, 1.0))
 
     def build_model(self) -> Model:
         self.builder.rigid_gap = 0.1
-        ground_cfg = newton.ModelBuilder.ShapeConfig(mu=0.7, ke=50.0, kd=50.0, kf=50.0)
-        self.builder.add_ground_plane(cfg=ground_cfg)
         create_helhest_model(
             self.builder,
-            xform=wp.transform(wp.vec3(0.0, 0.0, 0.5), wp.quat_identity()),
+            xform=wp.transform(wp.vec3(0.0, 0.0, 2.0), wp.quat_identity()),
             control_mode="velocity",
-            k_p=HelhestConfig.TARGET_KE,
-            k_d=HelhestConfig.TARGET_KD,
-            friction_left_right=0.7,
+            k_p=250.0,
+            k_d=0.0,
+            friction_left_right=0.8,
             friction_rear=0.35,
         )
+
+        surface_m = openmesh.read_trimesh(str(ASSETS_DIR.joinpath("surface.obj")))
+        mesh_indices = np.array(surface_m.face_vertex_indices(), dtype=np.int32).flatten()
+        scale = np.array([6.0, 6.0, 5.0])
+        mesh_points = np.array(surface_m.points()) * scale + np.array([0.0, 0.0, 0.05])
+        surface_mesh = newton.Mesh(mesh_points, mesh_indices)
+
+        self.builder.add_shape_mesh(
+            body=-1,
+            mesh=surface_mesh,
+            cfg=newton.ModelBuilder.ShapeConfig(
+                density=0.0,
+                has_shape_collision=True,
+                mu=1.0,
+                ke=150.0,
+                kd=150.0,
+                kf=500.0,
+            ),
+        )
+
         return self.builder.finalize_replicated(
             num_worlds=self.simulation_config.num_worlds,
             requires_grad=True,
         )
 
-    def _expand(self, params: np.ndarray) -> np.ndarray:
-        return self.W @ params  # (T, K) @ (K, 3) = (T, 3)
+    def _expand(self, params):
+        return self.W @ params
 
-    def _contract(self, grad_v: np.ndarray) -> np.ndarray:
+    def _contract(self, grad_v):
         return (self.W.T @ grad_v) / self.W_col_sums[:, None]
 
-    def _apply_params(self, params: np.ndarray):
+    def _apply_params(self, params):
         T = self.clock.total_sim_steps
         num_dofs = self.trajectory.joint_target_vel.shape[-1]
         expanded = self._expand(params)
@@ -164,25 +193,36 @@ class HelhestTrajectorySplineOptimizer(AxionDifferentiableSimulator):
             wp.copy(self.controls[i].joint_target_vel, self.trajectory.joint_target_vel[i])
 
     def compute_loss(self):
-        num_steps = self.trajectory.body_pose.shape[0]
+        T = self.trajectory.body_pose.shape[0]
         wp.launch(
             kernel=loss_kernel,
-            dim=num_steps,
+            dim=T,
             inputs=[
                 self.trajectory.body_pose,
                 self.trajectory.target_body_pose,
-                self.trajectory_weight / num_steps,
+                self.trajectory_weight / T,
+            ],
+            outputs=[self.loss],
+            device=self.solver.model.device,
+        )
+        wp.launch(
+            kernel=yaw_loss_kernel,
+            dim=T,
+            inputs=[
+                self.trajectory.body_pose,
+                self.trajectory.target_body_pose,
+                self.yaw_weight / T,
             ],
             outputs=[self.loss],
             device=self.solver.model.device,
         )
         wp.launch(
             kernel=regularization_kernel,
-            dim=(self.clock.total_sim_steps, NUM_WHEEL_DOFS),
+            dim=(T, NUM_WHEEL_DOFS),
             inputs=[
                 self.trajectory.joint_target_vel,
                 WHEEL_DOF_OFFSET,
-                self.regularization_weight,
+                self.regularization_weight / T,
             ],
             outputs=[self.loss],
             device=self.solver.model.device,
@@ -197,79 +237,60 @@ class HelhestTrajectorySplineOptimizer(AxionDifferentiableSimulator):
         self.spline_params = self.spline_adam.step(self.spline_params, grad_params)
         self._apply_params(self.spline_params)
 
-    def _extract_target_trajectory(self):
-        """Extract (T+1, 2) xy target trajectory from trajectory buffer."""
-        num_steps = self.trajectory.target_body_pose.shape[0]
-        traj = []
-        for t in range(num_steps):
-            body_pose = self.trajectory.target_body_pose[t].numpy()[0, 0]
-            traj.append([float(body_pose[0]), float(body_pose[1])])
-        return traj
-
-    def train(self, iterations=200, target_only=False):
+    def train(self, iterations=200):
         newton.eval_fk(self.model, self.model.joint_q, self.model.joint_qd, self.states[0])
         newton.eval_fk(self.model, self.model.joint_q, self.model.joint_qd, self.target_states[0])
 
         T = self.clock.total_sim_steps
         num_dofs = self.trajectory.joint_target_vel.shape[-1]
 
-        # --- Target episode ---
+        # Target episode
         for i in range(T):
             ctrl = np.zeros(num_dofs, dtype=np.float32)
-            ctrl[WHEEL_DOF_OFFSET + 0] = TARGET_CTRL[0]
-            ctrl[WHEEL_DOF_OFFSET + 1] = TARGET_CTRL[1]
-            ctrl[WHEEL_DOF_OFFSET + 2] = TARGET_CTRL[2]
+            ctrl[WHEEL_DOF_OFFSET + 0] = self._target_ctrl[0]
+            ctrl[WHEEL_DOF_OFFSET + 1] = self._target_ctrl[1]
+            ctrl[WHEEL_DOF_OFFSET + 2] = self._target_ctrl[2]
             wp.copy(
                 self.target_controls[i].joint_target_vel,
                 wp.array(ctrl, dtype=wp.float32, device=self.model.device),
             )
-
         self.run_target_episode()
 
-        if target_only:
-            traj = self._extract_target_trajectory()
-            print(f"Target final xy: ({traj[-1][0]:.3f}, {traj[-1][1]:.3f})")
-            traj_result = {
-                "simulator": "Axion",
-                "problem": "helhest",
-                "dt": self.clock.dt,
-                "T": T,
-                "target_trajectory": traj,
-            }
-            if self.save_path:
-                pathlib.Path(self.save_path).parent.mkdir(parents=True, exist_ok=True)
-                pathlib.Path(self.save_path).write_text(json.dumps(traj_result, indent=2))
-                print(f"Saved to {self.save_path}")
-            return
-
-        if not self.save_path:
-            print("Rendering target episode...")
-            self.states, self.target_states = self.target_states, self.states
-            self.render_episode(iteration=-1, loop=True, loops_count=2, playback_speed=1.0)
-            self.states, self.target_states = self.target_states, self.states
-
-        # --- Spline setup ---
+        # Spline setup
         self.W, self.W_col_sums = make_interp_matrix(T, self.K)
-        self.spline_params = np.array(
-            [[INIT_CTRL[0], INIT_CTRL[1], INIT_CTRL[2]]] * self.K, dtype=np.float64
-        )
-        self.spline_adam = SplineAdam(
-            K=self.K, num_dofs=NUM_WHEEL_DOFS, lr=0.15, betas=(0.5, 0.999)
-        )
+        self.spline_params = np.array([list(self._init_ctrl)] * self.K, dtype=np.float64)
+        self.spline_adam = SplineAdam(K=self.K, num_dofs=NUM_WHEEL_DOFS, lr=0.05)
         self._apply_params(self.spline_params)
 
-        # --- Optimization ---
-        print(f"\nOptimizing: T={T}, dt={self.clock.dt:.4f}, K={self.K}, lr=0.3 (SplineAdam)")
+        # Optimization
+        print(
+            f"Terrain traversal: T={T}, dt={self.clock.dt:.4f}, "
+            f"K={self.K}, duration={T * self.clock.dt:.1f}s"
+        )
+        # Iterations at which to snapshot the full xy trajectory
+        snapshot_iters = {0, 10, 30, 50, 100, iterations - 1}
+
         results = {
             "simulator": "Axion",
-            "problem": "helhest",
+            "problem": "terrain_traversal",
             "dt": self.clock.dt,
             "T": T,
             "K": self.K,
+            "duration": T * self.clock.dt,
             "iterations": [],
             "loss": [],
+            "rmse_m": [],
             "time_ms": [],
+            "trajectories": {},  # iter -> {"x": [...], "y": [...]}
         }
+
+        # Save target trajectory (computed once from target episode)
+        target_pos = self.trajectory.target_body_pose.numpy()[:, 0, 0, :3]  # [T, 3]
+        results["target_trajectory"] = {
+            "x": target_pos[:, 0].tolist(),
+            "y": target_pos[:, 1].tolist(),
+        }
+
         for i in range(iterations):
             t0 = time.perf_counter()
             self.diff_step()
@@ -277,21 +298,29 @@ class HelhestTrajectorySplineOptimizer(AxionDifferentiableSimulator):
             t_iter = time.perf_counter() - t0
 
             curr_loss = self.loss.numpy()[0]
-            p0, pm, pN = (
-                self.spline_params[0],
-                self.spline_params[self.K // 2],
-                self.spline_params[-1],
-            )
+
+            # RMSE in meters: sqrt( (1/T) * Σ_t ||p_t - p*_t||² )
+            # wp.transform numpy layout: [px, py, pz, qx, qy, qz, qw]
+            poses = self.trajectory.body_pose.numpy()[:, 0, 0, :3]  # [T, 3]
+            targets = self.trajectory.target_body_pose.numpy()[:, 0, 0, :3]  # [T, 3]
+            rmse_m = float(np.sqrt(np.mean(np.sum((poses - targets) ** 2, axis=-1))))
+
             print(
                 f"Iter {i:3d}: loss={curr_loss:.4f} | "
-                f"cp[0]=({p0[0]:.2f},{p0[1]:.2f}) "
-                f"cp[{self.K//2}]=({pm[0]:.2f},{pm[1]:.2f}) "
-                f"cp[-1]=({pN[0]:.2f},{pN[1]:.2f}) | "
+                f"RMSE={rmse_m:.3f}m | "
                 f"t={t_iter * 1000:.0f}ms"
             )
+
             results["iterations"].append(i)
             results["loss"].append(float(curr_loss))
+            results["rmse_m"].append(rmse_m)
             results["time_ms"].append(t_iter * 1000)
+
+            if i in snapshot_iters:
+                results["trajectories"][str(i)] = {
+                    "x": poses[:, 0].tolist(),
+                    "y": poses[:, 1].tolist(),
+                }
 
             self.update()
             self.tape.zero()
@@ -305,31 +334,32 @@ class HelhestTrajectorySplineOptimizer(AxionDifferentiableSimulator):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--save", metavar="PATH", help="Save results to JSON and run headless")
+    parser.add_argument("--save", metavar="PATH", help="Save results to JSON")
     parser.add_argument(
-        "--target-only",
-        action="store_true",
-        help="Only compute and save the target trajectory, skip optimization",
+        "--duration",
+        type=float,
+        default=10.0,
+        help="Simulation duration in seconds (default: 10.0)",
     )
-    parser.add_argument("--dt", type=float, default=DT, help=f"Timestep override (default: {DT})")
+    parser.add_argument("--dt", type=float, default=DT, help=f"Timestep (default: {DT})")
+    parser.add_argument(
+        "--K", type=int, default=10, help="Number of spline control points (default: 10)"
+    )
+    parser.add_argument(
+        "--iterations", type=int, default=200, help="Optimisation iterations (default: 200)"
+    )
     args = parser.parse_args()
 
-    # Default save path for --target-only without explicit --save
-    if args.target_only and not args.save:
-        args.save = "/tmp/helhest_axion.json"
-
     sim_config = SimulationConfig(
-        duration_seconds=DURATION,
+        duration_seconds=args.duration,
         target_timestep_seconds=args.dt,
         num_worlds=1,
         sync_mode=SyncMode.ALIGN_FPS_TO_DT,
     )
     render_config = RenderingConfig(
-        vis_type="null" if (args.save or args.target_only) else "gl",
+        vis_type="null",
         target_fps=30,
         usd_file=None,
-        world_offset_x=5.0,
-        world_offset_y=5.0,
         start_paused=False,
     )
     exec_config = ExecutionConfig(
@@ -344,11 +374,6 @@ def main():
         linear_atol=1e-3,
         linear_tol=1e-3,
         enable_linesearch=False,
-        linesearch_conservative_step_count=16,
-        linesearch_conservative_upper_bound=5e-2,
-        linesearch_min_step=1e-6,
-        linesearch_optimistic_step_count=48,
-        linesearch_optimistic_window=0.4,
         joint_compliance=6e-8,
         contact_compliance=1e-6,
         friction_compliance=1e-6,
@@ -357,23 +382,23 @@ def main():
         contact_fb_beta=1.0,
         friction_fb_alpha=1.0,
         friction_fb_beta=1.0,
-        max_contacts_per_world=8,
+        max_contacts_per_world=64,
     )
     logging_config = LoggingConfig(
         enable_timing=False,
         enable_hdf5_logging=False,
     )
 
-    sim = HelhestTrajectorySplineOptimizer(
+    sim = TerrainTraversalOptimizer(
         sim_config,
         render_config,
         exec_config,
         engine_config,
         logging_config,
-        num_control_points=K,
+        num_control_points=args.K,
         save_path=args.save,
     )
-    sim.train(iterations=50, target_only=args.target_only)
+    sim.train(iterations=args.iterations)
 
 
 if __name__ == "__main__":

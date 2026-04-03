@@ -148,6 +148,7 @@ def trajectory_loss(mx, dx0, W, params, target_xy_traj):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--save", metavar="PATH", help="Save results to JSON")
+    parser.add_argument("--target-only", action="store_true", help="Only compute and save the target trajectory, skip optimization")
     args = parser.parse_args()
 
     mj_model = mujoco.MjModel.from_xml_string(HELHEST_XML)
@@ -160,6 +161,20 @@ def main():
     target_xy_traj = jax.jit(rollout)(mx, dx0, target_ctrl_traj)
     target_xy_traj.block_until_ready()
     print(f"Target final xy: ({target_xy_traj[-1, 0]:.3f}, {target_xy_traj[-1, 1]:.3f})")
+
+    if args.target_only:
+        traj_result = {
+            "simulator": "MJX-jacfwd",
+            "problem": "helhest",
+            "dt": DT,
+            "T": T,
+            "target_trajectory": np.array(target_xy_traj).tolist(),
+        }
+        if args.save:
+            pathlib.Path(args.save).parent.mkdir(parents=True, exist_ok=True)
+            pathlib.Path(args.save).write_text(json.dumps(traj_result, indent=2))
+            print(f"Saved to {args.save}")
+        return
 
     W = jnp.array(make_interp_matrix(T, K))
     params = jnp.tile(jnp.array(INIT_CTRL), (K, 1))
