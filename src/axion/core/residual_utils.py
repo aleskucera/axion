@@ -233,6 +233,8 @@ def control_target_grad_kernel(
 @wp.kernel
 def body_pose_prev_grad_kernel(
     body_pose_grad: wp.array(dtype=wp.transform, ndim=2),
+    body_vel: wp.array(dtype=wp.spatial_vector, ndim=2),
+    dt: wp.float32,
     # --- Output ---
     body_pose_prev_grad: wp.array(dtype=wp.transform, ndim=2),
 ):
@@ -240,10 +242,68 @@ def body_pose_prev_grad_kernel(
     if body_idx >= body_pose_grad.shape[1]:
         return
 
-    # Kinematic propagation: q_{i+1} = Integrate(q_i, u_{i+1})
-    # To a first approximation, dq_{i+1}/dq_i = I
-    # We should ideally differentiate Integrate, but Identity is a good start.
-    wp.atomic_add(body_pose_prev_grad, world_idx, body_idx, body_pose_grad[world_idx, body_idx])
+    # Kinematic propagation: q+ = q- + dt * G(q-) * u
+    # Full derivative: dq+/dq- = I + dt * (dG/dq-) * u
+    #
+    # Translation part: p+ = p- + dt*v, so dp+/dp- = I (exact, no correction needed)
+    #
+    # Rotation part: r+ = r- + (dt/2) * Q(r-) * w
+    # dr+/dr- = I + (dt/2) * (dQ/dr-) * w
+    # The correction term is [dQ(r)*w/dr]^T * grad_r
+
+    g = body_pose_grad[world_idx, body_idx]
+    grad_p = wp.transform_get_translation(g)
+    grad_r = wp.transform_get_rotation(g)
+
+    vel = body_vel[world_idx, body_idx]
+    w1 = wp.spatial_bottom(vel)[0]  # angular x
+    w2 = wp.spatial_bottom(vel)[1]  # angular y
+    w3 = wp.spatial_bottom(vel)[2]  # angular z
+
+    s = dt * 0.5
+
+    # grad_r components (x=0, y=1, z=2, w=3 in quat storage)
+    gr_x = grad_r[0]
+    gr_y = grad_r[1]
+    gr_z = grad_r[2]
+    gr_w = grad_r[3]
+
+    # [dQ(r)*w/dr]^T * grad_r
+    # Q*w rows (from G_matvec):
+    #   d_theta_x = theta_w*w1 + theta_z*w2 - theta_y*w3
+    #   d_theta_y = -theta_z*w1 + theta_w*w2 + theta_x*w3
+    #   d_theta_z = theta_y*w1 - theta_x*w2 + theta_w*w3
+    #   d_theta_w = -theta_x*w1 - theta_y*w2 - theta_z*w3
+    #
+    # Differentiating each row w.r.t. each theta component and transposing:
+    # d/d(theta_x): row_x gives 0, row_y gives w3, row_z gives -w2, row_w gives -w1
+    #   correction_x = s * (0*gr_x + w3*gr_y + (-w2)*gr_z + (-w1)*gr_w)
+    # d/d(theta_y): row_x gives -w3, row_y gives 0, row_z gives w1, row_w gives -w2
+    #   correction_y = s * ((-w3)*gr_x + 0*gr_y + w1*gr_z + (-w2)*gr_w)
+    # d/d(theta_z): row_x gives w2, row_y gives -w1, row_z gives 0, row_w gives -w3
+    #   correction_z = s * (w2*gr_x + (-w1)*gr_y + 0*gr_z + (-w3)*gr_w)
+    # d/d(theta_w): row_x gives w1, row_y gives w2, row_z gives w3, row_w gives 0
+    #   correction_w = s * (w1*gr_x + w2*gr_y + w3*gr_z + 0*gr_w)
+
+    corr_x = s * (w3 * gr_y - w2 * gr_z - w1 * gr_w)
+    corr_y = s * (-w3 * gr_x + w1 * gr_z - w2 * gr_w)
+    corr_z = s * (w2 * gr_x - w1 * gr_y - w3 * gr_w)
+    corr_w = s * (w1 * gr_x + w2 * gr_y + w3 * gr_z)
+
+    # Total: identity + correction
+    out_r = wp.quat(
+        grad_r[0] + corr_x,
+        grad_r[1] + corr_y,
+        grad_r[2] + corr_z,
+        grad_r[3] + corr_w,
+    )
+
+    wp.atomic_add(
+        body_pose_prev_grad,
+        world_idx,
+        body_idx,
+        wp.transform(grad_p, out_r),
+    )
 
 
 def compute_residual_gradient(
@@ -272,6 +332,8 @@ def compute_residual_gradient(
         dim=(dims.num_worlds, dims.body_count),
         inputs=[
             data.body_pose_grad,
+            data.body_vel,
+            data.dt,
         ],
         outputs=[data.body_pose_prev.grad],
         device=data.device,
