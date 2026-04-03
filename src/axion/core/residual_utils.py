@@ -268,6 +268,16 @@ def compute_residual_gradient(
     )
 
     wp.launch(
+        kernel=body_pose_prev_grad_kernel,
+        dim=(dims.num_worlds, dims.body_count),
+        inputs=[
+            data.body_pose_grad,
+        ],
+        outputs=[data.body_pose_prev.grad],
+        device=data.device,
+    )
+
+    wp.launch(
         kernel=control_target_grad_kernel,
         dim=(dims.num_worlds, dims.joint_count),
         inputs=[

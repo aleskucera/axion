@@ -256,8 +256,96 @@ def test_hard_turn():
     print("  PASSED")
 
 
+def test_multi_step_trajectory():
+    """Multi-step gradient accumulation through the trajectory buffer."""
+    print("\n=== Test: Multi-step trajectory (5 steps) ===")
+
+    model = build_taros4()
+    num_steps = 5
+    engine = make_engine(model, sim_steps=num_steps)
+    dims = engine.dims
+    dt = 0.01
+
+    np.random.seed(42)
+    w_terminal = np.random.randn(model.body_count * 6).astype(np.float32)
+    target_vel = np.zeros(dims.joint_dof_count, dtype=np.float32)
+    target_vel[6:] = 5.0
+
+    # --- Analytical via trajectory buffer backward ---
+    state_in = model.state()
+    newton.eval_fk(model, model.joint_q, model.joint_qd, state_in)
+    control = model.control()
+    wp.copy(
+        control.joint_target_vel,
+        wp.array(target_vel.reshape(1, -1), dtype=wp.float32, device=model.device),
+    )
+
+    buffer = TrajectoryBuffer(
+        data=engine.data, contacts=engine.axion_contacts,
+        dims=dims, num_steps=num_steps, device=model.device,
+    )
+    states = [model.state() for _ in range(num_steps + 1)]
+    wp.copy(states[0].body_q, state_in.body_q)
+    wp.copy(states[0].body_qd, state_in.body_qd)
+    for i in range(num_steps):
+        contacts = model.collide(states[i])
+        engine.step(states[i], states[i + 1], control, contacts, dt)
+        buffer.save_step(i, engine.data, engine.axion_contacts)
+
+    buffer.zero_grad()
+    wp.copy(
+        buffer.body_vel.grad[num_steps],
+        wp.array(w_terminal.reshape(engine.data.body_vel_grad.numpy().shape),
+                 dtype=wp.spatial_vector, device=model.device),
+    )
+    for i in range(num_steps - 1, -1, -1):
+        buffer.load_step(i, engine.data, engine.axion_contacts)
+        engine.data.zero_gradients()
+        engine.step_backward()
+        buffer.save_gradients(i, engine.data)
+        buffer.save_pose_gradients(i, engine.data)
+
+    ctrl_grad_a = np.zeros(dims.joint_dof_count, dtype=np.float32)
+    for i in range(num_steps):
+        ctrl_grad_a += buffer.joint_target_vel.grad[i].numpy().flatten()
+
+    # --- FD for all wheel DOFs ---
+    eps = 1e-3
+    ctrl_grad_fd = np.zeros(dims.joint_dof_count, dtype=np.float32)
+    for dof in range(6, dims.joint_dof_count):
+        def run_traj(tv):
+            s_in = model.state()
+            newton.eval_fk(model, model.joint_q, model.joint_qd, s_in)
+            ctrl = model.control()
+            wp.copy(ctrl.joint_target_vel,
+                    wp.array(tv.reshape(1, -1), dtype=wp.float32, device=model.device))
+            s_out = model.state()
+            for step in range(num_steps):
+                c = model.collide(s_in)
+                engine.step(s_in, s_out, ctrl, c, dt)
+                s_in, s_out = s_out, s_in
+            return np.dot(w_terminal, s_in.body_qd.numpy().flatten())
+
+        tv_p = target_vel.copy(); tv_p[dof] += eps
+        tv_m = target_vel.copy(); tv_m[dof] -= eps
+        ctrl_grad_fd[dof] = (run_traj(tv_p) - run_traj(tv_m)) / (2 * eps)
+
+    wheel_names = ["front_left", "front_right", "rear_left", "rear_right"]
+    max_err = 0.0
+    for dof in range(6, dims.joint_dof_count):
+        a, f = ctrl_grad_a[dof], ctrl_grad_fd[dof]
+        err = abs(a - f) / max(abs(a), abs(f), 1e-10)
+        max_err = max(max_err, err)
+        print(f"  {wheel_names[dof - 6]:12s}: analytical={a:10.4f}  FD={f:10.4f}  rel_err={err:.4f}")
+
+    print(f"  Max rel error: {max_err:.4f}")
+    assert max_err < 0.15, f"Multi-step trajectory gradient failed: max rel error {max_err:.4f}"
+    print("  PASSED")
+
+
 if __name__ == "__main__":
     test_straight_drive()
     test_differential_turn()
     test_hard_turn()
+    test_multi_step_trajectory()
     print("\n=== All wheeled robot tests done! ===")
