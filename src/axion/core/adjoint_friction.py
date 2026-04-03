@@ -1,12 +1,16 @@
-"""Friction mode freezing for the adjoint backward pass.
+"""Contact mode freezing for the adjoint backward pass.
 
-After the forward Newton solve converges, the FB complementarity-derived friction
-compliance (C_f = w/dt) may be poorly conditioned, leading to large constraint
-residuals that invalidate the IFT assumption (R=0).
+The FB complementarity for friction rarely converges to R=0 (residuals O(1e-2)).
+For the adjoint, we replace the FB-derived friction compliance with a linearized
+version based on the detected contact mode:
 
-This module replaces the FB-derived friction properties with linearized versions
-that are consistent with the converged contact mode (sliding or sticking),
-ensuring the adjoint system is well-conditioned.
+  - Sticking (|λ_f| < μ·λ_n): friction locks tangential velocity.
+    → small compliance (rigid constraint, like joint compliance)
+  - Sliding (|λ_f| ≈ μ·λ_n): friction force is at Coulomb limit.
+    → large compliance (force is nearly independent of velocity)
+
+The friction Jacobians J (tangential directions) are kept from the forward solve.
+The residuals are zeroed so the IFT assumption (R=0) holds.
 
 See docs/adjoint_warm_start_issue.md for full background.
 """
@@ -15,8 +19,8 @@ import warp as wp
 
 
 @wp.kernel
-def freeze_friction_mode_kernel(
-    # Friction constraint data (indexed by friction pair: 2 rows per contact)
+def freeze_contact_mode_kernel(
+    # Friction constraint data
     constr_active_mask_f: wp.array(dtype=wp.float32, ndim=2),
     C_values_f: wp.array(dtype=wp.float32, ndim=2),
     res_c_f: wp.array(dtype=wp.float32, ndim=2),
@@ -29,21 +33,13 @@ def freeze_friction_mode_kernel(
     contact_count: wp.array(dtype=wp.int32, ndim=1),
     shape_material_mu: wp.array(dtype=wp.float32, ndim=2),
     # Config
-    friction_compliance: wp.float32,
+    sticking_compliance: wp.float32,
+    sliding_compliance: wp.float32,
 ):
-    """Replace FB friction compliance with a fixed compliance for the adjoint.
-
-    For each active friction contact:
-      - Zero the residual (so the IFT assumption R=0 holds)
-      - Replace C_f with a fixed compliance based on the contact mode:
-        * Sliding (|λ_f| ≈ μ·λ_n): small compliance (force is determined)
-        * Sticking (|λ_f| < μ·λ_n): small compliance (velocity is zero)
-        * Inactive (λ_n ≈ 0): deactivate the constraint
-    """
+    """Linearize friction for the adjoint based on the converged contact mode."""
     world_idx, contact_idx = wp.tid()
 
     if contact_idx >= contact_count[world_idx]:
-        # Deactivate out-of-range friction constraints
         constr_active_mask_f[world_idx, 2 * contact_idx + 0] = 0.0
         constr_active_mask_f[world_idx, 2 * contact_idx + 1] = 0.0
         return
@@ -58,22 +54,27 @@ def freeze_friction_mode_kernel(
     shape1 = contact_shape1[world_idx, contact_idx]
     mu = 0.5 * (shape_material_mu[world_idx, shape0] + shape_material_mu[world_idx, shape1])
 
-    lambda_f_norm = wp.sqrt(lambda_t1 * lambda_t1 + lambda_t2 * lambda_t2)
+    lambda_f_norm = wp.sqrt(lambda_t1 * lambda_t1 + lambda_t2 * lambda_t2 + 1e-10)
     coulomb_limit = mu * lambda_n
 
-    # If normal force is negligible, deactivate friction entirely
+    # Deactivate if no normal force
     if lambda_n < 1e-6:
         constr_active_mask_f[world_idx, 2 * contact_idx + 0] = 0.0
         constr_active_mask_f[world_idx, 2 * contact_idx + 1] = 0.0
         return
 
-    # For both sliding and sticking: use fixed compliance and zero residual.
-    # The J values (tangential direction Jacobians) are kept from compute_linear_system.
-    c_adj = friction_compliance
+    # Detect mode: sliding if friction force is near the Coulomb limit
+    ratio = lambda_f_norm / (coulomb_limit + 1e-10)
+    is_sliding = ratio > 0.9
+
+    # Set compliance based on mode
+    c_adj = sticking_compliance
+    if is_sliding:
+        c_adj = sliding_compliance
 
     C_values_f[world_idx, 2 * contact_idx + 0] = c_adj
     C_values_f[world_idx, 2 * contact_idx + 1] = c_adj
 
-    # Zero the residual so IFT holds
+    # Zero residuals so IFT assumption holds
     res_c_f[world_idx, 2 * contact_idx + 0] = 0.0
     res_c_f[world_idx, 2 * contact_idx + 1] = 0.0
