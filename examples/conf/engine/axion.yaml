@@ -3,7 +3,7 @@ _target_: axion.AxionEngineConfig
 max_newton_iters: 16
 max_linear_iters: 16
 backtrack_min_iter: 12
-newton_atol: 1e-1
+newton_atol: 1e-3
 linear_atol: 1e-3
 linear_tol: 1e-3
 enable_linesearch: false 
