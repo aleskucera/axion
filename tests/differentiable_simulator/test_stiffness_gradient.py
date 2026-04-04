@@ -184,7 +184,97 @@ def test_stiffness_gradient_multi_step():
     print("  REPORTED (no assertion)")
 
 
+def test_wheeled_robot_ke_gradient():
+    """ke gradient for wheeled robot with TARGET_VELOCITY mode and friction contacts."""
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).parent.parent.parent / "examples"))
+    from taros_4.common import create_taros4_model
+
+    print("\n=== Test: Wheeled robot ke gradient (TARGET_VELOCITY, single step) ===")
+
+    ke_val = 1000.0
+    dt = 0.01
+
+    def build_robot(ke):
+        builder = AxionModelBuilder()
+        builder.rigid_gap = 0.05
+        builder.add_ground_plane()
+        create_taros4_model(
+            builder,
+            xform=wp.transform(wp.vec3(0, 0, 0.8), wp.quat_identity()),
+            is_visible=False, control_mode="velocity", k_p=ke, k_d=0.0, friction=0.8,
+        )
+        return builder.finalize_replicated(num_worlds=1, gravity=-9.81)
+
+    config = AxionEngineConfig(
+        max_newton_iters=20, max_linear_iters=200,
+        linear_tol=1e-8, linear_atol=1e-8,
+    )
+
+    model = build_robot(ke_val)
+    engine = AxionEngine(
+        model=model, sim_steps=1, config=config,
+        logging_config=LoggingConfig(), differentiable_simulation=True,
+    )
+    dims = engine.dims
+
+    # Set wheel velocities
+    target_vel = np.zeros(dims.joint_dof_count, dtype=np.float32)
+    target_vel[6:] = 5.0
+
+    state_in = model.state()
+    newton.eval_fk(model, model.joint_q, model.joint_qd, state_in)
+    control = model.control()
+    wp.copy(control.joint_target_vel,
+            wp.array(target_vel.reshape(1, -1), dtype=wp.float32, device=model.device))
+
+    # Forward
+    state_out = model.state()
+    contacts = model.collide(state_in)
+    engine.step(state_in, state_out, control, contacts, dt)
+
+    # Loss: chassis linear x velocity (body 0, spatial_top index 0)
+    np.random.seed(42)
+    w = np.random.randn(model.body_count * 6).astype(np.float32)
+
+    # Backward
+    engine.data.zero_gradients()
+    engine.axion_model.joint_target_ke.grad.zero_()
+    wp.copy(engine.data.body_vel_grad,
+            wp.array(w.reshape(engine.data.body_vel_grad.numpy().shape),
+                     dtype=wp.spatial_vector, device=model.device))
+    engine.step_backward()
+
+    ke_a = float(engine.axion_model.joint_target_ke.grad.numpy().sum())
+
+    # FD: rebuild model with different ke
+    eps = 10.0
+    def get_loss(ke):
+        m = build_robot(ke)
+        e = AxionEngine(model=m, sim_steps=1, config=config,
+                        logging_config=LoggingConfig(), differentiable_simulation=True)
+        s_in = m.state()
+        newton.eval_fk(m, m.joint_q, m.joint_qd, s_in)
+        ct = m.control()
+        wp.copy(ct.joint_target_vel,
+                wp.array(target_vel.reshape(1, -1), dtype=wp.float32, device=m.device))
+        s_out = m.state()
+        c = m.collide(s_in)
+        e.step(s_in, s_out, ct, c, dt)
+        return np.dot(w, s_out.body_qd.numpy().flatten())
+
+    fd = (get_loss(ke_val + eps) - get_loss(ke_val - eps)) / (2 * eps)
+
+    err = abs(ke_a - fd) / max(abs(ke_a), abs(fd), 1e-15)
+    print(f"  ke: analytical={ke_a:.8f}  FD={fd:.8f}  rel_err={err:.4f}")
+    print(f"  Max rel error: {err:.4f}")
+    assert err < 0.15, f"Wheeled robot ke gradient failed: rel error {err:.4f}"
+    print("  PASSED")
+
+
 if __name__ == "__main__":
     test_stiffness_gradient_single_step()
     test_stiffness_gradient_multi_step()
+    test_wheeled_robot_ke_gradient()
     print("\n=== Stiffness gradient tests done! ===")
