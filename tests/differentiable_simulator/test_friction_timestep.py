@@ -18,7 +18,7 @@ from axion.core.engine_config import AxionEngineConfig
 from axion.core.logging_config import LoggingConfig
 from axion.core.model_builder import AxionModelBuilder
 
-sys.path.insert(0, str(Path(__file__).parent.parent / "examples"))
+sys.path.insert(0, str(Path(__file__).parent.parent.parent / "examples"))
 from taros_4.common import create_taros4_model
 
 
