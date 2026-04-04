@@ -73,7 +73,9 @@ def run_gradient_test(num_steps, loss_type="velocity"):
     target_vel[0] = 2.0
 
     state_in = model.state()
-    model.joint_q.numpy()[1] = np.pi  # pole hanging down
+    jq = model.joint_q.numpy()
+    jq[1] = np.pi  # pole hanging down
+    wp.copy(model.joint_q, wp.array(jq, dtype=wp.float32, device=model.joint_q.device))
     newton.eval_fk(model, model.joint_q, model.joint_qd, state_in)
     control = model.control()
     wp.copy(control.joint_target_vel,

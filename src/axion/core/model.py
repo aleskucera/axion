@@ -220,6 +220,8 @@ class AxionModel:
             self.joint_enabled = model.joint_enabled.reshape((model.world_count, -1))
             self.joint_target_ke = model.joint_target_ke.reshape((model.world_count, -1))
             self.joint_target_kd = model.joint_target_kd.reshape((model.world_count, -1))
+            self.joint_target_ke.requires_grad = True
+            self.joint_target_kd.requires_grad = True
             self.joint_compliance = model.joint_compliance.reshape((model.world_count, -1))
             self.joint_type = model.joint_type.reshape((model.world_count, -1))
             self.joint_q_start = wp.zeros((model.world_count, self.joint_count), dtype=wp.int32)

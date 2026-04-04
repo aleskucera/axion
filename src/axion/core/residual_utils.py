@@ -195,11 +195,16 @@ def control_target_grad_kernel(
     joint_enabled: wp.array(dtype=wp.bool, ndim=2),
     joint_dof_mode: wp.array(dtype=wp.int32, ndim=2),
     control_constraint_offsets: wp.array(dtype=wp.int32, ndim=2),
-    w_ctrl: wp.array(dtype=wp.float32, ndim=2),  # Adjoint vector for control constraints
+    w_ctrl: wp.array(dtype=wp.float32, ndim=2),
+    lambda_ctrl: wp.array(dtype=wp.float32, ndim=2),
+    joint_target_ke: wp.array(dtype=wp.float32, ndim=2),
+    joint_target_kd: wp.array(dtype=wp.float32, ndim=2),
     dt: wp.float32,
     # Outputs:
     target_pos_grad: wp.array(dtype=wp.float32, ndim=2),
     target_vel_grad: wp.array(dtype=wp.float32, ndim=2),
+    target_ke_grad: wp.array(dtype=wp.float32, ndim=2),
+    target_kd_grad: wp.array(dtype=wp.float32, ndim=2),
 ):
     world_idx, joint_idx = wp.tid()
 
@@ -217,17 +222,35 @@ def control_target_grad_kernel(
 
     ctrl_offset = control_constraint_offsets[world_idx, joint_idx]
 
-    # Extract the adjoint variable w_lambda corresponding to this constraint row
     w_lambda = w_ctrl[world_idx, ctrl_offset]
+    lam = lambda_ctrl[world_idx, ctrl_offset]
+    ke = joint_target_ke[world_idx, qd_start_idx]
+    kd = joint_target_kd[world_idx, qd_start_idx]
 
     if mode == JointMode.TARGET_POSITION:
-        # IFT: dL/d(target) = w_lambda * dR_c/d(target) where R_c = (q-target)/h + α·λ·h
-        # so dR_c/d(target) = -1/h, giving: gradient = w_lambda * (-1/dt)
+        # R_c = (q - target)/h + α·λ·h,  α = 1/(h²·ke + h·kd)
         wp.atomic_add(target_pos_grad, world_idx, qd_start_idx, w_lambda * (-1.0 / dt))
 
+        # dα/d(ke) = -h²/(h²·ke + h·kd)²,  dα/d(kd) = -h/(h²·ke + h·kd)²
+        # dR_c/d(ke) = dα/d(ke) · λ · h,    dR_c/d(kd) = dα/d(kd) · λ · h
+        denom = dt * dt * ke + dt * kd
+        if denom > 1e-6:
+            inv_denom_sq = 1.0 / (denom * denom)
+            wp.atomic_add(target_ke_grad, world_idx, qd_start_idx,
+                          w_lambda * (-dt * dt * inv_denom_sq) * lam * dt)
+            wp.atomic_add(target_kd_grad, world_idx, qd_start_idx,
+                          w_lambda * (-dt * inv_denom_sq) * lam * dt)
+
     elif mode == JointMode.TARGET_VELOCITY:
-        # IFT: R_c = (qd - target_vel) + α·λ·h, so dR_c/d(target_vel) = -1
+        # R_c = (qd - target_vel) + α·λ·h,  α = 1/(h·ke)
         wp.atomic_add(target_vel_grad, world_idx, qd_start_idx, w_lambda * (-1.0))
+
+        # dα/d(ke) = -h/(h·ke)² = -1/(ke²·h)
+        denom = dt * ke
+        if denom > 1e-6:
+            inv_denom_sq = 1.0 / (denom * denom)
+            wp.atomic_add(target_ke_grad, world_idx, qd_start_idx,
+                          w_lambda * (-dt * inv_denom_sq) * lam * dt)
 
 
 @wp.kernel
@@ -349,11 +372,16 @@ def compute_residual_gradient(
             model.joint_dof_mode,
             model.control_constraint_offsets,
             data.w.c.ctrl,
+            data.constr_force.ctrl,
+            model.joint_target_ke,
+            model.joint_target_kd,
             data.dt,
         ],
         outputs=[
             data.joint_target_pos.grad,
             data.joint_target_vel.grad,
+            model.joint_target_ke.grad,
+            model.joint_target_kd.grad,
         ],
         device=data.device,
     )
