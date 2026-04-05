@@ -10,32 +10,30 @@ import os
 import pathlib
 import time
 
-import hydra
 import newton
 import numpy as np
 import warp as wp
 from axion import AxionDifferentiableSimulator
-from axion import EngineConfig
 from axion import ExecutionConfig
 from axion import LoggingConfig
 from axion import RenderingConfig
 from axion import SimulationConfig
+from axion.core.engine_config import AxionEngineConfig
 from axion.core.types import JointMode
 from newton import Model
-from omegaconf import DictConfig
 
 os.environ["PYOPENGL_PLATFORM"] = "glx"
-CONFIG_PATH = pathlib.Path(__file__).parent.parent.joinpath("conf")
 
-# Import robot config from uphill_drive
+# Import robot config and terrain builder from uphill_drive
 from examples.differentiable.uphill_drive import (
+    build_mesh_terrain,
     create_4wheel_robot,
-    WHEEL_RADIUS,
     CHASSIS_HX,
     CHASSIS_HY,
     CHASSIS_HZ,
     CHASSIS_MASS,
     WHEEL_MASS,
+    WHEEL_RADIUS,
     NUM_WHEELS,
     SLIP_WIDTH,
 )
@@ -126,25 +124,6 @@ def energy_loss_kernel(
     wp.atomic_add(loss, 0, weight * v * v)
 
 
-@wp.kernel
-def update_friction_kernel(
-    body_q: wp.array(dtype=wp.transform, ndim=2),
-    shape_material_mu: wp.array(dtype=wp.float32, ndim=2),
-    wheel_shape_indices: wp.array(dtype=wp.int32),
-    slip_y_start: float,
-    slip_y_end: float,
-    mu_normal: float,
-    mu_slippery: float,
-):
-    world_idx = wp.tid()
-    chassis_y = wp.transform_get_translation(body_q[world_idx, 0])[1]
-    mu = mu_normal
-    if chassis_y > slip_y_start and chassis_y < slip_y_end:
-        mu = mu_slippery
-    for i in range(wheel_shape_indices.shape[0]):
-        shape_material_mu[world_idx, wheel_shape_indices[i]] = mu
-
-
 # ─── Simulator ─────────────────────────────────────────────────────────────
 
 
@@ -170,96 +149,30 @@ class UphillOptimizer(AxionDifferentiableSimulator):
         self.loss = wp.zeros(1, dtype=float, requires_grad=True)
         self.frame = 0
 
-        # Wheel shape indices for friction switching (bodies 1-4)
-        wheel_shape_ids = []
-        shape_body = self.model.shape_body.numpy()
-        n_shapes_per_world = self.model.shape_count // max(self.model.world_count, 1)
-        for si in range(n_shapes_per_world):
-            if shape_body[si] in [1, 2, 3, 4]:
-                wheel_shape_ids.append(si)
-        self._wheel_shape_indices = wp.array(
-            wheel_shape_ids,
-            dtype=wp.int32,
-            device=self.model.device,
-        )
-
-        p1_len = 8.0
-        self._slip_y_start = p1_len
-        self._slip_y_end = p1_len + SLIP_WIDTH
-
         self.track_body(body_idx=0, name="chassis", color=(0.0, 0.5, 1.0))
 
         # Target position: on the flat top, a bit after the ramp ends
+        # Terrain layout: flat(3m) + ramp1(5m) + slip(SLIP_WIDTH) + ramp2(5m) + flat_top
         z_per_m = np.tan(np.radians(SLOPE_ANGLE))
-        target_y = 8.0 + SLIP_WIDTH + 5.0 + 2.0  # p1 + p2 + ramp2 + 2m into flat
-        target_z = z_per_m * (5.0 + SLIP_WIDTH + 5.0) + WHEEL_RADIUS  # total ramp height + wheel
+        total_ramp = 5.0 + SLIP_WIDTH + 5.0
+        target_y = 3.0 + total_ramp + 2.0  # 2m into flat top
+        target_z = z_per_m * total_ramp + WHEEL_RADIUS
         self._target_pos = wp.vec3(0.0, target_y, target_z)
 
         if self.viewer:
             self.viewer.set_camera(
-                pos=wp.vec3(-22.0, -14.0, 10.0),
-                pitch=-20.0,
-                yaw=30.0,
+                pos=wp.vec3(-18.0, -14.0, 15.0),
+                pitch=-25.0,
+                yaw=55.0,
             )
+            self.viewer.show_ui = False
 
     def build_model(self) -> Model:
-        self.builder.rigid_gap = 0.05
+        self.builder.rigid_gap = 0.3
 
-        slope_rad = np.radians(SLOPE_ANGLE)
-        hy = 3.0
-        z_per_m = np.tan(slope_rad)
-        ncol, nrow = 30, 12
+        build_mesh_terrain(self.builder, SLOPE_ANGLE, SLIP_WIDTH)
 
-        p1_len, p2_len, p3_len = 8.0, SLIP_WIDTH, 15.0
-        flat_len, ramp1_len, ramp2_len = 3.0, 5.0, 5.0
-        z_ramp1_end = z_per_m * ramp1_len
-        z_slip_end = z_ramp1_end + z_per_m * p2_len
-        z_ramp2_end = z_slip_end + z_per_m * ramp2_len
-
-        normal_cfg = newton.ModelBuilder.ShapeConfig(ke=1e4, kd=1e3, kf=1e3, mu=0.8)
-        slippery_cfg = newton.ModelBuilder.ShapeConfig(ke=1e4, kd=1e3, kf=1e3, mu=0.01)
         rot_z90 = wp.quat_from_axis_angle(wp.vec3(0.0, 0.0, 1.0), wp.pi / 2.0)
-
-        def make_heightfield(length, z_fn):
-            x = np.linspace(0.0, length, ncol)
-            z = np.array([z_fn(xi) for xi in x], dtype=np.float32)
-            d = np.tile(z, (nrow, 1))
-            return newton.Heightfield(
-                d,
-                nrow,
-                ncol,
-                hx=length / 2.0,
-                hy=hy,
-                min_z=float(z.min()),
-                max_z=max(float(z.max()), float(z.min()) + 0.001),
-            )
-
-        hf1 = make_heightfield(p1_len, lambda x: 0.0 if x < flat_len else z_per_m * (x - flat_len))
-        self.builder.add_shape_heightfield(
-            heightfield=hf1,
-            xform=wp.transform(wp.vec3(0.0, p1_len / 2.0, 0.0), rot_z90),
-            cfg=normal_cfg,
-            label="terrain_bottom",
-        )
-
-        hf2 = make_heightfield(p2_len, lambda x: z_ramp1_end + z_per_m * x)
-        self.builder.add_shape_heightfield(
-            heightfield=hf2,
-            xform=wp.transform(wp.vec3(0.0, p1_len + p2_len / 2.0, 0.0), rot_z90),
-            cfg=slippery_cfg,
-            label="terrain_slippery",
-        )
-
-        hf3 = make_heightfield(
-            p3_len, lambda x: z_slip_end + z_per_m * x if x < ramp2_len else z_ramp2_end
-        )
-        self.builder.add_shape_heightfield(
-            heightfield=hf3,
-            xform=wp.transform(wp.vec3(0.0, p1_len + p2_len + p3_len / 2.0, 0.0), rot_z90),
-            cfg=normal_cfg,
-            label="terrain_top",
-        )
-
         robot_xform = wp.transform(wp.vec3(0.0, 1.5, WHEEL_RADIUS + 0.2), rot_z90)
         create_4wheel_robot(
             self.builder,
@@ -267,29 +180,12 @@ class UphillOptimizer(AxionDifferentiableSimulator):
             is_visible=True,
             k_p=500.0,
             k_d=0.0,
-            wheel_mu=0.8,
+            wheel_mu=0.1,
         )
 
         return self.builder.finalize_replicated(
             num_worlds=self.simulation_config.num_worlds,
             requires_grad=True,
-        )
-
-    def control_policy(self, current_state):
-        nw = self.simulation_config.num_worlds
-        wp.launch(
-            kernel=update_friction_kernel,
-            dim=nw,
-            inputs=[
-                current_state.body_q.reshape((nw, -1)),
-                self.model.shape_material_mu.reshape((nw, -1)),
-                self._wheel_shape_indices,
-                self._slip_y_start,
-                self._slip_y_end,
-                0.8,
-                0.01,
-            ],
-            device=self.model.device,
         )
 
     def compute_loss(self):
@@ -391,7 +287,7 @@ class UphillOptimizer(AxionDifferentiableSimulator):
             callback=draw_extras,
             loop=True,
             loops_count=1,
-            playback_speed=2.0,
+            playback_speed=1.0,
         )
         self.frame += 1
 
@@ -435,13 +331,37 @@ class UphillOptimizer(AxionDifferentiableSimulator):
             self.loss.zero_()
 
 
-@hydra.main(version_base=None, config_path=str(CONFIG_PATH), config_name="config_uphill")
-def main(cfg: DictConfig):
-    sim_config: SimulationConfig = hydra.utils.instantiate(cfg.simulation)
-    render_config: RenderingConfig = hydra.utils.instantiate(cfg.rendering)
-    exec_config: ExecutionConfig = hydra.utils.instantiate(cfg.execution)
-    engine_config: EngineConfig = hydra.utils.instantiate(cfg.engine)
-    logging_config: LoggingConfig = hydra.utils.instantiate(cfg.logging)
+def main():
+    sim_config = SimulationConfig(
+        duration_seconds=6.0,
+        target_timestep_seconds=5e-2,
+        num_worlds=1,
+    )
+    render_config = RenderingConfig(vis_type="gl")
+    exec_config = ExecutionConfig(use_cuda_graph=True)
+    engine_config = AxionEngineConfig(
+        max_newton_iters=16,
+        max_linear_iters=16,
+        backtrack_min_iter=12,
+        newton_mode="convergence",
+        linear_mode="convergence",
+        newton_atol=1e-3,
+        linear_tol=1e-5,
+        linear_atol=1e-5,
+        joint_compliance=5e-8,
+        contact_compliance=1e-6,
+        friction_compliance=1e-6,
+        regularization=1e-6,
+        contact_fb_alpha=1.0,
+        contact_fb_beta=1.0,
+        friction_fb_alpha=1.0,
+        friction_fb_beta=1.0,
+        enable_linesearch=False,
+        max_contacts_per_world=512,
+        joint_constraint_level="pos",
+        contact_constraint_level="pos",
+    )
+    logging_config = LoggingConfig()
 
     sim = UphillOptimizer(
         sim_config,
