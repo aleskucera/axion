@@ -1,5 +1,6 @@
 from typing import Optional
 
+import numpy as np
 import warp as wp
 from axion.optim import JacobiPreconditioner
 from axion.optim import PCRSolver
@@ -383,8 +384,36 @@ class AxionEngineBase(SolverBase):
         )
 
     def step_backward(self):
+        from .adjoint_friction import freeze_contact_mode_kernel
+
         compute_linear_system(
             self.axion_model, self.axion_contacts, self.data, self.config, self.dims
+        )
+
+        # Freeze friction mode for the adjoint: replace FB-derived compliance
+        # with linearized values based on the converged contact mode (sticking
+        # vs sliding). Normal contacts are kept as-is (they converge well).
+        # See docs/adjoint_warm_start_issue.md
+        wp.launch(
+            kernel=freeze_contact_mode_kernel,
+            dim=(self.dims.num_worlds, self.dims.contact_count),
+            inputs=[
+                self.data.constr_active_mask.f,
+                self.data.C_values.f,
+                self.data.res.c.f,
+                self.data._constr_force[
+                    :, self.dims.offset_f : self.dims.offset_f + 2 * self.dims.contact_count
+                ],
+                self.data._constr_force[:, self.dims.offset_n : self.dims.offset_f],
+                self.axion_contacts.contact_shape0,
+                self.axion_contacts.contact_shape1,
+                self.axion_contacts.contact_count,
+                self.axion_model.shape_material_mu,
+                self.config.joint_compliance,  # sticking: rigid like joints
+                100.0,  # sliding: very soft (force at Coulomb limit, nearly independent of velocity)
+            ],
+            outputs=[],
+            device=self.device,
         )
 
         wp.launch(
@@ -394,6 +423,7 @@ class AxionEngineBase(SolverBase):
                 self.data.body_pose_grad,
                 self.data.body_vel_grad,
                 self.data.body_pose,
+                self.axion_model.body_com,
                 self.axion_model.body_inv_mass,
                 self.axion_model.body_inv_inertia,
                 self.data.dt,

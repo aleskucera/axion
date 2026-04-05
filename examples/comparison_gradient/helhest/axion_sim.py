@@ -28,7 +28,7 @@ from examples.helhest.common import HelhestConfig
 
 os.environ["PYOPENGL_PLATFORM"] = "glx"
 
-DT = 7e-2
+DT = 5e-2
 DURATION = 3.0
 K = 30  # number of spline control points
 
@@ -197,7 +197,16 @@ class HelhestTrajectorySplineOptimizer(AxionDifferentiableSimulator):
         self.spline_params = self.spline_adam.step(self.spline_params, grad_params)
         self._apply_params(self.spline_params)
 
-    def train(self, iterations=200):
+    def _extract_target_trajectory(self):
+        """Extract (T+1, 2) xy target trajectory from trajectory buffer."""
+        num_steps = self.trajectory.target_body_pose.shape[0]
+        traj = []
+        for t in range(num_steps):
+            body_pose = self.trajectory.target_body_pose[t].numpy()[0, 0]
+            traj.append([float(body_pose[0]), float(body_pose[1])])
+        return traj
+
+    def train(self, iterations=200, target_only=False):
         newton.eval_fk(self.model, self.model.joint_q, self.model.joint_qd, self.states[0])
         newton.eval_fk(self.model, self.model.joint_q, self.model.joint_qd, self.target_states[0])
 
@@ -216,6 +225,23 @@ class HelhestTrajectorySplineOptimizer(AxionDifferentiableSimulator):
             )
 
         self.run_target_episode()
+
+        if target_only:
+            traj = self._extract_target_trajectory()
+            print(f"Target final xy: ({traj[-1][0]:.3f}, {traj[-1][1]:.3f})")
+            traj_result = {
+                "simulator": "Axion",
+                "problem": "helhest",
+                "dt": self.clock.dt,
+                "T": T,
+                "target_trajectory": traj,
+            }
+            if self.save_path:
+                pathlib.Path(self.save_path).parent.mkdir(parents=True, exist_ok=True)
+                pathlib.Path(self.save_path).write_text(json.dumps(traj_result, indent=2))
+                print(f"Saved to {self.save_path}")
+            return
+
         if not self.save_path:
             print("Rendering target episode...")
             self.states, self.target_states = self.target_states, self.states
@@ -280,16 +306,26 @@ class HelhestTrajectorySplineOptimizer(AxionDifferentiableSimulator):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--save", metavar="PATH", help="Save results to JSON and run headless")
+    parser.add_argument(
+        "--target-only",
+        action="store_true",
+        help="Only compute and save the target trajectory, skip optimization",
+    )
+    parser.add_argument("--dt", type=float, default=DT, help=f"Timestep override (default: {DT})")
     args = parser.parse_args()
+
+    # Default save path for --target-only without explicit --save
+    if args.target_only and not args.save:
+        args.save = "/tmp/helhest_axion.json"
 
     sim_config = SimulationConfig(
         duration_seconds=DURATION,
-        target_timestep_seconds=DT,
+        target_timestep_seconds=args.dt,
         num_worlds=1,
         sync_mode=SyncMode.ALIGN_FPS_TO_DT,
     )
     render_config = RenderingConfig(
-        vis_type="null" if args.save else "gl",
+        vis_type="null" if (args.save or args.target_only) else "gl",
         target_fps=30,
         usd_file=None,
         world_offset_x=5.0,
@@ -298,7 +334,7 @@ def main():
     )
     exec_config = ExecutionConfig(
         use_cuda_graph=True,
-        headless_steps_per_segment=10,
+        headless_steps_per_segment=1,
     )
     engine_config = AxionEngineConfig(
         max_newton_iters=12,
@@ -337,7 +373,7 @@ def main():
         num_control_points=K,
         save_path=args.save,
     )
-    sim.train(iterations=50)
+    sim.train(iterations=50, target_only=args.target_only)
 
 
 if __name__ == "__main__":

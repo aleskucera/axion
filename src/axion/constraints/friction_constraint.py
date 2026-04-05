@@ -42,32 +42,49 @@ def compute_friction_model(
     dt: wp.float32,
     precond: wp.float32,
 ):
-    """Algebraic Fisher-Burmeister formulation for friction."""
+    """Impulse-level Fisher-Burmeister formulation for friction.
+
+    Computes the friction compliance 'w' using impulse-level quantities
+    so that the sticking/sliding transition is independent of dt.
+
+    The FB function operates on:
+      a = tangential displacement (v_t * dt)   [m]
+      b = friction cone gap in impulse space    [N·s]
+    with precond = effective_mass (no dt).
+
+    The output w is used in the velocity-level residual: v_t + w * lambda = 0.
+    Since w is computed from dt-independent ratios, friction is timestep-consistent.
+    """
+    # Tangential velocity
     v_t_0 = wp.dot(J_t1_0, vel0) + wp.dot(J_t1_1, vel1)
     v_t_1 = wp.dot(J_t2_0, vel0) + wp.dot(J_t2_1, vel1)
     v_t = wp.vec2(v_t_0, v_t_1)
 
     eps = 1e-8
-    v_t_norm = wp.sqrt(wp.dot(v_t, v_t) + eps)
 
-    # 1. Capture Raw Norm (Represents the actual scale of forces in the system)
-    raw_f_norm = wp.length(force_f_prev)
+    # Convert to impulse level for the FB evaluation
+    d_t = v_t * dt  # tangential displacement [m]
+    d_t_norm = wp.sqrt(wp.dot(d_t, d_t) + eps)
 
-    # 2. Compute Clamped Norm (Represents the physical limit)
-    limit = mu * force_n_prev
-    clamped_f_norm = wp.min(raw_f_norm, limit)
+    # Previous friction/normal impulses
+    impulse_f_prev = force_f_prev * dt
+    raw_imp_norm = wp.length(impulse_f_prev)
 
-    # 3. GAP Calculation: ALWAYS use Clamped
-    gap = limit - clamped_f_norm
+    impulse_n_prev = force_n_prev * dt
+    limit = mu * impulse_n_prev
+    clamped_imp_norm = wp.min(raw_imp_norm, limit)
 
+    # Gap in impulse space
+    gap = limit - clamped_imp_norm
+
+    # precond = effective_mass (dt-independent)
     r = precond
-    phi_f = scaled_fisher_burmeister(v_t_norm, gap, 1.0, r)
+    phi_f = scaled_fisher_burmeister(d_t_norm, gap, 1.0, r)
 
-    denom_eps = 1e-6
+    denom_eps = 1e-6 * dt  # scale epsilon with dt to match impulse-level quantities
 
-    # 4. DENOMINATOR Calculation: Use RAW Norm (The Fix)
-    denominator = r * raw_f_norm + phi_f + denom_eps
-    numerator = v_t_norm - phi_f
+    denominator = r * raw_imp_norm + phi_f + denom_eps
+    numerator = d_t_norm - phi_f
 
     w = r * (numerator / denominator)
     w = wp.max(w, 0.0)
@@ -109,6 +126,7 @@ def compute_friction_core(
     lambda_t2_prev: float,
     force_n_prev: float,
     dt: float,
+    compliance: float,
 ):
     """
     Computes all Jacobians and friction residuals dynamically.
@@ -143,7 +161,7 @@ def compute_friction_core(
     )
 
     effective_mass = (w_t1 + w_t2) * 0.5
-    precond = dt * effective_mass
+    precond = effective_mass  # dt-independent for impulse-level FB
     force_f_prev = wp.vec2(lambda_t1_prev, lambda_t2_prev)
 
     v_t, w = compute_friction_model(
@@ -154,7 +172,7 @@ def compute_friction_core(
     d_res_d1 = -dt * (J_t1_1 * lambda_t1 + J_t2_1 * lambda_t2)
     res_f0 = v_t.x + w * lambda_t1
     res_f1 = v_t.y + w * lambda_t2
-    c_f = w / dt
+    c_f = w / dt + compliance
 
     return d_res_d0, d_res_d1, res_f0, res_f1, J_t1_0, J_t2_0, J_t1_1, J_t2_1, c_f
 
@@ -190,6 +208,7 @@ def friction_residual_kernel(
     contact_normal: wp.array(dtype=wp.vec3, ndim=2),
     # Simulation parameters
     dt: wp.float32,
+    compliance: wp.float32,
     # Outputs
     res_d: wp.array(dtype=wp.spatial_vector, ndim=2),
     res_f: wp.array(dtype=wp.float32, ndim=2),
@@ -289,6 +308,7 @@ def friction_residual_kernel(
         lam_t2_p,
         force_n_prev,
         dt,
+        compliance,
     )
 
     if body0 >= 0:
@@ -326,6 +346,7 @@ def friction_constraint_kernel(
     contact_normal: wp.array(dtype=wp.vec3, ndim=2),
     # Simulation parameters
     dt: wp.float32,
+    compliance: wp.float32,
     # Outputs
     constr_active_mask: wp.array(dtype=wp.float32, ndim=2),
     constr_body_idx: wp.array(dtype=wp.int32, ndim=3),
@@ -474,6 +495,7 @@ def friction_constraint_kernel(
         lam_t2_p,
         force_n_prev,
         dt,
+        compliance,
     )
 
     if body0 >= 0:
@@ -524,6 +546,7 @@ def batch_friction_residual_kernel(
     contact_normal: wp.array(dtype=wp.vec3, ndim=2),
     # Simulation parameters
     dt: wp.float32,
+    compliance: wp.float32,
     # Outputs (3D)
     res_d: wp.array(dtype=wp.spatial_vector, ndim=3),
     res_f: wp.array(dtype=wp.float32, ndim=3),
@@ -623,6 +646,7 @@ def batch_friction_residual_kernel(
         lam_t2_p,
         force_n_prev,
         dt,
+        compliance,
     )
 
     if body0 >= 0:
@@ -660,6 +684,7 @@ def fused_batch_friction_residual_kernel(
     contact_normal: wp.array(dtype=wp.vec3, ndim=2),
     # Simulation parameters
     dt: wp.float32,
+    compliance: wp.float32,
     num_batches: int,
     # Outputs (3D)
     res_d: wp.array(dtype=wp.spatial_vector, ndim=3),
@@ -764,6 +789,7 @@ def fused_batch_friction_residual_kernel(
                 lam_t2_p,
                 force_n_prev,
                 dt,
+                compliance,
             )
         )
 

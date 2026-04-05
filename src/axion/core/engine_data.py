@@ -279,12 +279,12 @@ class EngineData:
         )
 
     def zero_gradients(self):
-        self.ext_force.grad.zero_()
-        self.body_pose_prev.grad.zero_()
-        self.body_vel_prev.grad.zero_()
-
-        self._res.grad.zero_()
-        self._res_spatial.grad.zero_()
+        # self.ext_force.grad.zero_()
+        # self.body_pose_prev.grad.zero_()
+        # self.body_vel_prev.grad.zero_()
+        #
+        # self._res.grad.zero_()
+        # self._res_spatial.grad.zero_()
 
         self.joint_target_pos.grad.zero_()
         self.joint_target_vel.grad.zero_()

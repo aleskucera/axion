@@ -105,12 +105,12 @@ class CurlingOptimizerImplicit(AxionDifferentiableSimulator):
         # Optimization Setup
         self.target_pos = wp.vec3(0.0, 3.5, 0.0)
         self.loss = wp.zeros(1, dtype=float, requires_grad=True)
-        self.learning_rate = 2.5
+        self.learning_rate = 1e-1
 
         self.frame = 0
 
         # Initial velocity guess (Y = sliding direction)
-        self.init_vel = wp.spatial_vector(0.0, 2.0, 0.0, 0.0, 0.0, 0.0)
+        self.init_vel = wp.spatial_vector(0.0, 1.0, 0.0, 0.0, 0.0, 0.0)
 
         # Track the stone (Body 0)
         self.track_body(body_idx=0, name="stone", color=(0.0, 0.5, 1.0))

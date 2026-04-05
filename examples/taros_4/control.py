@@ -178,7 +178,7 @@ class Taros4ControlSimulator(InteractiveSimulator):
     def build_model(self) -> newton.Model:
         self.builder.rigid_gap = 0.5
         # --- 1. Ground ---
-        ground_cfg = newton.ModelBuilder.ShapeConfig(mu=1.0)
+        ground_cfg = newton.ModelBuilder.ShapeConfig(mu=0.3)
         self.builder.add_ground_plane(cfg=ground_cfg)
 
         # Obstacle 1: Stairs (Stepped boxes)

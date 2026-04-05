@@ -9,7 +9,6 @@ import numpy as np
 import warp as wp
 from axion.core.engine_config import AxionEngineConfig
 from axion.core.engine_config import EngineConfig
-from axion.core.engine_config import SemiImplicitEngineConfig
 from axion.core.logging_config import LoggingConfig
 
 from .base_simulator import BaseSimulator
@@ -250,10 +249,15 @@ class AxionDifferentiableSimulator(DifferentiableSimulator, ABC):
         # Explicit gradients come from the TrajectoryBuffer
         self.tape.backward(self.loss)
 
+        # # DEBUG: Check initial gradients from tape
+        # print(f"DEBUG: Loss gradient norm: {np.linalg.norm(self.trajectory.body_pose.grad.numpy())}")
+        #
         for i in range(self.clock.total_sim_steps - 1, -1, -1):
             self.trajectory.load_step(i, self.solver.data, self.solver.axion_contacts)
+            self.solver.data.zero_gradients()
             self.solver.step_backward()
             self.trajectory.save_gradients(i, self.solver.data)
+            self.trajectory.save_pose_gradients(i, self.solver.data)
 
     def run_target_episode(self):
         for i in range(self.clock.total_sim_steps):

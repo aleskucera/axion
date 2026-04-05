@@ -4,6 +4,33 @@ from axion.core.engine_data import EngineData
 from axion.core.engine_dims import EngineDimensions
 
 
+@wp.kernel
+def accumulate_pose_grad_kernel(
+    src: wp.array(dtype=wp.transform, ndim=2),
+    dest: wp.array(dtype=wp.transform, ndim=2),
+):
+    world_idx, body_idx = wp.tid()
+    val = src[world_idx, body_idx]
+    
+    # Explicitly add components since atomic_add on structs might be limited
+    p_src = wp.transform_get_translation(val)
+    r_src = wp.transform_get_rotation(val)
+    
+    # We can't easily atomic_add to a transform's components directly if it's an array of transforms.
+    # But we can read, add, and write. Since this is a single-threaded write per body_idx, 
+    # it doesn't need to be atomic if we ensure no other thread writes to the same (world, body).
+    # In TrajectoryBuffer, each (world, body) is indeed handled by one thread in this kernel.
+    
+    curr = dest[world_idx, body_idx]
+    p_curr = wp.transform_get_translation(curr)
+    r_curr = wp.transform_get_rotation(curr)
+    
+    dest[world_idx, body_idx] = wp.transform(
+        p_curr + p_src,
+        wp.quat(r_curr[0] + r_src[0], r_curr[1] + r_src[1], r_curr[2] + r_src[2], r_curr[3] + r_src[3])
+    )
+
+
 class TrajectoryBuffer:
     def __init__(
         self,
@@ -166,11 +193,14 @@ class TrajectoryBuffer:
     def save_gradients(self, step_idx: int, data: EngineData):
         """
         Saves gradients computed during a backward pass from EngineData into the buffer.
+
+        Note: body_pose.grad is NOT overwritten here. The implicit backward pass
+        absorbs pose gradients into the velocity adjoint (via dt * G^T * grad_q in
+        compute_body_adjoint_init_kernel), so body_pose_prev.grad is not computed.
+        The tape.backward values in body_pose.grad (direct loss sensitivities) must
+        be preserved for earlier backward steps to use.
         """
-        # --- Body State ---
-        # Note: We save the gradients w.r.t the INITIAL state of this step (q_prev)
-        # into the buffer at step_idx (which corresponds to q at time T)
-        wp.copy(self.body_pose.grad[step_idx], data.body_pose_prev.grad)
+        # --- Body Velocity ---
         wp.copy(self.body_vel.grad[step_idx], data.body_vel_prev.grad)
 
         # Forces and inputs are interval-based (index T)
@@ -179,3 +209,15 @@ class TrajectoryBuffer:
         # --- Inputs ---
         wp.copy(self.joint_target_pos.grad[step_idx], data.joint_target_pos.grad)
         wp.copy(self.joint_target_vel.grad[step_idx], data.joint_target_vel.grad)
+
+    def save_pose_gradients(self, step_idx: int, data: EngineData):
+        """
+        Accumulates the propagated pose gradient from EngineData into the buffer.
+        """
+        wp.launch(
+            kernel=accumulate_pose_grad_kernel,
+            dim=(self.dims.num_worlds, self.dims.body_count),
+            inputs=[data.body_pose_prev.grad],
+            outputs=[self.body_pose.grad[step_idx]],
+            device=self.device,
+        )

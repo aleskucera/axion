@@ -205,7 +205,7 @@ class TarosSurfaceSimulator(InteractiveSimulator):
         self.builder.add_shape_mesh(
             body=-1,
             mesh=surface_mesh,
-            cfg=newton.ModelBuilder.ShapeConfig(density=0.0, has_shape_collision=True, mu=1.0),
+            cfg=newton.ModelBuilder.ShapeConfig(density=0.0, has_shape_collision=True, mu=0.3),
         )
 
         return self.builder.finalize_replicated(num_worlds=self.simulation_config.num_worlds)

@@ -261,9 +261,12 @@ end
 
 function main()
     save_path = nothing
-    for i in 1:length(ARGS)-1
-        if ARGS[i] == "--save"
+    target_only = false
+    for i in 1:length(ARGS)
+        if ARGS[i] == "--save" && i < length(ARGS)
             save_path = ARGS[i+1]
+        elseif ARGS[i] == "--target-only"
+            target_only = true
         end
     end
 
@@ -284,7 +287,26 @@ function main()
     target_ctrl_traj = repeat(TARGET_CTRL', T_STEPS)  # (T, 3)
     target_zs, _, _  = rollout_with_gradients(mech, z0, target_ctrl_traj)
     target_xy = [chassis_xy(target_zs[t]) for t in 1:T_STEPS+1]
-    println("  Final XY: ($(round(target_xy[end][1], digits=3)), $(round(target_xy[end][2], digits=3)))")
+    println("  Target final xy: ($(round(target_xy[end][1], digits=3)), $(round(target_xy[end][2], digits=3)))")
+
+    if target_only
+        if save_path === nothing
+            save_path = "helhest_dojo.json"
+        end
+        traj_json = "[\n" * join(["    [$(xy[1]), $(xy[2])]" for xy in target_xy], ",\n") * "\n  ]"
+        mkpath(dirname(abspath(save_path)))
+        open(save_path, "w") do io
+            println(io, "{")
+            println(io, "  \"simulator\": \"Dojo\",")
+            println(io, "  \"problem\": \"helhest\",")
+            println(io, "  \"dt\": $DT,")
+            println(io, "  \"T\": $T_STEPS,")
+            println(io, "  \"target_trajectory\": $traj_json")
+            println(io, "}")
+        end
+        println("Saved to $save_path")
+        return
+    end
 
     # --- Spline setup ---
     W, col_sums = make_interp_matrix(T_STEPS, K)

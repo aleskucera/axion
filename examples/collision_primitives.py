@@ -55,8 +55,6 @@ class Simulator(InteractiveSimulator):
                 kf=KF,
                 mu=FRICTION,
                 restitution=RESTITUTION,
-                thickness=0.0,
-                contact_margin=0.3,
             ),
         )
 
@@ -74,7 +72,6 @@ class Simulator(InteractiveSimulator):
                 kf=KF,
                 mu=FRICTION,
                 restitution=RESTITUTION,
-                thickness=0.0,
             ),
         )
 
@@ -92,8 +89,6 @@ class Simulator(InteractiveSimulator):
                 kf=KF,
                 mu=FRICTION,
                 restitution=RESTITUTION,
-                thickness=0.0,
-                contact_margin=0.3,
             ),
         )
 
@@ -111,8 +106,6 @@ class Simulator(InteractiveSimulator):
                 kf=KF,
                 mu=FRICTION,
                 restitution=RESTITUTION,
-                thickness=0.0,
-                contact_margin=0.3,
             ),
         )
 
@@ -132,8 +125,6 @@ class Simulator(InteractiveSimulator):
                 kf=KF,
                 mu=FRICTION,
                 restitution=RESTITUTION,
-                thickness=0.0,
-                contact_margin=0.3,
             ),
         )
 
@@ -144,7 +135,6 @@ class Simulator(InteractiveSimulator):
                 kf=0.0,
                 mu=FRICTION,
                 restitution=RESTITUTION,
-                contact_margin=0.3,
             )
         )
 

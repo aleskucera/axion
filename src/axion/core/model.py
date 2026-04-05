@@ -41,9 +41,9 @@ def batch_joint_qd_start_kernel(
     world_idx = joint_idx // joint_count_per_world
     slot = joint_idx % joint_count_per_world
 
-    if joint_dof_count_per_world > 1:
-        batched_joint_qd_start[world_idx, slot] = joint_qd_start[joint_idx] % (
-            joint_dof_count_per_world - 1
+    if joint_dof_count_per_world > 0:
+        batched_joint_qd_start[world_idx, slot] = (
+            joint_qd_start[joint_idx] % joint_dof_count_per_world
         )
     else:
         batched_joint_qd_start[world_idx, slot] = 0
@@ -220,6 +220,8 @@ class AxionModel:
             self.joint_enabled = model.joint_enabled.reshape((model.world_count, -1))
             self.joint_target_ke = model.joint_target_ke.reshape((model.world_count, -1))
             self.joint_target_kd = model.joint_target_kd.reshape((model.world_count, -1))
+            self.joint_target_ke.requires_grad = True
+            self.joint_target_kd.requires_grad = True
             self.joint_compliance = model.joint_compliance.reshape((model.world_count, -1))
             self.joint_type = model.joint_type.reshape((model.world_count, -1))
             self.joint_q_start = wp.zeros((model.world_count, self.joint_count), dtype=wp.int32)
@@ -246,7 +248,7 @@ class AxionModel:
             dim=self.model.joint_count,
             inputs=[
                 self.joint_count,
-                self.joint_coord_count,
+                self.joint_dof_count,
                 model.joint_qd_start,
             ],
             outputs=[

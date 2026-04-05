@@ -26,21 +26,24 @@ import pytinydiffsim_ad as pd
 
 from config import DURATION, INIT_CTRL, TARGET_CTRL
 
-# TinyDiffSim's impulse-based solver requires a smaller timestep and lower
-# actuator gain than the config defaults to remain stable at wheel contact.
-# dt=5e-3 (vs 5e-2), kv=10 (vs 100), K=10 control points (vs 30).
+# TinyDiffSim's impulse-based solver requires a smaller timestep and moderate
+# actuator gain to remain stable at wheel contact.
+# KV=30 produces trajectories closest to MuJoCo (kv=100) — higher values
+# cause instability due to the explicit Euler integrator.
 DT = 5e-3
 K = 10
 T = int(DURATION / DT)  # 600 steps
 NU = 3  # left, right, rear wheel
-KV = 10.0  # reduced from MuJoCo kv=100 — higher values cause instability
+KV = 30.0
 
 TRAJECTORY_WEIGHT = 10.0
 SMOOTHNESS_WEIGHT = 1e-2
 REGULARIZATION_WEIGHT = 1e-7
 
 # Helhest URDF with sphere collision shapes for wheels
-# (cylinders are not supported by TinyDiffSim's contact solver)
+# (cylinders are not supported by TinyDiffSim's contact solver).
+# Chassis mass and inertia include all fixed components (battery, motors,
+# wheel holders) lumped via parallel axis theorem to match MuJoCo MJCF.
 _HELHEST_URDF = """\
 <?xml version="1.0"?>
 <robot name="helhest_sphere_wheels">
@@ -51,9 +54,9 @@ _HELHEST_URDF = """\
       <geometry><box size="0.26 0.6 0.18"/></geometry>
     </collision>
     <inertial>
-      <mass value="49"/>
+      <mass value="85"/>
       <origin xyz="-0.047 0 0"/>
-      <inertia ixx="1.5" ixy="0" ixz="0" iyy="1.5" iyz="0" izz="1.5"/>
+      <inertia ixx="0.6213" ixy="0" ixz="0" iyy="0.1583" iyz="0" izz="0.677"/>
     </inertial>
   </link>
 
@@ -259,6 +262,7 @@ def adam_step(grad, m, v, t, lr=0.01, beta1=0.9, beta2=0.999, eps=1e-8):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--save", metavar="PATH")
+    parser.add_argument("--target-only", action="store_true", help="Only compute and save the target trajectory, skip optimization")
     args = parser.parse_args()
 
     W = make_interp_matrix(T, K)
@@ -269,6 +273,20 @@ def main():
     print("Computing target trajectory...")
     target_xy = rollout_float(target_params, W)
     print(f"Target final xy: ({target_xy[-1, 0]:.3f}, {target_xy[-1, 1]:.3f})")
+
+    if args.target_only:
+        traj_result = {
+            "simulator": "TinyDiffSim",
+            "problem": "helhest",
+            "dt": DT,
+            "T": T,
+            "target_trajectory": target_xy.tolist(),
+        }
+        if args.save:
+            pathlib.Path(args.save).parent.mkdir(parents=True, exist_ok=True)
+            pathlib.Path(args.save).write_text(json.dumps(traj_result, indent=2))
+            print(f"Saved to {args.save}")
+        return
 
     params = np.tile(INIT_CTRL, (K, 1)).astype(float)
     m_adam = np.zeros_like(params)
