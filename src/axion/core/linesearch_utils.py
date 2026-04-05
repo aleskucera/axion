@@ -199,6 +199,7 @@ def _compute_batched_residual(
             contacts.contact_thickness1,
             contacts.contact_normal,
             data.dt,
+            config.contact_compliance,
             dims.linesearch_step_count,
         ],
         outputs=[
@@ -231,6 +232,7 @@ def _compute_batched_residual(
             contacts.contact_thickness1,
             contacts.contact_normal,
             data.dt,
+            config.friction_compliance,
             dims.linesearch_step_count,
         ],
         outputs=[

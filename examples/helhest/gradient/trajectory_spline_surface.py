@@ -142,7 +142,7 @@ class HelhestTrajectorySplineSurfaceOptimizer(AxionDifferentiableSimulator):
         self.frame = 0
 
         # Initial guess (Left, Right, Rear)
-        self.init_wheel_vel = (4.0, 5.0, 0.0)
+        self.init_wheel_vel = (4.0, 4.0, 1.0)
 
         self.track_body(body_idx=0, name="chassis", color=(0.0, 0.5, 1.0))
 
@@ -318,9 +318,9 @@ class HelhestTrajectorySplineSurfaceOptimizer(AxionDifferentiableSimulator):
 
         for i in range(T):
             target_ctrl = np.zeros(num_dofs, dtype=np.float32)
-            target_ctrl[WHEEL_DOF_OFFSET + 0] = 2.0
-            target_ctrl[WHEEL_DOF_OFFSET + 1] = 5.0
-            target_ctrl[WHEEL_DOF_OFFSET + 2] = 2.0
+            target_ctrl[WHEEL_DOF_OFFSET + 0] = 4.0
+            target_ctrl[WHEEL_DOF_OFFSET + 1] = 2.0
+            target_ctrl[WHEEL_DOF_OFFSET + 2] = 3.0
 
             target_ctrl_wp = wp.array(target_ctrl, dtype=wp.float32, device=self.model.device)
             wp.copy(self.target_controls[i].joint_target_vel, target_ctrl_wp)

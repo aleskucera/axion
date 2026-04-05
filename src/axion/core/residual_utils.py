@@ -121,6 +121,7 @@ def compute_residual(
             contacts.contact_thickness1,
             contacts.contact_normal,
             data.dt,
+            config.contact_compliance,
         ],
         outputs=[
             data.res.d_spatial,
@@ -152,6 +153,7 @@ def compute_residual(
             contacts.contact_thickness1,
             contacts.contact_normal,
             data.dt,
+            config.friction_compliance,
         ],
         outputs=[
             data.res.d_spatial,

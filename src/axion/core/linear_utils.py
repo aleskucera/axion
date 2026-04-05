@@ -261,6 +261,7 @@ def compute_linear_system(
             contacts.contact_thickness1,
             contacts.contact_normal,
             data.dt,
+            config.contact_compliance,
         ],
         outputs=[
             data.constr_active_mask.n,
@@ -296,6 +297,7 @@ def compute_linear_system(
             contacts.contact_thickness1,
             contacts.contact_normal,
             data.dt,
+            config.friction_compliance,
         ],
         outputs=[
             data.constr_active_mask.f,

@@ -126,6 +126,7 @@ def compute_friction_core(
     lambda_t2_prev: float,
     force_n_prev: float,
     dt: float,
+    compliance: float,
 ):
     """
     Computes all Jacobians and friction residuals dynamically.
@@ -171,7 +172,7 @@ def compute_friction_core(
     d_res_d1 = -dt * (J_t1_1 * lambda_t1 + J_t2_1 * lambda_t2)
     res_f0 = v_t.x + w * lambda_t1
     res_f1 = v_t.y + w * lambda_t2
-    c_f = w / dt
+    c_f = w / dt + compliance
 
     return d_res_d0, d_res_d1, res_f0, res_f1, J_t1_0, J_t2_0, J_t1_1, J_t2_1, c_f
 
@@ -207,6 +208,7 @@ def friction_residual_kernel(
     contact_normal: wp.array(dtype=wp.vec3, ndim=2),
     # Simulation parameters
     dt: wp.float32,
+    compliance: wp.float32,
     # Outputs
     res_d: wp.array(dtype=wp.spatial_vector, ndim=2),
     res_f: wp.array(dtype=wp.float32, ndim=2),
@@ -306,6 +308,7 @@ def friction_residual_kernel(
         lam_t2_p,
         force_n_prev,
         dt,
+        compliance,
     )
 
     if body0 >= 0:
@@ -343,6 +346,7 @@ def friction_constraint_kernel(
     contact_normal: wp.array(dtype=wp.vec3, ndim=2),
     # Simulation parameters
     dt: wp.float32,
+    compliance: wp.float32,
     # Outputs
     constr_active_mask: wp.array(dtype=wp.float32, ndim=2),
     constr_body_idx: wp.array(dtype=wp.int32, ndim=3),
@@ -491,6 +495,7 @@ def friction_constraint_kernel(
         lam_t2_p,
         force_n_prev,
         dt,
+        compliance,
     )
 
     if body0 >= 0:
@@ -541,6 +546,7 @@ def batch_friction_residual_kernel(
     contact_normal: wp.array(dtype=wp.vec3, ndim=2),
     # Simulation parameters
     dt: wp.float32,
+    compliance: wp.float32,
     # Outputs (3D)
     res_d: wp.array(dtype=wp.spatial_vector, ndim=3),
     res_f: wp.array(dtype=wp.float32, ndim=3),
@@ -640,6 +646,7 @@ def batch_friction_residual_kernel(
         lam_t2_p,
         force_n_prev,
         dt,
+        compliance,
     )
 
     if body0 >= 0:
@@ -677,6 +684,7 @@ def fused_batch_friction_residual_kernel(
     contact_normal: wp.array(dtype=wp.vec3, ndim=2),
     # Simulation parameters
     dt: wp.float32,
+    compliance: wp.float32,
     num_batches: int,
     # Outputs (3D)
     res_d: wp.array(dtype=wp.spatial_vector, ndim=3),
@@ -781,6 +789,7 @@ def fused_batch_friction_residual_kernel(
                 lam_t2_p,
                 force_n_prev,
                 dt,
+                compliance,
             )
         )
 

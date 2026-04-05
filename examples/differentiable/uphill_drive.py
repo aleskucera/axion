@@ -151,7 +151,7 @@ def build_mesh_terrain(builder, slope_angle, slip_width, half_width=3.0):
     z_slip_end = z_ramp1_end + z_per_m * slip_width
     z_ramp2_end = z_slip_end + z_per_m * ramp2_len
 
-    normal_cfg = newton.ModelBuilder.ShapeConfig(ke=1.0e4, kd=1.0e3, kf=1.0e3, mu=1.0)
+    normal_cfg = newton.ModelBuilder.ShapeConfig(ke=1.0e4, kd=1.0e3, kf=1.0e3, mu=2.0)
     slippery_cfg = newton.ModelBuilder.ShapeConfig(ke=1.0e4, kd=1.0e3, kf=1.0e3, mu=0.0)
 
     slip_y_start = flat_len + ramp1_len
@@ -245,7 +245,7 @@ class UphillDrive(InteractiveSimulator):
             is_visible=True,
             k_p=300.0,
             k_d=0.0,
-            wheel_mu=0.1,
+            wheel_mu=0.7,
         )
 
         return self.builder.finalize_replicated(
@@ -262,9 +262,9 @@ class UphillDrive(InteractiveSimulator):
                 current_state.body_q,
                 self._step_counter,
                 self._settle_steps,
-                20.0,
+                25.0,
                 6,
-                1.0,
+                0.0,
             ],
             device=self.model.device,
         )
@@ -278,7 +278,28 @@ def main():
     )
     render_config = RenderingConfig(vis_type="gl")
     exec_config = ExecutionConfig(use_cuda_graph=True)
-    engine_config = AxionEngineConfig(joint_compliance=5e-6, max_contacts_per_world=512)
+    engine_config = AxionEngineConfig(
+        max_newton_iters=16,
+        max_linear_iters=16,
+        backtrack_min_iter=12,
+        newton_mode="convergence",
+        linear_mode="convergence",
+        newton_atol=1e-3,
+        linear_tol=1e-5,
+        linear_atol=1e-5,
+        joint_compliance=5e-6,
+        contact_compliance=1.0,
+        friction_compliance=1e-12,
+        regularization=1e-6,
+        contact_fb_alpha=1.0,
+        contact_fb_beta=1.0,
+        friction_fb_alpha=1.0,
+        friction_fb_beta=1.0,
+        enable_linesearch=False,
+        max_contacts_per_world=512,
+        joint_constraint_level="pos",
+        contact_constraint_level="pos",
+    )
     logging_config = LoggingConfig()
 
     sim = UphillDrive(sim_config, render_config, exec_config, engine_config, logging_config)
