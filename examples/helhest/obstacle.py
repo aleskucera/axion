@@ -138,7 +138,7 @@ class HelhestObstacleSimulator(InteractiveSimulator):
         )
 
         # Ground Plane parameters
-        FRICTION = 1.0
+        FRICTION = 0.4
         RESTITUTION = 0.0
         KE = 1.0e4
         KD = 1.0e3

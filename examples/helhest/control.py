@@ -207,7 +207,7 @@ class HelhestControlSimulator(InteractiveSimulator):
         self.builder.rigid_gap = 1.0
         # --- 1. Ground ---
         ground_cfg = newton.ModelBuilder.ShapeConfig(
-            mu=1.0,
+            mu=0.3,
             ke=4e4,
             kd=4e3,
             kf=1e3,
