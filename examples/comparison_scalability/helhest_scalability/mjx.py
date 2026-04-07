@@ -11,6 +11,7 @@ import time
 
 os.environ.setdefault("DISPLAY", ":1")
 os.environ.pop("WAYLAND_DISPLAY", None)
+os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
 
 import jax
 import jax.numpy as jnp
@@ -166,8 +167,6 @@ def main():
         t_iter = (time.perf_counter() - t0) * 1000
 
         mem_stats = device.memory_stats()
-        if i == 0:
-            print(f"  [debug] memory_stats: { {k: f'{v/1024**2:.1f}MB' for k, v in mem_stats.items() if v > 0} }")
         used_mb = mem_stats.get("peak_pool_bytes", 0) / 1024**2
         if used_mb == 0:
             used_mb = mem_stats.get("peak_bytes_in_use", 0) / 1024**2

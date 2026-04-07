@@ -11,6 +11,7 @@ import time
 
 os.environ.setdefault("DISPLAY", ":1")
 os.environ.pop("WAYLAND_DISPLAY", None)
+os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
 
 import jax
 import jax.numpy as jnp
@@ -166,8 +167,10 @@ def main():
         t_iter = (time.perf_counter() - t0) * 1000
 
         mem_stats = device.memory_stats()
-        used_mb = mem_stats["bytes_in_use"] / 1024**2
-        peak_mem_mb = max(peak_mem_mb, mem_stats.get("peak_bytes_in_use", 0) / 1024**2)
+        used_mb = mem_stats.get("peak_pool_bytes", 0) / 1024**2
+        if used_mb == 0:
+            used_mb = mem_stats.get("peak_bytes_in_use", 0) / 1024**2
+        peak_mem_mb = max(peak_mem_mb, used_mb)
 
         updates, opt_state = optimizer.update(grad, opt_state)
         params = optax.apply_updates(params, updates)

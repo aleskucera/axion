@@ -207,7 +207,11 @@ class HelhestScalabilityOptimizer(AxionDifferentiableSimulator):
             wp.synchronize()
             t_iter = (time.perf_counter() - t0) * 1000
 
-            used_mb = wp.get_mempool_used_bytes() / 1024**2
+            try:
+                used_bytes = wp.get_mempool_used_bytes()
+            except AttributeError:
+                used_bytes = wp.get_mempool_used_mem_high()
+            used_mb = used_bytes / 1024**2
             peak_mem_mb = max(peak_mem_mb, used_mb)
 
             print(f"  iter {i:3d}: loss={self.loss.numpy()[0]:.4f} | t={t_iter:.0f}ms | mem={used_mb:.0f}MB")
