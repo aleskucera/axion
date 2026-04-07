@@ -96,8 +96,9 @@ def regularization_kernel(
 
 
 class HelhestScalabilityOptimizer(AxionDifferentiableSimulator):
-    def __init__(self, sim_config, render_config, exec_config, engine_config,
-                 logging_config, save_path=None):
+    def __init__(
+        self, sim_config, render_config, exec_config, engine_config, logging_config, save_path=None
+    ):
         self.save_path = save_path
         self.K = K
         self.num_worlds = sim_config.num_worlds
@@ -133,7 +134,7 @@ class HelhestScalabilityOptimizer(AxionDifferentiableSimulator):
         num_dofs = self.trajectory.joint_target_vel.shape[-1]
         expanded = self._expand(params)
         vel_np = np.zeros((T, self.num_worlds, num_dofs), dtype=np.float32)
-        vel_np[:, :, WHEEL_DOF_OFFSET:WHEEL_DOF_OFFSET + NUM_WHEEL_DOFS] = expanded[:, None, :]
+        vel_np[:, :, WHEEL_DOF_OFFSET : WHEEL_DOF_OFFSET + NUM_WHEEL_DOFS] = expanded[:, None, :]
         wp.copy(self.trajectory.joint_target_vel, wp.array(vel_np, dtype=wp.float32))
         for i in range(T):
             wp.copy(self.controls[i].joint_target_vel, self.trajectory.joint_target_vel[i])
@@ -165,7 +166,7 @@ class HelhestScalabilityOptimizer(AxionDifferentiableSimulator):
 
     def update(self):
         grad_v = self.trajectory.joint_target_vel.grad.numpy()[
-            :, :, WHEEL_DOF_OFFSET:WHEEL_DOF_OFFSET + NUM_WHEEL_DOFS
+            :, :, WHEEL_DOF_OFFSET : WHEEL_DOF_OFFSET + NUM_WHEEL_DOFS
         ].mean(axis=1)
         grad_params = self._contract(grad_v)
         self.trajectory.joint_target_vel.grad.zero_()
@@ -195,10 +196,14 @@ class HelhestScalabilityOptimizer(AxionDifferentiableSimulator):
         self.spline_params = np.array(
             [[INIT_CTRL[0], INIT_CTRL[1], INIT_CTRL[2]]] * self.K, dtype=np.float64
         )
-        self.spline_adam = SplineAdam(K=self.K, num_dofs=NUM_WHEEL_DOFS, lr=0.15, betas=(0.5, 0.999))
+        self.spline_adam = SplineAdam(
+            K=self.K, num_dofs=NUM_WHEEL_DOFS, lr=0.15, betas=(0.5, 0.999)
+        )
         self._apply_params(self.spline_params)
 
-        print(f"Optimizing: T={T}, dt={self.clock.dt:.4f}, K={self.K}, num_worlds={self.num_worlds}")
+        print(
+            f"Optimizing: T={T}, dt={self.clock.dt:.4f}, K={self.K}, num_worlds={self.num_worlds}"
+        )
         peak_mem_mb = 0.0
         time_ms_list = []
         for i in range(iterations):
@@ -214,7 +219,9 @@ class HelhestScalabilityOptimizer(AxionDifferentiableSimulator):
             used_mb = used_bytes / 1024**2
             peak_mem_mb = max(peak_mem_mb, used_mb)
 
-            print(f"  iter {i:3d}: loss={self.loss.numpy()[0]:.4f} | t={t_iter:.0f}ms | mem={used_mb:.0f}MB")
+            print(
+                f"  iter {i:3d}: loss={self.loss.numpy()[0]:.4f} | t={t_iter:.0f}ms | mem={used_mb:.0f}MB"
+            )
             time_ms_list.append(t_iter)
 
             self.update()
@@ -224,7 +231,11 @@ class HelhestScalabilityOptimizer(AxionDifferentiableSimulator):
         results = {
             "simulator": "Axion",
             "num_worlds": self.num_worlds,
-            "median_time_ms": float(np.median(time_ms_list[3:])) if len(time_ms_list) > 3 else float(np.median(time_ms_list)),
+            "median_time_ms": (
+                float(np.median(time_ms_list[3:]))
+                if len(time_ms_list) > 3
+                else float(np.median(time_ms_list))
+            ),
             "peak_gpu_mb": peak_mem_mb,
             "time_ms": time_ms_list,
         }
@@ -246,21 +257,41 @@ def main():
         num_worlds=args.num_worlds,
         sync_mode=SyncMode.ALIGN_FPS_TO_DT,
     )
-    render_config = RenderingConfig(vis_type="null", target_fps=30, usd_file=None,
-                                    world_offset_x=5.0, world_offset_y=5.0, start_paused=False)
-    exec_config = ExecutionConfig(use_cuda_graph=True, headless_steps_per_segment=10)
+    render_config = RenderingConfig(
+        vis_type="null",
+        target_fps=30,
+        usd_file=None,
+        world_offset_x=5.0,
+        world_offset_y=5.0,
+        start_paused=False,
+    )
+    exec_config = ExecutionConfig(use_cuda_graph=True, headless_steps_per_segment=1)
     engine_config = AxionEngineConfig(
-        max_newton_iters=12, max_linear_iters=12, backtrack_min_iter=8,
-        newton_atol=1e-3, linear_atol=1e-3, linear_tol=1e-3,
+        max_newton_iters=12,
+        max_linear_iters=12,
+        backtrack_min_iter=8,
+        newton_atol=1e-3,
+        linear_atol=1e-3,
+        linear_tol=1e-3,
         enable_linesearch=False,
-        joint_compliance=6e-8, contact_compliance=1e-6, friction_compliance=1e-6,
-        regularization=1e-6, contact_fb_alpha=0.5, contact_fb_beta=1.0,
-        friction_fb_alpha=1.0, friction_fb_beta=1.0, max_contacts_per_world=8,
+        joint_compliance=6e-8,
+        contact_compliance=1e-6,
+        friction_compliance=1e-6,
+        regularization=1e-6,
+        contact_fb_alpha=0.5,
+        contact_fb_beta=1.0,
+        friction_fb_alpha=1.0,
+        friction_fb_beta=1.0,
+        max_contacts_per_world=8,
     )
     logging_config = LoggingConfig(enable_timing=False, enable_hdf5_logging=False)
 
     sim = HelhestScalabilityOptimizer(
-        sim_config, render_config, exec_config, engine_config, logging_config,
+        sim_config,
+        render_config,
+        exec_config,
+        engine_config,
+        logging_config,
         save_path=args.save,
     )
     sim.train()
