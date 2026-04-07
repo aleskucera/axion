@@ -29,7 +29,7 @@ INIT_CTRL = np.array([2.0, 5.0, 0.0], dtype=np.float32)
 TRAJECTORY_WEIGHT = 10.0
 SMOOTHNESS_WEIGHT = 1e-2
 REGULARIZATION_WEIGHT = 1e-7
-ITERATIONS = 10
+ITERATIONS = 5
 
 HELHEST_XML = f"""
 <mujoco model="helhest">
