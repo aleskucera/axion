@@ -11,37 +11,37 @@ import pathlib
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
 import numpy as np
+from matplotlib.transforms import blended_transform_factory
 
 RESULTS_DIR = pathlib.Path(__file__).parent / "results"
+PAPER_DIR = pathlib.Path(__file__).resolve().parents[3] / ".." / "axion_paper" / "figures"
 
-plt.rcParams.update({
-    "text.usetex": True,
-    "text.latex.preamble": r"\usepackage{amsmath}",
-    "font.family": "serif",
-    "font.size": 9,
-    "axes.labelsize": 9,
-    "xtick.labelsize": 8,
-    "ytick.labelsize": 8,
-    "legend.fontsize": 8,
-    "axes.spines.top": False,
-    "axes.spines.right": False,
-})
+plt.rcParams.update(
+    {
+        "text.usetex": True,
+        "text.latex.preamble": r"\usepackage{amsmath}",
+        "font.family": "serif",
+        "font.size": 12,
+        "axes.labelsize": 12,
+        "xtick.labelsize": 12,
+        "ytick.labelsize": 12,
+        "legend.fontsize": 11,
+        "axes.spines.top": False,
+        "axes.spines.right": False,
+    }
+)
 
 STYLES = {
-    "Axion":        {"color": "#2196F3", "marker": "o", "lw": 2.0, "zorder": 5},
-    "MJX-jacfwd":   {"color": "#FF5722", "marker": "s", "lw": 1.5, "zorder": 3},
-    "MJX-grad":     {"color": "#FF8A65", "marker": "^", "lw": 1.5, "zorder": 3},
-    "TinyDiffSim":  {"color": "#607D8B", "marker": "D", "lw": 1.5, "zorder": 3},
-    "Brax":         {"color": "#009688", "marker": "v", "lw": 1.5, "zorder": 3},
+    "Axion": {"color": "#2196F3", "marker": "o", "lw": 2.0, "zorder": 5},
+    "MJX-grad": {"color": "#FF5722", "marker": "o", "lw": 1.8, "zorder": 3},
 }
 LABELS = {
-    "Axion":        r"\textbf{Axion}",
-    "MJX-jacfwd":   "MJX-jacfwd",
-    "MJX-grad":     "MJX-grad",
-    "TinyDiffSim":  "TinyDiffSim",
-    "Brax":         "Brax",
+    "Axion": r"\textbf{Axion}",
+    "MJX-grad": "MJX-grad",
 }
 SIM_ORDER = list(STYLES.keys())
+
+GPU_MEM_LIMIT_MB = 24 * 1024  # 24 GB
 
 
 def load_results() -> dict[str, dict[int, dict]]:
@@ -55,6 +55,8 @@ def load_results() -> dict[str, dict[int, dict]]:
         sim = data.get("simulator")
         nw = data.get("num_worlds")
         if sim is None or nw is None:
+            continue
+        if sim not in STYLES:
             continue
         out.setdefault(sim, {})[nw] = data
     return out
@@ -73,6 +75,8 @@ def main():
     fig, (ax_time, ax_mem) = plt.subplots(1, 2, figsize=(7.0, 3.0))
     fig.subplots_adjust(wspace=0.35)
 
+    # Collect data for annotations
+    sim_data = {}
     for sim in SIM_ORDER:
         if sim not in all_results:
             continue
@@ -84,14 +88,171 @@ def main():
         times = [data_by_worlds[n]["median_time_ms"] for n in worlds]
         mems_raw = [data_by_worlds[n].get("peak_gpu_mb") for n in worlds]
 
-        ax_time.plot(worlds, times, color=style["color"], marker=style["marker"],
-                     linewidth=style["lw"], markersize=5, label=label, zorder=style["zorder"])
+        sim_data[sim] = {"worlds": worlds, "times": times, "mems": mems_raw}
+
+        ax_time.plot(
+            worlds,
+            times,
+            color=style["color"],
+            marker=style["marker"],
+            linewidth=style["lw"],
+            markersize=5,
+            label=label,
+            zorder=style["zorder"],
+        )
 
         mem_worlds = [w for w, m in zip(worlds, mems_raw) if m is not None]
         mems = [m for m in mems_raw if m is not None]
         if mems:
-            ax_mem.plot(mem_worlds, mems, color=style["color"], marker=style["marker"],
-                        linewidth=style["lw"], markersize=5, label=label, zorder=style["zorder"])
+            ax_mem.plot(
+                mem_worlds,
+                mems,
+                color=style["color"],
+                marker=style["marker"],
+                linewidth=style["lw"],
+                markersize=5,
+                label=label,
+                zorder=style["zorder"],
+            )
+
+    # --- Memory panel: GPU limit line + OOM shading + MJX extrapolation ---
+    ax_mem.axhline(GPU_MEM_LIMIT_MB, color="red", linestyle="-", linewidth=0.8, alpha=0.7, zorder=1)
+    ax_mem.text(
+        0.97,
+        GPU_MEM_LIMIT_MB * 1.3,
+        r"24\,GB GPU limit",
+        fontsize=9,
+        color="red",
+        alpha=0.8,
+        ha="right",
+        transform=blended_transform_factory(ax_mem.transAxes, ax_mem.transData),
+    )
+
+    if "MJX-grad" in sim_data:
+        mjx = sim_data["MJX-grad"]
+        mjx_worlds = np.array(mjx["worlds"])
+        mjx_mems = np.array([m for m in mjx["mems"] if m is not None])
+        mjx_mem_worlds = np.array([w for w, m in zip(mjx["worlds"], mjx["mems"]) if m is not None])
+
+        # Linear extrapolation of MJX memory
+        if len(mjx_mem_worlds) >= 2:
+            coeffs = np.polyfit(mjx_mem_worlds, mjx_mems, 1)
+            slope_gb = coeffs[0] / 1024  # MB/world -> GB/world
+
+            # Annotate the slope along the MJX line
+            mid_idx = len(mjx_mem_worlds) // 2
+            mid_w = mjx_mem_worlds[mid_idx]
+            mid_m = mjx_mems[mid_idx]
+            ax_mem.text(
+                mid_w * 2.4,
+                mid_m * 3.5,
+                rf"$\sim{slope_gb:.1f}$\,GB/world",
+                fontsize=7,
+                color="#FF5722",
+                alpha=0.8,
+                rotation=54,
+                rotation_mode="anchor",
+            )
+            extrap_worlds = np.array([mjx_mem_worlds[-1], 32, 64, 128, 256, 512, 1024])
+            extrap_worlds = extrap_worlds[extrap_worlds > mjx_mem_worlds[-1]]
+            if len(extrap_worlds) > 0:
+                extrap_worlds = np.concatenate([[mjx_mem_worlds[-1]], extrap_worlds])
+                extrap_mems = np.polyval(coeffs, extrap_worlds)
+                ax_mem.plot(
+                    extrap_worlds,
+                    extrap_mems,
+                    color="#FF5722",
+                    linestyle="--",
+                    linewidth=1.2,
+                    alpha=0.5,
+                    zorder=2,
+                )
+
+                # Single OOM marker at first world exceeding GPU limit
+                for w, m in zip(extrap_worlds[1:], extrap_mems[1:]):
+                    if m > GPU_MEM_LIMIT_MB:
+                        ax_mem.plot(
+                            w,
+                            GPU_MEM_LIMIT_MB,
+                            "x",
+                            color="red",
+                            markersize=8,
+                            markeredgewidth=2.0,
+                            zorder=6,
+                        )
+                        break
+
+        # Single OOM marker on time plot at first OOM world
+        if len(mjx_worlds) >= 2:
+            median_mjx_time = np.median(mjx["times"])
+            oom_world = 32  # first world that OOMs
+            ax_time.plot(
+                oom_world,
+                median_mjx_time,
+                "x",
+                color="red",
+                markersize=8,
+                markeredgewidth=2.0,
+                zorder=6,
+            )
+
+    # --- Speedup annotations: double-headed arrow ---
+    if "Axion" in sim_data and "MJX-grad" in sim_data:
+        axion = sim_data["Axion"]
+        mjx = sim_data["MJX-grad"]
+
+        common = sorted(set(axion["worlds"]) & set(mjx["worlds"]))
+        if common:
+            w = common[0]
+            ax_t = axion["times"][axion["worlds"].index(w)]
+            mx_t = mjx["times"][mjx["worlds"].index(w)]
+            ratio = mx_t / ax_t
+
+            # Double-headed arrow between the two points
+            ax_time.annotate(
+                "",
+                xy=(w, mx_t),
+                xytext=(w, ax_t),
+                arrowprops=dict(arrowstyle="<->", color="0.3", lw=1.2, shrinkA=3, shrinkB=3),
+            )
+            # Label at geometric midpoint
+            mid_y = np.sqrt(ax_t * mx_t)
+            ax_time.text(
+                w * 1.6,
+                mid_y,
+                rf"${ratio:.0f}\times$",
+                fontsize=10,
+                color="0.3",
+                fontweight="bold",
+                va="center",
+                ha="left",
+            )
+
+    # --- Knee point annotation ---
+    if "Axion" in sim_data:
+        axion = sim_data["Axion"]
+        # Knee is around 256-512 worlds where per-world cost starts growing
+        knee_w = 512
+        if knee_w in axion["worlds"]:
+            knee_idx = axion["worlds"].index(knee_w)
+            knee_t = axion["times"][knee_idx]
+            knee_m = axion["mems"][knee_idx]
+
+            for ax, val in [(ax_time, knee_t), (ax_mem, knee_m)]:
+                ax.axvline(knee_w, color="#64B5F6", linestyle="--", linewidth=1.2, alpha=0.7)
+
+            _knee_w = knee_w  # save for later placement
+
+    # --- Shade OOM region on memory plot ---
+    xlims = ax_mem.get_xlim()
+    ax_mem.fill_between(
+        [xlims[0], xlims[1] * 2],
+        GPU_MEM_LIMIT_MB,
+        GPU_MEM_LIMIT_MB * 100,
+        color="red",
+        alpha=0.05,
+        zorder=0,
+    )
 
     for ax in (ax_time, ax_mem):
         ax.set_xscale("log")
@@ -99,21 +260,52 @@ def main():
         ax.set_xlabel("Number of worlds")
         ax.xaxis.set_major_formatter(ticker.ScalarFormatter())
         ax.xaxis.set_minor_formatter(ticker.NullFormatter())
-        ax.grid(True, which="both", alpha=0.2, linewidth=0.4)
+        ax.grid(True, which="both", alpha=0.35, linewidth=0.6)
 
     ax_time.set_ylabel("Median time per iteration (ms)")
-    ax_time.set_title("Wall-clock time vs worlds", pad=4)
+    ax_mem.set_ylabel("Peak GPU memory (MB)")
 
-    ax_mem.set_ylabel("Peak memory (MB)")
-    ax_mem.set_title("Memory vs worlds", pad=4)
+    # Extend x-axis and place "GPU saturated" text next to the dashed line
+    for ax in (ax_time, ax_mem):
+        ax.set_xlim(right=ax.get_xlim()[1] * 3)
+    if "Axion" in sim_data and "_knee_w" in dir():
+        for ax in (ax_time, ax_mem):
+            ax.text(
+                _knee_w,
+                0.13,
+                "GPU saturated",
+                rotation=90,
+                fontsize=8,
+                color="#64B5F6",
+                ha="right",
+                va="bottom",
+                transform=blended_transform_factory(ax.transData, ax.transAxes),
+            )
 
+    # Add OOM marker to legend
+    oom_handle = ax_time.plot(
+        [], [], "x", color="red", markersize=8, markeredgewidth=2.0, label="OOM"
+    )[0]
     handles, labels = ax_time.get_legend_handles_labels()
-    fig.legend(handles, labels, loc="lower center", ncol=len(handles),
-               bbox_to_anchor=(0.5, -0.08), frameon=False, columnspacing=1.5)
+    fig.legend(
+        handles,
+        labels,
+        loc="lower center",
+        ncol=len(handles),
+        bbox_to_anchor=(0.5, -0.22),
+        frameon=False,
+        columnspacing=1.5,
+    )
 
     out = RESULTS_DIR / "scalability.png"
     plt.savefig(out, dpi=300, bbox_inches="tight")
     print(f"Saved to {out}")
+
+    paper_dir = PAPER_DIR.resolve()
+    if paper_dir.is_dir():
+        out_paper = paper_dir / "scalability_helhest.png"
+        plt.savefig(out_paper, dpi=300, bbox_inches="tight")
+        print(f"Saved to {out_paper}")
 
     if args.show:
         plt.show()
