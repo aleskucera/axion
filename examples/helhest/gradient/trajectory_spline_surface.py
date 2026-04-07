@@ -50,13 +50,28 @@ def make_interp_matrix(T: int, K: int) -> tuple[np.ndarray, np.ndarray]:
 class SplineAdam:
     """Adam optimizer for a [K, num_dofs] numpy parameter array."""
 
-    def __init__(self, K: int, num_dofs: int, lr: float, betas=(0.9, 0.999), eps=1e-8):
-        self.lr = lr
+    def __init__(
+        self,
+        K: int,
+        num_dofs: int,
+        lr: float,
+        total_steps: int = 200,
+        lr_min_ratio: float = 0.05,
+        betas=(0.9, 0.999),
+        eps=1e-8,
+    ):
+        self.lr_init = lr
+        self.lr_min = lr * lr_min_ratio
+        self.total_steps = total_steps
         self.beta1, self.beta2 = betas
         self.eps = eps
         self.m = np.zeros((K, num_dofs), dtype=np.float64)
         self.v = np.zeros((K, num_dofs), dtype=np.float64)
         self.t = 0
+
+    def _cosine_lr(self) -> float:
+        progress = min(self.t / self.total_steps, 1.0)
+        return self.lr_min + 0.5 * (self.lr_init - self.lr_min) * (1.0 + np.cos(np.pi * progress))
 
     def step(self, params: np.ndarray, grad: np.ndarray) -> np.ndarray:
         self.t += 1
@@ -64,7 +79,8 @@ class SplineAdam:
         self.v = self.beta2 * self.v + (1.0 - self.beta2) * grad**2
         m_hat = self.m / (1.0 - self.beta1**self.t)
         v_hat = self.v / (1.0 - self.beta2**self.t)
-        return params - self.lr * m_hat / (np.sqrt(v_hat) + self.eps)
+        lr = self._cosine_lr()
+        return params - lr * m_hat / (np.sqrt(v_hat) + self.eps)
 
 
 @wp.kernel
@@ -106,7 +122,7 @@ def regularization_kernel(
     weight: float,
     loss: wp.array(dtype=wp.float32),
 ):
-    """L2 magnitude regularization: weight * Σ_t ||v_t||² over wheel DOFs."""
+    """L2 magnitude regularization:  weight * Σ_t ||v_t||² over wheel DOFs."""
     sim_step, wheel_idx = wp.tid()
 
     dof_idx = wheel_dof_offset + wheel_idx
@@ -142,12 +158,12 @@ class HelhestTrajectorySplineSurfaceOptimizer(AxionDifferentiableSimulator):
         self.frame = 0
 
         # Initial guess (Left, Right, Rear)
-        self.init_wheel_vel = (4.0, 4.0, 1.0)
+        self.init_wheel_vel = (2.0, 2.0, 1.0)
 
         self.track_body(body_idx=0, name="chassis", color=(0.0, 0.5, 1.0))
 
     def build_model(self) -> Model:
-        self.builder.rigid_gap = 0.1
+        self.builder.rigid_gap = 0.2
         # Joint Control
         TARGET_KE = 250.0
         TARGET_KD = 0.0
@@ -174,7 +190,7 @@ class HelhestTrajectorySplineSurfaceOptimizer(AxionDifferentiableSimulator):
             cfg=newton.ModelBuilder.ShapeConfig(
                 density=0.0,
                 has_shape_collision=True,
-                mu=1.0,
+                mu=0.8,
                 ke=150.0,
                 kd=150.0,
                 kf=500.0,
@@ -192,7 +208,8 @@ class HelhestTrajectorySplineSurfaceOptimizer(AxionDifferentiableSimulator):
 
     def _contract(self, grad_v: np.ndarray) -> np.ndarray:
         """Contract [T, 3] velocity gradients → [K, 3] control point gradients (normalized average)."""
-        return (self.W.T @ grad_v) / self.W_col_sums[:, None]
+        safe_sums = np.where(self.W_col_sums > 0, self.W_col_sums, 1.0)
+        return (self.W.T @ grad_v) / safe_sums[:, None]
 
     def _apply_params(self, params: np.ndarray):
         """Write expanded spline params into joint_target_vel and per-step controls."""
@@ -318,9 +335,9 @@ class HelhestTrajectorySplineSurfaceOptimizer(AxionDifferentiableSimulator):
 
         for i in range(T):
             target_ctrl = np.zeros(num_dofs, dtype=np.float32)
-            target_ctrl[WHEEL_DOF_OFFSET + 0] = 4.0
-            target_ctrl[WHEEL_DOF_OFFSET + 1] = 2.0
-            target_ctrl[WHEEL_DOF_OFFSET + 2] = 3.0
+            target_ctrl[WHEEL_DOF_OFFSET + 0] = 3.0
+            target_ctrl[WHEEL_DOF_OFFSET + 1] = 1.0
+            target_ctrl[WHEEL_DOF_OFFSET + 2] = 2.0
 
             target_ctrl_wp = wp.array(target_ctrl, dtype=wp.float32, device=self.model.device)
             wp.copy(self.target_controls[i].joint_target_vel, target_ctrl_wp)
@@ -343,7 +360,9 @@ class HelhestTrajectorySplineSurfaceOptimizer(AxionDifferentiableSimulator):
             dtype=np.float64,
         )  # [K, 3]
 
-        self.spline_adam = SplineAdam(K=self.K, num_dofs=NUM_WHEEL_DOFS, lr=0.05)
+        self.spline_adam = SplineAdam(
+            K=self.K, num_dofs=NUM_WHEEL_DOFS, lr=0.1, lr_min_ratio=0.2, total_steps=iterations
+        )
 
         self._apply_params(self.spline_params)
 

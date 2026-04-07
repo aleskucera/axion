@@ -1,15 +1,12 @@
 defaults:
-  - simulation: taros-4
+  - simulation: marv_tracked
   - rendering: gl
   - execution: cuda_graph
   - logging: disabled
   - engine: axion 
-  - control: taros-4/velocity
+  - control: helhest/velocity
   - _self_
 
 # Use the recommended hybrid approach for project names
 project_name: ${hydra:job.name}
 
-friction_coeff: 0.5
-engine.joint_compliance: 6e-9
-engine.contact_compliance: 1.0

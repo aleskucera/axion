@@ -1,8 +1,9 @@
 """
-Cart Pole balancing via spline trajectory optimization.
+Cart Pole Swing-Up via Spline Trajectory Optimization.
 
 Goal: optimize a spline of target velocities for the cart (actuated)
-so that it balances the passive pole upright while staying near X=0.
+so that it pumps energy into the passive pole (starting from pointing straight down),
+swings it up, and actively balances it at the top without spinning or driving away.
 """
 import os
 import pathlib
@@ -63,13 +64,19 @@ def make_interp_matrix(T: int, K: int) -> tuple[np.ndarray, np.ndarray]:
 
 
 class SplineAdam:
-    def __init__(self, K: int, num_dofs: int, lr: float, betas=(0.9, 0.999), eps=1e-8):
-        self.lr = lr
+    def __init__(self, K: int, num_dofs: int, lr: float, total_steps: int = 200, lr_min_ratio: float = 0.05, betas=(0.9, 0.999), eps=1e-8):
+        self.lr_init = lr
+        self.lr_min = lr * lr_min_ratio
+        self.total_steps = total_steps
         self.beta1, self.beta2 = betas
         self.eps = eps
         self.m = np.zeros((K, num_dofs), dtype=np.float64)
         self.v = np.zeros((K, num_dofs), dtype=np.float64)
         self.t = 0
+
+    def _cosine_lr(self) -> float:
+        progress = min(self.t / self.total_steps, 1.0)
+        return self.lr_min + 0.5 * (self.lr_init - self.lr_min) * (1.0 + np.cos(np.pi * progress))
 
     def step(self, params: np.ndarray, grad: np.ndarray) -> np.ndarray:
         self.t += 1
@@ -77,35 +84,55 @@ class SplineAdam:
         self.v = self.beta2 * self.v + (1.0 - self.beta2) * grad**2
         m_hat = self.m / (1.0 - self.beta1**self.t)
         v_hat = self.v / (1.0 - self.beta2**self.t)
-        return params - self.lr * m_hat / (np.sqrt(v_hat) + self.eps)
+        lr = self._cosine_lr()
+        return params - lr * m_hat / (np.sqrt(v_hat) + self.eps)
 
 
 # --- LOSS KERNELS ---
 
 
 @wp.kernel
-def cartpole_balance_loss_kernel(
+def cartpole_swingup_loss_kernel(
     body_pose: wp.array(dtype=wp.transform, ndim=3),
-    weight_pole: float,
-    weight_cart: float,
+    body_vel: wp.array(dtype=wp.spatial_vector, ndim=3),
+    num_steps: int,
+    weight_pole_pos: float,
+    weight_pole_vel: float,
+    weight_cart_pos: float,
+    weight_cart_vel: float,
     loss: wp.array(dtype=wp.float32),
 ):
     t = wp.tid()
+
+    # TIME WEIGHTING: Linearly increases from 0.0 to 1.0.
+    # Gives the cart a "grace period" to swing up early on,
+    # but demands strict balancing at the end of the trajectory.
+    time_weight = float(t) / float(num_steps)
 
     # Body 0 = Cart, Body 1 = Pole
     cart_pos = wp.transform_get_translation(body_pose[t, 0, 0])
     pole_pose = body_pose[t, 0, 1]
 
-    # 1. Cart Bounds Penalty (keep it near X=0)
-    cart_x = cart_pos[0]
-    wp.atomic_add(loss, 0, weight_cart * cart_x * cart_x)
+    cart_vel = body_vel[t, 0, 0]
+    pole_vel = body_vel[t, 0, 1]
 
-    # 2. Pole Upright Penalty (align local Z with world Z)
+    # 1. Cart Bounds Penalty (keep it near Y=0)
+    cart_y = cart_pos[1]
+    wp.atomic_add(loss, 0, weight_cart_pos * cart_y * cart_y * time_weight)
+
+    # 2. Cart Velocity Penalty (Prevents jittering/driving crazy)
+    cart_v = wp.spatial_top(cart_vel)
+    wp.atomic_add(loss, 0, weight_cart_vel * wp.dot(cart_v, cart_v) * time_weight)
+
+    # 3. Pole Upright Penalty (align local Z with world Z)
     pole_rot = wp.transform_get_rotation(pole_pose)
     pole_up_vector = wp.quat_rotate(pole_rot, wp.vec3(0.0, 0.0, 1.0))
-
     delta = pole_up_vector - wp.vec3(0.0, 0.0, 1.0)
-    wp.atomic_add(loss, 0, weight_pole * wp.dot(delta, delta))
+    wp.atomic_add(loss, 0, weight_pole_pos * wp.dot(delta, delta) * time_weight)
+
+    # 4. Pole Angular Velocity Penalty (Stops the flipping!)
+    pole_w = wp.spatial_bottom(pole_vel)
+    wp.atomic_add(loss, 0, weight_pole_vel * wp.dot(pole_w, pole_w) * time_weight)
 
 
 @wp.kernel
@@ -114,7 +141,7 @@ def regularization_kernel(
     weight: float,
     loss: wp.array(dtype=wp.float32),
 ):
-    """Penalize high control velocities."""
+    """Penalize high control target velocities overall."""
     t = wp.tid()
     v = target_vel[t, 0, 0]  # Only penalize the cart's velocity
     wp.atomic_add(loss, 0, weight * v * v)
@@ -136,7 +163,7 @@ def init_cartpole_state_kernel(
     joint_q[pole_idx] = pole_init_angle
 
 
-class CartPoleBalance(AxionDifferentiableSimulator):
+class CartPoleSwingUp(AxionDifferentiableSimulator):
     def __init__(
         self,
         sim_config: SimulationConfig,
@@ -144,7 +171,7 @@ class CartPoleBalance(AxionDifferentiableSimulator):
         exec_config: ExecutionConfig,
         engine_config: EngineConfig,
         logging_config: LoggingConfig,
-        num_control_points: int = 20,
+        num_control_points: int = 50,
     ):
         super().__init__(
             sim_config,
@@ -160,9 +187,11 @@ class CartPoleBalance(AxionDifferentiableSimulator):
         self.K = num_control_points
         self.actuated_dofs = 1  # We only actuate the cart
 
-        # Loss weights
-        self.weight_pole = 50.0  # High priority: don't let it fall!
-        self.weight_cart = 10.0  # Lower priority: stay near origin
+        # --- LOSS WEIGHTS ---
+        self.weight_pole_pos = 50.0  # High priority: get to the top
+        self.weight_pole_vel = 1.0  # Medium priority: stop spinning!
+        self.weight_cart_pos = 0.5  # Low priority: stay near origin
+        self.weight_cart_vel = 0.1  # Low priority: don't drive too fast
         self.regularization_weight = 1e-4
 
         self.frame = 0
@@ -195,7 +224,7 @@ class CartPoleBalance(AxionDifferentiableSimulator):
 
         # --- 2. The Pole ---
         link_pole = self.builder.add_link()
-        self.builder.add_shape_box(link_pole, hx=0.05, hy=0.05, hz=1.0, cfg=no_collision_cfg)
+        self.builder.add_shape_box(link_pole, hx=0.1, hy=0.1, hz=1.0, cfg=no_collision_cfg)
 
         # We want the pole to swing in the Y-Z plane (rotating around World X).
         # The local X-axis is already aligned with World X, so no rotation is needed!
@@ -223,7 +252,8 @@ class CartPoleBalance(AxionDifferentiableSimulator):
         return self.W @ params  # [T, K] @ [K, 1] = [T, 1]
 
     def _contract(self, grad_v: np.ndarray) -> np.ndarray:
-        return (self.W.T @ grad_v) / self.W_col_sums[:, None]
+        safe_sums = np.where(self.W_col_sums > 0, self.W_col_sums, 1.0)
+        return (self.W.T @ grad_v) / safe_sums[:, None]
 
     def _apply_params(self, params: np.ndarray):
         T = self.clock.total_sim_steps
@@ -244,14 +274,18 @@ class CartPoleBalance(AxionDifferentiableSimulator):
         num_steps = self.clock.total_sim_steps
 
         wp.launch(
-            kernel=cartpole_balance_loss_kernel,
+            kernel=cartpole_swingup_loss_kernel,
             dim=num_steps,
             inputs=[
                 self.trajectory.body_pose,
-                self.weight_pole / num_steps,
-                self.weight_cart / num_steps,
+                self.trajectory.body_vel,
+                num_steps,
+                self.weight_pole_pos / num_steps,
+                self.weight_pole_vel / num_steps,
+                self.weight_cart_pos / num_steps,
+                self.weight_cart_vel / num_steps,
+                self.loss,
             ],
-            outputs=[self.loss],
             device=self.solver.model.device,
         )
 
@@ -261,8 +295,8 @@ class CartPoleBalance(AxionDifferentiableSimulator):
             inputs=[
                 self.trajectory.joint_target_vel,
                 self.regularization_weight / num_steps,
+                self.loss,
             ],
-            outputs=[self.loss],
             device=self.solver.model.device,
         )
 
@@ -298,21 +332,21 @@ class CartPoleBalance(AxionDifferentiableSimulator):
             callback=draw_extras,
             loop=True,
             loops_count=1,
-            playback_speed=2.0,
+            playback_speed=1.0,
         )
 
         self.frame += 1
 
-    def train(self, iterations=300):
-        # --- THE EASIER TASK: INITIALIZE NEAR THE TOP ---
-        # Set cart to origin, pole slightly tipped (0.1 radians)
+    def train(self, iterations=400):
+        # --- THE HARD TASK: SWING UP FROM THE BOTTOM ---
+        # Set cart to origin, pole hanging straight down (pi radians)
         wp.launch(
             kernel=init_cartpole_state_kernel,
             dim=self.simulation_config.num_worlds,
             inputs=[
                 self.model.joint_q,
                 0.0,  # Cart position
-                wp.pi,  # Pole angle (tipped forward slightly)
+                wp.pi,  # Pole angle (hanging down)
             ],
             device=self.model.device,
         )
@@ -327,7 +361,7 @@ class CartPoleBalance(AxionDifferentiableSimulator):
 
         # Initialize parameters with zeros (do nothing initially)
         self.spline_params = np.zeros((self.K, self.actuated_dofs), dtype=np.float64)
-        self.spline_adam = SplineAdam(K=self.K, num_dofs=self.actuated_dofs, lr=0.5)
+        self.spline_adam = SplineAdam(K=self.K, num_dofs=self.actuated_dofs, lr=1.0, total_steps=iterations)
 
         self._apply_params(self.spline_params)
 
@@ -363,15 +397,15 @@ def main(cfg: DictConfig):
     engine_config: EngineConfig = hydra.utils.instantiate(cfg.engine)
     logging_config: LoggingConfig = hydra.utils.instantiate(cfg.logging)
 
-    sim = CartPoleBalance(
+    sim = CartPoleSwingUp(
         sim_config,
         render_config,
         exec_config,
         engine_config,
         logging_config,
-        num_control_points=50,  # 20 points gives it enough flexibility to react
+        num_control_points=100,  # 50 points gives it high flexibility to swing
     )
-    sim.train(iterations=2000)
+    sim.train(iterations=1000)
 
 
 if __name__ == "__main__":

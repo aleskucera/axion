@@ -121,6 +121,7 @@ class HelhestObstacleSimulator(InteractiveSimulator):
         """
         Builds the unified Helhest model with an obstacle.
         """
+        self.builder.rigid_gap = 1.0
 
         # Robot position
         robot_x = -1.5

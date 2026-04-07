@@ -363,7 +363,7 @@ class MarvTrackedSimulator(InteractiveSimulator):
         self.track_info_cpu = track_info
 
         # Add Ground
-        ground_cfg = newton.ModelBuilder.ShapeConfig(ke=1.0e4, kd=1.0e3, kf=1.0e3, mu=0.4)
+        ground_cfg = newton.ModelBuilder.ShapeConfig(ke=1.0e4, kd=1.0e3, kf=1.0e3, mu=0.5)
         self.builder.add_ground_plane(cfg=ground_cfg)
 
         # Obstacles (Same as before)
@@ -461,7 +461,7 @@ def set_flipper_targets_kernel(
     targets[idx_rr] = val_rr
 
 
-@hydra.main(config_path=str(CONFIG_PATH), config_name="taros-4", version_base=None)
+@hydra.main(config_path=str(CONFIG_PATH), config_name="marv_tracked", version_base=None)
 def marv_tracked_example(cfg: DictConfig):
     sim_config = hydra.utils.instantiate(cfg.simulation)
     render_config = hydra.utils.instantiate(cfg.rendering)

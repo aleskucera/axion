@@ -18,11 +18,11 @@ plt.rcParams.update({
     "text.usetex": True,
     "text.latex.preamble": r"\usepackage{amsmath}",
     "font.family": "serif",
-    "font.size": 9,
-    "axes.labelsize": 9,
-    "xtick.labelsize": 9,
-    "ytick.labelsize": 9,
-    "legend.fontsize": 7,
+    "font.size": 22,
+    "axes.labelsize": 22,
+    "xtick.labelsize": 18,
+    "ytick.labelsize": 18,
+    "legend.fontsize": 14,
     "axes.spines.top": False,
     "axes.spines.right": False,
 })
@@ -61,12 +61,12 @@ def main():
 
     # --- Figure: two subplots side by side ---
     fig, (ax_traj, ax_rmse) = plt.subplots(
-        1, 2, figsize=(6.8, 2.8),
-        gridspec_kw={"width_ratios": [1.2, 1], "wspace": 0.35},
+        1, 2, figsize=(10.0, 5.0),
+        gridspec_kw={"width_ratios": [1.2, 1], "wspace": 0.4},
     )
 
     # ===== Left: Trajectory progression (xy plane) =====
-    snap_iters = sorted(int(k) for k in trajs.keys())
+    snap_iters = sorted(int(k) for k in trajs.keys() if int(k) != 30)
     last_iter = snap_iters[-1]
     cmap = plt.get_cmap("Blues")
     n_intermediate = len(snap_iters) - 1
@@ -74,7 +74,7 @@ def main():
     # Iter 0: initial guess in black
     t0 = trajs[str(snap_iters[0])]
     ax_traj.plot(t0["x"], t0["y"],
-                 color="black", linewidth=0.9, alpha=0.5,
+                 color="black", linewidth=1.5, alpha=0.5,
                  label=f"iter {snap_iters[0]} (init)")
 
     # Intermediate iterations in fading blues
@@ -82,27 +82,27 @@ def main():
         t = trajs[str(it)]
         frac = 0.3 + 0.45 * (idx / max(len(snap_iters) - 3, 1))
         ax_traj.plot(t["x"], t["y"],
-                     color=cmap(frac), linewidth=0.7, alpha=0.6,
+                     color=cmap(frac), linewidth=1.2, alpha=0.6,
                      label=f"iter {it}")
 
     # Final optimized trajectory
     t_final = trajs[str(last_iter)]
     ax_traj.plot(t_final["x"], t_final["y"],
-                 color=AXION_COLOR, linewidth=1.5, label=f"iter {last_iter}")
+                 color=AXION_COLOR, linewidth=2.5, label=f"iter {last_iter}")
 
     ax_traj.plot(target["x"], target["y"],
-                 color=TARGET_COLOR, linewidth=1.5, linestyle="--", label="target")
+                 color=TARGET_COLOR, linewidth=2.5, linestyle="--", label="target")
 
     ax_traj.plot(target["x"][0], target["y"][0],
-                 "o", color=TARGET_COLOR, markersize=4, zorder=5)
+                 "o", color=TARGET_COLOR, markersize=6, zorder=5)
     ax_traj.plot(t_final["x"][0], t_final["y"][0],
-                 "o", color=AXION_COLOR, markersize=4, zorder=5)
+                 "o", color=AXION_COLOR, markersize=6, zorder=5)
 
     ax_traj.set_xlabel("$x$ (m)")
     ax_traj.set_ylabel("$y$ (m)")
     ax_traj.set_aspect("equal")
     ax_traj.grid(True, which="major", alpha=0.25, linewidth=0.5)
-    ax_traj.legend(loc="best", ncol=2, framealpha=0.85)
+    ax_traj.legend(loc="upper center", bbox_to_anchor=(0.5, -0.28), ncol=3, framealpha=0.85, columnspacing=1.0, fontsize=16)
 
     # ===== Right: RMSE convergence =====
     time_steady = time_ms[1:]
@@ -110,17 +110,17 @@ def main():
     best_rmse = float(np.min(rmse))
     best_iter = int(np.argmin(rmse))
 
-    ax_rmse.plot(iters, rmse, color=AXION_LIGHT, linewidth=0.6, alpha=0.7)
-    ax_rmse.plot(iters, smooth(rmse), color=AXION_COLOR, linewidth=1.2)
-    ax_rmse.axhline(best_rmse, color="gray", linestyle="--", linewidth=0.5, alpha=0.5)
-    ax_rmse.plot(best_iter, best_rmse, "v", color=AXION_COLOR, markersize=5, zorder=5)
+    ax_rmse.plot(iters, rmse, color=AXION_LIGHT, linewidth=1.0, alpha=0.7)
+    ax_rmse.plot(iters, smooth(rmse), color=AXION_COLOR, linewidth=2.0)
+    ax_rmse.axhline(best_rmse, color="gray", linestyle="--", linewidth=0.8, alpha=0.5)
+    ax_rmse.plot(best_iter, best_rmse, "v", color=AXION_COLOR, markersize=8, zorder=5)
     ax_rmse.set_xlabel("Iteration")
     ax_rmse.set_ylabel("RMSE (m)")
     ax_rmse.grid(True, which="major", alpha=0.25, linewidth=0.5)
-    ax_rmse.text(0.97, 0.18, f"best = {best_rmse:.2f}\\,m (iter {best_iter})",
-                 transform=ax_rmse.transAxes, ha="right", va="bottom", fontsize=7, color="gray")
-    ax_rmse.text(0.97, 0.06, f"median iter time = {median_time:.0f}\\,ms",
-                 transform=ax_rmse.transAxes, ha="right", va="bottom", fontsize=7, color=AXION_COLOR)
+    ax_rmse.text(0.97, 0.95, f"best = {best_rmse:.2f}\\,m (iter {best_iter})",
+                 transform=ax_rmse.transAxes, ha="right", va="top", fontsize=14, color="gray")
+    ax_rmse.text(0.97, 0.87, f"median iter time = {median_time:.0f}\\,ms",
+                 transform=ax_rmse.transAxes, ha="right", va="top", fontsize=14, color=AXION_COLOR)
 
     plt.tight_layout(pad=0.4)
 

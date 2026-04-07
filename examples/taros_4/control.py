@@ -176,7 +176,7 @@ class Taros4ControlSimulator(InteractiveSimulator):
             wp.copy(self.control.joint_target_pos, self.joint_target)
 
     def build_model(self) -> newton.Model:
-        self.builder.rigid_gap = 0.5
+        self.builder.rigid_gap = 0.8
         # --- 1. Ground ---
         ground_cfg = newton.ModelBuilder.ShapeConfig(mu=0.3)
         self.builder.add_ground_plane(cfg=ground_cfg)

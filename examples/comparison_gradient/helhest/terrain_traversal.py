@@ -40,7 +40,7 @@ ASSETS_DIR = pathlib.Path(__file__).parent.parent.parent.joinpath("assets")
 WHEEL_DOF_OFFSET = 6
 NUM_WHEEL_DOFS = 3
 
-DT = 6e-2
+DT = 8e-2
 
 
 def make_interp_matrix(T: int, K: int):
@@ -57,12 +57,21 @@ def make_interp_matrix(T: int, K: int):
 
 
 class SplineAdam:
-    def __init__(self, K, num_dofs, lr, betas=(0.9, 0.999), eps=1e-8):
-        self.lr, self.eps = lr, eps
+    def __init__(
+        self, K, num_dofs, lr, total_steps=200, lr_min_ratio=0.05, betas=(0.9, 0.999), eps=1e-8
+    ):
+        self.lr_init = lr
+        self.lr_min = lr * lr_min_ratio
+        self.total_steps = total_steps
+        self.eps = eps
         self.beta1, self.beta2 = betas
         self.m = np.zeros((K, num_dofs), dtype=np.float64)
         self.v = np.zeros((K, num_dofs), dtype=np.float64)
         self.t = 0
+
+    def _cosine_lr(self):
+        progress = min(self.t / self.total_steps, 1.0)
+        return self.lr_min + 0.5 * (self.lr_init - self.lr_min) * (1.0 + np.cos(np.pi * progress))
 
     def step(self, params, grad):
         self.t += 1
@@ -70,7 +79,8 @@ class SplineAdam:
         self.v = self.beta2 * self.v + (1 - self.beta2) * grad**2
         m_hat = self.m / (1 - self.beta1**self.t)
         v_hat = self.v / (1 - self.beta2**self.t)
-        return params - self.lr * m_hat / (np.sqrt(v_hat) + self.eps)
+        lr = self._cosine_lr()
+        return params - lr * m_hat / (np.sqrt(v_hat) + self.eps)
 
 
 @wp.kernel
@@ -126,8 +136,8 @@ class TerrainTraversalOptimizer(AxionDifferentiableSimulator):
         logging_config,
         num_control_points=10,
         save_path=None,
-        target_ctrl=(2.0, 5.0, 2.0),
-        init_ctrl=(4.0, 5.0, 0.0),
+        target_ctrl=(2.8, 1.2, 2.0),
+        init_ctrl=(2.0, 2.0, 1.0),
     ):
         self.save_path = save_path
         self.K = num_control_points
@@ -141,7 +151,7 @@ class TerrainTraversalOptimizer(AxionDifferentiableSimulator):
         self.track_body(body_idx=0, name="chassis", color=(0.0, 0.5, 1.0))
 
     def build_model(self) -> Model:
-        self.builder.rigid_gap = 0.1
+        self.builder.rigid_gap = 0.2
         create_helhest_model(
             self.builder,
             xform=wp.transform(wp.vec3(0.0, 0.0, 2.0), wp.quat_identity()),
@@ -164,7 +174,7 @@ class TerrainTraversalOptimizer(AxionDifferentiableSimulator):
             cfg=newton.ModelBuilder.ShapeConfig(
                 density=0.0,
                 has_shape_collision=True,
-                mu=1.0,
+                mu=0.5,
                 ke=150.0,
                 kd=150.0,
                 kf=500.0,
@@ -180,7 +190,8 @@ class TerrainTraversalOptimizer(AxionDifferentiableSimulator):
         return self.W @ params
 
     def _contract(self, grad_v):
-        return (self.W.T @ grad_v) / self.W_col_sums[:, None]
+        safe_sums = np.where(self.W_col_sums > 0, self.W_col_sums, 1.0)
+        return (self.W.T @ grad_v) / safe_sums[:, None]
 
     def _apply_params(self, params):
         T = self.clock.total_sim_steps
@@ -259,7 +270,9 @@ class TerrainTraversalOptimizer(AxionDifferentiableSimulator):
         # Spline setup
         self.W, self.W_col_sums = make_interp_matrix(T, self.K)
         self.spline_params = np.array([list(self._init_ctrl)] * self.K, dtype=np.float64)
-        self.spline_adam = SplineAdam(K=self.K, num_dofs=NUM_WHEEL_DOFS, lr=0.05)
+        self.spline_adam = SplineAdam(
+            K=self.K, num_dofs=NUM_WHEEL_DOFS, lr=0.1, lr_min_ratio=0.2, total_steps=iterations
+        )
         self._apply_params(self.spline_params)
 
         # Optimization
@@ -367,22 +380,22 @@ def main():
         headless_steps_per_segment=1,
     )
     engine_config = AxionEngineConfig(
-        max_newton_iters=12,
-        max_linear_iters=12,
-        backtrack_min_iter=8,
-        newton_atol=1e-1,
+        max_newton_iters=14,
+        max_linear_iters=16,
+        backtrack_min_iter=10,
+        newton_atol=1e-3,
         linear_atol=1e-3,
         linear_tol=1e-3,
         enable_linesearch=False,
         joint_compliance=6e-8,
-        contact_compliance=1e-6,
+        contact_compliance=0.1,
         friction_compliance=1e-6,
         regularization=1e-6,
         contact_fb_alpha=0.5,
         contact_fb_beta=1.0,
         friction_fb_alpha=1.0,
         friction_fb_beta=1.0,
-        max_contacts_per_world=64,
+        max_contacts_per_world=256,
     )
     logging_config = LoggingConfig(
         enable_timing=False,

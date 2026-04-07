@@ -50,9 +50,9 @@ def main():
         color = COLORS[i % len(COLORS)]
         traj = d["traj"]
         label = f'{name} (dt={d["dt"]}, T={d["T"]})'
-        ax.plot(traj[:, 0], traj[:, 1], label=label, linewidth=1.5, color=color)
-        ax.plot(traj[-1, 0], traj[-1, 1], "o", markersize=6, color=color)
-        ax.plot(traj[0, 0], traj[0, 1], "s", markersize=5, color=color, alpha=0.5)
+        ax.plot(traj[:, 0], traj[:, 1], label=label, linewidth=0.8, color=color)
+        ax.plot(traj[-1, 0], traj[-1, 1], "o", markersize=4, color=color)
+        ax.plot(traj[0, 0], traj[0, 1], "s", markersize=3, color=color, alpha=0.5)
 
     ax.set_xlabel("x (m)", fontsize=12)
     ax.set_ylabel("y (m)", fontsize=12)
@@ -73,9 +73,9 @@ def main():
         color = COLORS[i % len(COLORS)]
         traj = d["traj"]
         label = f'{name} (dt={d["dt"]}, T={d["T"]})'
-        ax.plot(traj[:, 0], traj[:, 1], label=label, linewidth=1.8, color=color)
-        ax.plot(traj[-1, 0], traj[-1, 1], "o", markersize=7, color=color)
-        ax.plot(traj[0, 0], traj[0, 1], "s", markersize=5, color=color, alpha=0.5)
+        ax.plot(traj[:, 0], traj[:, 1], label=label, linewidth=0.8, color=color)
+        ax.plot(traj[-1, 0], traj[-1, 1], "o", markersize=4, color=color)
+        ax.plot(traj[0, 0], traj[0, 1], "s", markersize=3, color=color, alpha=0.5)
 
     excluded_str = f" (excl. {', '.join(exclude)})" if exclude else ""
     ax.set_xlabel("x (m)", fontsize=12)

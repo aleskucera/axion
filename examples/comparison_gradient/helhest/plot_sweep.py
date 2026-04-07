@@ -22,6 +22,7 @@ import tempfile
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+from matplotlib.transforms import blended_transform_factory
 import numpy as np
 
 DURATION = 3.0
@@ -200,13 +201,24 @@ main()
 
 # ── Plotting ──
 
+def load_trajectory_json(path):
+    """Load a helhest_*.json that already contains target_trajectory + sweep error."""
+    with open(path) as f:
+        d = json.load(f)
+    traj = np.array(d["target_trajectory"])
+    err = d.get("best_error")
+    dt = d.get("dt", "?")
+    name = d.get("simulator", "?")
+    return name, traj, err, dt
+
+
 def main():
     parser = argparse.ArgumentParser(description="Plot sweep trajectories vs ground truth")
     parser.add_argument("--ground-truth", required=True, help="Chrono ground truth JSON")
-    parser.add_argument("--axion", help="Axion sweep result JSON")
-    parser.add_argument("--mujoco", help="MuJoCo sweep result JSON")
-    parser.add_argument("--dojo", help="Dojo sweep result JSON")
-    parser.add_argument("--tinydiffsim", help="TinyDiffSim sweep result JSON")
+    parser.add_argument("--axion", help="Axion sweep result JSON (or helhest_*.json with trajectory)")
+    parser.add_argument("--mujoco", help="MuJoCo sweep result JSON (or helhest_*.json with trajectory)")
+    parser.add_argument("--dojo", help="Dojo sweep result JSON (or helhest_*.json with trajectory)")
+    parser.add_argument("--tinydiffsim", help="TinyDiffSim sweep result JSON (or helhest_*.json with trajectory)")
     parser.add_argument("-o", "--output", default="results/sweep_all_vs_chrono.png",
                         help="Output image path (default: results/sweep_all_vs_chrono.png)")
     args = parser.parse_args()
@@ -219,22 +231,41 @@ def main():
           f"final=({chrono_traj[-1, 0]:.3f}, {chrono_traj[-1, 1]:.3f})")
 
     # Collect (name, traj, error, dt, color, linestyle, linewidth)
-    sims = [("Chrono (GT)", chrono_traj, None, gt["dt"], "k", "-", 2.5)]
+    sims = [("Chrono (GT)", chrono_traj, None, gt["dt"], "k", "-", 2.0)]
 
     simulator_args = [
-        ("Axion", args.axion, simulate_axion, "tab:blue", "-", 1.8),
-        ("Dojo", args.dojo, simulate_dojo, "tab:green", "--", 1.8),
-        ("MuJoCo", args.mujoco, simulate_mujoco, "tab:red", "--", 1.5),
-        ("TinyDiffSim", args.tinydiffsim, simulate_tinydiffsim, "tab:orange", ":", 1.5),
+        ("Axion", args.axion, simulate_axion, "#2196F3", "-", 1.5),
+        ("Dojo", args.dojo, simulate_dojo, "#FF9800", "--", 1.5),
+        ("MuJoCo", args.mujoco, simulate_mujoco, "#E91E63", "--", 1.3),
+        ("TinyDiffSim", args.tinydiffsim, simulate_tinydiffsim, "#9C27B0", ":", 1.3),
     ]
 
     for name, sweep_path, sim_fn, color, ls, lw in simulator_args:
         if sweep_path is None:
             continue
         with open(sweep_path) as f:
-            sweep = json.load(f)
-        params = sweep["best_params"]
-        err = sweep["best_error"]
+            data = json.load(f)
+
+        # If the JSON already has a trajectory, use it directly
+        if "target_trajectory" in data:
+            traj = np.array(data["target_trajectory"])
+            # Try to find the matching sweep JSON for the error
+            err = data.get("best_error")
+            if err is None:
+                sweep_name = name.lower().replace(" ", "")
+                try:
+                    with open(f"results/sweep_{sweep_name}.json") as sf:
+                        err = json.load(sf).get("best_error")
+                except FileNotFoundError:
+                    pass
+            print(f"Loaded {name}: err={err}, {len(traj)} pts, "
+                  f"final=({traj[-1, 0]:.3f}, {traj[-1, 1]:.3f})")
+            sims.append((name, traj, err, data.get("dt", "?"), color, ls, lw))
+            continue
+
+        # Otherwise re-simulate from sweep params
+        params = data["best_params"]
+        err = data["best_error"]
         dt = params.get("dt", params.get("timestep", "?"))
         print(f"Simulating {name}: err={err:.4f}, dt={dt}, params={params}")
         try:
@@ -249,61 +280,103 @@ def main():
         "text.usetex": True,
         "font.family": "serif",
         "font.serif": ["Computer Modern Roman"],
-        "font.size": 9,
-        "axes.labelsize": 10,
-        "axes.titlesize": 10,
-        "legend.fontsize": 7.5,
-        "xtick.labelsize": 8,
-        "ytick.labelsize": 8,
-        "lines.linewidth": 1.2,
-        "axes.linewidth": 0.6,
-        "grid.linewidth": 0.4,
-        "xtick.major.width": 0.5,
-        "ytick.major.width": 0.5,
+        "font.size": 14,
+        "axes.labelsize": 14,
+        "axes.titlesize": 14,
+        "legend.fontsize": 10,
+        "xtick.labelsize": 12,
+        "ytick.labelsize": 12,
+        "lines.linewidth": 2.0,
+        "axes.linewidth": 0.8,
+        "grid.linewidth": 0.5,
+        "xtick.major.width": 0.6,
+        "ytick.major.width": 0.6,
     })
 
-    fig, axes = plt.subplots(1, 3, figsize=(7.16, 2.2))
+    AXION_COLOR = "#2196F3"
+    BAR_STYLES = {
+        "Axion":       {"color": AXION_COLOR},
+        "Dojo":        {"color": "#FF9800"},
+        "MuJoCo":      {"color": "#E91E63"},
+        "TinyDiffSim": {"color": "#9C27B0"},
+    }
+    BAR_LABELS = {
+        "Axion":       r"\textbf{Axion}",
+        "Dojo":        "Dojo",
+        "MuJoCo":      "MuJoCo",
+        "TinyDiffSim": "TinyDiffSim",
+    }
 
+    fig = plt.figure(figsize=(7.0, 3.5))
+    ax_traj = fig.add_axes([0.07, 0.25, 0.32, 0.68])
+    ax_bar = fig.add_axes([0.56, 0.25, 0.28, 0.65])
+
+    # --- Left: xy trajectory ---
     for name, traj, err, dt, color, ls, lw in sims:
-        t = np.linspace(0, DURATION, len(traj))
-        if err is not None:
-            label_xy = rf"{name} ($\bar{{e}}$={err:.2f}\,m)"
-        else:
-            label_xy = name
+        ax_traj.plot(traj[:, 0], traj[:, 1], color=color, ls=ls, lw=lw, label=name)
 
-        axes[0].plot(traj[:, 0], traj[:, 1], color=color, ls=ls, lw=lw, label=label_xy)
-        axes[1].plot(t, traj[:, 0], color=color, ls=ls, lw=lw, label=name)
-        axes[2].plot(t, traj[:, 1], color=color, ls=ls, lw=lw, label=name)
+    ax_traj.set_xlabel(r"$x$ (m)")
+    ax_traj.set_ylabel(r"$y$ (m)")
+    ax_traj.set_aspect("equal")
+    ax_traj.grid(True, alpha=0.25)
+    ax_traj.tick_params(direction="in", top=True, right=True)
+    ax_traj.legend(loc="upper center", bbox_to_anchor=(0.5, -0.25),
+                   ncol=3, frameon=True, framealpha=0.9, fontsize=9,
+                   handlelength=1.5, columnspacing=0.6)
 
-    axes[0].set_xlabel(r"$x$ (m)")
-    axes[0].set_ylabel(r"$y$ (m)")
-    axes[0].set_aspect("equal")
-    axes[0].grid(True, alpha=0.25)
+    # --- Right: horizontal bar chart (stacked_boxes style) ---
+    # Sort by error ascending (best at top)
+    bar_sims = [(name, err, BAR_STYLES.get(name, {"color": "gray"})["color"])
+                for name, _, err, _, _, _, _ in sims if err is not None]
+    bar_sims.sort(key=lambda x: x[1])
 
-    axes[1].set_xlabel(r"Time (s)")
-    axes[1].set_ylabel(r"$x$ (m)")
-    axes[1].grid(True, alpha=0.25)
+    bar_names = [BAR_LABELS.get(s[0], s[0]) for s in bar_sims]
+    bar_errs = [s[1] for s in bar_sims]
+    bar_colors = [s[2] for s in bar_sims]
 
-    axes[2].set_xlabel(r"Time (s)")
-    axes[2].set_ylabel(r"$y$ (m)")
-    axes[2].grid(True, alpha=0.25)
+    axion_err = next(e for n, e, _ in bar_sims if n == "Axion")
 
-    for ax in axes:
-        ax.tick_params(direction="in", top=True, right=True)
+    y_pos = np.arange(len(bar_sims))
+    bars = ax_bar.barh(y_pos, bar_errs, color=bar_colors, height=0.5, zorder=3)
 
-    fig.tight_layout(pad=0.4, w_pad=0.8)
-    fig.subplots_adjust(bottom=0.28)
+    ax_bar.set_yticks(y_pos)
+    ax_bar.set_yticklabels(bar_names)
+    ax_bar.set_xlabel(r"Mean $L_2$ error (m)")
+    ax_bar.grid(True, axis="x", alpha=0.25, zorder=0, linewidth=0.5)
+    ax_bar.set_ylim(-0.6, len(bar_sims) - 0.4)
+    ax_bar.spines["top"].set_visible(False)
+    ax_bar.spines["right"].set_visible(False)
 
-    # Single legend below all panels
-    handles, labels = axes[0].get_legend_handles_labels()
-    fig.legend(handles, labels, loc="lower center", ncol=len(sims),
-               frameon=True, framealpha=0.9, fontsize=6.5,
-               handlelength=1.8, columnspacing=1.0,
-               bbox_to_anchor=(0.5, 0.01))
+    xmax = max(bar_errs)
+    ax_bar.set_xlim(right=xmax * 1.8)
+
+    right_xfm = blended_transform_factory(ax_bar.transAxes, ax_bar.transData)
+
+    for i, (sim_name, val, _) in enumerate(bar_sims):
+        cy = y_pos[i]
+        ax_bar.text(val + 0.01, cy, f"{val:.2f}", va="center", ha="left", fontsize=10)
+
+        if sim_name != "Axion":
+            ratio = val / axion_err
+            ratio_str = f"${ratio:.1f}\\times$"
+            ax_bar.text(
+                1.04, cy, ratio_str,
+                va="center", ha="left", fontsize=10,
+                color=AXION_COLOR, fontweight="bold",
+                transform=right_xfm, clip_on=False,
+            )
+
+    ax_bar.text(
+        1.04, 1.01, r"vs \textbf{Axion}",
+        va="bottom", ha="left", fontsize=9,
+        color="gray", transform=ax_bar.transAxes, clip_on=False,
+    )
+
+    # Manual positioning — no tight_layout needed
 
     import pathlib
     pathlib.Path(args.output).parent.mkdir(parents=True, exist_ok=True)
-    plt.savefig(args.output, dpi=300, bbox_inches="tight")
+    plt.savefig(args.output, dpi=400, bbox_inches="tight")
     print(f"\nSaved to {args.output}")
 
 
