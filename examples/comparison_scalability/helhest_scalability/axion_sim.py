@@ -33,7 +33,7 @@ TARGET_CTRL = (1.0, 6.0, 0.0)
 INIT_CTRL = (2.0, 5.0, 0.0)
 WHEEL_DOF_OFFSET = 6
 NUM_WHEEL_DOFS = 3
-ITERATIONS = 20
+ITERATIONS = 10
 
 
 def make_interp_matrix(T, K):
