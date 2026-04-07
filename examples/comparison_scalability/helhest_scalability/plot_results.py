@@ -118,10 +118,10 @@ def main():
     # --- Memory panel: GPU limit line + OOM shading + MJX extrapolation ---
     ax_mem.axhline(GPU_MEM_LIMIT_MB, color="red", linestyle="-", linewidth=0.8, alpha=0.7, zorder=1)
     ax_mem.text(
-        0.97,
+        0.99,
         GPU_MEM_LIMIT_MB * 1.3,
         r"24\,GB GPU limit",
-        fontsize=9,
+        fontsize=8,
         color="red",
         alpha=0.8,
         ha="right",
@@ -144,13 +144,13 @@ def main():
             mid_w = mjx_mem_worlds[mid_idx]
             mid_m = mjx_mems[mid_idx]
             ax_mem.text(
-                mid_w * 2.4,
+                mid_w * 2.6,
                 mid_m * 3.5,
                 rf"$\sim{slope_gb:.1f}$\,GB/world",
                 fontsize=7,
                 color="#FF5722",
                 alpha=0.8,
-                rotation=54,
+                rotation=50,
                 rotation_mode="anchor",
             )
             extrap_worlds = np.array([mjx_mem_worlds[-1], 32, 64, 128, 256, 512, 1024])
@@ -239,20 +239,9 @@ def main():
             knee_m = axion["mems"][knee_idx]
 
             for ax, val in [(ax_time, knee_t), (ax_mem, knee_m)]:
-                ax.axvline(knee_w, color="#64B5F6", linestyle="--", linewidth=1.2, alpha=0.7)
+                ax.axvline(knee_w, color="#2196F3", linestyle="--", linewidth=1.2, alpha=0.75)
 
             _knee_w = knee_w  # save for later placement
-
-    # --- Shade OOM region on memory plot ---
-    xlims = ax_mem.get_xlim()
-    ax_mem.fill_between(
-        [xlims[0], xlims[1] * 2],
-        GPU_MEM_LIMIT_MB,
-        GPU_MEM_LIMIT_MB * 100,
-        color="red",
-        alpha=0.05,
-        zorder=0,
-    )
 
     for ax in (ax_time, ax_mem):
         ax.set_xscale("log")
@@ -265,18 +254,19 @@ def main():
     ax_time.set_ylabel("Median time per iteration (ms)")
     ax_mem.set_ylabel("Peak GPU memory (MB)")
 
-    # Extend x-axis and place "GPU saturated" text next to the dashed line
-    for ax in (ax_time, ax_mem):
-        ax.set_xlim(right=ax.get_xlim()[1] * 3)
+    # Shade OOM region on memory plot
+    ax_mem.axhspan(GPU_MEM_LIMIT_MB, ax_mem.get_ylim()[1], color="red", alpha=0.05, zorder=0)
+
+    # Place "GPU saturated" text next to the dashed line
     if "Axion" in sim_data and "_knee_w" in dir():
         for ax in (ax_time, ax_mem):
             ax.text(
-                _knee_w,
+                _knee_w - 100,
                 0.13,
                 "GPU saturated",
                 rotation=90,
                 fontsize=8,
-                color="#64B5F6",
+                color="#2196F3",
                 ha="right",
                 va="bottom",
                 transform=blended_transform_factory(ax.transData, ax.transAxes),
