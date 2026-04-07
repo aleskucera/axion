@@ -274,7 +274,7 @@ def main():
 
     # Add OOM marker to legend
     oom_handle = ax_time.plot(
-        [], [], "x", color="red", markersize=8, markeredgewidth=2.0, label="OOM"
+        [], [], "x", color="red", markersize=8, markeredgewidth=2.0, label="Out of Memory"
     )[0]
     handles, labels = ax_time.get_legend_handles_labels()
     fig.legend(
