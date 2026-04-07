@@ -167,9 +167,7 @@ def main():
         t_iter = (time.perf_counter() - t0) * 1000
 
         mem_stats = device.memory_stats()
-        used_mb = mem_stats.get("peak_pool_bytes", 0) / 1024**2
-        if used_mb == 0:
-            used_mb = mem_stats.get("peak_bytes_in_use", 0) / 1024**2
+        used_mb = mem_stats.get("peak_bytes_in_use", 0) / 1024**2
         peak_mem_mb = max(peak_mem_mb, used_mb)
 
         updates, opt_state = optimizer.update(grad, opt_state)
