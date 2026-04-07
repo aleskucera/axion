@@ -1,3 +1,4 @@
+import time
 from abc import ABC
 from typing import Optional
 
@@ -121,10 +122,16 @@ class InteractiveSimulator(BaseSimulator, ABC):
         if self.cuda_graph is None:
             self._capture_cuda_graphs()
 
-        wp.capture_launch(self.cuda_graph)
-
-        # if isinstance(self.solver, AxionEngine):
-        #     self.solver.events.record_timings()
+        if self.logging_config and self.logging_config.enable_timing:
+            wp.synchronize()
+            t0 = time.perf_counter()
+            wp.capture_launch(self.cuda_graph)
+            wp.synchronize()
+            t1 = time.perf_counter()
+            ms_per_step = (t1 - t0) * 1000 / self.steps_per_segment
+            print(f"segment: {(t1 - t0) * 1000:.2f} ms total, ~{ms_per_step:.2f} ms/step")
+        else:
+            wp.capture_launch(self.cuda_graph)
 
     def _capture_cuda_graphs(self):
         n_steps = self.steps_per_segment
