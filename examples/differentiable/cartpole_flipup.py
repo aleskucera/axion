@@ -64,7 +64,16 @@ def make_interp_matrix(T: int, K: int) -> tuple[np.ndarray, np.ndarray]:
 
 
 class SplineAdam:
-    def __init__(self, K: int, num_dofs: int, lr: float, total_steps: int = 200, lr_min_ratio: float = 0.05, betas=(0.9, 0.999), eps=1e-8):
+    def __init__(
+        self,
+        K: int,
+        num_dofs: int,
+        lr: float,
+        total_steps: int = 200,
+        lr_min_ratio: float = 0.05,
+        betas=(0.9, 0.999),
+        eps=1e-8,
+    ):
         self.lr_init = lr
         self.lr_min = lr * lr_min_ratio
         self.total_steps = total_steps
@@ -315,7 +324,7 @@ class CartPoleSwingUp(AxionDifferentiableSimulator):
         self._apply_params(self.spline_params)
 
     def render(self, train_iter):
-        if self.frame > 0 and train_iter % 50 != 0:
+        if self.frame > 0 and train_iter % 20 != 0:
             return
 
         loss_val = self.loss.numpy()[0]
@@ -361,7 +370,9 @@ class CartPoleSwingUp(AxionDifferentiableSimulator):
 
         # Initialize parameters with zeros (do nothing initially)
         self.spline_params = np.zeros((self.K, self.actuated_dofs), dtype=np.float64)
-        self.spline_adam = SplineAdam(K=self.K, num_dofs=self.actuated_dofs, lr=1.0, total_steps=iterations)
+        self.spline_adam = SplineAdam(
+            K=self.K, num_dofs=self.actuated_dofs, lr=1.0, total_steps=iterations
+        )
 
         self._apply_params(self.spline_params)
 

@@ -44,18 +44,13 @@ def compute_friction_model(
 ):
     """Impulse-level Fisher-Burmeister formulation for friction.
 
-    Computes the friction compliance 'w' using impulse-level quantities
-    so that the sticking/sliding transition is independent of dt.
+    Operates on impulse-level quantities (v_t * dt, forces * dt) with
+    precond = effective_mass (no dt). This makes the sticking/sliding
+    transition region dt-independent.
 
-    The FB function operates on:
-      a = tangential displacement (v_t * dt)   [m]
-      b = friction cone gap in impulse space    [N·s]
-    with precond = effective_mass (no dt).
-
-    The output w is used in the velocity-level residual: v_t + w * lambda = 0.
-    Since w is computed from dt-independent ratios, friction is timestep-consistent.
+    In pure sticking and pure sliding, this is equivalent to the force-level
+    formulation. The difference is only at the Coulomb boundary transition.
     """
-    # Tangential velocity
     v_t_0 = wp.dot(J_t1_0, vel0) + wp.dot(J_t1_1, vel1)
     v_t_1 = wp.dot(J_t2_0, vel0) + wp.dot(J_t2_1, vel1)
     v_t = wp.vec2(v_t_0, v_t_1)
@@ -63,10 +58,9 @@ def compute_friction_model(
     eps = 1e-8
 
     # Convert to impulse level for the FB evaluation
-    d_t = v_t * dt  # tangential displacement [m]
+    d_t = v_t * dt
     d_t_norm = wp.sqrt(wp.dot(d_t, d_t) + eps)
 
-    # Previous friction/normal impulses
     impulse_f_prev = force_f_prev * dt
     raw_imp_norm = wp.length(impulse_f_prev)
 
@@ -74,14 +68,12 @@ def compute_friction_model(
     limit = mu * impulse_n_prev
     clamped_imp_norm = wp.min(raw_imp_norm, limit)
 
-    # Gap in impulse space
     gap = limit - clamped_imp_norm
 
-    # precond = effective_mass (dt-independent)
     r = precond
     phi_f = scaled_fisher_burmeister(d_t_norm, gap, 1.0, r)
 
-    denom_eps = 1e-6 * dt  # scale epsilon with dt to match impulse-level quantities
+    denom_eps = 1e-6 * dt
 
     denominator = r * raw_imp_norm + phi_f + denom_eps
     numerator = d_t_norm - phi_f
