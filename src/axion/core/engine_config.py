@@ -91,6 +91,10 @@ class AxionEngineConfig(EngineConfig):
     # --- Differentiable Simulation ---
     differentiable_simulation: bool = False
 
+    # --- Adjoint Backward Pass Interventions ---
+    adjoint_soft_blending: bool = False
+    adjoint_soft_blending_temperature: float = 0.05
+
     # --- Logging & Profiling (MOVED HERE from Base Class) ---
     enable_timing: bool = False
     enable_hdf5_logging: bool = False

@@ -141,13 +141,16 @@ def _helhest_ctrl(ndof):
     return ctrl
 
 
-def make_engine(model, num_steps):
-    config = AxionEngineConfig(
+def make_engine(model, num_steps, config_overrides=None):
+    kwargs = dict(
         max_newton_iters=20,
         max_linear_iters=200,
         linear_tol=1e-8,
         linear_atol=1e-8,
     )
+    if config_overrides:
+        kwargs.update(config_overrides)
+    config = AxionEngineConfig(**kwargs)
     return AxionEngine(
         model=model, sim_steps=num_steps, config=config,
         logging_config=LoggingConfig(), differentiable_simulation=True,
@@ -159,13 +162,13 @@ def make_engine(model, num_steps):
 # =============================================================================
 
 
-def measure_gradient_accuracy(scene_cfg, num_steps, rng):
+def measure_gradient_accuracy(scene_cfg, num_steps, rng, config_overrides=None):
     """Run forward + backward for `num_steps`, compare adjoint grad vs FD.
 
     Returns dict with per-DOF analytical, FD, and relative error.
     """
     model = scene_cfg["build"]()
-    engine = make_engine(model, num_steps)
+    engine = make_engine(model, num_steps, config_overrides)
     dims = engine.dims
     dt = scene_cfg["dt"]
 
@@ -293,14 +296,14 @@ def measure_gradient_accuracy(scene_cfg, num_steps, rng):
     return grad_a, grad_fd
 
 
-def measure_gradient_norm_decay(scene_cfg, num_steps, rng):
+def measure_gradient_norm_decay(scene_cfg, num_steps, rng, config_overrides=None):
     """Run forward, then backward step-by-step, recording ||grad|| at each step.
 
     Returns array of shape (num_steps+1,) with gradient norms.
     norms[num_steps] = seed norm (1.0), norms[0] = norm at initial state.
     """
     model = scene_cfg["build"]()
-    engine = make_engine(model, num_steps)
+    engine = make_engine(model, num_steps, config_overrides)
     dims = engine.dims
     dt = scene_cfg["dt"]
 
@@ -433,21 +436,23 @@ def print_decay_report(scene_name, label, num_steps, norms):
 # =============================================================================
 
 
-def run_scene(scene_name, horizons, decay_steps):
+def run_scene(scene_name, horizons, decay_steps, config_overrides=None):
     scene_cfg = SCENES[scene_name]
     label = scene_cfg["label"]
+    if config_overrides:
+        label += f" [{', '.join(f'{k}={v}' for k, v in config_overrides.items())}]"
     rng = np.random.default_rng(42)
 
     # --- Gradient accuracy at increasing horizons ---
     accuracy_results = []
     for n in horizons:
-        ga, gf = measure_gradient_accuracy(scene_cfg, n, rng)
+        ga, gf = measure_gradient_accuracy(scene_cfg, n, rng, config_overrides)
         accuracy_results.append((ga, gf))
 
     print_accuracy_report(scene_name, label, horizons, accuracy_results)
 
     # --- Gradient norm decay ---
-    norms = measure_gradient_norm_decay(scene_cfg, decay_steps, rng)
+    norms = measure_gradient_norm_decay(scene_cfg, decay_steps, rng, config_overrides)
     print_decay_report(scene_name, label, decay_steps, norms)
 
 
@@ -468,12 +473,26 @@ def main():
         "--decay-steps", type=int, default=30,
         help="Number of steps for decay measurement (default: 30)",
     )
+    parser.add_argument(
+        "--soft-blending", action="store_true",
+        help="Enable adjoint soft mode blending (sigmoid interpolation)",
+    )
+    parser.add_argument(
+        "--temperature", type=float, default=0.05,
+        help="Soft blending temperature (default: 0.05)",
+    )
     args = parser.parse_args()
 
     scenes = args.scene if args.scene else list(SCENES.keys())
 
+    config_overrides = {}
+    if args.soft_blending:
+        config_overrides["adjoint_soft_blending"] = True
+        config_overrides["adjoint_soft_blending_temperature"] = args.temperature
+
     for scene_name in scenes:
-        run_scene(scene_name, args.horizons, args.decay_steps)
+        run_scene(scene_name, args.horizons, args.decay_steps,
+                  config_overrides or None)
 
     print(f"\n{'='*70}")
     print(f"  DONE — {len(scenes)} scene(s) benchmarked")
