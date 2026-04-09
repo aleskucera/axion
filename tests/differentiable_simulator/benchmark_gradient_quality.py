@@ -43,7 +43,7 @@ from helhest.common import HelhestConfig, create_helhest_model
 # =============================================================================
 
 
-def build_box_on_ground():
+def build_box_on_ground(num_worlds=1):
     """Box sitting on ground plane — passive body with friction contact."""
     builder = AxionModelBuilder()
     builder.rigid_gap = 0.05
@@ -55,10 +55,10 @@ def build_box_on_ground():
         body=body, hx=0.5, hy=0.5, hz=0.5,
         cfg=newton.ModelBuilder.ShapeConfig(density=100.0, mu=0.5),
     )
-    return builder.finalize_replicated(num_worlds=1, gravity=-9.81)
+    return builder.finalize_replicated(num_worlds=num_worlds, gravity=-9.81)
 
 
-def build_pendulum():
+def build_pendulum(num_worlds=1):
     """Pendulum with velocity-controlled revolute joint, no ground contact."""
     builder = AxionModelBuilder()
 
@@ -78,10 +78,10 @@ def build_pendulum():
         custom_attributes={"joint_dof_mode": [JointMode.TARGET_VELOCITY]},
     )
     builder.add_articulation([j], label="pendulum")
-    return builder.finalize_replicated(num_worlds=1, requires_grad=True)
+    return builder.finalize_replicated(num_worlds=num_worlds, requires_grad=True)
 
 
-def build_helhest():
+def build_helhest(num_worlds=1):
     """Helhest 3-wheeled robot on flat ground with velocity control."""
     builder = AxionModelBuilder()
     builder.rigid_gap = 0.1
@@ -96,7 +96,7 @@ def build_helhest():
         friction_left_right=0.7,
         friction_rear=0.35,
     )
-    return builder.finalize_replicated(num_worlds=1, gravity=-9.81)
+    return builder.finalize_replicated(num_worlds=num_worlds, gravity=-9.81)
 
 
 # =============================================================================
@@ -184,8 +184,110 @@ def _should_normalize(config_overrides):
     return config_overrides and config_overrides.get("adjoint_gradient_normalization", False)
 
 
-def measure_gradient_accuracy(scene_cfg, num_steps, rng, config_overrides=None):
+def measure_smoothed_gradient(scene_cfg, num_steps, w, rng, sigma=1e-3, num_samples=64):
+    """Compute gradient via antithetic randomized smoothing.
+
+    Estimates nabla f_sigma(x) where f_sigma is the Gaussian-smoothed loss.
+    Uses antithetic pairs (eps, -eps) for variance reduction.
+    All 2*num_samples worlds run in a single batched forward pass.
+
+    Only supports scenes with fd_type == "ctrl" (control perturbation).
+
+    Args:
+        w: loss direction vector, shape (bodies_per_world * 6,). Must match
+           the w used in the adjoint computation.
+
+    Returns:
+        grad_smoothed: gradient estimate (over active DOFs)
+        grad_std: per-component standard deviation of the estimate
+    """
+    assert scene_cfg["fd_type"] == "ctrl", "Smoothed gradient only supports ctrl perturbation"
+
+    N = num_samples
+    num_worlds = 2 * N  # antithetic pairs
+
+    model = scene_cfg["build"](num_worlds=num_worlds)
+    config = AxionEngineConfig(
+        max_newton_iters=20,
+        max_linear_iters=200,
+        linear_tol=1e-8,
+        linear_atol=1e-8,
+    )
+    engine = AxionEngine(
+        model=model, sim_steps=num_steps, config=config,
+        logging_config=LoggingConfig(), differentiable_simulation=False,
+    )
+    dims = engine.dims
+    dt = scene_cfg["dt"]
+
+    # Base control and active DOFs
+    ctrl_base = scene_cfg["control_vel"](dims.joint_dof_count)
+    active_dofs = np.nonzero(ctrl_base)[0]
+    if len(active_dofs) == 0:
+        active_dofs = np.arange(min(dims.joint_dof_count, 3))
+    n_active = len(active_dofs)
+
+    # Sample perturbations (only in active DOFs)
+    epsilons = rng.standard_normal((N, n_active)).astype(np.float32)
+
+    # Build per-world controls: worlds [0..N-1] = +sigma*eps, [N..2N-1] = -sigma*eps
+    ctrl_all = np.tile(ctrl_base, (num_worlds, 1))  # (2N, ndof)
+    for i in range(N):
+        ctrl_all[i, active_dofs] += sigma * epsilons[i]
+        ctrl_all[N + i, active_dofs] -= sigma * epsilons[i]
+
+    # Set per-world controls via the control object
+    control = model.control()
+    wp.copy(
+        control.joint_target_vel,
+        wp.array(ctrl_all, dtype=wp.float32, device=model.device),
+    )
+
+    # Init states
+    state_in = model.state()
+    newton.eval_fk(model, model.joint_q, model.joint_qd, state_in)
+    state_out = model.state()
+
+    # Forward simulation
+    for step in range(num_steps):
+        contacts = model.collide(state_in)
+        engine.step(state_in, state_out, control, contacts, dt)
+        state_in, state_out = state_out, state_in
+
+    # Read final velocities and compute per-world scalar loss: L = w^T @ qd
+    # body_qd is stored flat as (num_worlds * bodies_per_world, 6)
+    final_qd = state_in.body_qd.numpy()  # (num_worlds * bodies_per_world, 6)
+    final_qd_flat = final_qd.reshape(num_worlds, -1)  # (num_worlds, bodies_per_world*6)
+    losses = final_qd_flat @ w  # (num_worlds,)
+
+    # Antithetic gradient estimate:
+    # grad ≈ (1/N) sum_i [(f(x+σε) - f(x-σε)) / (2σ)] * ε
+    loss_plus = losses[:N]
+    loss_minus = losses[N:]
+    fd_per_sample = (loss_plus - loss_minus) / (2.0 * sigma)  # (N,)
+
+    # Each sample contributes: fd_per_sample[i] * epsilons[i]
+    grad_samples = fd_per_sample[:, None] * epsilons  # (N, n_active)
+    grad_smoothed = np.mean(grad_samples, axis=0)  # (n_active,)
+    grad_std = np.std(grad_samples, axis=0) / np.sqrt(N)  # standard error
+
+    return grad_smoothed, grad_std, active_dofs
+
+
+def _make_loss_direction(scene_cfg, rng):
+    """Generate a random unit loss direction for a single-world scene."""
+    model = scene_cfg["build"](num_worlds=1)
+    qd_size = model.body_count * 6
+    w = rng.standard_normal(qd_size).astype(np.float32)
+    w /= np.linalg.norm(w)
+    return w
+
+
+def measure_gradient_accuracy(scene_cfg, num_steps, w, rng, config_overrides=None):
     """Run forward + backward for `num_steps`, compare adjoint grad vs FD.
+
+    Args:
+        w: loss direction vector, shape (body_count * 6,) for a single world.
 
     Returns dict with per-DOF analytical, FD, and relative error.
     """
@@ -205,11 +307,6 @@ def measure_gradient_accuracy(scene_cfg, num_steps, rng, config_overrides=None):
             control.joint_target_vel,
             wp.array(ctrl_np.reshape(1, -1), dtype=wp.float32, device=model.device),
         )
-
-    # Random loss seed
-    qd_size = state_in.body_qd.numpy().flatten().shape[0]
-    w = rng.standard_normal(qd_size).astype(np.float32)
-    w /= np.linalg.norm(w)  # unit norm for comparability
 
     # --- Forward ---
     buffer = TrajectoryBuffer(
@@ -321,7 +418,7 @@ def measure_gradient_accuracy(scene_cfg, num_steps, rng, config_overrides=None):
     return grad_a, grad_fd
 
 
-def measure_gradient_norm_decay(scene_cfg, num_steps, rng, config_overrides=None):
+def measure_gradient_norm_decay(scene_cfg, num_steps, w, config_overrides=None):
     """Run forward, then backward step-by-step, recording ||grad|| at each step.
 
     Returns array of shape (num_steps+1,) with gradient norms.
@@ -342,11 +439,6 @@ def measure_gradient_norm_decay(scene_cfg, num_steps, rng, config_overrides=None
             control.joint_target_vel,
             wp.array(ctrl_np.reshape(1, -1), dtype=wp.float32, device=model.device),
         )
-
-    # Random unit seed
-    qd_size = state_in.body_qd.numpy().flatten().shape[0]
-    w = rng.standard_normal(qd_size).astype(np.float32)
-    w /= np.linalg.norm(w)
 
     # --- Forward ---
     buffer = TrajectoryBuffer(
@@ -407,13 +499,14 @@ def relative_error(a, fd):
     return np.abs(a - fd) / denom
 
 
-def print_accuracy_report(scene_name, label, horizons, results):
+def print_accuracy_report(scene_name, label, horizons, results, ref_label="FD"):
     """Print a table of gradient accuracy vs horizon."""
     print(f"\n{'='*70}")
     print(f"  GRADIENT ACCURACY: {label}")
+    print(f"  Reference: {ref_label}")
     print(f"{'='*70}")
     print(f"  {'Steps':>5}  {'Max RelErr':>10}  {'Mean RelErr':>11}  "
-          f"{'||Adjoint||':>11}  {'||FD||':>11}  {'Cosine':>7}")
+          f"{'||Adjoint||':>11}  {'||Ref||':>11}  {'Cosine':>7}")
     print(f"  {'-'*60}")
 
     for n, (ga, gf) in zip(horizons, results):
@@ -465,23 +558,36 @@ def print_decay_report(scene_name, label, num_steps, norms):
 # =============================================================================
 
 
-def run_scene(scene_name, horizons, decay_steps, config_overrides=None):
+def run_scene(scene_name, horizons, decay_steps, config_overrides=None,
+              use_smoothed=False, smoothed_sigma=1e-3, smoothed_samples=64):
     scene_cfg = SCENES[scene_name]
     label = scene_cfg["label"]
     if config_overrides:
         label += f" [{', '.join(f'{k}={v}' for k, v in config_overrides.items())}]"
     rng = np.random.default_rng(42)
+    w = _make_loss_direction(scene_cfg, rng)
 
     # --- Gradient accuracy at increasing horizons ---
     accuracy_results = []
     for n in horizons:
-        ga, gf = measure_gradient_accuracy(scene_cfg, n, rng, config_overrides)
+        ga, gf = measure_gradient_accuracy(scene_cfg, n, w, rng, config_overrides)
+
+        # Optionally replace FD reference with smoothed gradient
+        if use_smoothed and scene_cfg["fd_type"] == "ctrl":
+            rng_smooth = np.random.default_rng(1000 + n)
+            gf_smooth, gf_std, active = measure_smoothed_gradient(
+                scene_cfg, n, w, rng_smooth,
+                sigma=smoothed_sigma, num_samples=smoothed_samples,
+            )
+            gf = gf_smooth
+
         accuracy_results.append((ga, gf))
 
-    print_accuracy_report(scene_name, label, horizons, accuracy_results)
+    ref_label = f"smoothed (σ={smoothed_sigma}, N={smoothed_samples})" if use_smoothed else "FD"
+    print_accuracy_report(scene_name, label, horizons, accuracy_results, ref_label)
 
     # --- Gradient norm decay ---
-    norms = measure_gradient_norm_decay(scene_cfg, decay_steps, rng, config_overrides)
+    norms = measure_gradient_norm_decay(scene_cfg, decay_steps, w, config_overrides)
     print_decay_report(scene_name, label, decay_steps, norms)
 
     # --- Collect structured results ---
@@ -553,6 +659,18 @@ def main():
         help="Enable per-step gradient normalization",
     )
     parser.add_argument(
+        "--smoothed", action="store_true",
+        help="Use randomized smoothing instead of FD as gradient reference",
+    )
+    parser.add_argument(
+        "--smoothed-sigma", type=float, default=1e-3,
+        help="Smoothing sigma for randomized gradient (default: 1e-3)",
+    )
+    parser.add_argument(
+        "--smoothed-samples", type=int, default=64,
+        help="Number of antithetic sample pairs (default: 64)",
+    )
+    parser.add_argument(
         "--save", metavar="PATH",
         help="Save results to JSON file",
     )
@@ -571,8 +689,13 @@ def main():
 
     all_results = []
     for scene_name in scenes:
-        result = run_scene(scene_name, args.horizons, args.decay_steps,
-                           config_overrides or None)
+        result = run_scene(
+            scene_name, args.horizons, args.decay_steps,
+            config_overrides=config_overrides or None,
+            use_smoothed=args.smoothed,
+            smoothed_sigma=args.smoothed_sigma,
+            smoothed_samples=args.smoothed_samples,
+        )
         all_results.append(result)
 
     print(f"\n{'='*70}")
