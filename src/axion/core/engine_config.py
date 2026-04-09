@@ -95,6 +95,7 @@ class AxionEngineConfig(EngineConfig):
     adjoint_soft_blending: bool = False
     adjoint_soft_blending_temperature: float = 0.05
     adjoint_regularization: float = 0.0
+    adjoint_gradient_normalization: bool = False
 
     # --- Logging & Profiling (MOVED HERE from Base Class) ---
     enable_timing: bool = False

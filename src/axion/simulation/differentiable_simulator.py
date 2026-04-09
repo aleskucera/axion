@@ -258,6 +258,8 @@ class AxionDifferentiableSimulator(DifferentiableSimulator, ABC):
             self.solver.step_backward()
             self.trajectory.save_gradients(i, self.solver.data)
             self.trajectory.save_pose_gradients(i, self.solver.data)
+            if self.solver.config.adjoint_gradient_normalization and i > 0:
+                self.trajectory.normalize_gradients(i)
 
     def run_target_episode(self):
         for i in range(self.clock.total_sim_steps):

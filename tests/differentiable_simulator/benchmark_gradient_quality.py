@@ -162,6 +162,10 @@ def make_engine(model, num_steps, config_overrides=None):
 # =============================================================================
 
 
+def _should_normalize(config_overrides):
+    return config_overrides and config_overrides.get("adjoint_gradient_normalization", False)
+
+
 def measure_gradient_accuracy(scene_cfg, num_steps, rng, config_overrides=None):
     """Run forward + backward for `num_steps`, compare adjoint grad vs FD.
 
@@ -212,12 +216,15 @@ def measure_gradient_accuracy(scene_cfg, num_steps, rng, config_overrides=None):
         ),
     )
 
+    normalize = _should_normalize(config_overrides)
     for i in range(num_steps - 1, -1, -1):
         buffer.load_step(i, engine.data, engine.axion_contacts)
         engine.data.zero_gradients()
         engine.step_backward()
         buffer.save_gradients(i, engine.data)
         buffer.save_pose_gradients(i, engine.data)
+        if normalize and i > 0:
+            buffer.normalize_gradients(i)
 
     if scene_cfg["fd_type"] == "vel":
         # Gradient w.r.t. initial velocity
@@ -349,6 +356,7 @@ def measure_gradient_norm_decay(scene_cfg, num_steps, rng, config_overrides=None
         ),
     )
 
+    normalize = _should_normalize(config_overrides)
     for i in range(num_steps - 1, -1, -1):
         buffer.load_step(i, engine.data, engine.axion_contacts)
         engine.data.zero_gradients()
@@ -356,12 +364,15 @@ def measure_gradient_norm_decay(scene_cfg, num_steps, rng, config_overrides=None
         buffer.save_gradients(i, engine.data)
         buffer.save_pose_gradients(i, engine.data)
 
-        # Measure the gradient norm propagated to step i
+        # Measure the gradient norm propagated to step i (before normalization)
         vel_grad = buffer.body_vel.grad[i].numpy().flatten()
         pose_grad = buffer.body_pose.grad[i].numpy().flatten()
         norms[i] = np.sqrt(
             np.dot(vel_grad, vel_grad) + np.dot(pose_grad, pose_grad)
         )
+
+        if normalize and i > 0:
+            buffer.normalize_gradients(i)
 
     return norms
 
@@ -485,6 +496,10 @@ def main():
         "--regularization", type=float, default=0.0,
         help="Adjoint regularization gamma (default: 0.0 = off)",
     )
+    parser.add_argument(
+        "--normalize", action="store_true",
+        help="Enable per-step gradient normalization",
+    )
     args = parser.parse_args()
 
     scenes = args.scene if args.scene else list(SCENES.keys())
@@ -495,6 +510,8 @@ def main():
         config_overrides["adjoint_soft_blending_temperature"] = args.temperature
     if args.regularization > 0.0:
         config_overrides["adjoint_regularization"] = args.regularization
+    if args.normalize:
+        config_overrides["adjoint_gradient_normalization"] = True
 
     for scene_name in scenes:
         run_scene(scene_name, args.horizons, args.decay_steps,
