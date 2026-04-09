@@ -4,14 +4,14 @@
 #
 # Usage:
 #   bash tests/differentiable_simulator/run_ablation.sh
-#   bash tests/differentiable_simulator/run_ablation.sh --scene helhest
+#   bash tests/differentiable_simulator/run_ablation.sh --scene helhest-hard
 
 set -e
 
 OUTDIR="results/ablation"
 mkdir -p "$OUTDIR"
 
-SCENE_ARGS="${@:---scene helhest pendulum box}"
+SCENE_ARGS="${@:---scene helhest-straight helhest-gentle helhest-hard pendulum box}"
 HORIZONS="--horizons 1 5 10 20 40"
 DECAY="--decay-steps 40"
 

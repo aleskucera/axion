@@ -123,23 +123,39 @@ SCENES = {
         "fd_type": "ctrl",  # perturb the target velocity
         "control_vel": lambda ndof: np.array([3.0] + [0.0] * (ndof - 1), dtype=np.float32),
     },
-    "helhest": {
+    "helhest-straight": {
         "build": build_helhest,
-        "dt": 0.01,
-        "label": "Helhest robot (3 wheels, friction)",
+        "dt": 0.05,
+        "label": "Helhest straight (all sticking)",
         "seed_type": "vel",
-        "fd_type": "ctrl",  # perturb wheel target velocities
-        "control_vel": lambda ndof: _helhest_ctrl(ndof),
+        "fd_type": "ctrl",
+        "control_vel": lambda ndof: _helhest_ctrl(ndof, 3.0, 3.0, 3.0),
+    },
+    "helhest-gentle": {
+        "build": build_helhest,
+        "dt": 0.05,
+        "label": "Helhest gentle turn (mixed)",
+        "seed_type": "vel",
+        "fd_type": "ctrl",
+        "control_vel": lambda ndof: _helhest_ctrl(ndof, 4.0, 2.0, 3.0),
+    },
+    "helhest-hard": {
+        "build": build_helhest,
+        "dt": 0.05,
+        "label": "Helhest hard turn (mostly sliding)",
+        "seed_type": "vel",
+        "fd_type": "ctrl",
+        "control_vel": lambda ndof: _helhest_ctrl(ndof, 6.0, 1.0, 0.0),
     },
 }
 
 
-def _helhest_ctrl(ndof):
-    """Fixed wheel velocities for helhest: all wheels at 3 rad/s."""
+def _helhest_ctrl(ndof, left, right, rear):
+    """Fixed wheel velocities for helhest."""
     ctrl = np.zeros(ndof, dtype=np.float32)
-    ctrl[6] = 3.0  # left
-    ctrl[7] = 3.0  # right
-    ctrl[8] = 3.0  # rear
+    ctrl[6] = left
+    ctrl[7] = right
+    ctrl[8] = rear
     return ctrl
 
 
@@ -506,10 +522,11 @@ def main():
     parser = argparse.ArgumentParser(
         description="Gradient quality benchmark across scenes"
     )
+    scene_names = list(SCENES.keys())
     parser.add_argument(
         "--scene", nargs="*", default=None,
-        choices=list(SCENES.keys()),
-        help="Scene(s) to benchmark (default: all)",
+        choices=scene_names,
+        help=f"Scene(s) to benchmark (default: all). Options: {scene_names}",
     )
     parser.add_argument(
         "--horizons", nargs="*", type=int, default=[1, 5, 10, 20],
