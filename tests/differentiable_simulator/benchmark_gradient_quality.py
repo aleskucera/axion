@@ -13,9 +13,11 @@ Usage:
     python -m tests.differentiable_simulator.benchmark_gradient_quality
     python -m tests.differentiable_simulator.benchmark_gradient_quality --scene helhest
     python -m tests.differentiable_simulator.benchmark_gradient_quality --horizons 1 5 10 20 40
+    python -m tests.differentiable_simulator.benchmark_gradient_quality --save results/ablation.json
 """
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
@@ -466,6 +468,39 @@ def run_scene(scene_name, horizons, decay_steps, config_overrides=None):
     norms = measure_gradient_norm_decay(scene_cfg, decay_steps, rng, config_overrides)
     print_decay_report(scene_name, label, decay_steps, norms)
 
+    # --- Collect structured results ---
+    accuracy_records = []
+    for n, (ga, gf) in zip(horizons, accuracy_results):
+        re = relative_error(ga, gf)
+        norm_a = float(np.linalg.norm(ga))
+        norm_f = float(np.linalg.norm(gf))
+        cos = float(np.dot(ga, gf) / max(norm_a * norm_f, 1e-15))
+        accuracy_records.append({
+            "steps": n,
+            "max_rel_err": float(np.max(re)),
+            "mean_rel_err": float(np.mean(re)),
+            "norm_adjoint": norm_a,
+            "norm_fd": norm_f,
+            "cosine": cos,
+        })
+
+    decay_rate = None
+    if norms[0] > 1e-15 and norms[decay_steps] > 1e-15:
+        decay_rate = float((norms[0] / norms[decay_steps]) ** (1.0 / decay_steps))
+
+    return {
+        "scene": scene_name,
+        "label": label,
+        "config_overrides": config_overrides or {},
+        "accuracy": accuracy_records,
+        "decay": {
+            "num_steps": decay_steps,
+            "norms": norms.tolist(),
+            "decay_rate": decay_rate,
+            "norm_at_step_0": float(norms[0]),
+        },
+    }
+
 
 def main():
     parser = argparse.ArgumentParser(
@@ -500,6 +535,10 @@ def main():
         "--normalize", action="store_true",
         help="Enable per-step gradient normalization",
     )
+    parser.add_argument(
+        "--save", metavar="PATH",
+        help="Save results to JSON file",
+    )
     args = parser.parse_args()
 
     scenes = args.scene if args.scene else list(SCENES.keys())
@@ -513,13 +552,20 @@ def main():
     if args.normalize:
         config_overrides["adjoint_gradient_normalization"] = True
 
+    all_results = []
     for scene_name in scenes:
-        run_scene(scene_name, args.horizons, args.decay_steps,
-                  config_overrides or None)
+        result = run_scene(scene_name, args.horizons, args.decay_steps,
+                           config_overrides or None)
+        all_results.append(result)
 
     print(f"\n{'='*70}")
     print(f"  DONE — {len(scenes)} scene(s) benchmarked")
     print(f"{'='*70}")
+
+    if args.save:
+        Path(args.save).parent.mkdir(parents=True, exist_ok=True)
+        Path(args.save).write_text(json.dumps(all_results, indent=2))
+        print(f"  Saved to {args.save}")
 
 
 if __name__ == "__main__":
