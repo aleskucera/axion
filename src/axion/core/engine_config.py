@@ -94,6 +94,7 @@ class AxionEngineConfig(EngineConfig):
     # --- Adjoint Backward Pass Interventions ---
     adjoint_soft_blending: bool = False
     adjoint_soft_blending_temperature: float = 0.05
+    adjoint_regularization: float = 0.0
 
     # --- Logging & Profiling (MOVED HERE from Base Class) ---
     enable_timing: bool = False

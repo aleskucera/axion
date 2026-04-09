@@ -384,6 +384,7 @@ class AxionEngineBase(SolverBase):
         )
 
     def step_backward(self):
+        from .adjoint_friction import adjoint_regularize_compliance_kernel
         from .adjoint_friction import freeze_contact_mode_kernel
         from .adjoint_friction import freeze_contact_mode_soft_kernel
 
@@ -436,6 +437,21 @@ class AxionEngineBase(SolverBase):
                     self.axion_model.shape_material_mu,
                     self.config.joint_compliance,  # sticking: rigid like joints
                     100.0,  # sliding: very soft
+                ],
+                outputs=[],
+                device=self.device,
+            )
+
+        # Adjoint regularization: add gamma to all constraint compliances
+        # Turns [J M⁻¹ Jᵀ + C] into [J M⁻¹ Jᵀ + C + γI]
+        if self.config.adjoint_regularization > 0.0:
+            wp.launch(
+                kernel=adjoint_regularize_compliance_kernel,
+                dim=(self.dims.num_worlds, self.dims.num_constraints),
+                inputs=[
+                    self.data.C_values.full,
+                    self.data.constr_active_mask.full,
+                    self.config.adjoint_regularization,
                 ],
                 outputs=[],
                 device=self.device,

@@ -140,3 +140,20 @@ def freeze_contact_mode_soft_kernel(
     # Zero residuals so IFT assumption holds
     res_c_f[world_idx, 2 * contact_idx + 0] = 0.0
     res_c_f[world_idx, 2 * contact_idx + 1] = 0.0
+
+
+@wp.kernel
+def adjoint_regularize_compliance_kernel(
+    C_values: wp.array(dtype=wp.float32, ndim=2),
+    constr_active_mask: wp.array(dtype=wp.float32, ndim=2),
+    gamma: wp.float32,
+):
+    """Add regularization gamma to all active constraint compliances for the adjoint.
+
+    Modifies the adjoint Schur complement from [J M-1 JT + C] to
+    [J M-1 JT + C + gamma*I], preventing ill-conditioning and creating
+    a gradient trust region that preserves signal through contacts.
+    """
+    world_idx, constr_idx = wp.tid()
+    if constr_active_mask[world_idx, constr_idx] > 0.0:
+        C_values[world_idx, constr_idx] = C_values[world_idx, constr_idx] + gamma

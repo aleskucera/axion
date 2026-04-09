@@ -481,6 +481,10 @@ def main():
         "--temperature", type=float, default=0.05,
         help="Soft blending temperature (default: 0.05)",
     )
+    parser.add_argument(
+        "--regularization", type=float, default=0.0,
+        help="Adjoint regularization gamma (default: 0.0 = off)",
+    )
     args = parser.parse_args()
 
     scenes = args.scene if args.scene else list(SCENES.keys())
@@ -489,6 +493,8 @@ def main():
     if args.soft_blending:
         config_overrides["adjoint_soft_blending"] = True
         config_overrides["adjoint_soft_blending_temperature"] = args.temperature
+    if args.regularization > 0.0:
+        config_overrides["adjoint_regularization"] = args.regularization
 
     for scene_name in scenes:
         run_scene(scene_name, args.horizons, args.decay_steps,
