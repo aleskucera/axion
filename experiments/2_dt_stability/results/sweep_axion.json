@@ -1,0 +1,85 @@
+{
+  "simulator": "Axion",
+  "experiment": "obstacle_dt_sweep",
+  "obstacle": {
+    "x": 2.0,
+    "height": 0.1
+  },
+  "calibrated_params": {
+    "k_p": 4000.0,
+    "mu": 0.1,
+    "friction_compliance": 0.02,
+    "contact_compliance": 0.1
+  },
+  "wheel_vel": 4.0,
+  "duration": 8.0,
+  "max_stable_dt": 0.2,
+  "results": [
+    {
+      "stable": false,
+      "has_nan": false,
+      "z_min": 0.0212,
+      "z_max": 0.5,
+      "x_final": 1.4133,
+      "y_max_abs": 0.0104,
+      "num_steps": 17,
+      "dt": 0.5,
+      "time_s": 3.93
+    },
+    {
+      "stable": false,
+      "has_nan": false,
+      "z_min": 0.104,
+      "z_max": 0.5,
+      "x_final": 1.3513,
+      "y_max_abs": 0.0088,
+      "num_steps": 28,
+      "dt": 0.3,
+      "time_s": 4.86
+    },
+    {
+      "stable": true,
+      "has_nan": false,
+      "z_min": 0.1952,
+      "z_max": 0.5355,
+      "x_final": 10.3208,
+      "y_max_abs": 0.1973,
+      "num_steps": 41,
+      "dt": 0.2,
+      "time_s": 6.72
+    },
+    {
+      "stable": false,
+      "has_nan": false,
+      "z_min": 0.1682,
+      "z_max": 0.5,
+      "x_final": 1.2946,
+      "y_max_abs": 0.0441,
+      "num_steps": 33,
+      "dt": 0.25,
+      "time_s": 5.44
+    },
+    {
+      "stable": false,
+      "has_nan": false,
+      "z_min": 0.2064,
+      "z_max": 0.5,
+      "x_final": 1.2684,
+      "y_max_abs": 0.0081,
+      "num_steps": 37,
+      "dt": 0.225,
+      "time_s": 5.94
+    },
+    {
+      "stable": false,
+      "has_nan": false,
+      "z_min": 0.2294,
+      "z_max": 0.5,
+      "x_final": 1.2559,
+      "y_max_abs": 0.0007,
+      "num_steps": 39,
+      "dt": 0.21250000000000002,
+      "time_s": 6.19
+    }
+  ]
+}

@@ -1,0 +1,121 @@
+{
+  "simulator": "Semi-Implicit",
+  "experiment": "obstacle_dt_sweep",
+  "obstacle": {
+    "x": 2.0,
+    "height": 0.1
+  },
+  "calibrated_params": {
+    "k_p": 0.0,
+    "k_d": 400.0,
+    "mu": 0.02,
+    "ke": 8000.0,
+    "kd_contact": 2000.0,
+    "kf": 1500.0
+  },
+  "wheel_vel": 4.0,
+  "ramp_time": 1.0,
+  "duration": 8.0,
+  "max_stable_dt": 0.000625,
+  "results": [
+    {
+      "stable": false,
+      "has_nan": true,
+      "z_min": 0.412,
+      "z_max": 27.6835,
+      "x_final": -64.677,
+      "y_max_abs": 10.2631,
+      "num_steps": 8,
+      "dt": 0.01,
+      "time_s": 1.9
+    },
+    {
+      "stable": false,
+      "has_nan": true,
+      "z_min": -0.1083,
+      "z_max": 0.5793,
+      "x_final": -1.3035,
+      "y_max_abs": 0.0441,
+      "num_steps": 9,
+      "dt": 0.005,
+      "time_s": 1.52
+    },
+    {
+      "stable": false,
+      "has_nan": true,
+      "z_min": 0.4087,
+      "z_max": 1.2763,
+      "x_final": 0.2718,
+      "y_max_abs": 2.0549,
+      "num_steps": 16,
+      "dt": 0.002,
+      "time_s": 1.86
+    },
+    {
+      "stable": false,
+      "has_nan": true,
+      "z_min": -34.205,
+      "z_max": 0.5799,
+      "x_final": 290.1882,
+      "y_max_abs": 74.0675,
+      "num_steps": 45,
+      "dt": 0.001,
+      "time_s": 1.54
+    },
+    {
+      "stable": true,
+      "has_nan": false,
+      "z_min": 0.2058,
+      "z_max": 0.5692,
+      "x_final": 9.8917,
+      "y_max_abs": 0.0508,
+      "num_steps": 16001,
+      "dt": 0.0005,
+      "time_s": 25.29
+    },
+    {
+      "stable": false,
+      "has_nan": false,
+      "z_min": 0.1998,
+      "z_max": 0.5,
+      "x_final": 1.2503,
+      "y_max_abs": 0.0582,
+      "num_steps": 10668,
+      "dt": 0.00075,
+      "time_s": 17.25
+    },
+    {
+      "stable": true,
+      "has_nan": false,
+      "z_min": 0.2055,
+      "z_max": 0.5101,
+      "x_final": 7.1653,
+      "y_max_abs": 0.2608,
+      "num_steps": 12801,
+      "dt": 0.000625,
+      "time_s": 21.03
+    },
+    {
+      "stable": false,
+      "has_nan": false,
+      "z_min": 0.205,
+      "z_max": 0.5,
+      "x_final": 3.1041,
+      "y_max_abs": 3.1862,
+      "num_steps": 11638,
+      "dt": 0.0006875,
+      "time_s": 18.52
+    },
+    {
+      "stable": false,
+      "has_nan": false,
+      "z_min": 0.2051,
+      "z_max": 0.5211,
+      "x_final": 3.6155,
+      "y_max_abs": 1.8001,
+      "num_steps": 12192,
+      "dt": 0.0006562499999999999,
+      "time_s": 19.55
+    }
+  ]
+}
