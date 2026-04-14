@@ -15,9 +15,17 @@ DATA="$DIR/../data"
 RESULTS="$DIR/results"
 mkdir -p "$RESULTS"
 
-GT="$DATA/right_turn_b.json"
+GT="${GT:-$DATA/right_turn_b.json}"   # override with GT=$DATA/acceleration.json ./run_experiment.sh
 HORIZON="${HORIZON:-2.0}"     # seconds;     override with HORIZON=9.2 ./run_experiment.sh
 ITERATIONS="${ITERATIONS:-50}"   # opt iters; override with ITERATIONS=200 ./run_experiment.sh
+
+# Save-file suffix derived from GT filename (so runs on different trajectories don't overwrite each other)
+GT_STEM="$(basename "$GT" .json)"
+if [ "$GT_STEM" != "right_turn_b" ]; then
+    SAVE_SUFFIX="_${GT_STEM}"
+else
+    SAVE_SUFFIX=""
+fi
 
 RUN_AXION=false; RUN_MJX=false; RUN_SEMI=false; RUN_TINY=false
 RUN_ALL=true
@@ -37,28 +45,28 @@ COMMON_ARGS=(--ground-truth "$GT" --horizon-s "$HORIZON" --iterations "$ITERATIO
 if $RUN_ALL || $RUN_AXION; then
     echo "=== Axion (adjoint)  [horizon=${HORIZON}s, iters=${ITERATIONS}] ==="
     python "$DIR/optimize_axion.py" \
-        "${COMMON_ARGS[@]}" --save "$RESULTS/axion.json" "${EXTRA_ARGS[@]}"
+        "${COMMON_ARGS[@]}" --save "$RESULTS/axion${SAVE_SUFFIX}.json" "${EXTRA_ARGS[@]}"
     echo ""
 fi
 
 if $RUN_ALL || $RUN_MJX; then
     echo "=== MJX (jax.grad / BPTT)  [horizon=${HORIZON}s, iters=${ITERATIONS}] ==="
     python "$DIR/optimize_mjx.py" \
-        "${COMMON_ARGS[@]}" --save "$RESULTS/mjx.json" "${EXTRA_ARGS[@]}"
+        "${COMMON_ARGS[@]}" --save "$RESULTS/mjx${SAVE_SUFFIX}.json" "${EXTRA_ARGS[@]}"
     echo ""
 fi
 
 if $RUN_ALL || $RUN_SEMI; then
     echo "=== Semi-Implicit (warp tape / BPTT)  [horizon=${HORIZON}s, iters=${ITERATIONS}] ==="
     python "$DIR/optimize_semi_implicit.py" \
-        "${COMMON_ARGS[@]}" --save "$RESULTS/semi_implicit.json" "${EXTRA_ARGS[@]}"
+        "${COMMON_ARGS[@]}" --save "$RESULTS/semi_implicit${SAVE_SUFFIX}.json" "${EXTRA_ARGS[@]}"
     echo ""
 fi
 
 if $RUN_ALL || $RUN_TINY; then
     echo "=== TinyDiffSim (CppAD)  [horizon=${HORIZON}s, iters=${ITERATIONS}] ==="
     python "$DIR/optimize_tinydiffsim.py" \
-        "${COMMON_ARGS[@]}" --save "$RESULTS/tinydiffsim.json" "${EXTRA_ARGS[@]}"
+        "${COMMON_ARGS[@]}" --save "$RESULTS/tinydiffsim${SAVE_SUFFIX}.json" "${EXTRA_ARGS[@]}"
     echo ""
 fi
 

@@ -20,8 +20,9 @@ import mujoco.mjx as mjx
 import numpy as np
 import optax
 
-DT = 2e-3
-DURATION = 3.0
+# Δt: largest stable+accurate timestep from Exp 2 (1.25 ms).
+DT = 0.00125
+DURATION = 2.0   # match Exp 3 horizon
 T = int(DURATION / DT)
 K = 30
 TARGET_CTRL = np.array([1.0, 6.0, 0.0], dtype=np.float32)

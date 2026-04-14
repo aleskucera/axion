@@ -37,17 +37,8 @@ for N in "${WORLDS[@]}"; do
     run_sim "$DIR/mjx.py"         "MJX-grad"   "$N" "$DIR/results/mjx_grad_${N}.json"
 done
 
-for N in "${WORLDS[@]}"; do
-    run_sim "$DIR/mjx_jacfwd.py"  "MJX-jacfwd" "$N" "$DIR/results/mjx_jacfwd_${N}.json"
-done
-
-for N in "${WORLDS[@]}"; do
-    run_sim "$DIR/tinydiffsim.py" "TinyDiffSim" "$N" "$DIR/results/tinydiffsim_${N}.json"
-done
-
-for N in "${WORLDS[@]}"; do
-    run_sim "$DIR/brax_sim.py"        "Brax"        "$N" "$DIR/results/brax_${N}.json"
-done
+# TinyDiffSim, MJX-jacfwd, Brax: kept on disk as references; not part of §IV-D
+# (TinyDiffSim is CPU-bound; Semi-Implicit's gradients fail to converge in §IV-C).
 
 echo ""
 echo "Sweep complete. Plotting..."

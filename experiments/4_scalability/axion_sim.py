@@ -26,8 +26,9 @@ from examples.helhest.common import HelhestConfig
 
 os.environ["PYOPENGL_PLATFORM"] = "glx"
 
-DT = 7e-2
-DURATION = 3.0
+# Δt: largest stable+accurate timestep from Exp 2 (0.125 s).
+DT = 0.125
+DURATION = 2.0   # match Exp 3 horizon
 K = 30
 TARGET_CTRL = (1.0, 6.0, 0.0)
 INIT_CTRL = (2.0, 5.0, 0.0)

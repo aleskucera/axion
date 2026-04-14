@@ -37,6 +37,7 @@ NUM_WHEEL_DOFS = 3
 NU = 3
 TRAJECTORY_WEIGHT = 10.0
 YAW_WEIGHT = 5.0
+REGULARIZATION_WEIGHT = 1e-7
 
 WHEEL_QD = [6, 7, 8]
 WHEEL_TAU = [0, 1, 2]
@@ -238,6 +239,15 @@ def grad_and_loss_ad(params_np, W, target_xy, T):
 
         dot = fwd_x * pd.ADDouble(tdx) + fwd_y * pd.ADDouble(tdy)
         loss_ad = loss_ad + (pd.ADDouble(1.0) - dot * dot) * pd.ADDouble(YAW_WEIGHT / T)
+
+    # Control regularization: diagonal approximation of sum_t (W @ params)[t]**2
+    # = sum_k (W[:,k]**2).sum() * params[k,:]**2 (cross terms are small for linear-interp W)
+    w_sq = (W * W).sum(axis=0)   # shape (K,)
+    for k in range(W.shape[1]):
+        coef = pd.ADDouble(float(w_sq[k]) * REGULARIZATION_WEIGHT / T)
+        for j in range(NU):
+            p = p_ind[k * NU + j]
+            loss_ad = loss_ad + p * p * coef
 
     fn = pd.ADFun(p_ind, [loss_ad])
     fn.optimize()
