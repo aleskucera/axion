@@ -428,7 +428,7 @@ def main():
     parser.add_argument("--save", metavar="PATH", default=str(RESULTS_DIR / "axion.json"))
     parser.add_argument("--iterations", type=int, default=200)
     parser.add_argument("--K", type=int, default=10)
-    parser.add_argument("--lr", type=float, default=0.01)
+    parser.add_argument("--lr", type=float, default=0.15)
     parser.add_argument(
         "--noise-std", type=float, default=0.2, help="Std of Gaussian noise for initial guess"
     )

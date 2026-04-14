@@ -281,6 +281,7 @@ class HelhestSemiImplicitOptimizer(NewtonDifferentiableSimulator):
 
             self.update()
             self.tape.zero()
+            self.tape.reset()  # release recorded ops; otherwise tape grows each iter
             self.loss.zero_()
 
         results["best_loss"] = float(best_loss)
