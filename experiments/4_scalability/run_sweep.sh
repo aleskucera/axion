@@ -7,7 +7,8 @@ set -e
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 mkdir -p "$DIR/results"
 
-WORLDS=(1 2 5 10 25 50 100 200 500)
+AXION_WORLDS=(1 2 5 10 25 50 100 200 500 1024 2048 4096 8192 16384 32768 65536 131072 262144)
+MJX_WORLDS=(1 2 4 8 16 32)   # MJX OOMs around 32 worlds (BPTT tape ~1.3 GB/world)
 
 run_sim() {
     local script="$1"
@@ -29,11 +30,11 @@ run_sim() {
     fi
 }
 
-for N in "${WORLDS[@]}"; do
+for N in "${AXION_WORLDS[@]}"; do
     run_sim "$DIR/axion_sim.py"   "Axion"      "$N" "$DIR/results/axion_${N}.json"
 done
 
-for N in "${WORLDS[@]}"; do
+for N in "${MJX_WORLDS[@]}"; do
     run_sim "$DIR/mjx.py"         "MJX-grad"   "$N" "$DIR/results/mjx_grad_${N}.json"
 done
 
