@@ -137,6 +137,39 @@ def collect_dataset(
         name = 'contact_thicknesses',
         data = rollouts['contacts']['contact_thicknesses'].detach().cpu().numpy()
     )
+    axion_contacts_grp = data_grp.create_group('axion_contacts')
+    axion_contacts_grp.create_dataset(
+        name='contact_count',
+        data=rollouts['axion_contacts']['contact_count'].detach().cpu().numpy()
+    )
+    axion_contacts_grp.create_dataset(
+        name='contact_point0',
+        data=rollouts['axion_contacts']['contact_point0'].detach().cpu().numpy()
+    )
+    axion_contacts_grp.create_dataset(
+        name='contact_point1',
+        data=rollouts['axion_contacts']['contact_point1'].detach().cpu().numpy()
+    )
+    axion_contacts_grp.create_dataset(
+        name='contact_normal',
+        data=rollouts['axion_contacts']['contact_normal'].detach().cpu().numpy()
+    )
+    axion_contacts_grp.create_dataset(
+        name='contact_shape0',
+        data=rollouts['axion_contacts']['contact_shape0'].detach().cpu().numpy()
+    )
+    axion_contacts_grp.create_dataset(
+        name='contact_shape1',
+        data=rollouts['axion_contacts']['contact_shape1'].detach().cpu().numpy()
+    )
+    axion_contacts_grp.create_dataset(
+        name='contact_thickness0',
+        data=rollouts['axion_contacts']['contact_thickness0'].detach().cpu().numpy()
+    )
+    axion_contacts_grp.create_dataset(
+        name='contact_thickness1',
+        data=rollouts['axion_contacts']['contact_thickness1'].detach().cpu().numpy()
+    )
     # data_grp.create_dataset(
     #     name = 'joint_acts', 
     #     data = rollouts['joint_acts'].detach().cpu().numpy()
@@ -156,6 +189,9 @@ def collect_dataset(
     data_grp.attrs['state_dim'] = rollouts['states'].shape[-1]
     # data_grp.attrs['contact_prob'] = contact_prob
     data_grp.attrs['num_contacts_per_env'] = rollouts['contacts']['contact_depths'].shape[-1]
+    data_grp.attrs['axion_contacts_format'] = (
+        "batched AxionContacts arrays captured before convert_newton_contacts_to_contacts_for_nn_model"
+    )
     # data_grp.attrs['joint_act_dim'] = rollouts['joint_acts'].shape[-1]
     data_grp.attrs['next_state_dim'] = rollouts['next_states'].shape[-1]
 
