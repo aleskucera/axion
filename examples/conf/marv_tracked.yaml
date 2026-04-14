@@ -10,5 +10,6 @@ defaults:
 # Use the recommended hybrid approach for project names
 project_name: ${hydra:job.name}
 
-engine.contact_compliance: 1e-3
-engine.max_contacts_per_world: 1024
+engine:
+  contact_compliance: 1e-3
+  max_contacts_per_world: 1024
