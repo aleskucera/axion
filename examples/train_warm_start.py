@@ -65,20 +65,6 @@ def get_state_tensor(engine: AxionEngine) -> torch.Tensor:
     return torch.cat([pose_flat, vel_flat], dim=-1)
 
 
-def compute_residual_loss(engine, body_vel, constr_force):
-    """Compute ||residual||^2 with exact autodiff gradients."""
-    residual = AxionResidualAD.apply(
-        engine.axion_model,
-        engine.axion_contacts,
-        engine.data,
-        engine.config,
-        engine.dims,
-        body_vel,
-        constr_force,
-    )
-    return torch.sum(residual**2)
-
-
 def count_solver_iters(engine, dims, init_vel, init_cf):
     """Run solver from given initialization, return (iter_count, res_norm_sq).
 

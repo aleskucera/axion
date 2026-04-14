@@ -17,8 +17,8 @@ import torch
 from axion.neural_solver.standalone.neural_predictor import NeuralPredictor
 from axion.neural_solver.models.lambda_models import LambdaClassificationModel
 from axion.neural_solver.utils.neural_lambda_hdf5_logger import NeuralLambdaHDF5Logger
-NN_BASE_PATH = Path.cwd() /"src"/"axion"/"neural_solver"/"train"/"trained_models"/"lambda_classifier"/"04-01-2026-15-45-58"#"04-01-2026-12-43-28"
-NN_PENDULUM_PT_PATH = NN_BASE_PATH/"nn"/"best_valid_valid_model.pt"
+NN_BASE_PATH = Path.cwd() /"src"/"axion"/"neural_solver"/"train"/"trained_models"/"lambda_classifier"/"04-02-2026-11-28-08"#"04-01-2026-12-43-28"
+NN_PENDULUM_PT_PATH = NN_BASE_PATH/"nn"/"final_model.pt"
 NN_PENDULUM_CFG_PATH = NN_BASE_PATH/"cfg.yaml"
 
 class AxionEngineWithNeuralLambdas(AxionEngineBase):
@@ -181,8 +181,28 @@ class AxionEngineWithNeuralLambdas(AxionEngineBase):
         if self._use_lambda_classification:
             with torch.no_grad():
                 lambda_logits = self.nn_predictor.nn_model.evaluate(nn_inputs).get("lambda", None)
-            lambda_logits = lambda_logits[:, -1, :] if lambda_logits.shape[1] > 1 else lambda_logits.squeeze(1)
-            lambda_activity = (torch.sigmoid(lambda_logits) >= 0.5).to(dtype=torch.float32)
+            if lambda_logits is None:
+                raise RuntimeError(
+                    "Lambda classification engine expected model.evaluate(...) to return "
+                    "a dict with key 'lambda'. Got None."
+                )
+
+            # Binary: (B,T,C). 
+            if lambda_logits.ndim == 3:
+                # (B,T,C) -> last-step (B,C)
+                lambda_logits = (
+                    lambda_logits[:, -1, :] if lambda_logits.shape[1] > 1 else lambda_logits.squeeze(1)
+                )
+                lambda_activity = (torch.sigmoid(lambda_logits) >= 0.5).to(dtype=torch.float32)
+            #Multiclass: (B,T,C,K).
+            elif lambda_logits.ndim == 4:
+                # (B,T,C,K) -> last-step (B,C,K) -> class indices (B,C)
+                lambda_logits_last = (
+                    lambda_logits[:, -1, :, :]
+                    if lambda_logits.shape[1] > 1
+                    else lambda_logits.squeeze(1)
+                )
+                lambda_activity = torch.argmax(lambda_logits_last, dim=-1).to(dtype=torch.float32)
         else:
             predicted_next_lambdas = self.nn_predictor.predict_lambdas_only(dt)
 

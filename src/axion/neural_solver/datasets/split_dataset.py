@@ -14,7 +14,7 @@ def parse_args():
         "--input",
         default=(
             "src/axion/neural_solver/datasets/Pendulum/"
-            "pendulumLambdasValid500klen400envs250seed1WithActivityLabels_th1000.hdf5"
+            "pendulumLambdasValid500klen400envs250seed1WithActivityLabels_lth01_hth1000.hdf5"
         ),
         help="Path to source HDF5 dataset.",
     )
