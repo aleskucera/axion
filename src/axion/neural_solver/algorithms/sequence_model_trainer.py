@@ -34,6 +34,7 @@ from tqdm import tqdm
 from axion.neural_solver.envs.nn_training_interface import NnTrainingInterface
 from axion.neural_solver.models.models import ModelMixedInput
 from axion.neural_solver.models.lambda_models import LambdaClassificationModel
+from axion.neural_solver.models.vel_and_lambda_model import VelAndLambdaModel
 from axion.neural_solver.utils.datasets import TrajectoryDataset
 from axion.neural_solver.utils.evaluator import NeuralSimEvaluator
 from axion.neural_solver.utils.python_utils import (
@@ -96,9 +97,26 @@ class SequenceModelTrainer:
             model_impl = str(cfg['network'].get('model_impl', 'default')).lower()
             if model_impl in ('lambda_classification', 'lambda_models', 'classification_head'):
 
+                # Wire classification-specific knobs from algorithm.loss into network_cfg
+                # so LambdaClassificationModel can stay backward compatible.
+                network_cfg = dict(cfg['network'])
+                loss_cfg = algo_cfg.get('loss', {}) or {}
+                if 'classification_num_classes' in loss_cfg and 'classification_num_classes' not in network_cfg:
+                    network_cfg['classification_num_classes'] = loss_cfg['classification_num_classes']
+
                 self.neural_model = LambdaClassificationModel(
                     input_sample=input_sample,
                     output_dim=self.utils_provider.lambda_prediction_dim,
+                    input_cfg=cfg['inputs'],
+                    network_cfg=network_cfg,
+                    device=self.device,
+                )
+            elif model_impl in ('vel_and_lambda', 'vel_and_lambda_model', 'vel_lambda'):
+                engine_dims = self.neural_env.simulator_wrapper.engine.dims
+                self.neural_model = VelAndLambdaModel(
+                    input_sample=input_sample,
+                    vel_ouput_dim=engine_dims.N_u,
+                    lambda_output_dim=engine_dims.num_constraints,
                     input_cfg=cfg['inputs'],
                     network_cfg=cfg['network'],
                     device=self.device,

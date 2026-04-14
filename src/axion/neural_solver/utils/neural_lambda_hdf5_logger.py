@@ -14,6 +14,12 @@ class NeuralLambdaHDF5Logger:
     The output schema is intentionally close to neural_solver/generate datasets:
     - top-level group: data/
     - per-step stacked arrays (T, B, ...)
+
+    Notes:
+    - `lambda_activity` is a per-step, per-channel label/prediction field. Depending on the
+      checkpoint/engine mode it may store:
+        - binary activity mask (0/1)
+        - multiclass activity indices (0/1/2)
     """
 
     def __init__(self, output_path: str):

@@ -21,7 +21,7 @@ from axion import LoggingConfig
 from axion import SimulationConfig
 from axion.core.model_builder import AxionModelBuilder
 from axion.generation.scene_generator_new import SceneGenerator
-from axion.learning.torch_residual_ad import AxionResidualAD
+from axion.learning.residual_loss_utils import compute_residual_loss
 from axion.learning.warm_start_net import WarmStartNet
 from omegaconf import DictConfig
 
@@ -63,20 +63,6 @@ def get_state_tensor(engine: AxionEngine) -> torch.Tensor:
     pose_flat = pose.reshape(engine.dims.num_worlds, -1).float()
     vel_flat = vel.reshape(engine.dims.num_worlds, -1).float()
     return torch.cat([pose_flat, vel_flat], dim=-1)
-
-
-def compute_residual_loss(engine, body_vel, constr_force):
-    """Compute ||residual||^2 with exact autodiff gradients."""
-    residual = AxionResidualAD.apply(
-        engine.axion_model,
-        engine.axion_contacts,
-        engine.data,
-        engine.config,
-        engine.dims,
-        body_vel,
-        constr_force,
-    )
-    return torch.sum(residual**2)
 
 
 def count_solver_iters(engine, dims, init_vel, init_cf):

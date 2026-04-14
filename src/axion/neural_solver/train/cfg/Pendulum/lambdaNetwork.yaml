@@ -17,19 +17,27 @@ algorithm:
   num_epochs: 10
   num_iters_per_epoch: -1
   sample_sequence_length: 10
-  batch_size: 1024
+  batch_size: 2048
   num_valid_batches: 256
   truncate_grad: true
   grad_norm: 1.0
   eval_interval: 0
   loss:
-    classification_loss_type: bce_logits
-    classification_label_key: lambda_activity
     require_dataset_labels: true
-    classification_threshold: 1.0e-3
-    classification_prob_threshold: 0.5
-    positive_class_weight: 1.0
+    classification_label_key: lambda_activity
     classification_eps: 1.0e-8
+
+    # --- Binary (default): BCE-with-logits over 22 channels, labels in {0,1} ---
+    #classification_loss_type: bce_logits
+    #classification_num_classes: 2
+    #classification_prob_threshold: 0.5
+    #positive_class_weight: 1.0
+
+    # --- Multiclass (3 classes 0/1/2) example ---
+    classification_num_classes: 3
+    classification_loss_type: ce_logits
+    classification_prob_threshold: 0.5   # not used for multiclass
+    positive_class_weight: 1.0          # not used for multiclass
 
   optimizer:
     name: adamw
@@ -39,9 +47,9 @@ algorithm:
     weight_decay: 8e-4
 
   dataset:
-    train_dataset_path: [src/axion/neural_solver/datasets/Pendulum/pendulumLambdasValid500klen400envs250seed1WithActivityLabels_th1000_train.hdf5]
+    train_dataset_path: [src/axion/neural_solver/datasets/Pendulum/pendulumLambdasValid500klen400envs250seed1WithActivityLabels_lth01_hth1000_train.hdf5]
     valid_datasets:
-      valid: src/axion/neural_solver/datasets/Pendulum/pendulumLambdasValid500klen400envs250seed1WithActivityLabels_th1000_val.hdf5
+      valid: src/axion/neural_solver/datasets/Pendulum/pendulumLambdasValid500klen400envs250seed1WithActivityLabels_lth01_hth1000_val.hdf5
     max_capacity: 100000000
     num_data_workers: 4
 
@@ -49,7 +57,7 @@ algorithm:
     mode: dataset
     rollout_horizon: 10
     num_rollouts: 20000
-    dataset_path: src/axion/neural_solver/datasets/Pendulum/pendulumLambdasValid500klen400envs250seed1WithActivityLabels_th1000_val.hdf5
+    dataset_path: src/axion/neural_solver/datasets/Pendulum/pendulumLambdasValid500klen400envs250seed1WithActivityLabels_lth01_hth1000_val.hdf5
     passive: true
 
 inputs:

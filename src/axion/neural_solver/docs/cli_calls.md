@@ -60,6 +60,11 @@ python src/axion/neural_solver/standalone/test_trained_model_cli.py --model-path
 python src/axion/neural_solver/utils/add_lambda_activity_labels.py --input src/axion/neural_solver/datasets/Pendulum/pendulumLambdasValid500klen400envs250seed1.hdf5 --output src/axion/neural_solver/datasets/Pendulum/pendulumLambdasValid500klen400envs250seed1_with_activity.hdf5
 ```
 
+Optional multiclass labels (`0/1/2`) based on `abs(next_lambdas - lambdas)` with cutpoints `0.1` and `1000`:
+```
+python src/axion/neural_solver/utils/add_lambda_activity_labels.py --input <...>.hdf5 --output <...>_with_activity.hdf5 --multiclass
+```
+
 ## Misc
 
 ### Copy from remote to local
