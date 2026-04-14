@@ -17,7 +17,10 @@ import tempfile
 import time
 
 import numpy as np
-import pytinydiffsim_ad as pd
+try:
+    import pytinydiffsim_ad as pd  # Google tiny-differentiable-simulator (AD build)
+except ModuleNotFoundError:
+    import pydiffarti as pd  # Qiao diffarticulated fork (same API)
 
 RESULTS_DIR = pathlib.Path(__file__).parent / "results"
 DATA_DIR = pathlib.Path(__file__).parent.parent / "data"
