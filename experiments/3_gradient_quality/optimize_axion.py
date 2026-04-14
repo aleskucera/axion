@@ -37,8 +37,9 @@ os.environ["PYOPENGL_PLATFORM"] = "glx"
 RESULTS_DIR = pathlib.Path(__file__).parent / "results"
 DATA_DIR = pathlib.Path(__file__).parent.parent / "data"
 
-# Calibrated params from Experiment 1 (sweep_axion.json)
-DT = 0.08
+# Calibrated params from Experiment 1 (sweep_axion.json), using
+# dt = largest value satisfying both stability (Exp 2: 0.2 s) and accuracy (0.125 s).
+DT = 0.125
 K_P = 4000.0
 MU = 0.1
 FRICTION_COMPLIANCE = 2e-2
@@ -437,9 +438,15 @@ def main():
         action="store_true",
         help="Enable OpenGL visualization of optimization progress",
     )
+    parser.add_argument("--horizon-s", type=float, default=None,
+                        help="Truncate trajectory to first N seconds (default: full duration)")
     args = parser.parse_args()
 
     target_ctrl, duration, traj_xy = load_ground_truth(args.ground_truth)
+    if args.horizon_s is not None and args.horizon_s < duration:
+        keep = max(2, int(args.horizon_s / duration * len(traj_xy)))
+        traj_xy = traj_xy[:keep]
+        duration = args.horizon_s
 
     # Initial control
     np.random.seed(42)

@@ -319,9 +319,15 @@ def main():
     parser.add_argument("--noise-std", type=float, default=0.2)
     parser.add_argument("--init", choices=["perturbed", "zeros", "forward"],
                         default="perturbed")
+    parser.add_argument("--horizon-s", type=float, default=None,
+                        help="Truncate trajectory to first N seconds (default: full duration)")
     args = parser.parse_args()
 
     target_ctrl, duration, traj_xy = load_ground_truth(args.ground_truth)
+    if args.horizon_s is not None and args.horizon_s < duration:
+        keep = max(2, int(args.horizon_s / duration * len(traj_xy)))
+        traj_xy = traj_xy[:keep]
+        duration = args.horizon_s
 
     np.random.seed(42)
     if args.init == "zeros":

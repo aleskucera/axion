@@ -22,8 +22,10 @@ import pytinydiffsim_ad as pd
 RESULTS_DIR = pathlib.Path(__file__).parent / "results"
 DATA_DIR = pathlib.Path(__file__).parent.parent / "data"
 
-# Calibrated params from Experiment 1 (sweep_tinydiffsim.json)
-DT = 0.001
+# Calibrated params from Experiment 1 (sweep_tinydiffsim.json), using
+# dt = largest accuracy-acceptable value (Exp 1 dt sweep: 2 ms, err 0.96 m).
+# No obstacle stability test for TinyDiffSim (no box collision support).
+DT = 0.002
 KV = 36.0
 FRICTION = 0.12
 
@@ -274,9 +276,15 @@ def main():
     parser.add_argument("--noise-std", type=float, default=0.2)
     parser.add_argument("--init", choices=["perturbed", "zeros", "forward"],
                         default="perturbed")
+    parser.add_argument("--horizon-s", type=float, default=None,
+                        help="Truncate trajectory to first N seconds (default: full duration)")
     args = parser.parse_args()
 
     target_ctrl, duration, traj_xy_np = load_ground_truth(args.ground_truth)
+    if args.horizon_s is not None and args.horizon_s < duration:
+        keep = max(2, int(args.horizon_s / duration * len(traj_xy_np)))
+        traj_xy_np = traj_xy_np[:keep]
+        duration = args.horizon_s
     T = int(duration / DT)
 
     # Resample target to sim steps

@@ -152,7 +152,7 @@ def main():
                 excluded_from_plot.append(sim_name)
             continue
         color = SIM_COLORS[sim_name]
-        ax_turn.plot(traj[:, 1], traj[:, 0], color=color, linewidth=1.1, label=sim_name)
+        ax_turn.plot(traj[:, 1], traj[:, 0], color=color, linewidth=1.1, label=(r"\textbf{Axion}" if sim_name == "Axion" else sim_name))
         for frac in (0.25, 0.5, 0.75):
             idx = int(frac * (len(traj) - 1))
             ax_turn.annotate(
@@ -171,28 +171,18 @@ def main():
             color=SIM_COLORS[sim_name],
             linewidth=1.1,
             alpha=0.4,
-            label=sim_name + " (excluded)",
+            label=(r"\textbf{Axion}" if sim_name == "Axion" else sim_name) + " (excluded)",
         )
 
     ax_turn.set_xlabel("y (m)")
     ax_turn.set_ylabel("x (m)")
     ax_turn.grid(True, alpha=0.3)
 
-    # --- Panel 2: Acceleration XY trajectory ---
+    # --- Panel 2: Acceleration x(t) ---
     ax_accel.plot(
-        gt_accel_xy[:, 0], gt_accel_xy[:, 1], "k--",
+        gt_accel_t, gt_accel_xy[:, 0], "k--",
         linewidth=1.6, label="Real robot", zorder=10,
     )
-    for frac in (0.25, 0.5, 0.75):
-        idx = int(frac * (len(gt_accel_xy) - 1))
-        ax_accel.annotate(
-            "",
-            xy=(gt_accel_xy[idx + 1, 0], gt_accel_xy[idx + 1, 1]),
-            xytext=(gt_accel_xy[idx, 0], gt_accel_xy[idx, 1]),
-            arrowprops=dict(arrowstyle="->", color="black", lw=1.7,
-                            mutation_scale=18),
-            zorder=12,
-        )
 
     excluded_accel = []
     for sim_name in SIM_ORDER:
@@ -208,16 +198,11 @@ def main():
                 excluded_accel.append(sim_name)
             continue
         color = SIM_COLORS[sim_name]
-        ax_accel.plot(traj[:, 0], traj[:, 1], color=color, linewidth=1.1, label=sim_name)
-        for frac in (0.25, 0.5, 0.75):
-            idx = int(frac * (len(traj) - 1))
-            ax_accel.annotate(
-                "",
-                xy=(traj[idx + 1, 0], traj[idx + 1, 1]),
-                xytext=(traj[idx, 0], traj[idx, 1]),
-                arrowprops=dict(arrowstyle="->", color=color, lw=1.2),
-                zorder=9,
-            )
+        bp = sweeps[sim_name].get("best_params", {})
+        fp = sweeps[sim_name].get("fixed_params", {})
+        dt = bp.get("dt", fp.get("dt", 0.01))
+        traj_t = np.arange(len(traj)) * dt
+        ax_accel.plot(traj_t, traj[:, 0], color=color, linewidth=1.1, label=(r"\textbf{Axion}" if sim_name == "Axion" else sim_name))
 
     for sim_name in excluded_accel:
         ax_accel.plot(
@@ -228,8 +213,8 @@ def main():
             label=f"\u0336".join(sim_name) + "\u0336" + " (err > threshold)",
         )
 
-    ax_accel.set_xlabel("x (m)")
-    ax_accel.set_ylabel("y (m)")
+    ax_accel.set_xlabel("time (s)")
+    ax_accel.set_ylabel("x (m)")
     ax_accel.grid(True, alpha=0.3)
 
     # --- Panel 3: Error bar chart with dt annotation ---
@@ -261,11 +246,25 @@ def main():
         sim_steps_list.append(total_steps)
         bar_colors.append(SIM_COLORS[sim_name])
 
+    # Reorder bars per requested display order (best first at the top)
+    BAR_ORDER = ["Axion", "MuJoCo", "TinyDiffSim", "Semi-Implicit", "Dojo"]
+    rank = {n: i for i, n in enumerate(BAR_ORDER)}
+    order = sorted(range(len(sim_names)), key=lambda i: rank.get(sim_names[i], 99),
+                   reverse=True)  # reverse: barh draws bottom-up, so first becomes top
+    sim_names = [sim_names[i] for i in order]
+    sim_errors = [sim_errors[i] for i in order]
+    sim_dts = [sim_dts[i] for i in order]
+    sim_steps_list = [sim_steps_list[i] for i in order]
+    bar_colors = [bar_colors[i] for i in order]
+
     y_pos = np.arange(len(sim_names))
     # Fail mask: bars over threshold are hatched + grayer
     fail_mask = [e > ACCURACY_THRESHOLD for e in sim_errors]
     # Mark excluded simulators with "(excluded)" suffix
-    display_names = [n + " (excluded)" if f else n for n, f in zip(sim_names, fail_mask)]
+    def _fmt(n, failed):
+        suf = " (excluded)" if failed else ""
+        return rf"\textbf{{Axion}}{suf}" if n == "Axion" else n + suf
+    display_names = [_fmt(n, f) for n, f in zip(sim_names, fail_mask)]
     hatches = ["///" if failed else "" for failed in fail_mask]
     alphas = [0.4 if failed else 1.0 for failed in fail_mask]
 
