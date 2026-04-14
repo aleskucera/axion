@@ -16,7 +16,8 @@ RESULTS="$DIR/results"
 mkdir -p "$RESULTS"
 
 GT="$DATA/right_turn_b.json"
-HORIZON="${HORIZON:-3.0}"   # seconds; override with HORIZON=9.2 ./run_experiment.sh
+HORIZON="${HORIZON:-2.0}"     # seconds;     override with HORIZON=9.2 ./run_experiment.sh
+ITERATIONS="${ITERATIONS:-50}"   # opt iters; override with ITERATIONS=200 ./run_experiment.sh
 
 RUN_AXION=false; RUN_MJX=false; RUN_SEMI=false; RUN_TINY=false
 RUN_ALL=true
@@ -31,31 +32,31 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-COMMON_ARGS=(--ground-truth "$GT" --horizon-s "$HORIZON")
+COMMON_ARGS=(--ground-truth "$GT" --horizon-s "$HORIZON" --iterations "$ITERATIONS")
 
 if $RUN_ALL || $RUN_AXION; then
-    echo "=== Axion (adjoint)  [horizon=${HORIZON}s] ==="
+    echo "=== Axion (adjoint)  [horizon=${HORIZON}s, iters=${ITERATIONS}] ==="
     python "$DIR/optimize_axion.py" \
         "${COMMON_ARGS[@]}" --save "$RESULTS/axion.json" "${EXTRA_ARGS[@]}"
     echo ""
 fi
 
 if $RUN_ALL || $RUN_MJX; then
-    echo "=== MJX (jax.grad / BPTT)  [horizon=${HORIZON}s] ==="
+    echo "=== MJX (jax.grad / BPTT)  [horizon=${HORIZON}s, iters=${ITERATIONS}] ==="
     python "$DIR/optimize_mjx.py" \
         "${COMMON_ARGS[@]}" --save "$RESULTS/mjx.json" "${EXTRA_ARGS[@]}"
     echo ""
 fi
 
 if $RUN_ALL || $RUN_SEMI; then
-    echo "=== Semi-Implicit (warp tape / BPTT)  [horizon=${HORIZON}s] ==="
+    echo "=== Semi-Implicit (warp tape / BPTT)  [horizon=${HORIZON}s, iters=${ITERATIONS}] ==="
     python "$DIR/optimize_semi_implicit.py" \
         "${COMMON_ARGS[@]}" --save "$RESULTS/semi_implicit.json" "${EXTRA_ARGS[@]}"
     echo ""
 fi
 
 if $RUN_ALL || $RUN_TINY; then
-    echo "=== TinyDiffSim (CppAD)  [horizon=${HORIZON}s] ==="
+    echo "=== TinyDiffSim (CppAD)  [horizon=${HORIZON}s, iters=${ITERATIONS}] ==="
     python "$DIR/optimize_tinydiffsim.py" \
         "${COMMON_ARGS[@]}" --save "$RESULTS/tinydiffsim.json" "${EXTRA_ARGS[@]}"
     echo ""
