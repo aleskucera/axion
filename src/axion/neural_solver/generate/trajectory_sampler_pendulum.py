@@ -144,6 +144,261 @@ class TrajectorySamplerPendulum(TrajectorySampler):
         else:
             print("no plane normals were edited")
 
+    def _snapshot_axion_contacts(
+        self,
+        step: int,
+        axion_contact_count: torch.Tensor,
+        axion_contact_point0: torch.Tensor,
+        axion_contact_point1: torch.Tensor,
+        axion_contact_normal: torch.Tensor,
+        axion_contact_shape0: torch.Tensor,
+        axion_contact_shape1: torch.Tensor,
+        axion_contact_thickness0: torch.Tensor,
+        axion_contact_thickness1: torch.Tensor,
+    ) -> None:
+        """Copy current pre-conversion batched AxionContacts into per-step buffers."""
+        axion_contacts = self.env.utils_provider.axion_contacts
+        axion_contact_count[step, :].copy_(
+            wp.to_torch(axion_contacts.contact_count).to(
+                device=self.torch_device, dtype=torch.int32
+            )
+        )
+        axion_contact_point0[step, :, :, :].copy_(
+            wp.to_torch(axion_contacts.contact_point0).to(
+                device=self.torch_device, dtype=torch.float32
+            )
+        )
+        axion_contact_point1[step, :, :, :].copy_(
+            wp.to_torch(axion_contacts.contact_point1).to(
+                device=self.torch_device, dtype=torch.float32
+            )
+        )
+        axion_contact_normal[step, :, :, :].copy_(
+            wp.to_torch(axion_contacts.contact_normal).to(
+                device=self.torch_device, dtype=torch.float32
+            )
+        )
+        axion_contact_shape0[step, :, :].copy_(
+            wp.to_torch(axion_contacts.contact_shape0).to(
+                device=self.torch_device, dtype=torch.int32
+            )
+        )
+        axion_contact_shape1[step, :, :].copy_(
+            wp.to_torch(axion_contacts.contact_shape1).to(
+                device=self.torch_device, dtype=torch.int32
+            )
+        )
+        axion_contact_thickness0[step, :, :].copy_(
+            wp.to_torch(axion_contacts.contact_thickness0).to(
+                device=self.torch_device, dtype=torch.float32
+            )
+        )
+        axion_contact_thickness1[step, :, :].copy_(
+            wp.to_torch(axion_contacts.contact_thickness1).to(
+                device=self.torch_device, dtype=torch.float32
+            )
+        )
+
+    def _allocate_round_buffers(
+        self,
+        trajectory_length: int,
+        num_contacts_per_env: int,
+    ) -> dict:
+        """Allocate one round of rollout buffers on torch device."""
+        initial_states = torch.empty(
+            self.num_envs,
+            self.state_dim,
+            dtype=torch.float32,
+            device=self.torch_device,
+        )
+        states = torch.empty(
+            trajectory_length,
+            self.num_envs,
+            self.state_dim,
+            dtype=torch.float32,
+            device=self.torch_device,
+        )
+        next_states = torch.empty(
+            trajectory_length,
+            self.num_envs,
+            self.state_dim,
+            dtype=torch.float32,
+            device=self.torch_device,
+        )
+        lambdas = torch.zeros(
+            trajectory_length,
+            self.num_envs,
+            PENDULUM_NUM_OF_ALL_LAMBDAS,
+            dtype=torch.float32,
+            device=self.torch_device,
+        )
+        next_lambdas = torch.zeros(
+            trajectory_length,
+            self.num_envs,
+            PENDULUM_NUM_OF_ALL_LAMBDAS,
+            dtype=torch.float32,
+            device=self.torch_device,
+        )
+        joint_acts = torch.empty(
+            trajectory_length,
+            self.num_envs,
+            self.joint_act_dim,
+            dtype=torch.float32,
+            device=self.torch_device,
+        )
+        root_body_q = torch.empty(
+            trajectory_length,
+            self.num_envs,
+            7,
+            dtype=torch.float32,
+            device=self.torch_device,
+        )
+        gravity_dir = torch.empty(
+            trajectory_length,
+            self.num_envs,
+            3,
+            dtype=torch.float32,
+            device=self.torch_device,
+        )
+        gravity_dir[:, :, self.env.model.up_axis] = -1.0
+
+        contact_normals = torch.empty(
+            trajectory_length,
+            self.num_envs,
+            num_contacts_per_env,
+            3,
+            dtype=torch.float32,
+            device=self.torch_device,
+        )
+        contact_depths = torch.empty(
+            trajectory_length,
+            self.num_envs,
+            num_contacts_per_env,
+            dtype=torch.float32,
+            device=self.torch_device,
+        )
+        contact_points_0 = torch.empty(
+            trajectory_length,
+            self.num_envs,
+            num_contacts_per_env,
+            3,
+            dtype=torch.float32,
+            device=self.torch_device,
+        )
+        contact_points_1 = torch.empty(
+            trajectory_length,
+            self.num_envs,
+            num_contacts_per_env,
+            3,
+            dtype=torch.float32,
+            device=self.torch_device,
+        )
+        contact_thicknesses = torch.empty(
+            trajectory_length,
+            self.num_envs,
+            num_contacts_per_env,
+            dtype=torch.float32,
+            device=self.torch_device,
+        )
+
+        axion_contact_count = torch.empty(
+            trajectory_length,
+            self.num_envs,
+            dtype=torch.int32,
+            device=self.torch_device,
+        )
+        axion_contact_point0 = torch.empty(
+            trajectory_length,
+            self.num_envs,
+            num_contacts_per_env,
+            3,
+            dtype=torch.float32,
+            device=self.torch_device,
+        )
+        axion_contact_point1 = torch.empty(
+            trajectory_length,
+            self.num_envs,
+            num_contacts_per_env,
+            3,
+            dtype=torch.float32,
+            device=self.torch_device,
+        )
+        axion_contact_normal = torch.empty(
+            trajectory_length,
+            self.num_envs,
+            num_contacts_per_env,
+            3,
+            dtype=torch.float32,
+            device=self.torch_device,
+        )
+        axion_contact_shape0 = torch.empty(
+            trajectory_length,
+            self.num_envs,
+            num_contacts_per_env,
+            dtype=torch.int32,
+            device=self.torch_device,
+        )
+        axion_contact_shape1 = torch.empty(
+            trajectory_length,
+            self.num_envs,
+            num_contacts_per_env,
+            dtype=torch.int32,
+            device=self.torch_device,
+        )
+        axion_contact_thickness0 = torch.empty(
+            trajectory_length,
+            self.num_envs,
+            num_contacts_per_env,
+            dtype=torch.float32,
+            device=self.torch_device,
+        )
+        axion_contact_thickness1 = torch.empty(
+            trajectory_length,
+            self.num_envs,
+            num_contacts_per_env,
+            dtype=torch.float32,
+            device=self.torch_device,
+        )
+
+        plane_normals = torch.empty(
+            self.num_envs,
+            3,
+            dtype=torch.float32,
+            device=self.torch_device,
+        )
+        plane_d_offsets = torch.zeros(
+            self.num_envs,
+            1,
+            dtype=torch.float32,
+            device=self.torch_device,
+        )
+
+        return {
+            "initial_states": initial_states,
+            "states": states,
+            "next_states": next_states,
+            "lambdas": lambdas,
+            "next_lambdas": next_lambdas,
+            "joint_acts": joint_acts,
+            "root_body_q": root_body_q,
+            "gravity_dir": gravity_dir,
+            "contact_normals": contact_normals,
+            "contact_depths": contact_depths,
+            "contact_points_0": contact_points_0,
+            "contact_points_1": contact_points_1,
+            "contact_thicknesses": contact_thicknesses,
+            "axion_contact_count": axion_contact_count,
+            "axion_contact_point0": axion_contact_point0,
+            "axion_contact_point1": axion_contact_point1,
+            "axion_contact_normal": axion_contact_normal,
+            "axion_contact_shape0": axion_contact_shape0,
+            "axion_contact_shape1": axion_contact_shape1,
+            "axion_contact_thickness0": axion_contact_thickness0,
+            "axion_contact_thickness1": axion_contact_thickness1,
+            "plane_normals": plane_normals,
+            "plane_d_offsets": plane_d_offsets,
+        }
+
     def sample_trajectories(
         self, 
         num_transitions: int, 
@@ -161,6 +416,16 @@ class TrajectorySamplerPendulum(TrajectorySampler):
             'gravity_dir': [],
             'root_body_q': [],
             'states': [],
+            'axion_contacts': {
+                'contact_count': [],
+                'contact_point0': [],
+                'contact_point1': [],
+                'contact_normal': [],
+                'contact_shape0': [],
+                'contact_shape1': [],
+                'contact_thickness0': [],
+                'contact_thickness1': [],
+            },
             'contacts': {
                 'contact_normals': [],
                 'contact_depths': [],
@@ -181,109 +446,34 @@ class TrajectorySamplerPendulum(TrajectorySampler):
             desc="Sampling state transitions"
         )
         
-        # allocate round-wise buffers
-        initial_states = torch.empty(
-            self.num_envs,
-            self.state_dim,
-            dtype=torch.float32,
-            device=self.torch_device)
-        states = torch.empty(
-            trajectory_length, 
-            self.num_envs,
-            self.state_dim,
-            dtype=torch.float32,
-            device=self.torch_device)
-        next_states = torch.empty(
-            trajectory_length, 
-            self.num_envs,
-            self.state_dim,
-            dtype=torch.float32,
-            device=self.torch_device)
-        lambdas =torch.zeros(
-            trajectory_length, 
-            self.num_envs,
-            PENDULUM_NUM_OF_ALL_LAMBDAS,
-            dtype=torch.float32,
-            device=self.torch_device)
-        next_lambdas =torch.zeros(
-            trajectory_length, 
-            self.num_envs,
-            PENDULUM_NUM_OF_ALL_LAMBDAS,
-            dtype=torch.float32,
-            device=self.torch_device)
-        joint_acts = torch.empty(
-            trajectory_length, 
-            self.num_envs,
-            self.joint_act_dim,
-            dtype=torch.float32,
-            device=self.torch_device)
-        root_body_q = torch.empty(
-            trajectory_length,
-            self.num_envs,
-            7,
-            dtype=torch.float32,
-            device=self.torch_device)
-        gravity_dir = torch.empty(
-            trajectory_length, 
-            self.num_envs,
-            3,
-            dtype=torch.float32,
-            device=self.torch_device)
-        gravity_dir[:, :, self.env.model.up_axis] = -1.0
-
         num_contacts_per_env = self.env.abstract_contacts.num_contacts_per_env
-        
-        contact_normals = torch.empty(
-            trajectory_length,
-            self.num_envs,
-            num_contacts_per_env,
-            3,
-            dtype=torch.float32,
-            device=self.torch_device
+        buffers = self._allocate_round_buffers(
+            trajectory_length=trajectory_length,
+            num_contacts_per_env=num_contacts_per_env,
         )
-        
-        contact_depths = torch.empty(
-            trajectory_length,
-            self.num_envs,
-            num_contacts_per_env,
-            dtype=torch.float32,
-            device=self.torch_device
-        )
-        contact_points_0 = torch.empty(
-            trajectory_length, 
-            self.num_envs,
-            num_contacts_per_env,
-            3,
-            dtype=torch.float32,
-            device=self.torch_device
-        )
-        contact_points_1 = torch.empty(
-            trajectory_length, 
-            self.num_envs,
-            num_contacts_per_env,
-            3,
-            dtype=torch.float32,
-            device=self.torch_device
-        )
-        contact_thicknesses = torch.empty(
-            trajectory_length,
-            self.num_envs,
-            num_contacts_per_env,
-            dtype=torch.float32,
-            device=self.torch_device
-        )
-        plane_normals = torch.empty(
-            self.num_envs,
-            3,
-            dtype = torch.float32,
-            device = self.torch_device
-        )
-        plane_d_offsets = torch.zeros(
-            self.num_envs,
-            1,
-            dtype = torch.float32,
-            device = self.torch_device
-        )
+        initial_states = buffers["initial_states"]
+        states = buffers["states"]
+        next_states = buffers["next_states"]
+        lambdas = buffers["lambdas"]
+        next_lambdas = buffers["next_lambdas"]
+        joint_acts = buffers["joint_acts"]
+        root_body_q = buffers["root_body_q"]
+        gravity_dir = buffers["gravity_dir"]
+        contact_normals = buffers["contact_normals"]
+        contact_depths = buffers["contact_depths"]
+        contact_points_0 = buffers["contact_points_0"]
+        contact_points_1 = buffers["contact_points_1"]
+        contact_thicknesses = buffers["contact_thicknesses"]
+        axion_contact_count = buffers["axion_contact_count"]
+        axion_contact_point0 = buffers["axion_contact_point0"]
+        axion_contact_point1 = buffers["axion_contact_point1"]
+        axion_contact_normal = buffers["axion_contact_normal"]
+        axion_contact_shape0 = buffers["axion_contact_shape0"]
+        axion_contact_shape1 = buffers["axion_contact_shape1"]
+        axion_contact_thickness0 = buffers["axion_contact_thickness0"]
+        axion_contact_thickness1 = buffers["axion_contact_thickness1"]
+        plane_normals = buffers["plane_normals"]
+        plane_d_offsets = buffers["plane_d_offsets"]
 
         self.env.set_env_mode('ground-truth')
         
@@ -371,6 +561,17 @@ class TrajectorySamplerPendulum(TrajectorySampler):
                 next_lambdas[step, :, :].copy_(self.env.get_lambdas())
                 converted_gravity = self.env.get_gravity_dir()
                 gravity_dir[step,:,:].copy_(converted_gravity)
+                self._snapshot_axion_contacts(
+                    step=step,
+                    axion_contact_count=axion_contact_count,
+                    axion_contact_point0=axion_contact_point0,
+                    axion_contact_point1=axion_contact_point1,
+                    axion_contact_normal=axion_contact_normal,
+                    axion_contact_shape0=axion_contact_shape0,
+                    axion_contact_shape1=axion_contact_shape1,
+                    axion_contact_thickness0=axion_contact_thickness0,
+                    axion_contact_thickness1=axion_contact_thickness1,
+                )
                 converted_contacts = self.env.convert_newton_contacts_to_contacts_for_nn_model()
                 contact_normals[step, :, :].copy_(converted_contacts["contact_normals"])
                 contact_depths[step, :, :].copy_(converted_contacts["contact_depths"])
@@ -382,6 +583,14 @@ class TrajectorySamplerPendulum(TrajectorySampler):
             rollout_batches['gravity_dir'].append(gravity_dir.clone())
             rollout_batches['root_body_q'].append(root_body_q.clone())
             rollout_batches['states'].append(states.clone())
+            rollout_batches['axion_contacts']['contact_count'].append(axion_contact_count.clone())
+            rollout_batches['axion_contacts']['contact_point0'].append(axion_contact_point0.clone())
+            rollout_batches['axion_contacts']['contact_point1'].append(axion_contact_point1.clone())
+            rollout_batches['axion_contacts']['contact_normal'].append(axion_contact_normal.clone())
+            rollout_batches['axion_contacts']['contact_shape0'].append(axion_contact_shape0.clone())
+            rollout_batches['axion_contacts']['contact_shape1'].append(axion_contact_shape1.clone())
+            rollout_batches['axion_contacts']['contact_thickness0'].append(axion_contact_thickness0.clone())
+            rollout_batches['axion_contacts']['contact_thickness1'].append(axion_contact_thickness1.clone()            )
             rollout_batches['contacts']['contact_normals'].append(contact_normals.clone())
             rollout_batches['contacts']['contact_depths'].append(contact_depths.clone())
             rollout_batches['contacts']['contact_points_0'].append(contact_points_0.clone())
