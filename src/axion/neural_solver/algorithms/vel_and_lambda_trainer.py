@@ -3,6 +3,7 @@ import warp as wp
 
 from axion.learning.residual_loss_utils import compute_residual_loss, validate_warm_start_shapes
 from axion.neural_solver.algorithms.sequence_model_trainer import SequenceModelTrainer
+from axion.neural_solver.utils.differentiable import pendulum_revolute_minimal_to_maximal_velocities
 from axion.neural_solver.utils import warp_utils
 from axion.neural_solver.utils.python_utils import print_warning
 
@@ -30,6 +31,8 @@ class VelAndLambdaTrainer(SequenceModelTrainer):
         self._control = sim_wrapper.control
         self._dt = sim_wrapper.frame_dt
         self._dims = self._engine.dims
+        self._dof_q_per_env = int(self.neural_env.dof_q_per_env)
+        self._dof_qd_per_env = int(self.neural_env.dof_qd_per_env)
 
         if int(self.batch_size) != int(self._dims.num_worlds):
             raise ValueError(
@@ -37,6 +40,7 @@ class VelAndLambdaTrainer(SequenceModelTrainer):
                 f"(engine num_worlds). Got batch_size={self.batch_size}, "
                 f"num_worlds={self._dims.num_worlds}."
             )
+        self._setup_pendulum_fk_constants()
 
         loss_cfg = cfg["algorithm"].get("loss", {}) or {}
         self.residual_loss_weight = float(loss_cfg.get("residual_loss_weight", 1.0))
@@ -67,6 +71,55 @@ class VelAndLambdaTrainer(SequenceModelTrainer):
                 )
             total_loss = total_loss + self.supervised_loss_weight * supervised_loss
         return total_loss
+
+    def _setup_pendulum_fk_constants(self) -> None:
+        """Cache per-joint FK constants for minimal->maximal velocity conversion."""
+        model = self._sim_wrapper.model
+        worlds = int(self._dims.num_worlds)
+        joints_per_world = int(self._sim_wrapper.num_joints_per_world)
+
+        joint_axis = wp.to_torch(model.joint_axis).to(self.device)
+        joint_x_p = wp.to_torch(model.joint_X_p).to(self.device)
+        joint_x_c = wp.to_torch(model.joint_X_c).to(self.device)
+        body_com = wp.to_torch(model.body_com).to(self.device)
+
+        # Replicated model has identical per-world kinematic constants, use world 0 slice.
+        self._fk_joint_axis_parent_23 = (joint_axis.reshape(worlds, joints_per_world, 3)[0].to(torch.float32).contiguous())
+        self._fk_joint_x_p_27 = (joint_x_p.reshape(worlds, joints_per_world, 7)[0].to(torch.float32).contiguous())
+        self._fk_joint_x_c_27 = (joint_x_c.reshape(worlds, joints_per_world, 7)[0].to(torch.float32).contiguous())
+        self._fk_body_com_23 = (
+            body_com.reshape(worlds, self._sim_wrapper.bodies_per_world, 3)[0].to(torch.float32).contiguous()
+        )
+
+    def _convert_minimal_state_to_maximal_vel(
+        self,
+        state_prediction: torch.Tensor,
+    ) -> torch.Tensor:
+        """Convert predicted minimal state [q, qd] to maximal N_u velocity."""
+        if state_prediction.ndim != 2:
+            raise RuntimeError(
+                "State prediction must be rank-2 at the last step: "
+                f"expected (B, D), got {tuple(state_prediction.shape)}."
+            )
+
+        q_for_fk = state_prediction[:, : self._dof_q_per_env]
+        qd_for_fk = state_prediction[:, self._dof_q_per_env :]
+
+        body_vel_prediction = pendulum_revolute_minimal_to_maximal_velocities(
+            q_b2=q_for_fk,
+            qd_b2=qd_for_fk,
+            joint_axis_parent_23=self._fk_joint_axis_parent_23,
+            joint_x_p_27=self._fk_joint_x_p_27,
+            joint_x_c_27=self._fk_joint_x_c_27,
+            body_com_23=self._fk_body_com_23,
+            body_count=self._sim_wrapper.bodies_per_world,
+        )
+        if body_vel_prediction.shape[1] != self._dims.N_u:
+            raise RuntimeError(
+                "Converted maximal velocity dim mismatch: expected "
+                f"{self._dims.N_u}, got {body_vel_prediction.shape[1]}."
+            )
+        return body_vel_prediction
 
     def _extract_last_step_axion_contacts(self, data: dict) -> dict:
         """Read strict `axion_*` tensors and take the last time step."""
@@ -176,13 +229,14 @@ class VelAndLambdaTrainer(SequenceModelTrainer):
     def compute_loss(self, data, train):
         del train  # compatibility with SequenceModelTrainer.one_epoch
         prediction = self.neural_model(data)
-        vel_prediction, lambda_prediction = self._split_prediction_last_step(prediction)
+        state_prediction, lambda_prediction = self._split_prediction_last_step(prediction)
 
         states = data["states"]
         states_last = states[:, -1, :]
         axion_contacts_last = self._extract_last_step_axion_contacts(data)
+        body_vel_prediction = self._convert_minimal_state_to_maximal_vel(state_prediction)
 
-        batch_worlds = vel_prediction.shape[0]
+        batch_worlds = body_vel_prediction.shape[0]
         worlds = self._dims.num_worlds
         if batch_worlds != worlds:
             raise RuntimeError(
@@ -190,9 +244,9 @@ class VelAndLambdaTrainer(SequenceModelTrainer):
                 f"batch={batch_worlds}, num_worlds={worlds}."
             )
 
-        validate_warm_start_shapes(self._dims, vel_prediction, lambda_prediction)
+        validate_warm_start_shapes(self._dims, body_vel_prediction, lambda_prediction)
         self._load_engine_step_from_states_and_contacts(states_last, axion_contacts_last)
-        residual_loss = compute_residual_loss(self._engine, vel_prediction, lambda_prediction)
+        residual_loss = compute_residual_loss(self._engine, body_vel_prediction, lambda_prediction)
         total_loss = self._compose_total_loss(residual_loss=residual_loss, supervised_loss=None)
 
         with torch.no_grad():

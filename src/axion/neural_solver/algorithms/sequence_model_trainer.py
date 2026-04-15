@@ -113,9 +113,10 @@ class SequenceModelTrainer:
                 )
             elif model_impl in ('vel_and_lambda', 'vel_and_lambda_model', 'vel_lambda'):
                 engine_dims = self.neural_env.simulator_wrapper.engine.dims
+                state_output_dim = int(self.neural_env.dof_q_per_env + self.neural_env.dof_qd_per_env)
                 self.neural_model = VelAndLambdaModel(
                     input_sample=input_sample,
-                    vel_ouput_dim=engine_dims.N_u,
+                    state_output_dim=state_output_dim,
                     lambda_output_dim=engine_dims.num_constraints,
                     input_cfg=cfg['inputs'],
                     network_cfg=cfg['network'],
