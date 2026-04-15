@@ -27,6 +27,11 @@ algorithm:
     supervised_loss_weight: 1.0 # currently inactive because use_supervised_loss=false
     use_supervised_loss: false # hybrid path not implemented yet; residual-only is active
     disable_rollout_eval: true
+    residual_balance_mode: block_rms # options: none | block_rms
+    residual_balance_exclude_blocks: [ctrl]
+    residual_balance_eps: 1e-6
+    residual_balance_warmup_steps: 200
+    residual_balance_momentum: 0.99
 
   optimizer:
     name: adamw

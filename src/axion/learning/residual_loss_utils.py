@@ -4,6 +4,8 @@ import torch
 
 from axion.learning.torch_residual_ad import AxionResidualAD
 
+RESIDUAL_BLOCK_NAMES = ("d", "j", "ctrl", "n", "f")
+
 
 def _safe_mean_square(sum_sq: torch.Tensor, count: int) -> torch.Tensor:
     """Return mean-square for a block, guarded against empty blocks."""
@@ -115,3 +117,53 @@ def compute_residual_diagnostics(
     }
 
     return total_sq, block_sum_sq, block_mse
+
+
+def update_residual_block_running_var(
+    running_var: dict[str, torch.Tensor],
+    block_mse: dict[str, torch.Tensor],
+    momentum: float,
+    exclude_blocks: set[str] | None = None,
+) -> None:
+    """EMA update for residual block running variances."""
+    if exclude_blocks is None:
+        exclude_blocks = set()
+
+    for block in RESIDUAL_BLOCK_NAMES:
+        if block in exclude_blocks:
+            continue
+        key = f"residual_mse_{block}"
+        if key not in block_mse or block not in running_var:
+            continue
+        value = block_mse[key].detach().to(dtype=torch.float32)
+        value_sq = torch.square(value)
+        running_var[block].mul_(momentum).add_((1.0 - momentum) * value_sq)
+
+
+def compute_weighted_residual_loss_from_blocks(
+    block_sum_sq: dict[str, torch.Tensor],
+    running_var: dict[str, torch.Tensor],
+    eps: float,
+    exclude_blocks: set[str] | None = None,
+) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+    """Compute weighted residual sum and per-block weights using 1/sqrt(var + eps)."""
+    if exclude_blocks is None:
+        exclude_blocks = set()
+
+    total = torch.zeros_like(next(iter(block_sum_sq.values())))
+    weights: dict[str, torch.Tensor] = {}
+
+    for block in RESIDUAL_BLOCK_NAMES:
+        sq_key = f"residual_sq_{block}"
+        if sq_key not in block_sum_sq:
+            continue
+        block_sq = block_sum_sq[sq_key]
+        if block in exclude_blocks or block not in running_var:
+            weight = torch.ones_like(block_sq)
+        else:
+            var = running_var[block].to(device=block_sq.device, dtype=block_sq.dtype)
+            weight = 1.0 / torch.sqrt(var + eps)
+        weights[f"residual_weight_{block}"] = weight
+        total = total + weight * block_sq
+
+    return total, weights
