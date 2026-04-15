@@ -1,7 +1,10 @@
 import torch
 import warp as wp
 
-from axion.learning.residual_loss_utils import compute_residual_loss, validate_warm_start_shapes
+from axion.learning.residual_loss_utils import (
+    compute_residual_diagnostics,
+    validate_warm_start_shapes,
+)
 from axion.neural_solver.algorithms.sequence_model_trainer import SequenceModelTrainer
 from axion.neural_solver.utils.differentiable import pendulum_revolute_minimal_to_maximal_velocities
 from axion.neural_solver.utils import warp_utils
@@ -249,7 +252,11 @@ class VelAndLambdaTrainer(SequenceModelTrainer):
 
         validate_warm_start_shapes(self._dims, body_vel_prediction, lambda_prediction)
         self._load_engine_step_from_states_and_contacts(states_last, axion_contacts_last)
-        residual_loss = compute_residual_loss(self._engine, body_vel_prediction, lambda_prediction)
+        residual_loss, residual_blocks_sq, residual_blocks_mse = compute_residual_diagnostics(
+            self._engine,
+            body_vel_prediction,
+            lambda_prediction,
+        )
         total_loss = self._compose_total_loss(residual_loss=residual_loss, supervised_loss=None)
 
         with torch.no_grad():
@@ -257,6 +264,10 @@ class VelAndLambdaTrainer(SequenceModelTrainer):
                 "residual_loss": residual_loss.detach(),
                 "total_loss": total_loss.detach(),
             }
+            for key, value in residual_blocks_sq.items():
+                loss_itemized[key] = value.detach()
+            for key, value in residual_blocks_mse.items():
+                loss_itemized[key] = value.detach()
         return total_loss, loss_itemized
 
     def compute_test_loss_reference(self, data):

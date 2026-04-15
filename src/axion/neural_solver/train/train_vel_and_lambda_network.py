@@ -51,6 +51,9 @@ if __name__ == "__main__":
     cfg = load_default_cfg(args.cfg)
     validate_cfg(cfg)
 
+    # Residual vel+lambda training requires one world per batch element.
+    cfg["env"]["num_envs"] = int(cfg["algorithm"]["batch_size"])
+
     if not args.no_time_stamp:
         args.logdir = os.path.join(args.logdir, get_time_stamp())
 

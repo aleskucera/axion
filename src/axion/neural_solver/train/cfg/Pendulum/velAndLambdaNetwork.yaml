@@ -17,7 +17,7 @@ algorithm:
   num_epochs: 10
   num_iters_per_epoch: -1
   sample_sequence_length: 10
-  batch_size: 512
+  batch_size: 1024
   num_valid_batches: 256
   truncate_grad: true
   grad_norm: 1.0
