@@ -55,9 +55,24 @@ class TrajectoryDataset(Dataset):
             if key == 'traj_lengths':
                 self.traj_lengths = dataset['data'][key][:num_trajectories].astype('int32')
                 continue
+            if key == 'axion_contacts':
+                continue
             data = dataset['data'][key][:, :num_trajectories, ...].astype('float32') # shape (T, B, dim1, dim2, ...)
             data = np.swapaxes(data, 0, 1) # shape (B, T, dim1, dim2, ...)
             self.dataset[key] = data.reshape(data.shape[0], data.shape[1], -1) # shape (B, T, dim)
+
+        # Optional nested group: data/axion_contacts/{contact_*}
+        if 'axion_contacts' in dataset['data']:
+            axion_contacts_group = dataset['data']['axion_contacts']
+            for sub_key in axion_contacts_group.keys():
+                data = axion_contacts_group[sub_key][:, :num_trajectories, ...]
+                if np.issubdtype(data.dtype, np.floating):
+                    data = data.astype('float32')
+                else:
+                    data = data.astype('int32')
+                data = np.swapaxes(data, 0, 1)  # (B, T, ...)
+                dataset_key = f"axion_{sub_key}"
+                self.dataset[dataset_key] = data.reshape(data.shape[0], data.shape[1], -1)
         
         if self.traj_lengths is None:
             self.traj_lengths = np.full(num_trajectories, num_transitions_per_trajectory)
