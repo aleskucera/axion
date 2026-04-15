@@ -7,6 +7,7 @@ import argparse
 import json
 import os
 import pathlib
+import threading
 import time
 
 os.environ.setdefault("DISPLAY", ":1")
@@ -157,6 +158,28 @@ def main():
     opt_state = optimizer.init(params)
     device = jax.devices()[0]
 
+    # NVML poller: captures true total GPU memory in use (JAX pool +
+    # allocator fragmentation + anything else on the device) at 100 Hz.
+    # Requires XLA_PYTHON_CLIENT_PREALLOCATE=false (set at module top).
+    import pynvml
+    pynvml.nvmlInit()
+    nvml_handle = pynvml.nvmlDeviceGetHandleByIndex(
+        int(os.environ.get("CUDA_VISIBLE_DEVICES", "0").split(",")[0])
+    )
+    nvml_baseline_mb = pynvml.nvmlDeviceGetMemoryInfo(nvml_handle).used / 1024**2
+    nvml_peak_mb = [nvml_baseline_mb]
+    nvml_stop = threading.Event()
+
+    def _poll_nvml():
+        while not nvml_stop.is_set():
+            used_mb = pynvml.nvmlDeviceGetMemoryInfo(nvml_handle).used / 1024**2
+            if used_mb > nvml_peak_mb[0]:
+                nvml_peak_mb[0] = used_mb
+            time.sleep(0.01)
+
+    poller = threading.Thread(target=_poll_nvml, daemon=True)
+    poller.start()
+
     peak_mem_mb = 0.0
     time_ms_list = []
     for i in range(ITERATIONS):
@@ -177,13 +200,20 @@ def main():
         print(f"  iter {i:3d}: loss={float(loss):.4f} | t={t_iter:.0f}ms | mem={used_mb:.0f}MB")
         time_ms_list.append(t_iter)
 
+    nvml_stop.set()
+    poller.join(timeout=1.0)
+    nvml_peak_delta_mb = nvml_peak_mb[0] - nvml_baseline_mb
+
     results = {
         "simulator": "MJX-grad",
         "num_worlds": num_worlds,
         "median_time_ms": float(np.median(time_ms_list[3:])) if len(time_ms_list) > 3 else float(np.median(time_ms_list)),
         "peak_gpu_mb": peak_mem_mb,
+        "peak_gpu_mb_nvml": float(nvml_peak_delta_mb),
+        "peak_gpu_mb_nvml_absolute": float(nvml_peak_mb[0]),
         "time_ms": time_ms_list,
     }
+    print(f"NVML peak: {nvml_peak_mb[0]:.0f} MB (baseline {nvml_baseline_mb:.0f} MB, delta {nvml_peak_delta_mb:.0f} MB)")
     if args.save:
         pathlib.Path(args.save).parent.mkdir(parents=True, exist_ok=True)
         pathlib.Path(args.save).write_text(json.dumps(results, indent=2))

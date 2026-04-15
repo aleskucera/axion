@@ -207,9 +207,22 @@ def main():
         default=None,
         help="Simulation duration (default: from ground truth or 10s)",
     )
-    parser.add_argument("--dt", type=float, default=0.3, help="Timestep (default: 0.05)")
     parser.add_argument(
-        "--k-p", type=float, default=4000.0, help="Velocity servo gain (default: 150)"
+        "--bag",
+        type=str,
+        default=None,
+        help="Rosbag dir; use /cmd_vel (diff-drive, fitted kinematics) as wheel target",
+    )
+    parser.add_argument(
+        "--wheels-json",
+        type=str,
+        default=None,
+        help="JSON with wheel_velocities.timeseries (e.g. synth output from "
+        "fit_joy_to_wheels.py); overrides --bag and ground-truth joint_states",
+    )
+    parser.add_argument("--dt", type=float, default=0.05, help="Timestep (default: 0.05)")
+    parser.add_argument(
+        "--k-p", type=float, default=2000.0, help="Velocity servo gain (default: 150)"
     )
     parser.add_argument("--mu", type=float, default=0.1, help="Coefficient of friction")
     parser.add_argument("--headless", action="store_true", help="Run without viewer")
@@ -226,9 +239,31 @@ def main():
             "constant_speed_duration_s", gt["trajectory"]["duration_s"]
         )
         gt_trajectory = gt["trajectory"]["points"]
-        if "wheel_velocities" in gt and "timeseries" in gt["wheel_velocities"]:
+        if args.wheels_json:
+            with open(args.wheels_json) as f:
+                wheel_timeseries = json.load(f)["wheel_velocities"]["timeseries"]
+            print(
+                f"  Using synth wheel targets from {args.wheels_json} "
+                f"({len(wheel_timeseries)} samples)"
+            )
+        elif args.bag:
+            from diagnose_cmd_vs_joint import load_cmd_vel_timeseries, cmd_vel_to_wheel_ts
+            import pathlib as _pl
+
+            cmd_msgs = load_cmd_vel_timeseries(_pl.Path(args.bag))
+            ref_ts = (
+                gt["wheel_velocities"]["timeseries"]
+                if "wheel_velocities" in gt and "timeseries" in gt["wheel_velocities"]
+                else [{"t": t} for t in np.linspace(0, duration, 400)]
+            )
+            wheel_timeseries = cmd_vel_to_wheel_ts(cmd_msgs, ref_ts)
+            print(
+                f"  Using /cmd_vel-derived wheel targets "
+                f"({len(cmd_msgs)} cmd_vel msgs → {len(wheel_timeseries)} samples)"
+            )
+        elif "wheel_velocities" in gt and "timeseries" in gt["wheel_velocities"]:
             wheel_timeseries = gt["wheel_velocities"]["timeseries"]
-            print(f"  Using time-varying wheel velocities ({len(wheel_timeseries)} points)")
+            print(f"  Using /joint_states wheel velocities ({len(wheel_timeseries)} points)")
         print(f"Ground truth: {gt.get('bag_name', '?')}")
     elif args.ctrl:
         target_ctrl = args.ctrl

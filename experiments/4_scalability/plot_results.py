@@ -48,6 +48,8 @@ def load_results() -> dict[str, dict[int, dict]]:
     """Returns {simulator: {num_worlds: data}}."""
     out: dict[str, dict[int, dict]] = {}
     for path in sorted(RESULTS_DIR.glob("*.json")):
+        if path.name.startswith("scalability_"):
+            continue
         try:
             data = json.loads(path.read_text())
         except Exception:
@@ -57,6 +59,9 @@ def load_results() -> dict[str, dict[int, dict]]:
         if sim is None or nw is None:
             continue
         if sim not in STYLES:
+            continue
+        # Keep only powers of two for a clean log-scale sweep.
+        if nw < 1 or (nw & (nw - 1)) != 0:
             continue
         out.setdefault(sim, {})[nw] = data
     return out
@@ -144,13 +149,13 @@ def main():
             mid_w = mjx_mem_worlds[mid_idx]
             mid_m = mjx_mems[mid_idx]
             ax_mem.text(
-                mid_w * 2.6,
-                mid_m * 3.5,
+                mid_w * 8.6,
+                mid_m * 12.0,
                 rf"$\sim{slope_gb:.1f}$\,GB/world",
                 fontsize=7,
                 color="#FF5722",
                 alpha=0.8,
-                rotation=50,
+                rotation=54,
                 rotation_mode="anchor",
             )
             extrap_worlds = np.array([mjx_mem_worlds[-1], 32, 64, 128, 256, 512, 1024])
@@ -168,24 +173,26 @@ def main():
                     zorder=2,
                 )
 
-                # Single OOM marker at first world exceeding GPU limit
-                for w, m in zip(extrap_worlds[1:], extrap_mems[1:]):
-                    if m > GPU_MEM_LIMIT_MB:
-                        ax_mem.plot(
-                            w,
-                            GPU_MEM_LIMIT_MB,
-                            "x",
-                            color="red",
-                            markersize=8,
-                            markeredgewidth=2.0,
-                            zorder=6,
-                        )
-                        break
+                # OOM marker at first observed OOM world (2x last successful).
+                # Place at the 24 GB limit line: the failure is total-memory
+                # (activations + tensors + buffers) exceeding the device, not
+                # just the single largest tensor reported by peak_gpu_mb.
+                oom_w = int(mjx_mem_worlds[-1]) * 2
+                ax_mem.plot(
+                    oom_w,
+                    GPU_MEM_LIMIT_MB,
+                    "x",
+                    color="red",
+                    markersize=8,
+                    markeredgewidth=2.0,
+                    zorder=6,
+                )
 
         # Single OOM marker on time plot at first OOM world
         if len(mjx_worlds) >= 2:
             median_mjx_time = np.median(mjx["times"])
-            oom_world = 32  # first world that OOMs
+            # First world count where MJX actually OOM'd (observed).
+            oom_world = int(mjx_mem_worlds[-1]) * 2
             ax_time.plot(
                 oom_world,
                 median_mjx_time,

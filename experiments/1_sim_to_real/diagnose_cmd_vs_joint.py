@@ -24,13 +24,28 @@ from sweep_mujoco import simulate, trajectory_error, BASE_PARAMS
 BEST = {**BASE_PARAMS, "dt": 0.001, "kv": 4000.0,
         "front_friction": 0.2, "rear_friction": 0.2, "ground_friction": 0.2}
 
-# Helhest geometry (from examples/helhest/common.py)
-WHEEL_RADIUS = 0.36
-HALF_TRACK = 0.36  # wheels at y = ±0.36
+# Effective kinematic geometry fitted from cmd_vel vs joint_states (LS fit on
+# bag helhest_2026_04_10-14_46_18). Physical URDF values are r=0.36, track=0.72;
+# fitted values absorb motor lag/slip so cmd_vel → wheel targets match measurement.
+WHEEL_RADIUS = 0.5741
+HALF_TRACK = 0.384  # track_fit / 2 = 0.7680 / 2
 
 
 def load_cmd_vel_timeseries(bag_dir):
-    """Read /cmd_vel from a ROS2 bag, return list of (t, vx, wz)."""
+    """Read /cmd_vel as list of (t, vx, wz).
+
+    Accepts either a rosbag directory (reads /cmd_vel) or a JSON file produced
+    by fit_joy_to_cmdvel.py --predict-bag (synthesized cmd_vel for bags that
+    lack the topic).
+    """
+    import pathlib as _pl
+    p = _pl.Path(bag_dir)
+    if p.is_file() and p.suffix == ".json":
+        import json as _json
+        data = _json.loads(p.read_text())
+        return [(float(c["t"]), float(c["vx"]), float(c["wz"]))
+                for c in data["cmd_vel"]]
+
     from rosbags.rosbag2 import Reader
     from rosbags.typesys import Stores, get_typestore
     ts = get_typestore(Stores.LATEST)
