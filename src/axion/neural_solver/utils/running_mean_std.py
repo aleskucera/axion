@@ -48,6 +48,8 @@ class RunningMeanStd(object):
         batch_dim = False, 
         time_dim = False
     ) -> None:
+        if not (torch.is_floating_point(arr) or torch.is_complex(arr)):
+            arr = arr.to(torch.float32)
         mean_dims = [i for i in range(int(batch_dim) + int(time_dim))]
         batch_mean = torch.mean(arr, dim = mean_dims)
         batch_var = torch.var(arr, dim = mean_dims, unbiased = False)

@@ -142,7 +142,8 @@ class VelAndLambdaTrainer(SequenceModelTrainer):
         axion_contacts_last = {}
         for key in required:
             value = data[key]
-            axion_contacts_last[key] = value[:, -1, :]
+            # Works for both (B, T, D) and (B, T): keeps feature dims when present.
+            axion_contacts_last[key] = value[:, -1]
 
         return axion_contacts_last
 
@@ -170,6 +171,8 @@ class VelAndLambdaTrainer(SequenceModelTrainer):
         worlds = self._dims.num_worlds
         max_contacts = int(self._engine.axion_contacts.max_contacts)
         contact_count = axion_contacts_bt["axion_contact_count"]
+        if contact_count.ndim == 2 and contact_count.shape[-1] == 1:
+            contact_count = contact_count[:, 0]
         if contact_count.shape != (worlds,):
             raise RuntimeError(
                 "axion_contact_count shape mismatch: expected "

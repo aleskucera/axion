@@ -26,6 +26,12 @@ python src/axion/neural_solver/train/train_lambda_network.py --cfg src/axion/neu
 ```
 optionally: --device cuda:1
 
+### Begin velocity+lambda residual training (example)
+```
+python src/axion/neural_solver/train/train_vel_and_lambda_network.py --cfg src/axion/neural_solver/train/cfg/Pendulum/velAndLambdaNetwork.yaml --logdir src/axion/neural_solver/train/trained_models/vel_and_lambda_residual
+```
+optionally: --device cuda:1
+
 ### Visualize training (wandb)
 View runs at [wandb.ai](https://wandb.ai) in your project (e.g. `neural-solver-transformer`). 
 Ensure `wandb.login()` runs before training (see `train.py`).
