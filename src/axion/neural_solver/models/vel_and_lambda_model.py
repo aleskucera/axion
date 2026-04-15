@@ -49,7 +49,7 @@ class VelAndLambdaModel(nn.Module):
     def __init__(
         self,
         input_sample,
-        vel_ouput_dim,
+        state_output_dim,
         lambda_output_dim,
         input_cfg,
         network_cfg,
@@ -95,9 +95,9 @@ class VelAndLambdaModel(nn.Module):
         else:
             raise NotImplementedError
 
-        self.vel_output_dim = int(vel_ouput_dim)
+        self.state_output_dim = int(state_output_dim)
         self.lambda_output_dim = int(lambda_output_dim)
-        self.total_output_dim = self.vel_output_dim + self.lambda_output_dim
+        self.total_output_dim = self.state_output_dim + self.lambda_output_dim
 
         self.model = VelAndLambdaPredictionHead(
             self.feature_dim,
@@ -169,8 +169,8 @@ class VelAndLambdaModel(nn.Module):
         return features
 
     def _split_outputs(self, output):
-        state_output = output[..., :self.vel_output_dim]
-        lambda_output = output[..., self.vel_output_dim:self.total_output_dim]
+        state_output = output[..., :self.state_output_dim]
+        lambda_output = output[..., self.state_output_dim:self.total_output_dim]
 
         if self.output_tanh:
             state_output = torch.tanh(state_output)
