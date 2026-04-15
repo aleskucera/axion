@@ -706,6 +706,42 @@ class SequenceModelTrainer:
                 grad_info['grad_norm_after_clip'] /= num_batches
 
         return avg_loss, avg_loss_itemized, grad_info
+
+    def _format_residual_breakdown(self, itemized: dict) -> Optional[str]:
+        """Build a readable residual diagnostics summary when available."""
+        if "residual_mse_d" not in itemized:
+            return None
+
+        block_labels = [
+            ("dynamics (d)", "residual_mse_d"),
+            ("joint constraints (j)", "residual_mse_j"),
+            ("control constraints (ctrl)", "residual_mse_ctrl"),
+            ("normal contact (n)", "residual_mse_n"),
+            ("friction contact (f)", "residual_mse_f"),
+        ]
+        parts = []
+        for label, mse_key in block_labels:
+            if mse_key in itemized:
+                parts.append(f"{label}: mse={format_value(itemized[mse_key], 6)}")
+        if not parts:
+            return None
+        return "\n".join(f"  - {part}" for part in parts)
+
+    def _format_itemized_multiline(self, itemized: dict, precision: int = 8) -> str:
+        """
+        Format itemized metrics one per line.
+
+        For residual diagnostics readability, hide residual_sq_* when residual_mse_* is present.
+        """
+        display_itemized = dict(itemized)
+        if any(key.startswith("residual_mse_") for key in display_itemized):
+            display_itemized = {
+                key: value
+                for key, value in display_itemized.items()
+                if not key.startswith("residual_sq_")
+            }
+        lines = [f"  - {key}: {format_value(value, precision)}" for key, value in display_itemized.items()]
+        return "\n".join(lines) if lines else "  - (none)"
             
     def train(self):
         if self.train_dataset is None:
@@ -803,16 +839,33 @@ class SequenceModelTrainer:
                 print_info("-"*100)
                 print_info(f"Epoch {epoch}")
                 if epoch > 0:
-                    print_info("[Train] loss = {}, itemized = {}".format(
-                        format_value(avg_train_loss, 8), 
-                        format_dict(avg_train_loss_itemized, 8)
+                    print_info("[Train] loss = {}".format(format_value(avg_train_loss, 8)))
+                    print_info("[Train] itemized:\n{}".format(
+                        self._format_itemized_multiline(avg_train_loss_itemized, precision=8)
                     ))
+                    train_residual_summary = self._format_residual_breakdown(avg_train_loss_itemized)
+                    if train_residual_summary is not None:
+                        print_info("[Train Residual Breakdown]\n{}".format(train_residual_summary))
                 for valid_dataset_name in self.valid_datasets.keys():
-                    print_info("[Valid] dataset [{}]: loss = {}, itemized = {}".format(
+                    print_info("[Valid] dataset [{}]: loss = {}".format(
                         valid_dataset_name, 
                         format_value(avg_valid_losses[valid_dataset_name], 8),
-                        format_dict(avg_valid_losses_itemized[valid_dataset_name], 8)
                     ))
+                    print_info("[Valid] dataset [{}] itemized:\n{}".format(
+                        valid_dataset_name,
+                        self._format_itemized_multiline(
+                            avg_valid_losses_itemized[valid_dataset_name], precision=8
+                        )
+                    ))
+                    valid_residual_summary = self._format_residual_breakdown(
+                        avg_valid_losses_itemized[valid_dataset_name]
+                    )
+                    if valid_residual_summary is not None:
+                        print_info(
+                            "[Valid Residual Breakdown] dataset [{}]\n{}".format(
+                                valid_dataset_name, valid_residual_summary
+                            )
+                        )
                 print_info("[Time Report] {}".format(time_summary))
                 if epoch > 0:
                     print_info("[Grad Info] {}".format(format_dict(grad_info, 3)))
