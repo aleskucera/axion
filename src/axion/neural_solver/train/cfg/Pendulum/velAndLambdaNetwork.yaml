@@ -6,18 +6,18 @@ env:
     states_frame: body
     anchor_frame_step: every # not actively used in current residual-only vel+lambda trainer path
     states_embedding_type: identical
-    state_prediction_type: relative # not used by residual loss directly (only used by supervised conversion helpers)
-    lambda_prediction_type: relative # not used by residual loss directly (only used by supervised conversion helpers)
-    prediction_quantity_type: velocities_only # not used by residual loss directly (trainer sends absolute vel/lambda to residual)
+    state_prediction_type: relative 
+    lambda_prediction_type: relative 
+    prediction_quantity_type: full_state # has to be full state!
     num_states_history: 10
 
 algorithm:
   name: VelAndLambdaTrainer # informational only; trainer class is selected by train_vel_and_lambda_network.py, not by this field
   use_energy_loss: false # legacy flag, not used in current residual-only vel+lambda trainer
-  num_epochs: 30
+  num_epochs: 2
   num_iters_per_epoch: -1
   sample_sequence_length: 10
-  batch_size: 1024
+  batch_size: 256
   num_valid_batches: 256
   truncate_grad: true
   grad_norm: 1.0
