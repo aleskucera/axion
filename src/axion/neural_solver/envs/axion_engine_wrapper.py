@@ -1,7 +1,7 @@
 import os
 import sys
 from dataclasses import fields
-from typing import Optional
+from typing import Optional, Mapping, Any
 
 import torch
 import warp as wp
@@ -38,6 +38,7 @@ class AxionEngineWrapper:
         num_worlds: int,
         device,
         requires_grad: bool,
+        warp_env_cfg: Optional[Mapping[str, Any]] = None,
         ):
         # Resolve device so the model is built on the intended GPU (e.g. cuda:1 when given "cuda:1").
         self.device = wp.get_device(device) if isinstance(device, str) else device
@@ -45,10 +46,18 @@ class AxionEngineWrapper:
         self.num_worlds = num_worlds
         self.requires_grad = requires_grad
         self.robot_name: str = self.env_name    # for compatibility with nn_training_interface
+
+        warp_env_cfg = warp_env_cfg or {}
+        self.with_contacts: bool = bool(warp_env_cfg.get("with_contacts", True))
         
         # model (robot model built by AxionModelBuilder):
         if self.env_name in ("PendulumWithContact", "Pendulum", "pendulum"):
-            self.model = build_pendulum_model(self.num_worlds, self.device, self.requires_grad)
+            self.model = build_pendulum_model(
+                self.num_worlds,
+                self.device,
+                self.requires_grad,
+                with_contacts=self.with_contacts,
+            )
         else:
             raise NotImplementedError
         
@@ -106,25 +115,30 @@ class AxionEngineWrapper:
         )
         self.eval_collisions: bool = True   # ?
 
-        # We group all static planes by shape_world and take the *last* plane
-        # in each world (the one added after add_ground_plane in the source
-        # builder) as the tilted plane.
-        shape_types = wp.to_torch(self.model.shape_type).to(self._torch_device)
-        shape_body = wp.to_torch(self.model.shape_body).to(self._torch_device)
-        shape_world = wp.to_torch(self.model.shape_world).to(self._torch_device)
+        if self.with_contacts:
+            # We group all static planes by shape_world and take the *last* plane
+            # in each world (the one added after add_ground_plane in the source
+            # builder) as the tilted plane.
+            shape_types = wp.to_torch(self.model.shape_type).to(self._torch_device)
+            shape_body = wp.to_torch(self.model.shape_body).to(self._torch_device)
+            shape_world = wp.to_torch(self.model.shape_world).to(self._torch_device)
 
-        is_static_plane = ((shape_types == int(newton.GeoType.PLANE)) & (shape_body == -1))
-        plane_indices = torch.where(is_static_plane)[0]
+            is_static_plane = ((shape_types == int(newton.GeoType.PLANE)) & (shape_body == -1))
+            plane_indices = torch.where(is_static_plane)[0]
 
-        tilted_indices = []
-        for w in range(self.num_worlds):
-            world_planes = plane_indices[shape_world[plane_indices] == w]
-            assert world_planes.numel() >= 2, (
-                f"Expected at least 2 plane shapes in world {w}, found {world_planes.numel()}"
+            tilted_indices = []
+            for w in range(self.num_worlds):
+                world_planes = plane_indices[shape_world[plane_indices] == w]
+                assert world_planes.numel() >= 2, (
+                    f"Expected at least 2 plane shapes in world {w}, found {world_planes.numel()}"
+                )
+                tilted_indices.append(world_planes[-1].item())
+
+            self._tilted_plane_shape_indices = torch.tensor(
+                tilted_indices, dtype=torch.long, device=self._torch_device
             )
-            tilted_indices.append(world_planes[-1].item())
-
-        self._tilted_plane_shape_indices = torch.tensor(tilted_indices, dtype=torch.long, device=self._torch_device)
+        else:
+            self._tilted_plane_shape_indices = None
 
         # misc
         self.frame_dt = FRAME_DT
@@ -197,6 +211,11 @@ class AxionEngineWrapper:
             plane_d_coefficients: optional (num_worlds, 1) or (num_worlds,) tensor; plane offset d.
                 If None, only rotation is updated (position unchanged).
         """
+        if not self.with_contacts:
+            raise RuntimeError(
+                "reset_scene() called but simulator was built with with_contacts=False."
+            )
+
         assert plane_normals.shape == (self.num_worlds, 3)
 
         # Ensure inputs are on the same device as model transforms

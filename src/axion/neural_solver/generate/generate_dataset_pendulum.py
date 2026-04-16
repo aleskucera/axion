@@ -50,6 +50,7 @@ def collect_dataset(
     num_transitions, 
     trajectory_length, 
     contact_prob, 
+    with_contacts: bool,
     dataset_path, 
     device: str = "cuda:0",
     passive = False,
@@ -72,6 +73,7 @@ def collect_dataset(
         device = device,
         warp_env_cfg = {
             "seed": seed,
+            "with_contacts": with_contacts,
         },
         render = render
     )
@@ -85,7 +87,8 @@ def collect_dataset(
             joint_qd_min = JOINT_QD_MIN[robot_name],
             joint_qd_max = JOINT_QD_MAX[robot_name],
             joint_act_scale = JOINT_ACT_SCALE.get(robot_name, 0.0),
-            contact_prob = contact_prob
+            contact_prob = contact_prob,
+            with_contacts = with_contacts,
         )
     
     rollouts = \
@@ -233,6 +236,11 @@ if __name__ == '__main__':
                         type=float,
                         default=0.5,
                         help='The probablity to sample a valid contact.')
+    parser.add_argument(
+        '--without-contacts',
+        action='store_true',
+        help="Disable the tilted contact plane in the simulator. By default, dataset generation uses contacts.",
+    )
     parser.add_argument('--seed',
                         type=int,
                         default=0,
@@ -270,6 +278,7 @@ if __name__ == '__main__':
         num_transitions=args.num_transitions, 
         trajectory_length=args.trajectory_length,
         contact_prob=args.contact_prob,
+        with_contacts=not args.without_contacts,
         dataset_path=dataset_path,
         device=args.device,
         passive=args.passive,
