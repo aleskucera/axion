@@ -1,4 +1,5 @@
 import torch
+import torch.nn.functional as F
 import warp as wp
 
 from axion.learning.residual_loss_utils import (
@@ -49,7 +50,8 @@ class VelAndLambdaTrainer(SequenceModelTrainer):
         loss_cfg = cfg["algorithm"].get("loss", {}) or {}
         self.residual_loss_weight = float(loss_cfg.get("residual_loss_weight", 1.0))
         self.supervised_loss_weight = float(loss_cfg.get("supervised_loss_weight", 1.0))
-        self.use_supervised_loss = bool(loss_cfg.get("use_supervised_loss", False))
+        self.use_supervised_loss_state = bool(loss_cfg.get("use_supervised_loss_state", False))
+        self.use_supervised_loss_lambdas = bool(loss_cfg.get("use_supervised_loss_lambdas", False))
 
         # Residual-only default: disable rollout eval until residual path is stable.
         if bool(loss_cfg.get("disable_rollout_eval", True)) and self.eval_interval > 0:
@@ -59,22 +61,54 @@ class VelAndLambdaTrainer(SequenceModelTrainer):
             )
             self.eval_interval = 0
 
-        if self.use_supervised_loss:
-            print_warning(
-                "use_supervised_loss=true is reserved for a later hybrid milestone. "
-                "Only residual loss is active right now."
-            )
-
-    def _compose_total_loss(self, residual_loss: torch.Tensor, supervised_loss: torch.Tensor = None):
-        """Single loss aggregator to keep future hybrid mode easy to add."""
+    def _compose_total_loss(
+        self,
+        residual_loss: torch.Tensor,
+        supervised_loss: torch.Tensor = None,
+    ):
+        """Single loss aggregator for residual + optional supervised loss."""
         total_loss = self.residual_loss_weight * residual_loss
-        if self.use_supervised_loss:
-            if supervised_loss is None:
-                raise RuntimeError(
-                    "use_supervised_loss=true but no supervised_loss was provided."
-                )
+        if self.use_supervised_loss_state or self.use_supervised_loss_lambdas:
             total_loss = total_loss + self.supervised_loss_weight * supervised_loss
         return total_loss
+
+    def _compute_supervised_losses(
+        self,
+        data: dict,
+        predicted_next_states: torch.Tensor,
+        predicted_next_lambdas: torch.Tensor,
+    ) -> tuple[torch.Tensor | None, dict[str, torch.Tensor]]:
+        """Compute optional next-step MSE losses against dataset targets."""
+        supervised_components = {}
+
+        if self.use_supervised_loss_state:
+            next_states = data["next_states"]
+            next_states_last = next_states[:, -1, :]
+            q_dim = self._dof_q_per_env
+            predicted_q = predicted_next_states[:, :q_dim]
+            target_q = next_states_last[:, :q_dim]
+            # Periodic angular loss robust to wrap discontinuities.
+            q_loss = torch.mean(1.0 - torch.cos(predicted_q - target_q))
+
+            predicted_qd = predicted_next_states[:, q_dim:]
+            target_qd = next_states_last[:, q_dim:]
+            qd_loss = F.mse_loss(predicted_qd, target_qd)
+
+            supervised_components["supervised_state_loss"] = q_loss + qd_loss
+
+        if self.use_supervised_loss_lambdas:
+            next_lambdas = data["next_lambdas"]
+            next_lambdas_last = next_lambdas[:, -1, :]
+            supervised_components["supervised_lambda_loss"] = F.mse_loss(
+                predicted_next_lambdas,
+                next_lambdas_last,
+            )
+
+        if not supervised_components:
+            return None, supervised_components
+
+        supervised_loss = sum(supervised_components.values())
+        return supervised_loss, supervised_components
 
     def _setup_pendulum_fk_constants(self) -> None:
         """Cache per-joint FK constants for minimal->maximal velocity conversion."""
@@ -315,13 +349,25 @@ class VelAndLambdaTrainer(SequenceModelTrainer):
             body_vel_prediction,
             lambda_for_loss,
         )
-        total_loss = self._compose_total_loss(residual_loss=residual_loss, supervised_loss=None)
+        supervised_loss, supervised_components = self._compute_supervised_losses(
+            data,
+            state_for_loss,
+            lambda_for_loss,
+        )
+        total_loss = self._compose_total_loss(
+            residual_loss=residual_loss,
+            supervised_loss=supervised_loss,
+        )
 
         with torch.no_grad():
             loss_itemized = {
                 "residual_loss": residual_loss.detach(),
                 "total_loss": total_loss.detach(),
             }
+            if supervised_loss is not None:
+                loss_itemized["supervised_loss"] = supervised_loss.detach()
+            for key, value in supervised_components.items():
+                loss_itemized[key] = value.detach()
             for key, value in residual_blocks_sq.items():
                 loss_itemized[key] = value.detach()
             for key, value in residual_blocks_mse.items():
