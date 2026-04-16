@@ -766,6 +766,7 @@ class SequenceModelTrainer:
         valid_loaders = {}
         valid_loader_iters = {}
         best_valid_losses = {}
+        best_train_loss = np.inf
         for valid_dataset_name in self.valid_datasets.keys():
             valid_loaders[valid_dataset_name] = DataLoader(
                 dataset = self.valid_datasets[valid_dataset_name],
@@ -843,9 +844,6 @@ class SequenceModelTrainer:
                     print_info("[Train] itemized:\n{}".format(
                         self._format_itemized_multiline(avg_train_loss_itemized, precision=8)
                     ))
-                    train_residual_summary = self._format_residual_breakdown(avg_train_loss_itemized)
-                    if train_residual_summary is not None:
-                        print_info("[Train Residual Breakdown]\n{}".format(train_residual_summary))
                 for valid_dataset_name in self.valid_datasets.keys():
                     print_info("[Valid] dataset [{}]: loss = {}".format(
                         valid_dataset_name, 
@@ -857,15 +855,6 @@ class SequenceModelTrainer:
                             avg_valid_losses_itemized[valid_dataset_name], precision=8
                         )
                     ))
-                    valid_residual_summary = self._format_residual_breakdown(
-                        avg_valid_losses_itemized[valid_dataset_name]
-                    )
-                    if valid_residual_summary is not None:
-                        print_info(
-                            "[Valid Residual Breakdown] dataset [{}]\n{}".format(
-                                valid_dataset_name, valid_residual_summary
-                            )
-                        )
                 print_info("[Time Report] {}".format(time_summary))
                 if epoch > 0:
                     print_info("[Grad Info] {}".format(format_dict(grad_info, 3)))
@@ -937,6 +926,18 @@ class SequenceModelTrainer:
                                 epoch, 
                                 format_value(avg_valid_losses[valid_dataset_name], 8)
                             ))
+
+            if epoch > 0 and avg_train_loss < best_train_loss:
+                best_train_loss = avg_train_loss
+                with open(
+                    os.path.join(self.model_log_dir, 'saved_best_train_model_epochs.txt'),
+                    'a',
+                ) as fp:
+                    fp.write(f"{epoch}\n")
+                print_ok(
+                    'Save Best Train Loss at Epoch {} with loss {}.'
+                    .format(epoch, format_value(avg_train_loss, 8))
+                )
 
         self.save_model("final_model")
 

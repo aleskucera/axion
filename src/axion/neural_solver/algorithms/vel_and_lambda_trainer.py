@@ -362,12 +362,19 @@ class VelAndLambdaTrainer(SequenceModelTrainer):
         with torch.no_grad():
             loss_itemized = {
                 "residual_loss": residual_loss.detach(),
+                "weighted_residual_loss": (self.residual_loss_weight * residual_loss).detach(),
                 "total_loss": total_loss.detach(),
             }
             if supervised_loss is not None:
                 loss_itemized["supervised_loss"] = supervised_loss.detach()
+                loss_itemized["weighted_supervised_loss"] = (
+                    self.supervised_loss_weight * supervised_loss
+                ).detach()
             for key, value in supervised_components.items():
                 loss_itemized[key] = value.detach()
+                loss_itemized[f"weighted_{key}"] = (
+                    self.supervised_loss_weight * value
+                ).detach()
             for key, value in residual_blocks_sq.items():
                 loss_itemized[key] = value.detach()
             for key, value in residual_blocks_mse.items():
