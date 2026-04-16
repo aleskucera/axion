@@ -36,6 +36,7 @@ class VelAndLambdaTrainer(SequenceModelTrainer):
         self._dims = self._engine.dims
         self._dof_q_per_env = int(self.neural_env.dof_q_per_env)
         self._dof_qd_per_env = int(self.neural_env.dof_qd_per_env)
+        self._validate_prediction_type_cfg_for_loss()
 
         if int(self.batch_size) != int(self._dims.num_worlds):
             raise ValueError(
@@ -232,15 +233,72 @@ class VelAndLambdaTrainer(SequenceModelTrainer):
 
         return vel_prediction, lambda_prediction
 
+    def _validate_prediction_type_cfg_for_loss(self) -> None:
+        """Require matching state/lambda prediction semantics in residual-loss training."""
+        state_prediction_type = self.utils_provider.state_prediction_type
+        lambda_prediction_type = self.utils_provider.lambda_prediction_type
+        if state_prediction_type != lambda_prediction_type:
+            raise ValueError(
+                "VelAndLambdaTrainer requires matching prediction types for residual loss. "
+                "Set env.utils_provider_cfg.state_prediction_type and "
+                "env.utils_provider_cfg.lambda_prediction_type to the same value, got "
+                f"state={state_prediction_type!r}, lambda={lambda_prediction_type!r}."
+            )
+
+    def _convert_predictions_to_absolute_for_loss(
+        self,
+        states_last: torch.Tensor,
+        lambdas_last: torch.Tensor,
+        state_prediction: torch.Tensor,
+        lambda_prediction: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Convert prediction-space outputs into absolute next-state warm starts."""
+        next_state_prediction = self.utils_provider.convert_prediction_to_next_states(
+            states_last,
+            state_prediction,
+            dt=self._dt,
+        )
+        next_lambda_prediction = self.utils_provider.convert_prediction_to_next_lambdas(
+            lambdas_last,
+            lambda_prediction,
+        )
+
+        if next_state_prediction.ndim == 3:
+            next_state_prediction = next_state_prediction[:, -1, :]
+        if next_lambda_prediction.ndim == 3:
+            next_lambda_prediction = next_lambda_prediction[:, -1, :]
+
+        if next_state_prediction.shape[-1] != self.neural_env.state_dim:
+            raise RuntimeError(
+                "Residual warm-start state must be an absolute full minimal state. "
+                f"Expected last dim {self.neural_env.state_dim}, got "
+                f"{next_state_prediction.shape[-1]}."
+            )
+        if next_lambda_prediction.shape[-1] != self._dims.num_constraints:
+            raise RuntimeError(
+                "Residual warm-start lambda dim mismatch: expected "
+                f"{self._dims.num_constraints}, got {next_lambda_prediction.shape[-1]}."
+            )
+
+        return next_state_prediction, next_lambda_prediction
+
     def compute_loss(self, data, train):
         del train  # compatibility with SequenceModelTrainer.one_epoch
         prediction = self.neural_model(data)
         state_prediction, lambda_prediction = self._split_prediction_last_step(prediction)
 
         states = data["states"]
+        lambdas = data["lambdas"]
         states_last = states[:, -1, :]
+        lambdas_last = lambdas[:, -1, :]
+        state_for_loss, lambda_for_loss = self._convert_predictions_to_absolute_for_loss(
+            states_last,
+            lambdas_last,
+            state_prediction,
+            lambda_prediction,
+        )
         axion_contacts_last = self._extract_last_step_axion_contacts(data)
-        body_vel_prediction = self._convert_minimal_state_to_maximal_vel(state_prediction)
+        body_vel_prediction = self._convert_minimal_state_to_maximal_vel(state_for_loss)
 
         batch_worlds = body_vel_prediction.shape[0]
         worlds = self._dims.num_worlds
@@ -250,12 +308,12 @@ class VelAndLambdaTrainer(SequenceModelTrainer):
                 f"batch={batch_worlds}, num_worlds={worlds}."
             )
 
-        validate_warm_start_shapes(self._dims, body_vel_prediction, lambda_prediction)
+        validate_warm_start_shapes(self._dims, body_vel_prediction, lambda_for_loss)
         self._load_engine_step_from_states_and_contacts(states_last, axion_contacts_last)
         residual_loss, residual_blocks_sq, residual_blocks_mse = compute_residual_diagnostics(
             self._engine,
             body_vel_prediction,
-            lambda_prediction,
+            lambda_for_loss,
         )
         total_loss = self._compose_total_loss(residual_loss=residual_loss, supervised_loss=None)
 
