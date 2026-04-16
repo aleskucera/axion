@@ -8,6 +8,10 @@ python src/axion/neural_solver/generate/simple_generate_dataset_pendulum.py --en
 ```
 python src/axion/neural_solver/generate/generate_dataset_pendulum.py --env-name Pendulum --num-transitions 10000 --dataset-name pendulumDatasetName.hdf5 --trajectory-length 100 --num-envs 2 --seed 0 --passive --device cuda:1
 ```
+### States + contacts fields, but **no tilted contact plane** (plane_coefficients are zeros)
+```
+python src/axion/neural_solver/generate/generate_dataset_pendulum.py --env-name Pendulum --num-transitions 10000 --dataset-name pendulumDatasetName.hdf5 --trajectory-length 100 --num-envs 2 --seed 0 --passive --device cuda:1 --without-contacts
+```
 Generated HDF5 includes:
 - converted NN contact fields (`contact_normals`, `contact_points_0/1`, `contact_depths`, `contact_thicknesses`)
 - pre-conversion batched Axion contact arrays under `data/axion_contacts/*` for reconstruction/debug.

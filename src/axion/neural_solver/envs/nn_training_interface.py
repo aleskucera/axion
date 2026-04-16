@@ -81,7 +81,8 @@ class NnTrainingInterface:
             env_name = env_name,
             num_worlds= num_envs,
             device = device,
-            requires_grad= False # Check if true
+            requires_grad= False, # Check if true
+            warp_env_cfg=warp_env_cfg,
         )
 
         self.utils_provider = TransformerNeuralModelUtilsProvider(

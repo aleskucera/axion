@@ -1121,8 +1121,3 @@ class SequenceModelTrainer:
             [self.neural_model, self.neural_env.robot_name], 
             os.path.join(self.model_log_dir, '{}.pt'.format(filename))
         )
-    
-
-
-
-

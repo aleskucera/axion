@@ -12,6 +12,7 @@ def build_pendulum_model(
     device: wp.Device,
     requires_grad: bool = False,
     plane_coefficients: tuple[float, float, float, float] = (0.0, 0.0, 1.0, 0.0),
+    with_contacts: bool = True,
 ) -> newton.Model:
     """Build the same 2-link revolute pendulum as examples/pendulum_AxionEngine.py,
     replicated for num_worlds."""
@@ -81,13 +82,14 @@ def build_pendulum_model(
     builder.add_articulation([j0, j1], label="pendulum")
     builder.add_ground_plane()
 
-    # Add a plane shape for contacts (plane equation: nx*x + ny*y + nz*z + d = 0)
-    builder.add_shape_plane(
-        plane=plane_coefficients,
-        width=0.0,
-        length=0.0,
-        label="tilted_plane",
-    )
+    if with_contacts:
+        # Add a plane shape for contacts (plane equation: nx*x + ny*y + nz*z + d = 0)
+        builder.add_shape_plane(
+            plane=plane_coefficients,
+            width=0.0,
+            length=0.0,
+            label="tilted_plane",
+        )
 
     return builder.finalize_replicated(
         num_worlds=num_worlds,

@@ -3,8 +3,6 @@ import warp as wp
 
 from axion.learning.residual_loss_utils import (
     compute_residual_diagnostics,
-    compute_weighted_residual_loss_from_blocks,
-    update_residual_block_running_var,
     validate_warm_start_shapes,
 )
 from axion.neural_solver.algorithms.sequence_model_trainer import SequenceModelTrainer
@@ -51,30 +49,6 @@ class VelAndLambdaTrainer(SequenceModelTrainer):
         self.residual_loss_weight = float(loss_cfg.get("residual_loss_weight", 1.0))
         self.supervised_loss_weight = float(loss_cfg.get("supervised_loss_weight", 1.0))
         self.use_supervised_loss = bool(loss_cfg.get("use_supervised_loss", False))
-        self.residual_balance_mode = str(loss_cfg.get("residual_balance_mode", "none")).lower()
-        if self.residual_balance_mode not in {"none", "block_rms"}:
-            raise ValueError(
-                "algorithm.loss.residual_balance_mode must be one of ['none', 'block_rms'], "
-                f"got {self.residual_balance_mode!r}."
-            )
-        self.residual_balance_eps = float(loss_cfg.get("residual_balance_eps", 1e-6))
-        self.residual_balance_warmup_steps = int(loss_cfg.get("residual_balance_warmup_steps", 200))
-        self.residual_balance_momentum = float(loss_cfg.get("residual_balance_momentum", 0.99))
-        if not (0.0 <= self.residual_balance_momentum < 1.0):
-            raise ValueError(
-                "algorithm.loss.residual_balance_momentum must satisfy 0 <= momentum < 1, "
-                f"got {self.residual_balance_momentum}."
-            )
-        exclude_blocks = loss_cfg.get("residual_balance_exclude_blocks", ["ctrl"])
-        if isinstance(exclude_blocks, str):
-            exclude_blocks = [exclude_blocks]
-        self.residual_balance_exclude_blocks = {str(block).lower() for block in exclude_blocks}
-        self._residual_balance_step = 0
-        self._residual_block_running_var = {
-            block: torch.ones((), device=self.device, dtype=torch.float32)
-            for block in ("d", "j", "n", "f")
-            if block not in self.residual_balance_exclude_blocks
-        }
 
         # Residual-only default: disable rollout eval until residual path is stable.
         if bool(loss_cfg.get("disable_rollout_eval", True)) and self.eval_interval > 0:
@@ -259,6 +233,7 @@ class VelAndLambdaTrainer(SequenceModelTrainer):
         return vel_prediction, lambda_prediction
 
     def compute_loss(self, data, train):
+        del train  # compatibility with SequenceModelTrainer.one_epoch
         prediction = self.neural_model(data)
         state_prediction, lambda_prediction = self._split_prediction_last_step(prediction)
 
@@ -277,55 +252,21 @@ class VelAndLambdaTrainer(SequenceModelTrainer):
 
         validate_warm_start_shapes(self._dims, body_vel_prediction, lambda_prediction)
         self._load_engine_step_from_states_and_contacts(states_last, axion_contacts_last)
-        residual_loss_raw, residual_blocks_sq, residual_blocks_mse = compute_residual_diagnostics(
+        residual_loss, residual_blocks_sq, residual_blocks_mse = compute_residual_diagnostics(
             self._engine,
             body_vel_prediction,
             lambda_prediction,
         )
-        residual_loss = residual_loss_raw
-        residual_loss_normalized = residual_loss_raw
-        residual_weights = {
-            "residual_weight_d": torch.ones_like(residual_loss_raw),
-            "residual_weight_j": torch.ones_like(residual_loss_raw),
-            "residual_weight_ctrl": torch.ones_like(residual_loss_raw),
-            "residual_weight_n": torch.ones_like(residual_loss_raw),
-            "residual_weight_f": torch.ones_like(residual_loss_raw),
-        }
-        use_block_rms = self.residual_balance_mode == "block_rms"
-        if use_block_rms:
-            with torch.no_grad():
-                if train:
-                    update_residual_block_running_var(
-                        running_var=self._residual_block_running_var,
-                        block_mse=residual_blocks_mse,
-                        momentum=self.residual_balance_momentum,
-                        exclude_blocks=self.residual_balance_exclude_blocks,
-                    )
-            residual_loss_normalized, residual_weights = compute_weighted_residual_loss_from_blocks(
-                block_sum_sq=residual_blocks_sq,
-                running_var=self._residual_block_running_var,
-                eps=self.residual_balance_eps,
-                exclude_blocks=self.residual_balance_exclude_blocks,
-            )
-            if self._residual_balance_step >= self.residual_balance_warmup_steps:
-                residual_loss = residual_loss_normalized
-            if train:
-                self._residual_balance_step += 1
-
         total_loss = self._compose_total_loss(residual_loss=residual_loss, supervised_loss=None)
 
         with torch.no_grad():
             loss_itemized = {
                 "residual_loss": residual_loss.detach(),
-                "residual_loss_raw": residual_loss_raw.detach(),
-                "residual_loss_normalized": residual_loss_normalized.detach(),
                 "total_loss": total_loss.detach(),
             }
             for key, value in residual_blocks_sq.items():
                 loss_itemized[key] = value.detach()
             for key, value in residual_blocks_mse.items():
-                loss_itemized[key] = value.detach()
-            for key, value in residual_weights.items():
                 loss_itemized[key] = value.detach()
         return total_loss, loss_itemized
 
