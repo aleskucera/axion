@@ -122,7 +122,14 @@ class NeuralPredictor:
         lambda_output_net = getattr(lambda_model, "output_net", None) if lambda_model is not None else None
         self.has_lambda_prediction_module = lambda_output_net is not None
         if self.has_lambda_prediction_module:
-            self.lambda_dim = int(lambda_output_net.out_features)
+            # VelAndLambdaModel keeps `lambda_model` as an alias to the shared
+            # joint state+lambda head. In that case `output_net.out_features`
+            # is total_output_dim (= state + lambda), not lambda-only.
+            explicit_lambda_dim = getattr(self.nn_model, "lambda_output_dim", None)
+            if explicit_lambda_dim is not None:
+                self.lambda_dim = int(explicit_lambda_dim)
+            else:
+                self.lambda_dim = int(lambda_output_net.out_features)
             self.lambdas = torch.zeros((self.num_worlds, self.lambda_dim), device=self.device)
         else:
             self.lambda_dim = 0
@@ -307,7 +314,10 @@ class NeuralPredictor:
         """
         Process model inputs: coordinate frame conversion, state embedding.
         """
-        
+        # Axion engine integrates maximal coordinates (body_q/body_qd). Ensure
+        # generalized coordinates are synchronized before reading joint_q/joint_qd.
+        newton.eval_ik(self.robot_model, state_in, state_in.joint_q, state_in.joint_qd)
+
         # Get min coordinate representation from newton's state
         state_min_coords = torch.cat( (wp.to_torch(state_in.joint_q), wp.to_torch(state_in.joint_qd)))
         state_min_coords = state_min_coords.unsqueeze(0)  # shape (1,4)

@@ -1,6 +1,7 @@
 from typing import Optional
 
 import warp as wp
+import newton
 from newton import Contacts
 from newton import Control
 from newton import Model
@@ -17,8 +18,8 @@ import torch
 from axion.neural_solver.standalone.neural_predictor import NeuralPredictor
 from axion.neural_solver.models.lambda_models import LambdaClassificationModel
 from axion.neural_solver.utils.neural_lambda_hdf5_logger import NeuralLambdaHDF5Logger
-NN_BASE_PATH = Path.cwd() /"src"/"axion"/"neural_solver"/"train"/"trained_models"/"lambda_classifier"/"04-02-2026-11-28-08"#"04-01-2026-12-43-28"
-NN_PENDULUM_PT_PATH = NN_BASE_PATH/"nn"/"final_model.pt"
+NN_BASE_PATH = Path.cwd() /"src"/"axion"/"neural_solver"/"train"/"trained_models"/"vel_and_lambda_residual"/"04-16-2026-17-52-39"
+NN_PENDULUM_PT_PATH = NN_BASE_PATH/"nn"/"best_valid_valid_model.pt"
 NN_PENDULUM_CFG_PATH = NN_BASE_PATH/"cfg.yaml"
 
 class AxionEngineWithNeuralLambdas(AxionEngineBase):
@@ -33,6 +34,18 @@ class AxionEngineWithNeuralLambdas(AxionEngineBase):
         has_state_head = bool(getattr(nn_model, "has_state_head", True))
         has_lambda_head = bool(getattr(nn_model, "has_lambda_head", False))
         return (not has_state_head) and has_lambda_head and ("lambda_models" in model_cls.__module__)
+
+    @staticmethod
+    def _is_vel_and_lambda_model(nn_model: torch.nn.Module) -> bool:
+        model_cls = type(nn_model)
+        if model_cls.__name__ == "VelAndLambdaModel":
+            return True
+        module_name = model_cls.__module__
+        return bool(
+            getattr(nn_model, "has_state_head", False)
+            and getattr(nn_model, "has_lambda_head", False)
+            and "vel_and_lambda_model" in module_name
+        )
 
     def __init__(
         self,
@@ -74,12 +87,16 @@ class AxionEngineWithNeuralLambdas(AxionEngineBase):
         # Load the nn .pt file and .cfg file correctly
         print(f"Loading model from: {nn_model_path}")
         loaded_nn_model, robot_name = torch.load(nn_model_path, map_location= str(self.device), weights_only= False)
+        self._use_vel_and_lambda_model = self._is_vel_and_lambda_model(loaded_nn_model)
         self._use_lambda_classification = self._is_lambda_classification_model(loaded_nn_model)
         print(f"Loaded model for robot: {robot_name}")
-        print(
-            "Loaded neural lambda model mode:",
-            "classification" if self._use_lambda_classification else "regression",
-        )
+        if self._use_lambda_classification:
+            model_mode = "classification"
+        elif self._use_vel_and_lambda_model:
+            model_mode = "vel_and_lambda"
+        else:
+            model_mode = "regression"
+        print("Loaded neural lambda model mode:", model_mode)
         print(f"Loading configuration from: {nn_cfg_path}")
         with open(nn_cfg_path, 'r') as f:
             loaded_nn_cfg = yaml.load(f, Loader=yaml.SafeLoader)
@@ -90,7 +107,7 @@ class AxionEngineWithNeuralLambdas(AxionEngineBase):
             nn_model=loaded_nn_model,
             nn_cfg=loaded_nn_cfg,
             device=str(self.device),
-            lambda_prediction_only=True,
+            lambda_prediction_only=not self._use_vel_and_lambda_model,
         )
 
     @staticmethod
@@ -102,7 +119,9 @@ class AxionEngineWithNeuralLambdas(AxionEngineBase):
         state_in: State,
         state_out: State,
         nn_inputs: dict[str, torch.Tensor],
+        sim_lambdas_before_step: torch.Tensor,
         predicted_next_lambdas: Optional[torch.Tensor],
+        predicted_next_states: Optional[torch.Tensor],
         lambda_activity: Optional[torch.Tensor],
     ) -> None:
         if self.neural_dataset_logger is None:
@@ -125,10 +144,6 @@ class AxionEngineWithNeuralLambdas(AxionEngineBase):
             root_body_q,
         )
 
-        lambdas = None
-        if "lambdas" in nn_inputs:
-            lambdas = nn_inputs["lambdas"][:, -1, :]
-
         self.neural_dataset_logger.append_step(
             states=self._to_numpy(nn_inputs["states"][:, -1, :]),
             next_states=self._to_numpy(next_states),
@@ -137,11 +152,15 @@ class AxionEngineWithNeuralLambdas(AxionEngineBase):
             contact_points_0=self._to_numpy(processed_contacts["contact_points_0"]),
             contact_points_1=self._to_numpy(processed_contacts["contact_points_1"]),
             contact_thicknesses=self._to_numpy(processed_contacts["contact_thicknesses"]),
-            lambdas=self._to_numpy(lambdas) if lambdas is not None else None,
+            lambdas=self._to_numpy(sim_lambdas_before_step),
             next_lambdas=self._to_numpy(wp.to_torch(self.data._constr_force)),
             predicted_next_lambdas=(
                 self._to_numpy(predicted_next_lambdas)
                 if predicted_next_lambdas is not None else None
+            ),
+            predicted_next_states=(
+                self._to_numpy(predicted_next_states)
+                if predicted_next_states is not None else None
             ),
             lambda_activity=(
                 self._to_numpy(lambda_activity) if lambda_activity is not None else None
@@ -170,6 +189,9 @@ class AxionEngineWithNeuralLambdas(AxionEngineBase):
         wp.copy(dest=self.data.body_pose, src=state_in.body_q)
         wp.copy(dest=self.data.body_vel, src=state_in.body_qd)
 
+        # Keep a copy of current simulation lambdas before warm-start reset.
+        sim_lambdas_before_step = wp.to_torch(self.data._constr_force).clone()
+
         self.data._constr_force.zero_()
         self.data._constr_force_prev_iter.zero_()
 
@@ -177,6 +199,7 @@ class AxionEngineWithNeuralLambdas(AxionEngineBase):
         self.nn_predictor.process_inputs(state_in, self.axion_contacts, dt)
         nn_inputs = self.nn_predictor.nn_model_inputs
         predicted_next_lambdas = None
+        predicted_next_states = None
         lambda_activity = None
         if self._use_lambda_classification:
             with torch.no_grad():
@@ -203,6 +226,39 @@ class AxionEngineWithNeuralLambdas(AxionEngineBase):
                     else lambda_logits.squeeze(1)
                 )
                 lambda_activity = torch.argmax(lambda_logits_last, dim=-1).to(dtype=torch.float32)
+        elif self._use_vel_and_lambda_model:
+            with torch.no_grad():
+                out = self.nn_predictor.nn_model.evaluate(nn_inputs)
+                state_prediction = out.get("state", None)
+                lambda_prediction = out.get("lambda", None)
+            if state_prediction is None or lambda_prediction is None:
+                raise RuntimeError(
+                    "VelAndLambdaModel engine expected model.evaluate(...) to return "
+                    "both 'state' and 'lambda' tensors."
+                )
+            state_prediction = (
+                state_prediction[:, -1, :]
+                if state_prediction.shape[1] > 1
+                else state_prediction.squeeze(1)
+            )
+            lambda_prediction = (
+                lambda_prediction[:, -1, :]
+                if lambda_prediction.shape[1] > 1
+                else lambda_prediction.squeeze(1)
+            )
+            cur_states = nn_inputs["states"][:, -1, :]
+            predicted_next_states = self.nn_predictor._convert_prediction_to_next_states(  # noqa: SLF001
+                cur_states,
+                state_prediction,
+                dt,
+            )
+            if (self.nn_predictor.lambdas is not None) and ("lambdas" in nn_inputs):
+                cur_lambdas = nn_inputs["lambdas"][:, -1, :]
+                predicted_next_lambdas = self.nn_predictor._convert_prediction_to_next_lambdas(  # noqa: SLF001
+                    cur_lambdas,
+                    lambda_prediction,
+                )
+                self.nn_predictor.lambdas.copy_(predicted_next_lambdas)
         else:
             predicted_next_lambdas = self.nn_predictor.predict_lambdas_only(dt)
 
@@ -210,10 +266,14 @@ class AxionEngineWithNeuralLambdas(AxionEngineBase):
 
         wp.copy(dest=state_out.body_q, src=self.data.body_pose)
         wp.copy(dest=state_out.body_qd, src=self.data.body_vel)
+        # Keep generalized coordinates in sync for logging/debug consumers.
+        newton.eval_ik(self.model, state_out, state_out.joint_q, state_out.joint_qd)
         self._log_neural_step(
             state_in=state_in,
             state_out=state_out,
             nn_inputs=nn_inputs,
+            sim_lambdas_before_step=sim_lambdas_before_step,
             predicted_next_lambdas=predicted_next_lambdas,
+            predicted_next_states=predicted_next_states,
             lambda_activity=lambda_activity,
         )

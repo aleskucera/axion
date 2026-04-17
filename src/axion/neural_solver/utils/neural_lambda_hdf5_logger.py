@@ -42,6 +42,7 @@ class NeuralLambdaHDF5Logger:
         gravity_dir: np.ndarray,
         root_body_q: np.ndarray,
         predicted_next_lambdas: Optional[np.ndarray] = None,
+        predicted_next_states: Optional[np.ndarray] = None,
         lambda_activity: Optional[np.ndarray] = None,
     ) -> None:
         step_payload = {
@@ -60,6 +61,8 @@ class NeuralLambdaHDF5Logger:
             step_payload["lambdas"] = lambdas
         if predicted_next_lambdas is not None:
             step_payload["predicted_next_lambdas"] = predicted_next_lambdas
+        if predicted_next_states is not None:
+            step_payload["predicted_next_states"] = predicted_next_states
         if lambda_activity is not None:
             step_payload["lambda_activity"] = lambda_activity
 
