@@ -1,4 +1,3 @@
-import os
 import pathlib
 from importlib.resources import files
 from typing import override
@@ -144,18 +143,22 @@ def basic_pendulum_example(cfg: DictConfig):
     engine_config: EngineConfig = hydra.utils.instantiate(cfg.engine)
     # Engine checkpoint compatibility:
     # - ModelMixedInput checkpoints log `predicted_next_lambdas`
+    # - VelAndLambdaModel checkpoints log:
+    #     - `predicted_next_states` (predicted q/qd)
+    #     - `predicted_next_lambdas`
     # - LambdaClassificationModel checkpoints log `lambda_activity`:
     #     - binary models: 0/1 activity mask
     #     - multiclass models: 0/1/2 class indices
 
     # Plane equation: nx*x + ny*y + nz*z + d = 0 (default: horizontal z=0)
     plane_coefficients = [0.0, 0.0, 1.0, 0.0]
-    plane_coefficients = [-0.2354, -0.0000, 0.9719, -2.3318]
+    #plane_coefficients = [-0.2354, -0.0000, 0.9719, -2.3318]
 
     # Custom initial conditions: (q0, q1, qd0, qd1)
     # Set to None to start from the default rest position.
     INITIAL_STATE = (-0.5704, 2.8907, -3.6530, -7.6918)  # e.g. (0.5, -0.3, 1.0, -2.0)
     INITIAL_STATE = (0.5, -0.3, 1.0, -2.0)
+    INITIAL_STATE = (3.14, 0.0, 0.5, -0.5)
 
     simulator = Simulator(
         sim_config=sim_config,
