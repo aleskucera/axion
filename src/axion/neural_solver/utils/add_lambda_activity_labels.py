@@ -20,8 +20,8 @@ from pathlib import Path
 import h5py
 import numpy as np
 
-THRESHOLD_DEFAULT = 1000
-LOW_THRESHOLD_DEFAULT = 0.1
+THRESHOLD_DEFAULT = 0.5
+LOW_THRESHOLD_DEFAULT = 0.5
 
 
 def _resolve_data_group(h5_file: h5py.File) -> h5py.Group:

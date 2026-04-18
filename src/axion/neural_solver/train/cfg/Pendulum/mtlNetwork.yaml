@@ -17,7 +17,7 @@ algorithm:
   num_epochs: 10
   num_iters_per_epoch: -1
   sample_sequence_length: 10
-  batch_size: 2048
+  batch_size: 256
   num_valid_batches: 256
   truncate_grad: true
   grad_norm: 1.0
@@ -38,9 +38,9 @@ algorithm:
     weight_decay: 8e-4
 
   dataset:
-    train_dataset_path: [src/axion/neural_solver/datasets/Pendulum/pendulumLambdasValid500klen400envs250seed1WithActivityLabels_lth01_hth1000_train.hdf5]
+    train_dataset_path: [src/axion/neural_solver/datasets/Pendulum/pendulumTrainMtlNoContacts2000len500envs2seed0LabelsTh05.hdf5]
     valid_datasets:
-      valid: src/axion/neural_solver/datasets/Pendulum/pendulumLambdasValid500klen400envs250seed1WithActivityLabels_lth01_hth1000_val.hdf5
+      valid: src/axion/neural_solver/datasets/Pendulum/pendulumValMtlNoContacts2000len500envs2seed1LabelsTh05.hdf5
     max_capacity: 100000000
     num_data_workers: 4
 
@@ -48,7 +48,7 @@ algorithm:
     mode: dataset # inactive when eval_interval=0
     rollout_horizon: 10 # inactive when eval_interval=0
     num_rollouts: 20000 # inactive when eval_interval=0
-    dataset_path: src/axion/neural_solver/datasets/Pendulum/pendulumLambdasValid500klen400envs250seed1WithActivityLabels_lth01_hth1000_val.hdf5 # inactive when eval_interval=0
+    dataset_path: src/axion/neural_solver/datasets/Pendulum/pendulumValMtlNoContacts2000len500envs2seed1LabelsTh05.hdf5 # inactive when eval_interval=0
     passive: true # inactive when eval_interval=0
 
 inputs:
