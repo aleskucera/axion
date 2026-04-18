@@ -22,19 +22,22 @@ Generated HDF5 includes:
 ```
 python src/axion/neural_solver/train/train.py --cfg src/axion/neural_solver/train/cfg/Pendulum/transformer.yaml --logdir src/axion/neural_solver/train/trained_models/
 ```
-optionally: --device cuda:1
+optionally: `--device cuda:1`, `--checkpoint /path/to/checkpoint.pt`, `--no-time-stamp`
 
 ### Begin lambda classifier training (example)
 ```
 python src/axion/neural_solver/train/train_lambda_network.py --cfg src/axion/neural_solver/train/cfg/Pendulum/lambdaNetwork.yaml --logdir src/axion/neural_solver/train/trained_models/lambda_classifier
 ```
-optionally: --device cuda:1
 
 ### Begin velocity+lambda residual training (example)
 ```
 python src/axion/neural_solver/train/train_vel_and_lambda_network.py --cfg src/axion/neural_solver/train/cfg/Pendulum/velAndLambdaNetwork.yaml --logdir src/axion/neural_solver/train/trained_models/vel_and_lambda_residual
 ```
-optionally: --device cuda:1
+
+### Begin MTL training (regression + lambda classification, example)
+```
+python src/axion/neural_solver/train/train_mtl.py --cfg src/axion/neural_solver/train/cfg/Pendulum/mtlNetwork.yaml --logdir src/axion/neural_solver/train/trained_models/mtl
+```
 
 ### Visualize training (wandb)
 View runs at [wandb.ai](https://wandb.ai) in your project (e.g. `neural-solver-transformer`). 

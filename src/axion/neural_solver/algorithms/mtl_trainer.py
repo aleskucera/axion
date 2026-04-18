@@ -34,6 +34,8 @@ class MTLTrainer(SequenceModelTrainer):
 
         self._bce_pos_weight = torch.tensor(self.positive_class_weight, device=self.device, dtype=torch.float32)
 
+        self._dof_q_per_env = int(self.neural_env.dof_q_per_env)
+
     def _build_regression_target(self, data: dict, prediction: torch.Tensor) -> torch.Tensor:
         regression_target = torch.cat([data["next_states"], data["next_lambdas"]], dim=-1)
         if regression_target.shape != prediction.shape:
@@ -43,6 +45,19 @@ class MTLTrainer(SequenceModelTrainer):
                 f"prediction={tuple(prediction.shape)}."
             )
         return regression_target
+
+    def _compute_regression_loss(
+        self, prediction: torch.Tensor, target: torch.Tensor
+    ) -> torch.Tensor:
+        """Angular generalized coordinates use 1-cos loss (wrap-safe); qd and lambdas use MSE."""
+        q_dim = self._dof_q_per_env
+        pred_q = prediction[..., :q_dim]
+        tgt_q = target[..., :q_dim]
+        q_loss = torch.mean(1.0 - torch.cos(pred_q - tgt_q))
+        rest_pred = prediction[..., q_dim:]
+        rest_tgt = target[..., q_dim:]
+        rest_loss = F.mse_loss(rest_pred, rest_tgt)
+        return q_loss + rest_loss
 
     def _build_classification_labels(self, data: dict, logits: torch.Tensor) -> torch.Tensor:
         if "lambda_activity" not in data:
@@ -149,6 +164,7 @@ class MTLTrainer(SequenceModelTrainer):
         }
 
     def compute_loss(self, data, train):
+        # Get the prediction from the model:
         del train
         prediction = self.neural_model(data)
         regression_prediction = prediction.get("regression")
@@ -158,10 +174,18 @@ class MTLTrainer(SequenceModelTrainer):
                 "MTLTrainer expects model outputs `regression` and `classification`."
             )
 
+        # Build the regression target:
         regression_target = self._build_regression_target(data, regression_prediction)
+
+        # Build the classification labels:
         classification_labels = self._build_classification_labels(data, classification_logits)
 
-        regression_loss = F.mse_loss(regression_prediction, regression_target)
+        # Compute the regression loss (periodic q, same idea as VelAndLambdaTrainer supervised state):
+        regression_loss = self._compute_regression_loss(
+            regression_prediction, regression_target
+        )
+
+        # Compute the classification loss:
         if self.classification_num_classes == 2:
             classification_loss = F.binary_cross_entropy_with_logits(
                 classification_logits,
@@ -173,6 +197,7 @@ class MTLTrainer(SequenceModelTrainer):
             labels_1d = classification_labels.reshape(-1)
             classification_loss = F.cross_entropy(logits_2d, labels_1d)
 
+        # Compute the total loss:
         total_loss = (
             self.regression_loss_weight * regression_loss
             + self.classification_loss_weight * classification_loss
