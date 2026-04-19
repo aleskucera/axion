@@ -10,16 +10,19 @@ import numpy as np
 
 DEFAULT_HDF5_PATH = (
     Path(__file__).resolve().parents[4]
-    / "data/logs/AxioneEngineWithNeuralLambdas_example_2026-04-17_16-16-55.h5"
+    / "data/logs/AxioneEngineWithNeuralLambdas_example_2026-04-19_10-46-56.h5"
 )
-DEFAULT_LAMBDA_SLICE = slice(0, 21)
+DEFAULT_LAMBDA_SLICE = slice(0, 10)
 
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
             "Plot real-vs-predicted next states and selected next lambdas "
-            "from an AxioneEngineWithNeuralLambdas HDF5 log."
+            "from an AxioneEngineWithNeuralLambdas HDF5 log. "
+            "If the file also contains lambda_activity and "
+            "lambda_activity_ground_truth, a fourth figure compares predicted vs "
+            "simulator activity labels (same lambda index slice as --lambda-start/--lambda-stop)."
         )
     )
     parser.add_argument(
@@ -106,6 +109,40 @@ def _load_and_validate(hdf5_path: Path) -> tuple[np.ndarray, np.ndarray, np.ndar
     return next_states, predicted_next_states, next_lambdas, predicted_next_lambdas
 
 
+def _try_load_lambda_activity_pair(
+    hdf5_path: Path, t_len: int
+) -> tuple[np.ndarray, np.ndarray] | None:
+    """
+    Load lambda_activity and lambda_activity_ground_truth if both exist under data/.
+    Returns None if either dataset is missing. Validates shape (T, C) and T == t_len.
+    """
+    with h5py.File(hdf5_path, "r") as h5f:
+        if "data" not in h5f:
+            return None
+        group = h5f["data"]
+        if "lambda_activity" not in group or "lambda_activity_ground_truth" not in group:
+            return None
+        pred = np.asarray(group["lambda_activity"][:]).squeeze()
+        gt = np.asarray(group["lambda_activity_ground_truth"][:]).squeeze()
+
+    if pred.ndim != 2 or gt.ndim != 2:
+        raise ValueError(
+            "lambda_activity and lambda_activity_ground_truth must be 2D (T, C) after squeeze; "
+            f"got shapes {pred.shape} and {gt.shape}"
+        )
+    if pred.shape != gt.shape:
+        raise ValueError(
+            "lambda_activity and lambda_activity_ground_truth shape mismatch: "
+            f"{pred.shape} vs {gt.shape}"
+        )
+    if pred.shape[0] != t_len:
+        raise ValueError(
+            "lambda_activity length does not match trajectory length: "
+            f"{pred.shape[0]} vs {t_len}"
+        )
+    return pred, gt
+
+
 def _build_time_axis(length: int, dt: float | None) -> tuple[np.ndarray, str]:
     if dt is None:
         return np.arange(length), "Step"
@@ -182,6 +219,61 @@ def _plot_lambdas(
     fig.tight_layout()
 
 
+def _plot_lambda_activity_labels(
+    time_axis: np.ndarray,
+    x_label: str,
+    pred: np.ndarray,
+    gt: np.ndarray,
+    lambda_start: int,
+    lambda_stop: int,
+) -> None:
+    total_channels = pred.shape[1]
+    start = max(0, lambda_start)
+    stop = min(total_channels, lambda_stop)
+    if stop <= start:
+        raise ValueError(
+            f"Invalid lambda activity slice [{lambda_start}:{lambda_stop}] "
+            f"for total {total_channels} channels"
+        )
+
+    selected = list(range(start, stop))
+    n = len(selected)
+    ncols = min(3, n)
+    nrows = math.ceil(n / ncols)
+
+    fig, axes = plt.subplots(nrows, ncols, figsize=(5.5 * ncols, 3.8 * nrows), sharex=True)
+    axes_arr = np.atleast_1d(axes).ravel()
+    fig.suptitle(
+        f"Lambda activity: predicted vs ground truth (indices {start}:{stop})"
+    )
+
+    for local_idx, ch_idx in enumerate(selected):
+        ax = axes_arr[local_idx]
+        ax.plot(
+            time_axis,
+            pred[:, ch_idx],
+            label="Predicted activity",
+            linewidth=1.6,
+        )
+        ax.plot(
+            time_axis,
+            gt[:, ch_idx],
+            label="Simulator GT",
+            linewidth=1.4,
+            linestyle="--",
+        )
+        ax.set_title(f"channel[{ch_idx}]")
+        ax.set_xlabel(x_label)
+        ax.set_ylabel("Label")
+        ax.grid(True, alpha=0.3)
+        ax.legend(loc="best")
+
+    for extra_idx in range(n, len(axes_arr)):
+        axes_arr[extra_idx].set_visible(False)
+
+    fig.tight_layout()
+
+
 def _plot_mae_summary(
     next_states: np.ndarray,
     predicted_next_states: np.ndarray,
@@ -233,6 +325,17 @@ def main() -> None:
         next_lambdas=next_lambdas,
         predicted_next_lambdas=predicted_next_lambdas,
     )
+    activity_pair = _try_load_lambda_activity_pair(args.hdf5, next_states.shape[0])
+    if activity_pair is not None:
+        lambda_activity, lambda_activity_gt = activity_pair
+        _plot_lambda_activity_labels(
+            time_axis=time_axis,
+            x_label=x_label,
+            pred=lambda_activity,
+            gt=lambda_activity_gt,
+            lambda_start=args.lambda_start,
+            lambda_stop=args.lambda_stop,
+        )
     plt.show()
 
 
