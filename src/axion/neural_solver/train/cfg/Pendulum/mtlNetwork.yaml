@@ -6,15 +6,13 @@ env:
     states_frame: body
     anchor_frame_step: every
     states_embedding_type: identical
-    state_prediction_type: relative
-    lambda_prediction_type: relative
-    prediction_quantity_type: full_state
+    prediction_type: relative
     num_states_history: 10
 
 algorithm:
   name: MTLTrainer # informational only; trainer class comes from train_mtl.py
   use_energy_loss: false # currently unused in MTLTrainer
-  num_epochs: 10
+  num_epochs: 50
   num_iters_per_epoch: -1
   sample_sequence_length: 10
   batch_size: 256
@@ -40,7 +38,7 @@ algorithm:
   dataset:
     train_dataset_path: [src/axion/neural_solver/datasets/Pendulum/pendulumTrainMtlNoContacts2000len500envs2seed0LabelsTh05.hdf5]
     valid_datasets:
-      valid: src/axion/neural_solver/datasets/Pendulum/pendulumValMtlNoContacts2000len500envs2seed1LabelsTh05.hdf5
+      valid: src/axion/neural_solver/datasets/Pendulum/pendulumValidMtlNoContacts2000len500envs2seed1LabelsTh05.hdf5
     max_capacity: 100000000
     num_data_workers: 4
 
@@ -48,7 +46,7 @@ algorithm:
     mode: dataset # inactive when eval_interval=0
     rollout_horizon: 10 # inactive when eval_interval=0
     num_rollouts: 20000 # inactive when eval_interval=0
-    dataset_path: src/axion/neural_solver/datasets/Pendulum/pendulumValMtlNoContacts2000len500envs2seed1LabelsTh05.hdf5 # inactive when eval_interval=0
+    dataset_path: src/axion/neural_solver/datasets/Pendulum/pendulumValidMtlNoContacts2000len500envs2seed1LabelsTh05.hdf5 # inactive when eval_interval=0
     passive: true # inactive when eval_interval=0
 
 inputs:
