@@ -108,8 +108,6 @@ class MTLModel(nn.Module):
             self.feature_dim, self.classification_flat_dim, device=device
         )
 
-        self.output_tanh = network_cfg.get("output_tanh", False)
-
     def construct_input_encoders(
         self, input_cfg, encoder_cfg, input_sample, device="cuda:0"
     ):
@@ -162,9 +160,6 @@ class MTLModel(nn.Module):
         return torch.cat(features, dim=-1)
 
     def _format_outputs(self, regression_output, classification_output):
-        if self.output_tanh:
-            regression_output = torch.tanh(regression_output)
-
         if self.normalize_output and self.regression_output_rms is not None:
             regression_output = self.regression_output_rms.normalize(
                 regression_output, un_norm=True
@@ -177,6 +172,12 @@ class MTLModel(nn.Module):
                 self.lambda_output_dim,
                 self.num_classes,
             )
+        else:
+            p = torch.sigmoid(classification_output)
+            sod = self.state_output_dim
+            reg_state = regression_output[..., :sod]
+            reg_lambda = regression_output[..., sod:]
+            regression_output = torch.cat([reg_state, p * reg_lambda], dim=-1)
 
         return regression_output, classification_output
 
