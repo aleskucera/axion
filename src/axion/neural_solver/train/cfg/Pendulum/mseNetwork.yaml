@@ -22,8 +22,10 @@ algorithm:
   grad_norm: 1.0
   eval_interval: 0 # disables rollout eval during training
   loss:
-    state_loss_weight: 1.0   # weight on the state (q + qd) loss term
-    lambda_loss_weight: 1.0  # weight on the lambda loss term  
+    state_loss_weight: 1.0    # weight on the state (q + qd) loss term
+    lambda_loss_weight: 1.0   # weight on the lambda loss term
+    lambda_log_space_loss: true   # compute lambda MSE in signed log space: z = sign(y)*ln(|y|+eps)
+    lambda_log_space_eps: 1.0e-6  # epsilon inside ln(|y| + eps) for numerical stability
     
   optimizer:
     name: adamw
@@ -33,9 +35,9 @@ algorithm:
     weight_decay: 8e-4
 
   dataset:
-    train_dataset_path: [src/axion/neural_solver/datasets/Pendulum/PLACEHOLDER_train.hdf5]
+    train_dataset_path: [src/axion/neural_solver/datasets/Pendulum/pendulumTrainMtlNoContacts2000len500envs2seed0LabelsTh05.hdf5]
     valid_datasets:
-      valid: src/axion/neural_solver/datasets/Pendulum/PLACEHOLDER_valid.hdf5
+      valid: src/axion/neural_solver/datasets/Pendulum/pendulumValidMtlNoContacts2000len500envs2seed1.hdf5
     max_capacity: 100000000
     num_data_workers: 4
 
@@ -43,7 +45,7 @@ algorithm:
     mode: dataset # inactive when eval_interval=0
     rollout_horizon: 10 # inactive when eval_interval=0
     num_rollouts: 20000 # inactive when eval_interval=0
-    dataset_path: src/axion/neural_solver/datasets/Pendulum/PLACEHOLDER_valid.hdf5 # inactive when eval_interval=0
+    dataset_path: src/axion/neural_solver/datasets/Pendulum/pendulumValidMtlNoContacts2000len500envs2seed1.hdf5 # inactive when eval_interval=0
     passive: true # inactive when eval_interval=0
 
 inputs:

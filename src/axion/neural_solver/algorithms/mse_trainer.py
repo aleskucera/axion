@@ -26,6 +26,8 @@ class MSETrainer(SequenceModelTrainer):
         loss_cfg = cfg["algorithm"].get("loss", {}) or {}
         self.state_loss_weight = float(loss_cfg.get("state_loss_weight", 1.0))
         self.lambda_loss_weight = float(loss_cfg.get("lambda_loss_weight", 1.0))
+        self.lambda_log_space_loss = bool(loss_cfg.get("lambda_log_space_loss", False))
+        self.lambda_log_space_eps = float(loss_cfg.get("lambda_log_space_eps", 1e-6))
 
         self._state_prediction_type = getattr(self.utils_provider, "state_prediction_type", "relative")
         self._lambda_prediction_type = getattr(self.utils_provider, "lambda_prediction_type", "relative")
@@ -78,11 +80,20 @@ class MSETrainer(SequenceModelTrainer):
         qd_loss = F.mse_loss(pred_state[..., q_dim:], tgt_state[..., q_dim:])
         return q_loss + qd_loss
 
+    def _signed_log(self, x: torch.Tensor) -> torch.Tensor:
+        """sign(x) * ln(|x| + eps) — continuous at zero, preserves sign."""
+        return x.sign() * (x.abs() + self.lambda_log_space_eps).log()
+
     def _compute_lambda_loss(
         self, prediction: torch.Tensor, target: torch.Tensor
     ) -> torch.Tensor:
         state_dim = self.utils_provider.state_prediction_dim
-        return F.mse_loss(prediction[..., state_dim:], target[..., state_dim:])
+        pred_lambda = prediction[..., state_dim:]
+        tgt_lambda = target[..., state_dim:]
+        if self.lambda_log_space_loss:
+            pred_lambda = self._signed_log(pred_lambda)
+            tgt_lambda = self._signed_log(tgt_lambda)
+        return F.mse_loss(pred_lambda, tgt_lambda)
 
     def compute_loss(self, data, train):
         del train

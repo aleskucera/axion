@@ -39,6 +39,11 @@ python src/axion/neural_solver/train/train_vel_and_lambda_network.py --cfg src/a
 python src/axion/neural_solver/train/train_mtl.py --cfg src/axion/neural_solver/train/cfg/Pendulum/mtlNetwork.yaml --logdir src/axion/neural_solver/train/trained_models/mtl
 ```
 
+### Begin MSE training (pure regression of [q, qd, lambda], example)
+```
+python src/axion/neural_solver/train/train_mse.py --cfg src/axion/neural_solver/train/cfg/Pendulum/mseNetwork.yaml --logdir src/axion/neural_solver/train/trained_models/mse
+```
+
 ### Visualize training (wandb)
 View runs at [wandb.ai](https://wandb.ai) in your project (e.g. `neural-solver-transformer`). 
 Ensure `wandb.login()` runs before training (see `train.py`).
