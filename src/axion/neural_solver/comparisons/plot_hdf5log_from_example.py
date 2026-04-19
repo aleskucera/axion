@@ -10,7 +10,7 @@ import numpy as np
 
 DEFAULT_HDF5_PATH = (
     Path(__file__).resolve().parents[4]
-    / "data/logs/AxioneEngineWithNeuralLambdas_example_2026-04-19_10-46-56.h5"
+    / "data/logs/AxioneEngineWithNeuralLambdas_example_2026-04-19_12-38-06.h5"
 )
 DEFAULT_LAMBDA_SLICE = slice(0, 10)
 

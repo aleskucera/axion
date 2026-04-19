@@ -36,6 +36,7 @@ from axion.neural_solver.models.models import ModelMixedInput
 from axion.neural_solver.models.lambda_models import LambdaClassificationModel
 from axion.neural_solver.models.vel_and_lambda_model import VelAndLambdaModel
 from axion.neural_solver.models.mtl_model import MTLModel
+from axion.neural_solver.models.mse_model import MSEModel
 from axion.neural_solver.utils.datasets import TrajectoryDataset
 from axion.neural_solver.utils.evaluator import NeuralSimEvaluator
 from axion.neural_solver.utils.python_utils import (
@@ -127,6 +128,17 @@ class SequenceModelTrainer:
                 engine_dims = self.neural_env.simulator_wrapper.engine.dims
                 state_output_dim = int(self.neural_env.dof_q_per_env + self.neural_env.dof_qd_per_env)
                 self.neural_model = MTLModel(
+                    input_sample=input_sample,
+                    state_output_dim=state_output_dim,
+                    lambda_output_dim=engine_dims.num_constraints,
+                    input_cfg=cfg['inputs'],
+                    network_cfg=cfg['network'],
+                    device=self.device,
+                )
+            elif model_impl in ('mse', 'mse_model'):
+                engine_dims = self.neural_env.simulator_wrapper.engine.dims
+                state_output_dim = int(self.neural_env.dof_q_per_env + self.neural_env.dof_qd_per_env)
+                self.neural_model = MSEModel(
                     input_sample=input_sample,
                     state_output_dim=state_output_dim,
                     lambda_output_dim=engine_dims.num_constraints,

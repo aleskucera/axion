@@ -1,0 +1,77 @@
+env:
+  env_name: Pendulum
+  num_envs: 512
+  utils_provider_cfg:
+    name: TransformerNeuralModelUtilsProvider
+    states_frame: body
+    anchor_frame_step: every
+    states_embedding_type: identical
+    state_prediction_type: relative   # relative or absolute
+    lambda_prediction_type: absolute  # independently configurable
+    num_states_history: 10
+
+algorithm:
+  name: MSETrainer # informational only; trainer class comes from train_mse.py
+  use_energy_loss: false
+  num_epochs: 50
+  num_iters_per_epoch: -1
+  sample_sequence_length: 10
+  batch_size: 256
+  num_valid_batches: 256
+  truncate_grad: true
+  grad_norm: 1.0
+  eval_interval: 0 # disables rollout eval during training
+  loss:
+    state_loss_weight: 1.0   # weight on the state (q + qd) loss term
+    lambda_loss_weight: 1.0  # weight on the lambda loss term  
+    
+  optimizer:
+    name: adamw
+    lr_start: 5e-3
+    lr_end: 1e-4
+    lr_schedule: cosine
+    weight_decay: 8e-4
+
+  dataset:
+    train_dataset_path: [src/axion/neural_solver/datasets/Pendulum/PLACEHOLDER_train.hdf5]
+    valid_datasets:
+      valid: src/axion/neural_solver/datasets/Pendulum/PLACEHOLDER_valid.hdf5
+    max_capacity: 100000000
+    num_data_workers: 4
+
+  eval:
+    mode: dataset # inactive when eval_interval=0
+    rollout_horizon: 10 # inactive when eval_interval=0
+    num_rollouts: 20000 # inactive when eval_interval=0
+    dataset_path: src/axion/neural_solver/datasets/Pendulum/PLACEHOLDER_valid.hdf5 # inactive when eval_interval=0
+    passive: true # inactive when eval_interval=0
+
+inputs:
+  low_dim: [
+    states_embedding,
+    contact_normals,
+    contact_points_1,
+    contact_depths,
+    gravity_dir
+  ]
+
+network:
+  model_impl: mse
+  normalize_input: true
+  normalize_output: false
+  enable_state_head: true
+  enable_lambda_head: true
+
+  encoder:
+    low_dim:
+      layer_sizes: []
+      activation: relu
+      layernorm: false
+
+  transformer:
+    block_size: 16
+    n_layer: 6
+    n_head: 12
+    n_embd: 192
+    dropout: 0.0
+    bias: false
