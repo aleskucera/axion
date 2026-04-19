@@ -20,6 +20,8 @@ class NeuralLambdaHDF5Logger:
       checkpoint/engine mode it may store:
         - binary activity mask (0/1)
         - multiclass activity indices (0/1/2)
+    - `lambda_activity_ground_truth` is the simulator-derived binary mask
+      (|next_lambdas - lambdas| >= threshold) per constraint channel, when enabled by the engine.
     """
 
     def __init__(self, output_path: str):
@@ -44,6 +46,7 @@ class NeuralLambdaHDF5Logger:
         predicted_next_lambdas: Optional[np.ndarray] = None,
         predicted_next_states: Optional[np.ndarray] = None,
         lambda_activity: Optional[np.ndarray] = None,
+        lambda_activity_ground_truth: Optional[np.ndarray] = None,
     ) -> None:
         step_payload = {
             "states": states,
@@ -65,6 +68,8 @@ class NeuralLambdaHDF5Logger:
             step_payload["predicted_next_states"] = predicted_next_states
         if lambda_activity is not None:
             step_payload["lambda_activity"] = lambda_activity
+        if lambda_activity_ground_truth is not None:
+            step_payload["lambda_activity_ground_truth"] = lambda_activity_ground_truth
 
         for key, value in step_payload.items():
             arr = np.asarray(value)

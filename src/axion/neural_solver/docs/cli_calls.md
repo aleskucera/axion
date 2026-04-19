@@ -83,13 +83,17 @@ python src/axion/neural_solver/utils/add_lambda_activity_labels.py --input <...>
 
 ## Misc
 
-### Copy from remote to local
+### Copy from remote to local (called on local)
 ```
 scp mestemar@dasenka:/local/mestemar/axion/src/axion/neural_solver/datasets/Pendulum/pendulumTrainStatesOnly100kenvs100Seed0.hdf5 /home/maros/axion/src/axion/neural_solver/datasets/Pendulum
 ```
 
 ```
 scp -r mestemar@dasenka:/local/mestemar/axion/src/axion/neural_solver/train/trained_models/02-25-2026-13-07-56 /home/maros/axion/src/axion/neural_solver/train/trained_models
+```
+### Copy from to local to remote (called on local)
+```
+scp /home/maros/axion/src/axion/neural_solver/datasets/Pendulum/pendulumValidMtlNoContacts2000len500envs2seed1LabelsTh05.hdf5 mestemar@dasenka:/local/mestemar/axion/src/axion/neural_solver/datasets/Pendulum/pendulumValidMtlNoContacts2000len500envs2seed1LabelsTh05.hdf5
 ```
 
 ### Monitoring GPUs/CPU

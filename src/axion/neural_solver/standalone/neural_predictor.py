@@ -28,6 +28,8 @@ try:
     from src.axion.neural_solver.utils import torch_utils
     from src.axion.types import reorder_ground_contacts_kernel, contact_penetration_depth_kernel
     from src.axion.core.contacts import AxionContacts
+    from src.axion.neural_solver.models.mtl_model import MTLModel as _MTLModel
+
 except ModuleNotFoundError:
     from axion.neural_solver.neural_model_utils_providers.transformer_neural_utils_provider_new import (
         _resolve_state_and_lambda_prediction_types,
@@ -44,6 +46,8 @@ except ModuleNotFoundError:
     from axion.neural_solver.utils import torch_utils
     from axion.types import reorder_ground_contacts_kernel, contact_penetration_depth_kernel
     from axion.core.contacts import AxionContacts
+    from axion.neural_solver.models.mtl_model import MTLModel as _MTLModel
+
 
 
 JOINT_FREE = newton.JointType.FREE
@@ -118,10 +122,22 @@ class NeuralPredictor:
         self.nn_model.to(device)
         self.nn_model.eval()
         self.lambda_prediction_only = lambda_prediction_only
+
+        is_mtl_model = isinstance(nn_model, _MTLModel) if _MTLModel else False
+        if not is_mtl_model and type(nn_model).__name__ == "MTLModel":
+            is_mtl_model = hasattr(nn_model, "regression_head") and hasattr(
+                nn_model, "classification_head"
+            )
+
         lambda_model = getattr(self.nn_model, "lambda_model", None)
         lambda_output_net = getattr(lambda_model, "output_net", None) if lambda_model is not None else None
         self.has_lambda_prediction_module = lambda_output_net is not None
-        if self.has_lambda_prediction_module:
+
+        if is_mtl_model:
+            self.has_lambda_prediction_module = True
+            self.lambda_dim = int(nn_model.lambda_output_dim)
+            self.lambdas = torch.zeros((self.num_worlds, self.lambda_dim), device=self.device)
+        elif self.has_lambda_prediction_module:
             # VelAndLambdaModel keeps `lambda_model` as an alias to the shared
             # joint state+lambda head. In that case `output_net.out_features`
             # is total_output_dim (= state + lambda), not lambda-only.
