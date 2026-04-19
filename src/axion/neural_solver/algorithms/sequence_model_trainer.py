@@ -278,9 +278,12 @@ class SequenceModelTrainer:
             # save config
             yaml.dump(cfg, open(os.path.join(self.log_dir, 'cfg.yaml'), 'w'))
 
-            # create logger
+            # create logger (include env + network alongside algorithm hyperparameters)
             self.logger = Logger()
-            self.logger.init_wandb(config=algo_cfg)
+            wandb_cfg = dict(algo_cfg)
+            wandb_cfg["env"] = cfg.get("env") or {}
+            wandb_cfg["network"] = cfg.get("network") or {}
+            self.logger.init_wandb(config=wandb_cfg)
                 
             # other logging params
             self.save_interval = cli_cfg.get("save_interval", 50)
