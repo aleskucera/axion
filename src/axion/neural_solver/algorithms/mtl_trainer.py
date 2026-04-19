@@ -36,6 +36,22 @@ class MTLTrainer(SequenceModelTrainer):
 
         self._dof_q_per_env = int(self.neural_env.dof_q_per_env)
 
+    def _convert_regression_to_absolute(
+        self, data: dict, regression_prediction: torch.Tensor
+    ) -> torch.Tensor:
+        """Convert regression head output to absolute (next) values."""
+        state_dim = self.utils_provider.state_prediction_dim
+        state_pred = regression_prediction[..., :state_dim]
+        lambda_pred = regression_prediction[..., state_dim:]
+
+        next_states = self.utils_provider.convert_prediction_to_next_states(
+            data["states"], state_pred
+        )
+        next_lambdas = self.utils_provider.convert_prediction_to_next_lambdas(
+            data["lambdas"], lambda_pred
+        )
+        return torch.cat([next_states, next_lambdas], dim=-1)
+
     def _build_regression_target(self, data: dict, prediction: torch.Tensor) -> torch.Tensor:
         regression_target = torch.cat([data["next_states"], data["next_lambdas"]], dim=-1)
         if regression_target.shape != prediction.shape:
@@ -169,12 +185,10 @@ class MTLTrainer(SequenceModelTrainer):
         prediction = self.neural_model(data)
         regression_prediction = prediction.get("regression")
         classification_logits = prediction.get("classification")
-        if regression_prediction is None or classification_logits is None:
-            raise RuntimeError(
-                "MTLTrainer expects model outputs `regression` and `classification`."
-            )
 
         # Build the regression target:
+        if self.utils_provider.state_prediction_type == "relative":
+            regression_prediction = self._convert_regression_to_absolute(data, regression_prediction)
         regression_target = self._build_regression_target(data, regression_prediction)
 
         # Build the classification labels:
