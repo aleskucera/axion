@@ -20,8 +20,8 @@ from axion.neural_solver.models.lambda_models import LambdaClassificationModel
 from axion.neural_solver.models.mtl_model import MTLModel
 from axion.neural_solver.utils.neural_lambda_hdf5_logger import NeuralLambdaHDF5Logger
 
-NN_BASE_PATH = Path.cwd() /"src"/"axion"/"neural_solver"/"train"/"trained_models"/"mtl"/"04-18-2026-23-49-31"
-NN_PENDULUM_PT_PATH = NN_BASE_PATH/"nn"/"best_valid_valid_model.pt"
+NN_BASE_PATH = Path.cwd() /"src"/"axion"/"neural_solver"/"train"/"trained_models"/"mtl"/"04-19-2026-12-29-09"
+NN_PENDULUM_PT_PATH = NN_BASE_PATH/"nn"/"final_model.pt"
 NN_PENDULUM_CFG_PATH = NN_BASE_PATH/"cfg.yaml"
 
 # Binary simulator activity mask: |next_lambdas - lambdas| >= threshold (matches Pendulum MTL datasets "Th05" / cfg classification_prob_threshold).
