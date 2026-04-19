@@ -146,6 +146,7 @@ def basic_pendulum_example(cfg: DictConfig):
     # - LambdaClassificationModel: `lambda_activity` (binary or multiclass indices)
     # - MTLModel: same regression fields as VelAndLambda plus `lambda_activity`; neural logger also
     #   writes `lambda_activity_ground_truth` from simulator |next_lambdas - lambdas| (see engine constant).
+    # - MSEModel: `predicted_next_states`, `predicted_next_lambdas` (no `lambda_activity`).
 
     # Plane equation: nx*x + ny*y + nz*z + d = 0 (default: horizontal z=0)
     plane_coefficients = [0.0, 0.0, 1.0, 0.0]
