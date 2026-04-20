@@ -37,7 +37,6 @@ class VelAndLambdaTrainer(SequenceModelTrainer):
         self._dims = self._engine.dims
         self._dof_q_per_env = int(self.neural_env.dof_q_per_env)
         self._dof_qd_per_env = int(self.neural_env.dof_qd_per_env)
-        self._validate_prediction_type_cfg_for_loss()
 
         if int(self.batch_size) != int(self._dims.num_worlds):
             raise ValueError(
@@ -266,18 +265,6 @@ class VelAndLambdaTrainer(SequenceModelTrainer):
             lambda_prediction = lambda_prediction[:, -1, :]
 
         return vel_prediction, lambda_prediction
-
-    def _validate_prediction_type_cfg_for_loss(self) -> None:
-        """Require matching state/lambda prediction semantics in residual-loss training."""
-        state_prediction_type = self.utils_provider.state_prediction_type
-        lambda_prediction_type = self.utils_provider.lambda_prediction_type
-        if state_prediction_type != lambda_prediction_type:
-            raise ValueError(
-                "VelAndLambdaTrainer requires matching prediction types for residual loss. "
-                "Set env.utils_provider_cfg.state_prediction_type and "
-                "env.utils_provider_cfg.lambda_prediction_type to the same value, got "
-                f"state={state_prediction_type!r}, lambda={lambda_prediction_type!r}."
-            )
 
     def _convert_predictions_to_absolute_for_loss(
         self,

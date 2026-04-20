@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import math
 from pathlib import Path
 
@@ -8,9 +9,11 @@ import h5py
 import matplotlib.pyplot as plt
 import numpy as np
 
+MODEL_INFO = "MSEModel"
+COMPARISON_CSV_PATH = Path(__file__).resolve().parent / "comparison_40k.csv"
 DEFAULT_HDF5_PATH = (
     Path(__file__).resolve().parents[4]
-    / "data/logs/AxioneEngineWithNeuralLambdas_example_2026-04-19_12-38-06.h5"
+    / "data/logs/AxioneEngineWithNeuralLambdas_example_2026-04-19_17-29-53.h5"
 )
 DEFAULT_LAMBDA_SLICE = slice(0, 10)
 
@@ -48,6 +51,20 @@ def _parse_args() -> argparse.Namespace:
         type=int,
         default=DEFAULT_LAMBDA_SLICE.stop,
         help="Last lambda index to plot (exclusive).",
+    )
+    parser.add_argument(
+        "--csv",
+        type=Path,
+        default=COMPARISON_CSV_PATH,
+        help=(
+            "Append one summary row to this CSV after a successful run "
+            "(creates file with header if missing)."
+        ),
+    )
+    parser.add_argument(
+        "--no-csv",
+        action="store_true",
+        help="Do not append to the comparison CSV.",
     )
     return parser.parse_args()
 
@@ -274,32 +291,118 @@ def _plot_lambda_activity_labels(
     fig.tight_layout()
 
 
-def _plot_mae_summary(
+def _compute_prediction_metrics(
     next_states: np.ndarray,
     predicted_next_states: np.ndarray,
     next_lambdas: np.ndarray,
     predicted_next_lambdas: np.ndarray,
+) -> tuple[float, float, float, float, float, float]:
+    """
+    Returns (state_mae, lambda_mae, state_total_abs, lambda_total_abs,
+             total_abs_error, total_squared_error).
+    total_abs_error is sum of absolute errors over all state and lambda elements.
+    total_squared_error is sum of squared errors over all state and lambda elements.
+    """
+    state_abs_err = np.abs(next_states - predicted_next_states)
+    lambda_abs_err = np.abs(next_lambdas - predicted_next_lambdas)
+
+    state_mae = float(np.mean(state_abs_err))
+    lambda_mae = float(np.mean(lambda_abs_err))
+    state_total = float(np.sum(state_abs_err))
+    lambda_total = float(np.sum(lambda_abs_err))
+    total_abs_error = state_total + lambda_total
+
+    state_sq = np.sum((next_states - predicted_next_states) ** 2)
+    lambda_sq = np.sum((next_lambdas - predicted_next_lambdas) ** 2)
+    total_squared_error = float(state_sq + lambda_sq)
+
+    return (
+        state_mae,
+        lambda_mae,
+        state_total,
+        lambda_total,
+        total_abs_error,
+        total_squared_error,
+    )
+
+
+def _append_comparison_csv(
+    csv_path: Path,
+    log_filename: str,
+    model_info: str,
+    trajectory_timesteps: int,
+    state_mae: float,
+    lambda_mae: float,
+    total_abs_error: float,
+    total_squared_error: float,
 ) -> None:
-    state_mae = float(np.mean(np.abs(next_states - predicted_next_states)))
-    lambda_mae = float(np.mean(np.abs(next_lambdas - predicted_next_lambdas)))
+    fieldnames = (
+        "log_file",
+        "model_info",
+        "trajectory_timesteps",
+        "state_mae",
+        "lambda_mae",
+        "total_absolute_error",
+        "total_squared_error",
+    )
+    csv_path.parent.mkdir(parents=True, exist_ok=True)
+    write_header = not csv_path.exists() or csv_path.stat().st_size == 0
+    with csv_path.open("a", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        if write_header:
+            writer.writeheader()
+        writer.writerow(
+            {
+                "log_file": log_filename,
+                "model_info": model_info,
+                "trajectory_timesteps": trajectory_timesteps,
+                "state_mae": state_mae,
+                "lambda_mae": lambda_mae,
+                "total_absolute_error": total_abs_error,
+                "total_squared_error": total_squared_error,
+            }
+        )
 
-    fig, ax = plt.subplots(figsize=(8, 4))
-    labels = ["State prediction MAE", "Lambda prediction MAE"]
-    values = [state_mae, lambda_mae]
-    bars = ax.bar(labels, values, width=0.55)
 
-    for bar, value in zip(bars, values):
-        ax.text(
+def _plot_mae_summary(
+    state_mae: float,
+    lambda_mae: float,
+    state_total: float,
+    lambda_total: float,
+) -> None:
+    fig, (ax_mae, ax_total) = plt.subplots(1, 2, figsize=(14, 4))
+    fig.suptitle("Overall Prediction Error Summary")
+
+    mae_labels = ["State MAE", "Lambda MAE"]
+    mae_values = [state_mae, lambda_mae]
+    mae_bars = ax_mae.bar(mae_labels, mae_values, width=0.45)
+    for bar, value in zip(mae_bars, mae_values):
+        ax_mae.text(
             bar.get_x() + bar.get_width() / 2,
             bar.get_height(),
             f"{value:.6f}",
             ha="center",
             va="bottom",
         )
+    ax_mae.set_ylabel("Mean Absolute Error")
+    ax_mae.set_title("MAE")
+    ax_mae.grid(True, axis="y", alpha=0.3)
 
-    ax.set_ylabel("Mean Absolute Error")
-    ax.set_title("Overall Prediction Error Summary")
-    ax.grid(True, axis="y", alpha=0.3)
+    total_labels = ["State total acc. abs. error", "Lambda total acc. abs. error"]
+    total_values = [state_total, lambda_total]
+    total_bars = ax_total.bar(total_labels, total_values, width=0.45)
+    for bar, value in zip(total_bars, total_values):
+        ax_total.text(
+            bar.get_x() + bar.get_width() / 2,
+            bar.get_height(),
+            f"{value:.4f}",
+            ha="center",
+            va="bottom",
+        )
+    ax_total.set_ylabel("Total Accumulated Absolute Error")
+    ax_total.set_title("Total Accumulated Absolute Error")
+    ax_total.grid(True, axis="y", alpha=0.3)
+
     fig.tight_layout()
 
 
@@ -319,12 +422,31 @@ def main() -> None:
         lambda_start=args.lambda_start,
         lambda_stop=args.lambda_stop,
     )
-    _plot_mae_summary(
-        next_states=next_states,
-        predicted_next_states=predicted_next_states,
-        next_lambdas=next_lambdas,
-        predicted_next_lambdas=predicted_next_lambdas,
+    (
+        state_mae,
+        lambda_mae,
+        state_total_abs,
+        lambda_total_abs,
+        total_abs_error,
+        total_squared_error,
+    ) = _compute_prediction_metrics(
+        next_states,
+        predicted_next_states,
+        next_lambdas,
+        predicted_next_lambdas,
     )
+    _plot_mae_summary(state_mae, lambda_mae, state_total_abs, lambda_total_abs)
+    if not args.no_csv:
+        _append_comparison_csv(
+            args.csv,
+            log_filename=args.hdf5.name,
+            model_info=MODEL_INFO,
+            trajectory_timesteps=int(next_states.shape[0]),
+            state_mae=state_mae,
+            lambda_mae=lambda_mae,
+            total_abs_error=total_abs_error,
+            total_squared_error=total_squared_error,
+        )
     activity_pair = _try_load_lambda_activity_pair(args.hdf5, next_states.shape[0])
     if activity_pair is not None:
         lambda_activity, lambda_activity_gt = activity_pair
