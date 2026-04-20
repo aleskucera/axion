@@ -12,7 +12,7 @@ from axion.neural_solver.utils import warp_utils
 from axion.neural_solver.utils.python_utils import print_warning
 
 
-class VelAndLambdaTrainer(SequenceModelTrainer):
+class ResidualTrainer(SequenceModelTrainer):
     """Residual-only trainer for velocity + lambda warm-start prediction."""
 
     def __init__(self, neural_env, cfg, model_checkpoint_path=None, device="cuda:0"):
@@ -25,7 +25,7 @@ class VelAndLambdaTrainer(SequenceModelTrainer):
 
         if not self.has_state_head or not self.has_lambda_head:
             raise ValueError(
-                "VelAndLambdaTrainer requires both network.enable_state_head and "
+                "ResidualTrainer requires both network.enable_state_head and "
                 "network.enable_lambda_head to be true."
             )
 
@@ -40,7 +40,7 @@ class VelAndLambdaTrainer(SequenceModelTrainer):
 
         if int(self.batch_size) != int(self._dims.num_worlds):
             raise ValueError(
-                "VelAndLambdaTrainer requires algorithm.batch_size == env.num_envs "
+                "ResidualTrainer requires algorithm.batch_size == env.num_envs "
                 f"(engine num_worlds). Got batch_size={self.batch_size}, "
                 f"num_worlds={self._dims.num_worlds}."
             )
@@ -48,14 +48,16 @@ class VelAndLambdaTrainer(SequenceModelTrainer):
 
         loss_cfg = cfg["algorithm"].get("loss", {}) or {}
         self.residual_loss_weight = float(loss_cfg.get("residual_loss_weight", 1.0))
-        self.supervised_loss_weight = float(loss_cfg.get("supervised_loss_weight", 1.0))
+        legacy_supervised_loss_weight = float(loss_cfg.get("supervised_loss_weight", 1.0))
+        self.state_loss_weight = float(loss_cfg.get("state_loss_weight", legacy_supervised_loss_weight))
+        self.lambda_loss_weight = float(loss_cfg.get("lambda_loss_weight", legacy_supervised_loss_weight))
         self.use_supervised_loss_state = bool(loss_cfg.get("use_supervised_loss_state", False))
         self.use_supervised_loss_lambdas = bool(loss_cfg.get("use_supervised_loss_lambdas", False))
 
         # Residual-only default: disable rollout eval until residual path is stable.
         if bool(loss_cfg.get("disable_rollout_eval", True)) and self.eval_interval > 0:
             print_warning(
-                "VelAndLambdaTrainer disables rollout eval by default for residual-only "
+                "ResidualTrainer disables rollout eval by default for residual-only "
                 "training. Set algorithm.loss.disable_rollout_eval=false to re-enable."
             )
             self.eval_interval = 0
@@ -63,12 +65,15 @@ class VelAndLambdaTrainer(SequenceModelTrainer):
     def _compose_total_loss(
         self,
         residual_loss: torch.Tensor,
-        supervised_loss: torch.Tensor = None,
+        supervised_components: dict[str, torch.Tensor] | None = None,
     ):
         """Single loss aggregator for residual + optional supervised loss."""
         total_loss = self.residual_loss_weight * residual_loss
-        if self.use_supervised_loss_state or self.use_supervised_loss_lambdas:
-            total_loss = total_loss + self.supervised_loss_weight * supervised_loss
+        if supervised_components:
+            if "supervised_state_loss" in supervised_components:
+                total_loss = total_loss + self.state_loss_weight * supervised_components["supervised_state_loss"]
+            if "supervised_lambda_loss" in supervised_components:
+                total_loss = total_loss + self.lambda_loss_weight * supervised_components["supervised_lambda_loss"]
         return total_loss
 
     def _compute_supervised_losses(
@@ -255,7 +260,7 @@ class VelAndLambdaTrainer(SequenceModelTrainer):
         lambda_prediction = prediction.get("lambda")
         if vel_prediction is None or lambda_prediction is None:
             raise RuntimeError(
-                "VelAndLambdaTrainer expects both prediction['state'] and "
+                "ResidualTrainer expects both prediction['state'] and "
                 "prediction['lambda'] to be present."
             )
 
@@ -341,10 +346,7 @@ class VelAndLambdaTrainer(SequenceModelTrainer):
             state_for_loss,
             lambda_for_loss,
         )
-        total_loss = self._compose_total_loss(
-            residual_loss=residual_loss,
-            supervised_loss=supervised_loss,
-        )
+        total_loss = self._compose_total_loss(residual_loss=residual_loss, supervised_components=supervised_components)
 
         with torch.no_grad():
             loss_itemized = {
@@ -354,14 +356,27 @@ class VelAndLambdaTrainer(SequenceModelTrainer):
             }
             if supervised_loss is not None:
                 loss_itemized["supervised_loss"] = supervised_loss.detach()
-                loss_itemized["weighted_supervised_loss"] = (
-                    self.supervised_loss_weight * supervised_loss
-                ).detach()
+                weighted_supervised_loss = torch.tensor(0.0, device=supervised_loss.device)
+                if "supervised_state_loss" in supervised_components:
+                    weighted_supervised_loss = (
+                        weighted_supervised_loss
+                        + self.state_loss_weight * supervised_components["supervised_state_loss"]
+                    )
+                if "supervised_lambda_loss" in supervised_components:
+                    weighted_supervised_loss = (
+                        weighted_supervised_loss
+                        + self.lambda_loss_weight * supervised_components["supervised_lambda_loss"]
+                    )
+                loss_itemized["weighted_supervised_loss"] = weighted_supervised_loss.detach()
             for key, value in supervised_components.items():
                 loss_itemized[key] = value.detach()
-                loss_itemized[f"weighted_{key}"] = (
-                    self.supervised_loss_weight * value
-                ).detach()
+                if key == "supervised_state_loss":
+                    weighted_value = self.state_loss_weight * value
+                elif key == "supervised_lambda_loss":
+                    weighted_value = self.lambda_loss_weight * value
+                else:
+                    weighted_value = value
+                loss_itemized[f"weighted_{key}"] = weighted_value.detach()
             for key, value in residual_blocks_sq.items():
                 loss_itemized[key] = value.detach()
             for key, value in residual_blocks_mse.items():

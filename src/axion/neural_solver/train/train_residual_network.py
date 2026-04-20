@@ -11,7 +11,7 @@ wp.config.verify_cuda = True
 
 import wandb
 
-from axion.neural_solver.algorithms.vel_and_lambda_trainer import VelAndLambdaTrainer
+from axion.neural_solver.algorithms.residual_trainer import ResidualTrainer
 from axion.neural_solver.envs.nn_training_interface import NnTrainingInterface
 from axion.neural_solver.train.config_builder import (
     build_cli_cfg,
@@ -23,7 +23,7 @@ from axion.neural_solver.utils.python_utils import get_time_stamp, set_random_se
 
 def _parse_args():
     p = argparse.ArgumentParser(
-        description="Train transformer-based velocity+lambda warm-start regressor from YAML config."
+        description="Train transformer-based residual warm-start regressor from YAML config."
     )
     p.add_argument("--cfg", required=True, help="Path to config YAML")
     p.add_argument("--logdir", required=True, help="Directory for logs and checkpoints")
@@ -43,7 +43,7 @@ if __name__ == "__main__":
     args.train = not args.test
     if not args.train:
         raise NotImplementedError(
-            "--test is not implemented yet for train_vel_and_lambda_network.py."
+            "--test is not implemented yet for train_residual_network.py."
         )
 
     wandb.login()
@@ -71,12 +71,12 @@ if __name__ == "__main__":
     print(f"Device = {args.device}")
     neural_env = NnTrainingInterface(**cfg["env"], device=args.device)
 
-    algo = VelAndLambdaTrainer(
+    algo = ResidualTrainer(
         neural_env=neural_env,
         model_checkpoint_path=args.checkpoint,
         cfg=cfg,
         device=args.device,
     )
 
-    print("Begin vel+lambda residual training")
+    print("Begin residual training")
     algo.train()

@@ -45,7 +45,7 @@ class VelAndLambdaPredictionHead(nn.Module):
         return self
 
 
-class VelAndLambdaModel(nn.Module):
+class ResidualModel(nn.Module):
     def __init__(
         self,
         input_sample,

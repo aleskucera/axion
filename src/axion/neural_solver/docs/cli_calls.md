@@ -29,9 +29,9 @@ optionally: `--device cuda:1`, `--checkpoint /path/to/checkpoint.pt`, `--no-time
 python src/axion/neural_solver/train/train_lambda_network.py --cfg src/axion/neural_solver/train/cfg/Pendulum/lambdaNetwork.yaml --logdir src/axion/neural_solver/train/trained_models/lambda_classifier
 ```
 
-### Begin velocity+lambda residual training (example)
+### Begin residual training (example)
 ```
-python src/axion/neural_solver/train/train_vel_and_lambda_network.py --cfg src/axion/neural_solver/train/cfg/Pendulum/velAndLambdaNetwork.yaml --logdir src/axion/neural_solver/train/trained_models/vel_and_lambda_residual
+python src/axion/neural_solver/train/train_residual_network.py --cfg src/axion/neural_solver/train/cfg/Pendulum/residualNetwork.yaml --logdir src/axion/neural_solver/train/trained_models/residual
 ```
 
 ### Begin MTL training (regression + lambda classification, example)

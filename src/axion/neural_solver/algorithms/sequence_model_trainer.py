@@ -34,7 +34,7 @@ from tqdm import tqdm
 from axion.neural_solver.envs.nn_training_interface import NnTrainingInterface
 from axion.neural_solver.models.models import ModelMixedInput
 from axion.neural_solver.models.lambda_models import LambdaClassificationModel
-from axion.neural_solver.models.vel_and_lambda_model import VelAndLambdaModel
+from axion.neural_solver.models.residual_model import ResidualModel
 from axion.neural_solver.models.mtl_model import MTLModel
 from axion.neural_solver.models.mse_model import MSEModel
 from axion.neural_solver.utils.datasets import TrajectoryDataset
@@ -97,7 +97,7 @@ class SequenceModelTrainer:
         if model_checkpoint_path is None:
             input_sample = self.utils_provider.get_neural_model_inputs()
             model_impl = str(cfg['network'].get('model_impl', 'default')).lower()
-            if model_impl in ('lambda_classification', 'lambda_models', 'classification_head'):
+            if model_impl == 'lambda_classification':
 
                 # Wire classification-specific knobs from algorithm.loss into network_cfg
                 # so LambdaClassificationModel can stay backward compatible.
@@ -113,10 +113,16 @@ class SequenceModelTrainer:
                     network_cfg=network_cfg,
                     device=self.device,
                 )
-            elif model_impl in ('vel_and_lambda', 'vel_and_lambda_model', 'vel_lambda'):
+            elif model_impl in (
+                'vel_and_lambda',
+                'vel_and_lambda_model',
+                'vel_lambda',
+                'residual',
+                'residual_model',
+            ):
                 engine_dims = self.neural_env.simulator_wrapper.engine.dims
                 state_output_dim = int(self.neural_env.dof_q_per_env + self.neural_env.dof_qd_per_env)
-                self.neural_model = VelAndLambdaModel(
+                self.neural_model = ResidualModel(
                     input_sample=input_sample,
                     state_output_dim=state_output_dim,
                     lambda_output_dim=engine_dims.num_constraints,
@@ -124,7 +130,7 @@ class SequenceModelTrainer:
                     network_cfg=cfg['network'],
                     device=self.device,
                 )
-            elif model_impl in ('mtl', 'mtl_model', 'multi_task', 'multitask'):
+            elif model_impl == 'mtl':
                 engine_dims = self.neural_env.simulator_wrapper.engine.dims
                 state_output_dim = int(self.neural_env.dof_q_per_env + self.neural_env.dof_qd_per_env)
                 self.neural_model = MTLModel(
@@ -135,7 +141,7 @@ class SequenceModelTrainer:
                     network_cfg=cfg['network'],
                     device=self.device,
                 )
-            elif model_impl in ('mse', 'mse_model'):
+            elif model_impl == 'mse':
                 engine_dims = self.neural_env.simulator_wrapper.engine.dims
                 state_output_dim = int(self.neural_env.dof_q_per_env + self.neural_env.dof_qd_per_env)
                 self.neural_model = MSEModel(
