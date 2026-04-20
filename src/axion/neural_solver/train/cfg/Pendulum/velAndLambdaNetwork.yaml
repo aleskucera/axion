@@ -6,8 +6,8 @@ env:
     states_frame: body
     anchor_frame_step: every # not actively used in current residual-only vel+lambda trainer path
     states_embedding_type: identical
-    state_prediction_type: relative 
-    lambda_prediction_type: relative 
+    state_prediction_type: relative
+    lambda_prediction_type: absolute
     prediction_quantity_type: full_state # has to be full state!
     num_states_history: 10
 
