@@ -12,9 +12,9 @@ env:
     num_states_history: 10
 
 algorithm:
-  name: VelAndLambdaTrainer # informational only; trainer class is selected by train_vel_and_lambda_network.py, not by this field
+  name: ResidualTrainer # informational only; trainer class is selected by train_residual_network.py, not by this field
   use_energy_loss: false # legacy flag, not used in current residual-only vel+lambda trainer
-  num_epochs: 2
+  num_epochs: 100
   num_iters_per_epoch: -1
   sample_sequence_length: 10
   batch_size: 256
@@ -24,9 +24,10 @@ algorithm:
   eval_interval: 0
   loss:
     residual_loss_weight: 1.0
-    supervised_loss_weight: 1.0 # scales any enabled supervised next-step MSE terms
+    state_loss_weight: 500.0 # weight on supervised next-state loss term
+    lambda_loss_weight: 1.0 # weight on supervised next-lambda loss term
     use_supervised_loss_state: true # adds MSE against HDF5 data/next_states when true
-    use_supervised_loss_lambdas: false # adds MSE against HDF5 data/next_lambdas when true
+    use_supervised_loss_lambdas: true # adds MSE against HDF5 data/next_lambdas when true
     disable_rollout_eval: true
 
   optimizer:
@@ -37,9 +38,9 @@ algorithm:
     weight_decay: 8e-4
 
   dataset:
-    train_dataset_path: src/axion/neural_solver/datasets/Pendulum/pendulumTrainVelLambda200klen400envs250seed0.hdf5
+    train_dataset_path: src/axion/neural_solver/datasets/Pendulum/pendulumTrainNoContacts40klen400envs5seed0.hdf5
     valid_datasets:
-      valid: src/axion/neural_solver/datasets/Pendulum/pendulumValidVelLambda200klen400envs250seed1.hdf5
+      valid: src/axion/neural_solver/datasets/Pendulum/pendulumValidNoContacts40klen400envs5seed1.hdf5
     max_capacity: 100000000
     num_data_workers: 4
 
@@ -47,7 +48,7 @@ algorithm:
     mode: dataset # currently inactive because eval_interval=0 (rollout eval disabled)
     rollout_horizon: 10 # currently inactive because eval_interval=0 (rollout eval disabled)
     num_rollouts: 20000 # currently inactive because eval_interval=0 (rollout eval disabled)
-    dataset_path: src/axion/neural_solver/datasets/Pendulum/pendulumValidVelLambda200klen400envs250seed1.hdf5 # currently inactive because eval_interval=0 (rollout eval disabled)
+    dataset_path: src/axion/neural_solver/datasets/Pendulum/pendulumValidNoContacts40klen400envs5seed1.hdf5 # currently inactive because eval_interval=0 (rollout eval disabled)
     passive: true # currently inactive because eval_interval=0 (rollout eval disabled)
 
 inputs:
@@ -61,7 +62,7 @@ inputs:
     ]
 
 network:
-  model_impl: vel_and_lambda
+  model_impl: residual
   normalize_input: true
   normalize_output: false
   enable_state_head: true

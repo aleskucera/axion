@@ -142,9 +142,9 @@ def basic_pendulum_example(cfg: DictConfig):
     # Checkpoint .pt / cfg.yaml paths are set only in axion_engine_with_neural_lambdas.py (NN_BASE_PATH / NN_PENDULUM_*).
     # Logged HDF5 fields depend on architecture:
     # - Regression / ModelMixedInput: `predicted_next_lambdas`
-    # - VelAndLambdaModel: `predicted_next_states`, `predicted_next_lambdas`
+    # - ResidualModel: `predicted_next_states`, `predicted_next_lambdas`
     # - LambdaClassificationModel: `lambda_activity` (binary or multiclass indices)
-    # - MTLModel: same regression fields as VelAndLambda plus `lambda_activity`; neural logger also
+    # - MTLModel: same regression fields as ResidualModel plus `lambda_activity`; neural logger also
     #   writes `lambda_activity_ground_truth` from simulator |next_lambdas - lambdas| (see engine constant).
     # - MSEModel: `predicted_next_states`, `predicted_next_lambdas` (no `lambda_activity`).
 

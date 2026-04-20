@@ -194,7 +194,7 @@ class MTLTrainer(SequenceModelTrainer):
         # Build the classification labels:
         classification_labels = self._build_classification_labels(data, classification_logits)
 
-        # Compute the regression loss (periodic q, same idea as VelAndLambdaTrainer supervised state):
+        # Compute the regression loss (periodic q, same idea as ResidualTrainer supervised state):
         regression_loss = self._compute_regression_loss(
             regression_prediction, regression_target
         )

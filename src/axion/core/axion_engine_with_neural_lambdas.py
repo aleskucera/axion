@@ -42,15 +42,15 @@ class AxionEngineWithNeuralLambdas(AxionEngineBase):
         return (not has_state_head) and has_lambda_head and ("lambda_models" in model_cls.__module__)
 
     @staticmethod
-    def _is_vel_and_lambda_model(nn_model: torch.nn.Module) -> bool:
+    def _is_residual_model(nn_model: torch.nn.Module) -> bool:
         model_cls = type(nn_model)
-        if model_cls.__name__ == "VelAndLambdaModel":
+        if model_cls.__name__ in ("ResidualModel", "VelAndLambdaModel"):
             return True
         module_name = model_cls.__module__
         return bool(
             getattr(nn_model, "has_state_head", False)
             and getattr(nn_model, "has_lambda_head", False)
-            and "vel_and_lambda_model" in module_name
+            and ("vel_and_lambda_model" in module_name or "residual_model" in module_name)
         )
 
     @staticmethod
@@ -140,7 +140,7 @@ class AxionEngineWithNeuralLambdas(AxionEngineBase):
             nn_model_path, map_location=str(self.device), weights_only=False
         )
         self._use_mtl_model = self._is_mtl_model(loaded_nn_model)
-        self._use_vel_and_lambda_model = self._is_vel_and_lambda_model(loaded_nn_model)
+        self._use_residual_model = self._is_residual_model(loaded_nn_model)
         self._use_lambda_classification = self._is_lambda_classification_model(loaded_nn_model)
         self._use_mse_model = self._is_mse_model(loaded_nn_model)
         print(f"Loaded model for robot: {robot_name}")
@@ -148,8 +148,8 @@ class AxionEngineWithNeuralLambdas(AxionEngineBase):
             model_mode = "mtl"
         elif self._use_lambda_classification:
             model_mode = "classification"
-        elif self._use_vel_and_lambda_model:
-            model_mode = "vel_and_lambda"
+        elif self._use_residual_model:
+            model_mode = "residual"
         elif self._use_mse_model:
             model_mode = "mse"
         else:
@@ -166,7 +166,7 @@ class AxionEngineWithNeuralLambdas(AxionEngineBase):
             nn_cfg=loaded_nn_cfg,
             device=str(self.device),
             lambda_prediction_only=not (
-                self._use_vel_and_lambda_model or self._use_mtl_model or self._use_mse_model
+                self._use_residual_model or self._use_mtl_model or self._use_mse_model
             ),
         )
 
@@ -310,14 +310,14 @@ class AxionEngineWithNeuralLambdas(AxionEngineBase):
                     "a dict with key 'lambda'. Got None."
                 )
             lambda_activity = self._decode_lambda_activity_from_logits(lambda_logits)
-        elif self._use_vel_and_lambda_model:
+        elif self._use_residual_model:
             with torch.no_grad():
                 out = self.nn_predictor.nn_model.evaluate(nn_inputs)
                 state_prediction = out.get("state", None)
                 lambda_prediction = out.get("lambda", None)
             if state_prediction is None or lambda_prediction is None:
                 raise RuntimeError(
-                    "VelAndLambdaModel engine expected model.evaluate(...) to return "
+                    "ResidualModel engine expected model.evaluate(...) to return "
                     "both 'state' and 'lambda' tensors."
                 )
             state_prediction = (

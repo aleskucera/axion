@@ -138,7 +138,7 @@ class NeuralPredictor:
             self.lambda_dim = int(nn_model.lambda_output_dim)
             self.lambdas = torch.zeros((self.num_worlds, self.lambda_dim), device=self.device)
         elif self.has_lambda_prediction_module:
-            # VelAndLambdaModel keeps `lambda_model` as an alias to the shared
+            # ResidualModel keeps `lambda_model` as an alias to the shared
             # joint state+lambda head. In that case `output_net.out_features`
             # is total_output_dim (= state + lambda), not lambda-only.
             explicit_lambda_dim = getattr(self.nn_model, "lambda_output_dim", None)
