@@ -28,6 +28,7 @@ algorithm:
     lambda_loss_weight: 1.0 # weight on supervised next-lambda loss term
     use_supervised_loss_state: true # adds MSE against HDF5 data/next_states when true
     use_supervised_loss_lambdas: true # adds MSE against HDF5 data/next_lambdas when true
+    supervised_over_window: true # if true, supervised MSE runs over full (B, T, D) window instead of last step only
     disable_rollout_eval: true
 
   optimizer:
