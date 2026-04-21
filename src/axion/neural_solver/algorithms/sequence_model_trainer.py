@@ -166,17 +166,13 @@ class SequenceModelTrainer:
             self.neural_model = checkpoint[0]
             self.neural_model.to(self.device)
 
-            if not hasattr(self.neural_model, 'has_state_head'):
-                self.neural_model.has_state_head = self.neural_model.model is not None
-            if not hasattr(self.neural_model, 'has_lambda_head'):
-                self.neural_model.has_lambda_head = (
-                    getattr(self.neural_model, 'lambda_model', None) is not None
-                )
+            ckpt_has_state_head, ckpt_has_lambda_head = self._infer_checkpoint_heads(self.neural_model)
+            self.neural_model.has_state_head = ckpt_has_state_head
+            self.neural_model.has_lambda_head = ckpt_has_lambda_head
 
             # Keep config/provider target mode consistent with loaded checkpoint head size.
-            state_head = getattr(getattr(self.neural_model, "model", None), "output_net", None)
-            if state_head is not None:
-                state_head_dim = int(state_head.out_features)
+            state_head_dim = self._state_output_head_dim(self.neural_model)
+            if state_head_dim is not None:
                 if state_head_dim == self.utils_provider.state_dim:
                     self.utils_provider.prediction_quantity_type = "full_state"
                     self.utils_provider.state_prediction_dim = self.utils_provider.state_dim
@@ -194,15 +190,23 @@ class SequenceModelTrainer:
                     "Checkpoint has no state head but config has enable_state_head: True."
                 )
 
+            if self.has_lambda_head and not ckpt_has_lambda_head:
+                raise ValueError(
+                    "Config enables lambda head but checkpoint has no lambda-capable head."
+                )
+
             self.neural_model.has_state_head = self.has_state_head
             self.neural_model.has_lambda_head = self.has_lambda_head
-            if not self.has_state_head and self.neural_model.model is not None:
-                for p in self.neural_model.model.parameters():
-                    p.requires_grad = False
-            if self.has_lambda_head and getattr(self.neural_model, 'lambda_model', None) is None:
-                raise ValueError(
-                    "Config enables lambda head but checkpoint has no lambda_model."
-                )
+            state_head_module = self._state_head_module(self.neural_model)
+            if not self.has_state_head:
+                if state_head_module is not None:
+                    for p in state_head_module.parameters():
+                        p.requires_grad = False
+                elif hasattr(self.neural_model, "regression_head"):
+                    raise ValueError(
+                        "Config disables state head, but this checkpoint shares state/lambda "
+                        "outputs in `regression_head`; selective state-head freezing is unsupported."
+                    )
         
         print('Model = \n', self.neural_model)
         print('# Model Parameters = ', num_params_torch_model(self.neural_model))
@@ -356,6 +360,50 @@ class SequenceModelTrainer:
                 if (not self.has_state_head and self.has_lambda_head)
                 else 'error(MSE)'
             )
+
+    def _state_output_head_dim(self, model) -> Optional[int]:
+        """Infer the state-head output dimension for loaded checkpoints."""
+        state_head = getattr(getattr(model, "model", None), "output_net", None)
+        if state_head is not None:
+            return int(state_head.out_features)
+
+        regression_head = getattr(getattr(model, "regression_head", None), "output_net", None)
+        if regression_head is None:
+            return None
+
+        state_output_dim = getattr(model, "state_output_dim", None)
+        if state_output_dim is not None:
+            return int(state_output_dim)
+        return int(regression_head.out_features)
+
+    def _infer_checkpoint_heads(self, model):
+        """Return inferred state/lambda head availability for a checkpoint model."""
+        has_state_head = getattr(model, "has_state_head", None)
+        if has_state_head is None:
+            state_dim = self._state_output_head_dim(model)
+            has_state_head = state_dim is not None and state_dim > 0
+        has_state_head = bool(has_state_head)
+
+        has_lambda_head = getattr(model, "has_lambda_head", None)
+        if has_lambda_head is None:
+            lambda_model = getattr(model, "lambda_model", None)
+            if lambda_model is not None:
+                has_lambda_head = True
+            else:
+                lambda_output_dim = getattr(model, "lambda_output_dim", None)
+                if lambda_output_dim is not None:
+                    has_lambda_head = int(lambda_output_dim) > 0
+                else:
+                    has_lambda_head = getattr(model, "classification_head", None) is not None
+        has_lambda_head = bool(has_lambda_head)
+        return has_state_head, has_lambda_head
+
+    def _state_head_module(self, model):
+        """Return the trainable module used for state predictions when separable."""
+        state_head_module = getattr(model, "model", None)
+        if state_head_module is not None:
+            return state_head_module
+        return None
     
     def get_datasets(self, train_dataset_path, valid_datasets_cfg, require_train_dataset: bool = True):
         # Training dataset is optional for `--test` runs.
