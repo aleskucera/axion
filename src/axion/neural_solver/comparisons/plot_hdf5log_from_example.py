@@ -13,9 +13,9 @@ MODEL_INFO = "MSEModel"
 COMPARISON_CSV_PATH = Path(__file__).resolve().parent / "comparison_40k.csv"
 DEFAULT_HDF5_PATH = (
     Path(__file__).resolve().parents[4]
-    / "data/logs/AxioneEngineWithNeuralLambdas_example_2026-04-19_17-29-53.h5"
+    / "data/logs/AxioneEngineWithNeuralLambdas_example_2026-04-20_21-41-08.h5"
 )
-DEFAULT_LAMBDA_SLICE = slice(0, 10)
+DEFAULT_LAMBDA_SLICE = slice(0, 21)
 
 
 def _parse_args() -> argparse.Namespace:

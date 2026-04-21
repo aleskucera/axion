@@ -53,6 +53,7 @@ class ResidualTrainer(SequenceModelTrainer):
         self.lambda_loss_weight = float(loss_cfg.get("lambda_loss_weight", legacy_supervised_loss_weight))
         self.use_supervised_loss_state = bool(loss_cfg.get("use_supervised_loss_state", False))
         self.use_supervised_loss_lambdas = bool(loss_cfg.get("use_supervised_loss_lambdas", False))
+        self.supervised_over_window = bool(loss_cfg.get("supervised_over_window", False))
 
         # Residual-only default: disable rollout eval until residual path is stable.
         if bool(loss_cfg.get("disable_rollout_eval", True)) and self.eval_interval > 0:
@@ -79,33 +80,67 @@ class ResidualTrainer(SequenceModelTrainer):
     def _compute_supervised_losses(
         self,
         data: dict,
-        predicted_next_states: torch.Tensor,
-        predicted_next_lambdas: torch.Tensor,
+        predicted_next_states_last: torch.Tensor,
+        predicted_next_lambdas_last: torch.Tensor,
+        state_prediction_full: torch.Tensor | None = None,
+        lambda_prediction_full: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor | None, dict[str, torch.Tensor]]:
-        """Compute optional next-step MSE losses against dataset targets."""
+        """Compute optional MSE losses against dataset targets.
+
+        When `self.supervised_over_window` is False (default), the losses compare the
+        last-step absolute prediction against the last-step dataset target. When True,
+        the full (B, T, D) sequence prediction is converted to absolute next_states/
+        next_lambdas and compared against the full dataset sequence at every window
+        position.
+        """
         supervised_components = {}
+        q_dim = self._dof_q_per_env
 
         if self.use_supervised_loss_state:
-            next_states = data["next_states"]
-            next_states_last = next_states[:, -1, :]
-            q_dim = self._dof_q_per_env
-            predicted_q = predicted_next_states[:, :q_dim]
-            target_q = next_states_last[:, :q_dim]
-            # Periodic angular loss robust to wrap discontinuities.
-            q_loss = torch.mean(1.0 - torch.cos(predicted_q - target_q))
+            if self.supervised_over_window:
+                if state_prediction_full is None:
+                    raise RuntimeError(
+                        "supervised_over_window=True requires state_prediction_full."
+                    )
+                predicted_next_states = self.utils_provider.convert_prediction_to_next_states(
+                    data["states"],
+                    state_prediction_full,
+                    dt=self._dt,
+                )
+                target_states = data["next_states"]
+            else:
+                predicted_next_states = predicted_next_states_last
+                target_states = data["next_states"][:, -1, :]
 
-            predicted_qd = predicted_next_states[:, q_dim:]
-            target_qd = next_states_last[:, q_dim:]
-            qd_loss = F.mse_loss(predicted_qd, target_qd)
+            # Periodic angular loss robust to wrap discontinuities.
+            q_loss = torch.mean(
+                1.0 - torch.cos(predicted_next_states[..., :q_dim] - target_states[..., :q_dim])
+            )
+            qd_loss = F.mse_loss(
+                predicted_next_states[..., q_dim:],
+                target_states[..., q_dim:],
+            )
 
             supervised_components["supervised_state_loss"] = q_loss + qd_loss
 
         if self.use_supervised_loss_lambdas:
-            next_lambdas = data["next_lambdas"]
-            next_lambdas_last = next_lambdas[:, -1, :]
+            if self.supervised_over_window:
+                if lambda_prediction_full is None:
+                    raise RuntimeError(
+                        "supervised_over_window=True requires lambda_prediction_full."
+                    )
+                predicted_next_lambdas = self.utils_provider.convert_prediction_to_next_lambdas(
+                    data["lambdas"],
+                    lambda_prediction_full,
+                )
+                target_lambdas = data["next_lambdas"]
+            else:
+                predicted_next_lambdas = predicted_next_lambdas_last
+                target_lambdas = data["next_lambdas"][:, -1, :]
+
             supervised_components["supervised_lambda_loss"] = F.mse_loss(
                 predicted_next_lambdas,
-                next_lambdas_last,
+                target_lambdas,
             )
 
         if not supervised_components:
@@ -343,8 +378,10 @@ class ResidualTrainer(SequenceModelTrainer):
         )
         supervised_loss, supervised_components = self._compute_supervised_losses(
             data,
-            state_for_loss,
-            lambda_for_loss,
+            predicted_next_states_last=state_for_loss,
+            predicted_next_lambdas_last=lambda_for_loss,
+            state_prediction_full=prediction.get("state"),
+            lambda_prediction_full=prediction.get("lambda"),
         )
         total_loss = self._compose_total_loss(residual_loss=residual_loss, supervised_components=supervised_components)
 

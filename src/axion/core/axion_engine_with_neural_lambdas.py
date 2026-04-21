@@ -13,20 +13,36 @@ from .logging_config import LoggingConfig
 
 # Neural network imports:
 from pathlib import Path
+import sys
 import yaml
 import torch
 from axion.neural_solver.standalone.neural_predictor import NeuralPredictor
 from axion.neural_solver.models.lambda_models import LambdaClassificationModel
 from axion.neural_solver.models.mse_model import MSEModel
 from axion.neural_solver.models.mtl_model import MTLModel
+from axion.neural_solver.models import residual_model as residual_model_module
 from axion.neural_solver.utils.neural_lambda_hdf5_logger import NeuralLambdaHDF5Logger
 
-NN_BASE_PATH = Path.cwd() /"src"/"axion"/"neural_solver"/"train"/"trained_models"/"mse"/"04-19-2026-17-09-47"
+M1 = Path("mse") / "04-19-2026-21-43-43"
+M2 = Path("mse") / "04-19-2026-22-06-52"
+M3 = Path("vel_and_lambda_residual") / "04-20-2026-09-59-32"
+M4 = Path("residual") / "04-20-2026-10-56-30"
+M5 = Path("residual") / "04-20-2026-18-46-48"
+
+NN_BASE_PATH = Path.cwd() /"src"/"axion"/"neural_solver"/"train"/"trained_models"/M5
 NN_PENDULUM_PT_PATH = NN_BASE_PATH/"nn"/"best_valid_valid_model.pt"
 NN_PENDULUM_CFG_PATH = NN_BASE_PATH/"cfg.yaml"
 
 # Binary simulator activity mask: |next_lambdas - lambdas| >= threshold (matches Pendulum MTL datasets "Th05" / cfg classification_prob_threshold).
 SIM_LAMBDA_ACTIVITY_ABS_DELTA_THRESHOLD = 0.5
+
+# Backward compatibility for checkpoints saved before residual_model.py rename.
+if not hasattr(residual_model_module, "VelAndLambdaModel"):
+    residual_model_module.VelAndLambdaModel = residual_model_module.ResidualModel
+sys.modules.setdefault(
+    "axion.neural_solver.models.vel_and_lambda_model",
+    residual_model_module,
+)
 
 class AxionEngineWithNeuralLambdas(AxionEngineBase):
     @staticmethod
