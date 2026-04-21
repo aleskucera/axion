@@ -63,6 +63,11 @@ network:
   normalize_output: false
   enable_state_head: true
   enable_lambda_head: true
+  model:
+    mlp:
+      layer_sizes: []
+      activation: relu
+      layernorm: false
 
   encoder:
     low_dim:

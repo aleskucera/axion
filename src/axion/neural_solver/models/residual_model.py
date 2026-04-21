@@ -24,20 +24,33 @@ class VelAndLambdaPredictionHead(nn.Module):
         self,
         input_dim,
         output_dim,
+        mlp_cfg=None,
         device='cuda:0'
     ):
         super().__init__()
         self.device = device
+        mlp_cfg = mlp_cfg or {}
+        hidden_cfg = {
+            'layer_sizes': list(mlp_cfg.get('layer_sizes', [])),
+            'activation': mlp_cfg.get('activation', 'relu'),
+            'layernorm': bool(mlp_cfg.get('layernorm', False)),
+        }
+        self.feature_net = MLPBase(
+            input_dim,
+            hidden_cfg,
+            device=device
+        )
 
         self.output_net = nn.Linear(
-            input_dim,
+            self.feature_net.out_features,
             output_dim
         )
 
         self.to(device)
 
     def forward(self, inputs):
-        return self.output_net(inputs)
+        features = self.feature_net(inputs)
+        return self.output_net(features)
 
     def to(self, device):
         super().to(device)
@@ -99,9 +112,15 @@ class ResidualModel(nn.Module):
         self.lambda_output_dim = int(lambda_output_dim)
         self.total_output_dim = self.state_output_dim + self.lambda_output_dim
 
+        head_mlp_cfg = (
+            network_cfg.get('model', {}).get('mlp', {})
+            if isinstance(network_cfg.get('model', {}), dict)
+            else {}
+        )
         self.model = VelAndLambdaPredictionHead(
             self.feature_dim,
             self.total_output_dim,
+            mlp_cfg=head_mlp_cfg,
             device=device
         )
         # Keep this alias for compatibility with older trainer logic/checkpoints.
