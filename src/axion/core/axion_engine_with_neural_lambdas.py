@@ -22,14 +22,9 @@ from axion.neural_solver.models.mse_model import MSEModel
 from axion.neural_solver.models.mtl_model import MTLModel
 from axion.neural_solver.models import residual_model as residual_model_module
 from axion.neural_solver.utils.neural_lambda_hdf5_logger import NeuralLambdaHDF5Logger
+from axion.neural_solver.train.trained_models.selected_trained_models import CONTACT_MODELS
 
-M1 = Path("mse") / "04-19-2026-21-43-43"
-M2 = Path("mse") / "04-19-2026-22-06-52"
-M3 = Path("vel_and_lambda_residual") / "04-20-2026-09-59-32"
-M4 = Path("residual") / "04-20-2026-10-56-30"
-M5 = Path("residual") / "04-20-2026-18-46-48"
-
-NN_BASE_PATH = Path.cwd() /"src"/"axion"/"neural_solver"/"train"/"trained_models"/M5
+NN_BASE_PATH = Path.cwd() /"src"/"axion"/"neural_solver"/"train"/"trained_models"/CONTACT_MODELS[8]
 NN_PENDULUM_PT_PATH = NN_BASE_PATH/"nn"/"best_valid_valid_model.pt"
 NN_PENDULUM_CFG_PATH = NN_BASE_PATH/"cfg.yaml"
 

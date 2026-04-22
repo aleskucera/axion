@@ -2,8 +2,7 @@ from pathlib import Path
 import csv
 import matplotlib.pyplot as plt
 
-CSV_PATH = Path(__file__).with_name("comparison_40k.csv")
-MODEL_NAMES = ["m1", "m2", "m3", "m4", "m5"]
+CSV_PATH = Path(__file__).with_name("contacts_40k_with_lambda_tae.csv")
 
 
 def format_value(value: float) -> str:
@@ -25,6 +24,22 @@ def add_bar_labels(ax: plt.Axes, bars) -> None:
             va="bottom",
         )
 
+def shorten_model_names(model_names: list[str], max_len: int = 24) -> list[str]:
+    short_names = []
+    for i, name in enumerate(model_names, start=1):
+        compact = " ".join(name.split())
+        if len(compact) > max_len:
+            compact = compact[: max_len - 3] + "..."
+        short_names.append(f"{i}: {compact}")
+    return short_names
+
+
+def style_x_labels(ax: plt.Axes) -> None:
+    ax.tick_params(axis="x", labelrotation=28, labelsize=8)
+    for tick in ax.get_xticklabels():
+        tick.set_horizontalalignment("right")
+
+
 def plot_metric(model_names, values, title: str, y_label: str, color: str) -> None:
     fig, ax = plt.subplots(figsize=(8, 5))
     bars = ax.bar(model_names, values, color=color)
@@ -32,6 +47,7 @@ def plot_metric(model_names, values, title: str, y_label: str, color: str) -> No
     ax.set_xlabel("Model")
     ax.set_ylabel(y_label)
     ax.grid(axis="y", linestyle="--", alpha=0.4)
+    style_x_labels(ax)
     add_bar_labels(ax, bars)
     fig.tight_layout()
 
@@ -82,6 +98,7 @@ def plot_state_lambda_mae(
     ax.set_ylabel("Mean Absolute Error")
     ax.legend(loc="best")
     ax.grid(axis="y", linestyle="--", alpha=0.4)
+    style_x_labels(ax)
     add_grouped_bar_labels(ax, bars_state)
     add_grouped_bar_labels(ax, bars_lambda)
     fig.tight_layout()
@@ -93,28 +110,43 @@ def main() -> None:
     if not rows:
         raise ValueError(f"No data found in {CSV_PATH}")
 
-    row_count = min(len(rows), len(MODEL_NAMES))
-    model_names = MODEL_NAMES[:row_count]
-    total_abs_error = [float(row["total_absolute_error"]) for row in rows[:row_count]]
-    total_sq_error = [float(row["total_squared_error"]) for row in rows[:row_count]]
-    state_maes = [float(row["state_mae"]) for row in rows[:row_count]]
-    lambda_maes = [float(row["lambda_mae"]) for row in rows[:row_count]]
+    model_names = [
+        (row.get("model_info") or f"model_{i + 1}").strip()
+        for i, row in enumerate(rows)
+    ]
+    display_names = shorten_model_names(model_names)
+    total_abs_error = [float(row["total_absolute_error"]) for row in rows]
+    lambda_total_abs_error = [float(row["lambda_total_absolute_error"]) for row in rows]
+    total_sq_error = [float(row["total_squared_error"]) for row in rows]
+    state_maes = [float(row["state_mae"]) for row in rows]
+    lambda_maes = [float(row["lambda_mae"]) for row in rows]
 
     plot_metric(
-        model_names=model_names,
+        model_names=display_names,
         values=total_abs_error,
         title="Total Absolute Error by Model",
         y_label="Total Absolute Error",
         color="tab:blue",
     )
     plot_metric(
-        model_names=model_names,
+        model_names=display_names,
+        values=lambda_total_abs_error,
+        title="Total Absolute Lambda Error by Model",
+        y_label="Total Absolute Lambda Error",
+        color="tab:purple",
+    )
+    plot_metric(
+        model_names=display_names,
         values=total_sq_error,
         title="Total Squared Error by Model",
         y_label="Total Squared Error",
         color="tab:orange",
     )
-    plot_state_lambda_mae(model_names, state_maes, lambda_maes)
+    plot_state_lambda_mae(display_names, state_maes, lambda_maes)
+
+    print("\nModel label mapping:")
+    for i, name in enumerate(model_names, start=1):
+        print(f"{i}: {name}")
 
     plt.show()
 

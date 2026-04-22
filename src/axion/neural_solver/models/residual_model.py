@@ -49,6 +49,10 @@ class VelAndLambdaPredictionHead(nn.Module):
         self.to(device)
 
     def forward(self, inputs):
+        # Backward compatibility for checkpoints created before configurable
+        # head depth/width, where this head only had a linear output layer.
+        if not hasattr(self, "feature_net"):
+            return self.output_net(inputs)
         features = self.feature_net(inputs)
         return self.output_net(features)
 
