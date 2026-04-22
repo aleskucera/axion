@@ -30,6 +30,8 @@ class MTLTrainer(SequenceModelTrainer):
         self.classification_eps = float(loss_cfg.get("classification_eps", 1e-8))
         self.positive_class_weight = float(loss_cfg.get("positive_class_weight", 1.0))
         self.classification_prob_threshold = float(loss_cfg.get("classification_prob_threshold", 0.5))
+        self.classification_loss_type = str(loss_cfg.get("classification_loss_type", "bce_logits")).lower()
+        self.focal_gamma = float(loss_cfg.get("focal_gamma", 2.0))
         self.angular_prediction_l2_weight = float(loss_cfg.get("angular_prediction_l2_weight", 0.5))
         self.jump_target_scale = float(loss_cfg.get("jump_target_scale", 100.0))
         self.neural_model.jump_target_scale = self.jump_target_scale
@@ -108,6 +110,20 @@ class MTLTrainer(SequenceModelTrainer):
             "classification_f1": f1.detach(),
         }
 
+    def _focal_loss_with_logits(
+        self, logits: torch.Tensor, targets: torch.Tensor
+    ) -> torch.Tensor:
+        """Binary focal loss without alpha balancing."""
+        targets = targets.float()
+        bce = F.binary_cross_entropy_with_logits(
+            logits, targets, reduction="none"
+        )
+        probs = torch.sigmoid(logits)
+        pt = targets * probs + (1.0 - targets) * (1.0 - probs)
+        focal_weight = (1.0 - pt).pow(self.focal_gamma)
+        loss = focal_weight * bce
+        return loss.mean()
+
     # ------------------------------------------------------------------
     # Main training step
     # ------------------------------------------------------------------
@@ -126,12 +142,15 @@ class MTLTrainer(SequenceModelTrainer):
             )
         state_loss = self._compute_state_regression_loss(state_abs, state_target)
 
-        # 2. Classification loss (binary BCE)
+        # 2. Classification loss (binary BCE or focal BCE)
         logits = prediction["logits"]
         cls_labels = self._build_classification_labels(data, logits)
-        cls_loss = F.binary_cross_entropy_with_logits(
-            logits, cls_labels, pos_weight=self._bce_pos_weight
-        )
+        if self.classification_loss_type == "bce_logits":
+            cls_loss = F.binary_cross_entropy_with_logits(
+                logits, cls_labels, pos_weight=self._bce_pos_weight
+            )
+        elif self.classification_loss_type == "focal_logits":
+            cls_loss = self._focal_loss_with_logits(logits, cls_labels)
 
         # 3. Lambda regression loss — MSE on lambda_hat = base + p * jump
         lambda_abs = self._convert_lambda_to_absolute(data, prediction["lambda_hat"])
