@@ -2,6 +2,7 @@ import torch
 import torch.nn.functional as F
 
 from axion.neural_solver.algorithms.sequence_model_trainer import SequenceModelTrainer
+from axion.neural_solver.utils.loss_utils import angular_prediction_loss
 
 
 class MTLTrainer(SequenceModelTrainer):
@@ -31,6 +32,7 @@ class MTLTrainer(SequenceModelTrainer):
         self.classification_eps = float(loss_cfg.get("classification_eps", 1e-8))
         self.positive_class_weight = float(loss_cfg.get("positive_class_weight", 1.0))
         self.classification_prob_threshold = float(loss_cfg.get("classification_prob_threshold", 0.5))
+        self.angular_prediction_l2_weight = float(loss_cfg.get("angular_prediction_l2_weight", 0.5))
 
         self._bce_pos_weight = torch.tensor(self.positive_class_weight, device=self.device, dtype=torch.float32)
 
@@ -39,17 +41,25 @@ class MTLTrainer(SequenceModelTrainer):
     def _convert_regression_to_absolute(
         self, data: dict, regression_prediction: torch.Tensor
     ) -> torch.Tensor:
-        """Convert regression head output to absolute (next) values."""
+        """Convert regression head output to absolute (next) values per branch type."""
         state_dim = self.utils_provider.state_prediction_dim
         state_pred = regression_prediction[..., :state_dim]
         lambda_pred = regression_prediction[..., state_dim:]
 
-        next_states = self.utils_provider.convert_prediction_to_next_states(
-            data["states"], state_pred
-        )
-        next_lambdas = self.utils_provider.convert_prediction_to_next_lambdas(
-            data["lambdas"], lambda_pred
-        )
+        if self.utils_provider.state_prediction_type == "relative":
+            next_states = self.utils_provider.convert_prediction_to_next_states(
+                data["states"], state_pred
+            )
+        else:
+            next_states = state_pred
+
+        if self.utils_provider.lambda_prediction_type == "relative":
+            next_lambdas = self.utils_provider.convert_prediction_to_next_lambdas(
+                data["lambdas"], lambda_pred
+            )
+        else:
+            next_lambdas = lambda_pred
+
         return torch.cat([next_states, next_lambdas], dim=-1)
 
     def _build_regression_target(self, data: dict, prediction: torch.Tensor) -> torch.Tensor:
@@ -69,7 +79,11 @@ class MTLTrainer(SequenceModelTrainer):
         q_dim = self._dof_q_per_env
         pred_q = prediction[..., :q_dim]
         tgt_q = target[..., :q_dim]
-        q_loss = torch.mean(1.0 - torch.cos(pred_q - tgt_q))
+        q_loss = angular_prediction_loss(
+            pred_q,
+            tgt_q,
+            angular_prediction_l2_weight=self.angular_prediction_l2_weight,
+        )
         rest_pred = prediction[..., q_dim:]
         rest_tgt = target[..., q_dim:]
         rest_loss = F.mse_loss(rest_pred, rest_tgt)
@@ -187,8 +201,9 @@ class MTLTrainer(SequenceModelTrainer):
         classification_logits = prediction.get("classification")
 
         # Build the regression target:
-        if self.utils_provider.state_prediction_type == "relative":
-            regression_prediction = self._convert_regression_to_absolute(data, regression_prediction)
+        regression_prediction = self._convert_regression_to_absolute(
+            data, regression_prediction
+        )
         regression_target = self._build_regression_target(data, regression_prediction)
 
         # Build the classification labels:
