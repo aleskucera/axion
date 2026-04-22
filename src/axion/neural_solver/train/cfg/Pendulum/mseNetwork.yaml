@@ -13,18 +13,18 @@ env:
 algorithm:
   name: MSETrainer # informational only; trainer class comes from train_mse.py
   use_energy_loss: false
-  num_epochs: 50
+  num_epochs: 100
   num_iters_per_epoch: -1
   sample_sequence_length: 10
-  batch_size: 256
+  batch_size: 512
   num_valid_batches: 256
   truncate_grad: true
   grad_norm: 1.0
   eval_interval: 0 # disables rollout eval during training
   loss:
-    state_loss_weight: 1.0    # weight on the state (q + qd) loss term
+    state_loss_weight: 1000.0    # weight on the state (q + qd) loss term
     lambda_loss_weight: 1.0   # weight on the lambda loss term
-    lambda_log_space_loss: true   # compute lambda MSE in signed log space: z = sign(y)*ln(|y|+eps)
+    lambda_log_space_loss: false   # compute lambda MSE in signed log space: z = sign(y)*ln(|y|+eps)
     lambda_log_space_eps: 1.0e-6  # epsilon inside ln(|y| + eps) for numerical stability
     
   optimizer:

@@ -9,14 +9,35 @@ import h5py
 import matplotlib.pyplot as plt
 import numpy as np
 
-MODEL_INFO = "MSEModel"
-COMPARISON_CSV_PATH = Path(__file__).resolve().parent / "comparison_40k.csv"
-DEFAULT_HDF5_PATH = (
-    Path(__file__).resolve().parents[4]
-    / "data/logs/AxioneEngineWithNeuralLambdas_example_2026-04-20_21-41-08.h5"
-)
-DEFAULT_LAMBDA_SLICE = slice(0, 21)
+HDF5_LOG_FILE_NAMES = [
+    "AxioneEngineWithNeuralLambdas_example_2026-04-21_15-29-48.h5",
+    "AxioneEngineWithNeuralLambdas_example_2026-04-21_15-30-16.h5",
+    "AxioneEngineWithNeuralLambdas_example_2026-04-21_15-30-36.h5",
+    "AxioneEngineWithNeuralLambdas_example_2026-04-21_15-30-58.h5",
+    "AxioneEngineWithNeuralLambdas_example_2026-04-21_15-31-18.h5",
+    "AxioneEngineWithNeuralLambdas_example_2026-04-21_15-35-16.h5",
+    "AxioneEngineWithNeuralLambdas_example_2026-04-21_15-35-38.h5",
+    "AxioneEngineWithNeuralLambdas_example_2026-04-21_15-36-03.h5",
+    "AxioneEngineWithNeuralLambdas_example_2026-04-21_15-36-23.h5",
+]
 
+MODEL_INFOS = [
+    "mse, w_state = 500",
+    "mse, w_state = 5e4",
+    "mse, checkpoint from no contact learning",
+    "mse, lambda in log space, w_state= 2",
+    "residual pure",
+    "residual + mse on last timestep, w_state =500",
+    "residual + mse on whole window T, w_state = 500",
+    "mse, w_state 5e4, head deep layers = [128, 128]",
+    "residual pure, head deep layers = [128,128]",
+]
+
+ID = 8
+MODEL_INFO = MODEL_INFOS[ID]
+COMPARISON_CSV_PATH = Path(__file__).resolve().parent / "contacts_40k_with_lambda_tae.csv"
+DEFAULT_HDF5_PATH = Path(__file__).resolve().parents[4] / "data/logs" / HDF5_LOG_FILE_NAMES[ID]
+DEFAULT_LAMBDA_SLICE = slice(0, 21)
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
@@ -333,6 +354,7 @@ def _append_comparison_csv(
     trajectory_timesteps: int,
     state_mae: float,
     lambda_mae: float,
+    lambda_total_abs_error: float,
     total_abs_error: float,
     total_squared_error: float,
 ) -> None:
@@ -342,6 +364,7 @@ def _append_comparison_csv(
         "trajectory_timesteps",
         "state_mae",
         "lambda_mae",
+        "lambda_total_absolute_error",
         "total_absolute_error",
         "total_squared_error",
     )
@@ -358,6 +381,7 @@ def _append_comparison_csv(
                 "trajectory_timesteps": trajectory_timesteps,
                 "state_mae": state_mae,
                 "lambda_mae": lambda_mae,
+                "lambda_total_absolute_error": lambda_total_abs_error,
                 "total_absolute_error": total_abs_error,
                 "total_squared_error": total_squared_error,
             }
@@ -444,6 +468,7 @@ def main() -> None:
             trajectory_timesteps=int(next_states.shape[0]),
             state_mae=state_mae,
             lambda_mae=lambda_mae,
+            lambda_total_abs_error=lambda_total_abs,
             total_abs_error=total_abs_error,
             total_squared_error=total_squared_error,
         )
