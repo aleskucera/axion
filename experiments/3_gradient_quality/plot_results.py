@@ -1,8 +1,7 @@
-"""Plot Experiment 3: gradient-quality convergence.
+"""Plot Experiment 3: gradient-quality convergence (wall-clock only).
 
-Two-panel figure:
-  Left : RMSE vs iteration  (per-step gradient quality — fair head-to-head)
-  Right: RMSE vs wall-clock (time-to-solution — Axion's adjoint advantage)
+Single panel: running-best RMSE vs wall-clock. Median line + IQR band across
+N trials with different perturbed initial guesses.
 
 Usage:
     python experiments/3_gradient_quality/plot_results.py
@@ -52,22 +51,55 @@ LABELS = {
 }
 SIM_ORDER = ["Axion", "MJX", "TinyDiffSim", "Semi-Implicit"]
 
+N_GRID = 80  # points in the common wall-clock grid
 
-def load_run(path):
+
+def _trial_curves(trial):
+    """Return (cum_s, rmse_best) for one trial."""
+    rmse = np.array(trial.get("rmse_m", []), dtype=float)
+    times_ms = np.array(trial.get("time_ms", []), dtype=float)
+    if len(rmse) == 0:
+        return np.array([]), np.array([])
+    rmse_best = np.minimum.accumulate(rmse)
+    cum_s = np.cumsum(times_ms) / 1000.0
+    return cum_s, rmse_best
+
+
+def load_sim(path):
+    """Load a sim's JSON (multi-trial or flat single-run) and return list of (cum_s, rmse_best)."""
     d = json.loads(path.read_text())
-    rmse = np.array(d.get("rmse_m", []), dtype=float)
-    times_ms = np.array(d.get("time_ms", []), dtype=float)
-    # Running-best so the curves are monotonic (optimization progress story)
-    rmse_best = np.minimum.accumulate(rmse) if len(rmse) else rmse
-    iters = np.arange(len(rmse))
-    cum_s = np.cumsum(times_ms) / 1000.0 if len(times_ms) else np.zeros_like(rmse)
-    return {
-        "sim": d.get("simulator", path.stem),
-        "rmse": rmse,
-        "rmse_best": rmse_best,
-        "iters": iters,
-        "cum_s": cum_s,
-    }
+    if "trials" in d:
+        trials = d["trials"]
+    else:
+        # Back-compat: flat single-run file
+        trials = [d]
+    curves = [_trial_curves(t) for t in trials]
+    return d.get("simulator", path.stem), [c for c in curves if len(c[0]) > 0]
+
+
+def _aggregate_on_grid(curves, n_grid=N_GRID):
+    """Interpolate each trial's (cum_s, rmse_best) onto a common log time grid.
+
+    Returns (t_grid, median, q1, q3). Grid spans [max(cum_s[0]), min(cum_s[-1])]
+    so all trials have data at every point.
+    """
+    t_lo = max(c[0][0] for c in curves)
+    t_hi = min(c[0][-1] for c in curves)
+    if t_hi <= t_lo:
+        # Degenerate; fall back to min-time range
+        t_lo = min(c[0][0] for c in curves)
+        t_hi = max(c[0][-1] for c in curves)
+    t_grid = np.geomspace(t_lo, t_hi, n_grid)
+
+    interp = []
+    for cum_s, rmse_best in curves:
+        y = np.interp(t_grid, cum_s, rmse_best)
+        interp.append(y)
+    arr = np.stack(interp, axis=0)  # (n_trials, n_grid)
+    median = np.median(arr, axis=0)
+    q1 = np.quantile(arr, 0.25, axis=0)
+    q3 = np.quantile(arr, 0.75, axis=0)
+    return t_grid, median, q1, q3
 
 
 def main():
@@ -79,59 +111,66 @@ def main():
     gt_stem = os.environ.get("GT_STEM", "")
     suffix = f"_{gt_stem}" if gt_stem else ""
 
-    # Load one run per simulator
-    runs = {}
     name_map = {
         "axion": "Axion", "mjx": "MJX",
         "semi_implicit": "Semi-Implicit", "tinydiffsim": "TinyDiffSim",
     }
+    sims = {}
     for stem, sim_name in name_map.items():
         path = RESULTS_DIR / f"{stem}{suffix}.json"
         if not path.exists():
             print(f"  [skip] {path.name} not found")
             continue
-        runs[sim_name] = load_run(path)
+        _, curves = load_sim(path)
+        if curves:
+            sims[sim_name] = curves
+            print(f"  [load] {sim_name}: {len(curves)} trial(s)")
 
-    if not runs:
+    if not sims:
         print("No results found. Run run_experiment.sh first.")
         return
 
-    fig, (ax_it, ax_wc) = plt.subplots(1, 2, figsize=(8.5, 3.4))
-    fig.subplots_adjust(wspace=0.30)
+    fig, ax = plt.subplots(1, 1, figsize=(5.5, 3.6))
 
     for sim in SIM_ORDER:
-        if sim not in runs:
+        if sim not in sims:
             continue
-        r = runs[sim]
+        curves = sims[sim]
         st = STYLES[sim]
-        ax_it.plot(
-            r["iters"], r["rmse_best"],
+
+        if len(curves) == 1:
+            cum_s, rmse_best = curves[0]
+            ax.plot(
+                cum_s, rmse_best,
+                color=st["color"], marker=st["marker"], linewidth=st["lw"],
+                markersize=4, markevery=max(1, len(cum_s) // 15),
+                label=LABELS[sim], zorder=st["zorder"],
+            )
+            continue
+
+        t_grid, median, q1, q3 = _aggregate_on_grid(curves)
+        ax.fill_between(
+            t_grid, q1, q3,
+            color=st["color"], alpha=0.18, linewidth=0, zorder=st["zorder"] - 1,
+        )
+        ax.plot(
+            t_grid, median,
             color=st["color"], marker=st["marker"], linewidth=st["lw"],
-            markersize=4, markevery=max(1, len(r["iters"]) // 15),
+            markersize=4, markevery=max(1, len(t_grid) // 12),
             label=LABELS[sim], zorder=st["zorder"],
         )
-        ax_wc.plot(
-            r["cum_s"], r["rmse_best"],
-            color=st["color"], marker=st["marker"], linewidth=st["lw"],
-            markersize=4, markevery=max(1, len(r["cum_s"]) // 15),
-            label=LABELS[sim], zorder=st["zorder"],
-        )
 
-    ax_it.set_xlabel("Iteration")
-    ax_it.set_ylabel("Running-best RMSE (m)")
-    ax_it.grid(True, alpha=0.35, linewidth=0.6)
+    ax.set_xlabel("Wall-clock time (s)")
+    ax.set_ylabel("Running-best RMSE (m)")
+    ax.set_xscale("log")
+    ax.grid(True, which="both", alpha=0.35, linewidth=0.6)
+    ax.xaxis.set_major_formatter(ticker.LogFormatterSciNotation())
 
-    ax_wc.set_xlabel("Wall-clock time (s)")
-    ax_wc.set_ylabel("Running-best RMSE (m)")
-    ax_wc.set_xscale("log")
-    ax_wc.grid(True, which="both", alpha=0.35, linewidth=0.6)
-    ax_wc.xaxis.set_major_formatter(ticker.LogFormatterSciNotation())
-
-    handles, labels = ax_it.get_legend_handles_labels()
-    fig.legend(
+    handles, labels = ax.get_legend_handles_labels()
+    ax.legend(
         handles, labels,
-        loc="upper center", bbox_to_anchor=(0.5, 0.02),
-        ncol=len(handles), fontsize=12,
+        loc="upper center", bbox_to_anchor=(0.5, -0.22),
+        ncol=len(handles), fontsize=11,
         frameon=False, columnspacing=1.5, handlelength=1.5,
     )
 

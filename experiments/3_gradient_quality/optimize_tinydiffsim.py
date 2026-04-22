@@ -291,6 +291,10 @@ def main():
                         default="perturbed")
     parser.add_argument("--horizon-s", type=float, default=None,
                         help="Truncate trajectory to first N seconds (default: full duration)")
+    parser.add_argument("--num-trials", type=int, default=3,
+                        help="Number of independent runs (different perturbed init guesses)")
+    parser.add_argument("--seed-base", type=int, default=42,
+                        help="First seed; trial k uses seed_base + k")
     args = parser.parse_args()
 
     target_ctrl, duration, traj_xy_np = load_ground_truth(args.ground_truth)
@@ -307,76 +311,86 @@ def main():
     target_xy[:, 0] = np.interp(sim_t, real_t, traj_xy_np[:, 0])
     target_xy[:, 1] = np.interp(sim_t, real_t, traj_xy_np[:, 1])
 
-    np.random.seed(42)
-    if args.init == "zeros":
-        init_ctrl = [0.0, 0.0, 0.0]
-    elif args.init == "forward":
-        avg = float(np.mean(target_ctrl))
-        init_ctrl = [avg, avg, avg]
-    else:
-        init_ctrl = [c + np.random.randn() * args.noise_std for c in target_ctrl]
-
     print(f"Target: real robot trajectory ({len(traj_xy_np)} pts -> {T} sim steps)")
     print(f"Real robot ctrl: L={target_ctrl[0]:.3f} R={target_ctrl[1]:.3f} Rear={target_ctrl[2]:.3f}")
-    print(f"Init ctrl ({args.init}): L={init_ctrl[0]:.3f} R={init_ctrl[1]:.3f} Rear={init_ctrl[2]:.3f}")
-    print(f"T={T}, dt={DT}, K={args.K}, kv={KV}, friction={FRICTION}, lr={args.lr}")
+    print(f"T={T}, dt={DT}, K={args.K}, kv={KV}, friction={FRICTION}, lr={args.lr}, "
+          f"num_trials={args.num_trials}")
 
     W = make_interp_matrix(T, args.K)
-    params = np.tile(init_ctrl, (args.K, 1)).astype(float)
-    adam = SplineAdam(K=args.K, num_dofs=NU, lr=args.lr,
-                      lr_min_ratio=0.1, total_steps=args.iterations)
 
-    print(f"\nOptimizing: T={T}, dt={DT}, K={args.K} (TinyDiffSim, CppAD)")
-    results = {
+    def run_trial(init_ctrl):
+        params = np.tile(init_ctrl, (args.K, 1)).astype(float)
+        adam = SplineAdam(K=args.K, num_dofs=NU, lr=args.lr,
+                          lr_min_ratio=0.1, total_steps=args.iterations)
+        trial = {
+            "init_ctrl": list(init_ctrl),
+            "iterations": [],
+            "loss": [],
+            "rmse_m": [],
+            "time_ms": [],
+            "best_iters": [],
+        }
+        best_loss = float("inf")
+        for i in range(args.iterations):
+            t0 = time.perf_counter()
+            loss, grad = grad_and_loss_ad(params, W, target_xy, T)
+            t_iter = (time.perf_counter() - t0) * 1000
+
+            sim_xy = rollout_float(params, W, T)
+            rmse_m = float(np.sqrt(np.mean(
+                (sim_xy[:, 0] - target_xy[:, 0])**2 +
+                (sim_xy[:, 1] - target_xy[:, 1])**2
+            )))
+
+            is_best = loss < best_loss
+            if is_best:
+                best_loss = loss
+                trial["best_iters"].append(i)
+
+            marker = " *" if is_best else ""
+            print(f"  Iter {i:3d}: loss={loss:.4f} | RMSE={rmse_m:.3f}m | "
+                  f"best={best_loss:.4f} | t={t_iter:.0f}ms{marker}")
+
+            trial["iterations"].append(i)
+            trial["loss"].append(float(loss))
+            trial["rmse_m"].append(rmse_m)
+            trial["time_ms"].append(t_iter)
+
+            params = adam.step(params, grad)
+        trial["best_loss"] = float(best_loss)
+        return trial
+
+    trials = []
+    for k in range(args.num_trials):
+        seed = args.seed_base + k
+        np.random.seed(seed)
+        if args.init == "zeros":
+            init_ctrl = [0.0, 0.0, 0.0]
+        elif args.init == "forward":
+            avg = float(np.mean(target_ctrl))
+            init_ctrl = [avg, avg, avg]
+        else:
+            init_ctrl = [c + np.random.randn() * args.noise_std for c in target_ctrl]
+        print(f"\n=== Trial {k + 1}/{args.num_trials} (seed={seed}) ===")
+        print(f"Init ctrl ({args.init}): L={init_ctrl[0]:.3f} R={init_ctrl[1]:.3f} "
+              f"Rear={init_ctrl[2]:.3f}")
+        trial = run_trial(init_ctrl)
+        trial["seed"] = seed
+        trials.append(trial)
+
+    aggregate = {
         "simulator": "TinyDiffSim",
         "gradient_method": "CppAD",
         "dt": DT,
         "T": T,
         "K": args.K,
-        "init_ctrl": init_ctrl,
-        "iterations": [],
-        "loss": [],
-        "rmse_m": [],
-        "time_ms": [],
-        "best_iters": [],
+        "num_trials": args.num_trials,
+        "trials": trials,
     }
-
-    best_loss = float("inf")
-
-    for i in range(args.iterations):
-        t0 = time.perf_counter()
-        loss, grad = grad_and_loss_ad(params, W, target_xy, T)
-        t_iter = (time.perf_counter() - t0) * 1000
-
-        # RMSE
-        sim_xy = rollout_float(params, W, T)
-        rmse_m = float(np.sqrt(np.mean(
-            (sim_xy[:, 0] - target_xy[:, 0])**2 +
-            (sim_xy[:, 1] - target_xy[:, 1])**2
-        )))
-
-        is_best = loss < best_loss
-        if is_best:
-            best_loss = loss
-            results["best_iters"].append(i)
-
-        marker = " *" if is_best else ""
-        print(f"  Iter {i:3d}: loss={loss:.4f} | RMSE={rmse_m:.3f}m | "
-              f"best={best_loss:.4f} | t={t_iter:.0f}ms{marker}")
-
-        results["iterations"].append(i)
-        results["loss"].append(float(loss))
-        results["rmse_m"].append(rmse_m)
-        results["time_ms"].append(t_iter)
-
-        params = adam.step(params, grad)
-
-    results["best_loss"] = float(best_loss)
-
     if args.save:
         pathlib.Path(args.save).parent.mkdir(parents=True, exist_ok=True)
-        pathlib.Path(args.save).write_text(json.dumps(results, indent=2))
-        print(f"Saved to {args.save}")
+        pathlib.Path(args.save).write_text(json.dumps(aggregate, indent=2))
+        print(f"\nSaved to {args.save}")
 
 
 if __name__ == "__main__":

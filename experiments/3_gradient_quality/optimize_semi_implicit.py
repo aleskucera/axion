@@ -129,13 +129,12 @@ def yaw_loss_kernel(
 
 class HelhestSemiImplicitOptimizer(NewtonDifferentiableSimulator):
     def __init__(self, sim_config, render_config, exec_config, engine_config,
-                 logging_config, num_control_points=10, save_path=None,
+                 logging_config, num_control_points=10,
                  target_trajectory_xy=None, lr=0.01, iterations=200):
         self.K = num_control_points
         self._lr = lr
         self._iterations = iterations
         super().__init__(sim_config, render_config, exec_config, engine_config, logging_config)
-        self.save_path = save_path
         self.loss = wp.zeros(1, dtype=float, requires_grad=True)
         self.trajectory_weight = 10.0
         self.yaw_weight = 5.0
@@ -230,12 +229,7 @@ class HelhestSemiImplicitOptimizer(NewtonDifferentiableSimulator):
 
         print(f"Optimizing: T={T}, dt={self.clock.dt}, K={self.K}, lr={self._lr}")
 
-        results = {
-            "simulator": "Semi-Implicit",
-            "gradient_method": "warp_tape",
-            "dt": self.clock.dt,
-            "T": T,
-            "K": self.K,
+        trial = {
             "init_ctrl": list(init_ctrl),
             "iterations": [],
             "loss": [],
@@ -268,30 +262,24 @@ class HelhestSemiImplicitOptimizer(NewtonDifferentiableSimulator):
             is_best = curr_loss < best_loss
             if is_best:
                 best_loss = curr_loss
-                results["best_iters"].append(i)
+                trial["best_iters"].append(i)
 
             marker = " *" if is_best else ""
             print(f"  Iter {i:3d}: loss={curr_loss:.4f} | RMSE={rmse_m:.3f}m | "
                   f"best={best_loss:.4f} | t={t_iter * 1000:.0f}ms{marker}")
 
-            results["iterations"].append(i)
-            results["loss"].append(float(curr_loss))
-            results["rmse_m"].append(rmse_m)
-            results["time_ms"].append(t_iter * 1000)
+            trial["iterations"].append(i)
+            trial["loss"].append(float(curr_loss))
+            trial["rmse_m"].append(rmse_m)
+            trial["time_ms"].append(t_iter * 1000)
 
             self.update()
             self.tape.zero()
             self.tape.reset()  # release recorded ops; otherwise tape grows each iter
             self.loss.zero_()
 
-        results["best_loss"] = float(best_loss)
-
-        if self.save_path:
-            pathlib.Path(self.save_path).parent.mkdir(parents=True, exist_ok=True)
-            pathlib.Path(self.save_path).write_text(json.dumps(results, indent=2))
-            print(f"Saved to {self.save_path}")
-
-        return results
+        trial["best_loss"] = float(best_loss)
+        return trial
 
 
 def load_ground_truth(path):
@@ -322,6 +310,10 @@ def main():
                         default="perturbed")
     parser.add_argument("--horizon-s", type=float, default=None,
                         help="Truncate trajectory to first N seconds (default: full duration)")
+    parser.add_argument("--num-trials", type=int, default=3,
+                        help="Number of independent runs (different perturbed init guesses)")
+    parser.add_argument("--seed-base", type=int, default=42,
+                        help="First seed; trial k uses seed_base + k")
     args = parser.parse_args()
 
     target_ctrl, duration, traj_xy = load_ground_truth(args.ground_truth)
@@ -330,19 +322,10 @@ def main():
         traj_xy = traj_xy[:keep]
         duration = args.horizon_s
 
-    np.random.seed(42)
-    if args.init == "zeros":
-        init_ctrl = [0.0, 0.0, 0.0]
-    elif args.init == "forward":
-        avg = float(np.mean(target_ctrl))
-        init_ctrl = [avg, avg, avg]
-    else:
-        init_ctrl = [c + np.random.randn() * args.noise_std for c in target_ctrl]
-
     print(f"Target: real robot trajectory ({len(traj_xy)} points)")
     print(f"Real robot ctrl: L={target_ctrl[0]:.3f} R={target_ctrl[1]:.3f} Rear={target_ctrl[2]:.3f}")
-    print(f"Init ctrl ({args.init}): L={init_ctrl[0]:.3f} R={init_ctrl[1]:.3f} Rear={init_ctrl[2]:.3f}")
-    print(f"Duration: {duration:.1f}s, dt={DT}, K={args.K}, lr={args.lr}")
+    print(f"Duration: {duration:.1f}s, dt={DT}, K={args.K}, lr={args.lr}, "
+          f"num_trials={args.num_trials}")
 
     sim_config = SimulationConfig(
         duration_seconds=duration,
@@ -361,10 +344,41 @@ def main():
 
     sim = HelhestSemiImplicitOptimizer(
         sim_config, render_config, exec_config, engine_config, logging_config,
-        num_control_points=args.K, save_path=args.save,
+        num_control_points=args.K,
         target_trajectory_xy=traj_xy, lr=args.lr, iterations=args.iterations,
     )
-    sim.train(init_ctrl, iterations=args.iterations)
+
+    trials = []
+    for k in range(args.num_trials):
+        seed = args.seed_base + k
+        np.random.seed(seed)
+        if args.init == "zeros":
+            init_ctrl = [0.0, 0.0, 0.0]
+        elif args.init == "forward":
+            avg = float(np.mean(target_ctrl))
+            init_ctrl = [avg, avg, avg]
+        else:
+            init_ctrl = [c + np.random.randn() * args.noise_std for c in target_ctrl]
+        print(f"\n=== Trial {k + 1}/{args.num_trials} (seed={seed}) ===")
+        print(f"Init ctrl ({args.init}): L={init_ctrl[0]:.3f} R={init_ctrl[1]:.3f} "
+              f"Rear={init_ctrl[2]:.3f}")
+        trial = sim.train(init_ctrl, iterations=args.iterations)
+        trial["seed"] = seed
+        trials.append(trial)
+
+    aggregate = {
+        "simulator": "Semi-Implicit",
+        "gradient_method": "warp_tape",
+        "dt": DT,
+        "T": sim.clock.total_sim_steps,
+        "K": args.K,
+        "num_trials": args.num_trials,
+        "trials": trials,
+    }
+    if args.save:
+        pathlib.Path(args.save).parent.mkdir(parents=True, exist_ok=True)
+        pathlib.Path(args.save).write_text(json.dumps(aggregate, indent=2))
+        print(f"\nSaved to {args.save}")
 
 
 if __name__ == "__main__":

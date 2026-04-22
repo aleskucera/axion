@@ -18,6 +18,8 @@ mkdir -p "$RESULTS"
 GT="${GT:-$DATA/right_turn_b.json}"   # override with GT=$DATA/acceleration.json ./run_experiment.sh
 HORIZON="${HORIZON:-2.0}"     # seconds;     override with HORIZON=9.2 ./run_experiment.sh
 ITERATIONS="${ITERATIONS:-50}"   # opt iters; override with ITERATIONS=200 ./run_experiment.sh
+NUM_TRIALS="${NUM_TRIALS:-3}"    # trials per sim; override with NUM_TRIALS=5 ./run_experiment.sh
+SEED_BASE="${SEED_BASE:-42}"     # seed for trial k is SEED_BASE + k
 
 # Save-file suffix derived from GT filename (so runs on different trajectories don't overwrite each other)
 GT_STEM="$(basename "$GT" .json)"
@@ -40,31 +42,32 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-COMMON_ARGS=(--ground-truth "$GT" --horizon-s "$HORIZON" --iterations "$ITERATIONS")
+COMMON_ARGS=(--ground-truth "$GT" --horizon-s "$HORIZON" --iterations "$ITERATIONS" \
+             --num-trials "$NUM_TRIALS" --seed-base "$SEED_BASE")
 
 if $RUN_ALL || $RUN_AXION; then
-    echo "=== Axion (adjoint)  [horizon=${HORIZON}s, iters=${ITERATIONS}] ==="
+    echo "=== Axion (adjoint)  [horizon=${HORIZON}s, iters=${ITERATIONS}, trials=${NUM_TRIALS}] ==="
     python "$DIR/optimize_axion.py" \
         "${COMMON_ARGS[@]}" --save "$RESULTS/axion${SAVE_SUFFIX}.json" "${EXTRA_ARGS[@]}"
     echo ""
 fi
 
 if $RUN_ALL || $RUN_MJX; then
-    echo "=== MJX (jax.grad / BPTT)  [horizon=${HORIZON}s, iters=${ITERATIONS}] ==="
+    echo "=== MJX (jax.grad / BPTT)  [horizon=${HORIZON}s, iters=${ITERATIONS}, trials=${NUM_TRIALS}] ==="
     python "$DIR/optimize_mjx.py" \
         "${COMMON_ARGS[@]}" --save "$RESULTS/mjx${SAVE_SUFFIX}.json" "${EXTRA_ARGS[@]}"
     echo ""
 fi
 
 if $RUN_ALL || $RUN_SEMI; then
-    echo "=== Semi-Implicit (warp tape / BPTT)  [horizon=${HORIZON}s, iters=${ITERATIONS}] ==="
+    echo "=== Semi-Implicit (warp tape / BPTT)  [horizon=${HORIZON}s, iters=${ITERATIONS}, trials=${NUM_TRIALS}] ==="
     python "$DIR/optimize_semi_implicit.py" \
         "${COMMON_ARGS[@]}" --save "$RESULTS/semi_implicit${SAVE_SUFFIX}.json" "${EXTRA_ARGS[@]}"
     echo ""
 fi
 
 if $RUN_ALL || $RUN_TINY; then
-    echo "=== TinyDiffSim (CppAD)  [horizon=${HORIZON}s, iters=${ITERATIONS}] ==="
+    echo "=== TinyDiffSim (CppAD)  [horizon=${HORIZON}s, iters=${ITERATIONS}, trials=${NUM_TRIALS}] ==="
     python "$DIR/optimize_tinydiffsim.py" \
         "${COMMON_ARGS[@]}" --save "$RESULTS/tinydiffsim${SAVE_SUFFIX}.json" "${EXTRA_ARGS[@]}"
     echo ""

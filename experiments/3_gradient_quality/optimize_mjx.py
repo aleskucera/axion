@@ -210,6 +210,10 @@ def main():
                         default="perturbed")
     parser.add_argument("--horizon-s", type=float, default=None,
                         help="Truncate trajectory to first N seconds (default: full duration)")
+    parser.add_argument("--num-trials", type=int, default=3,
+                        help="Number of independent runs (different perturbed init guesses)")
+    parser.add_argument("--seed-base", type=int, default=42,
+                        help="First seed; trial k uses seed_base + k")
     args = parser.parse_args()
 
     target_ctrl, duration, traj_xy_np = load_ground_truth(args.ground_truth)
@@ -227,104 +231,116 @@ def main():
     target_xy_np[:, 1] = np.interp(sim_t, real_t, traj_xy_np[:, 1])
     target_xy = jnp.array(target_xy_np)
 
-    # Initial control
-    np.random.seed(42)
-    if args.init == "zeros":
-        init_ctrl = [0.0, 0.0, 0.0]
-    elif args.init == "forward":
-        avg = float(np.mean(target_ctrl))
-        init_ctrl = [avg, avg, avg]
-    else:
-        init_ctrl = [c + np.random.randn() * args.noise_std for c in target_ctrl]
-
     print(f"Target: real robot trajectory ({len(traj_xy_np)} pts -> {T} sim steps)")
     print(f"Real robot ctrl: L={target_ctrl[0]:.3f} R={target_ctrl[1]:.3f} Rear={target_ctrl[2]:.3f}")
-    print(f"Init ctrl ({args.init}): L={init_ctrl[0]:.3f} R={init_ctrl[1]:.3f} Rear={init_ctrl[2]:.3f}")
-    print(f"T={T}, dt={DT}, K={args.K}, kv={KV}, mu={MU}, lr={args.lr}")
+    print(f"T={T}, dt={DT}, K={args.K}, kv={KV}, mu={MU}, lr={args.lr}, "
+          f"num_trials={args.num_trials}")
 
     mj_model = mujoco.MjModel.from_xml_string(HELHEST_XML)
     mx = mjx.put_model(mj_model)
     dx0 = make_init_data(mx, mj_model)
 
-    # Spline setup
+    # Spline setup (W shared across trials)
     W = jnp.array(make_interp_matrix(T, args.K))
-    params = jnp.tile(jnp.array(init_ctrl, dtype=jnp.float32), (args.K, 1))
 
     loss_fn = lambda p: trajectory_loss(mx, dx0, W, p, target_xy)
     value_and_grad_fn = jax.jit(jax.value_and_grad(loss_fn))
+    rollout_jit = jax.jit(rollout)
 
     print("Compiling value_and_grad_fn (jax.grad, reverse-mode AD)...")
     t0 = time.perf_counter()
-    loss, grad = value_and_grad_fn(params)
+    dummy = jnp.zeros((args.K, 3), dtype=jnp.float32)
+    loss, grad = value_and_grad_fn(dummy)
     loss.block_until_ready()
     grad.block_until_ready()
     print(f"  compile: {time.perf_counter() - t0:.2f}s")
 
-    # Cosine LR schedule
-    schedule = optax.cosine_decay_schedule(
-        init_value=args.lr, decay_steps=args.iterations, alpha=0.1
-    )
-    optimizer = optax.adam(learning_rate=schedule)
-    opt_state = optimizer.init(params)
+    def run_trial(init_ctrl):
+        params = jnp.tile(jnp.array(init_ctrl, dtype=jnp.float32), (args.K, 1))
+        schedule = optax.cosine_decay_schedule(
+            init_value=args.lr, decay_steps=args.iterations, alpha=0.1
+        )
+        optimizer = optax.adam(learning_rate=schedule)
+        opt_state = optimizer.init(params)
 
-    print(f"\nOptimizing: T={T}, dt={DT}, K={args.K} (MJX jax.grad)")
-    results = {
+        trial = {
+            "init_ctrl": list(init_ctrl),
+            "iterations": [],
+            "loss": [],
+            "rmse_m": [],
+            "time_ms": [],
+            "best_iters": [],
+        }
+        best_loss = float("inf")
+
+        for i in range(args.iterations):
+            t0 = time.perf_counter()
+            loss, grad = value_and_grad_fn(params)
+            loss.block_until_ready()
+            grad.block_until_ready()
+            t_iter = time.perf_counter() - t0
+
+            loss_val = float(loss)
+
+            ctrl_traj = W @ params
+            xy_traj, _ = rollout_jit(mx, dx0, ctrl_traj)
+            xy_np = np.array(xy_traj)
+            rmse_m = float(np.sqrt(np.mean(
+                (xy_np[:, 0] - target_xy_np[:, 0])**2 +
+                (xy_np[:, 1] - target_xy_np[:, 1])**2
+            )))
+
+            is_best = loss_val < best_loss
+            if is_best:
+                best_loss = loss_val
+                trial["best_iters"].append(i)
+
+            marker = " *" if is_best else ""
+            print(f"  Iter {i:3d}: loss={loss_val:.4f} | RMSE={rmse_m:.3f}m | "
+                  f"best={best_loss:.4f} | t={t_iter * 1000:.0f}ms{marker}")
+
+            trial["iterations"].append(i)
+            trial["loss"].append(loss_val)
+            trial["rmse_m"].append(rmse_m)
+            trial["time_ms"].append(t_iter * 1000)
+
+            updates, opt_state = optimizer.update(grad, opt_state)
+            params = optax.apply_updates(params, updates)
+
+        trial["best_loss"] = float(best_loss)
+        return trial
+
+    trials = []
+    for k in range(args.num_trials):
+        seed = args.seed_base + k
+        np.random.seed(seed)
+        if args.init == "zeros":
+            init_ctrl = [0.0, 0.0, 0.0]
+        elif args.init == "forward":
+            avg = float(np.mean(target_ctrl))
+            init_ctrl = [avg, avg, avg]
+        else:
+            init_ctrl = [c + np.random.randn() * args.noise_std for c in target_ctrl]
+        print(f"\n=== Trial {k + 1}/{args.num_trials} (seed={seed}) ===")
+        print(f"Init ctrl ({args.init}): L={init_ctrl[0]:.3f} R={init_ctrl[1]:.3f} "
+              f"Rear={init_ctrl[2]:.3f}")
+        trial = run_trial(init_ctrl)
+        trial["seed"] = seed
+        trials.append(trial)
+
+    aggregate = {
         "simulator": "MJX",
         "gradient_method": "jax.grad",
         "dt": DT,
         "T": T,
         "K": args.K,
-        "init_ctrl": init_ctrl,
-        "iterations": [],
-        "loss": [],
-        "rmse_m": [],
-        "time_ms": [],
-        "best_iters": [],
+        "num_trials": args.num_trials,
+        "trials": trials,
     }
-
-    best_loss = float("inf")
-
-    for i in range(args.iterations):
-        t0 = time.perf_counter()
-        loss, grad = value_and_grad_fn(params)
-        loss.block_until_ready()
-        grad.block_until_ready()
-        t_iter = time.perf_counter() - t0
-
-        loss_val = float(loss)
-
-        # Compute RMSE
-        ctrl_traj = W @ params
-        xy_traj, _ = jax.jit(rollout)(mx, dx0, ctrl_traj)
-        xy_np = np.array(xy_traj)
-        rmse_m = float(np.sqrt(np.mean(
-            (xy_np[:, 0] - target_xy_np[:, 0])**2 +
-            (xy_np[:, 1] - target_xy_np[:, 1])**2
-        )))
-
-        is_best = loss_val < best_loss
-        if is_best:
-            best_loss = loss_val
-            results["best_iters"].append(i)
-
-        marker = " *" if is_best else ""
-        print(f"  Iter {i:3d}: loss={loss_val:.4f} | RMSE={rmse_m:.3f}m | "
-              f"best={best_loss:.4f} | t={t_iter * 1000:.0f}ms{marker}")
-
-        results["iterations"].append(i)
-        results["loss"].append(loss_val)
-        results["rmse_m"].append(rmse_m)
-        results["time_ms"].append(t_iter * 1000)
-
-        updates, opt_state = optimizer.update(grad, opt_state)
-        params = optax.apply_updates(params, updates)
-
-    results["best_loss"] = float(best_loss)
-
     if args.save:
         pathlib.Path(args.save).parent.mkdir(parents=True, exist_ok=True)
-        pathlib.Path(args.save).write_text(json.dumps(results, indent=2))
-        print(f"Saved to {args.save}")
+        pathlib.Path(args.save).write_text(json.dumps(aggregate, indent=2))
+        print(f"\nSaved to {args.save}")
 
 
 if __name__ == "__main__":
