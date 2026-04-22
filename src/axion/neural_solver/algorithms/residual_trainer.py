@@ -8,6 +8,7 @@ from axion.learning.residual_loss_utils import (
 )
 from axion.neural_solver.algorithms.sequence_model_trainer import SequenceModelTrainer
 from axion.neural_solver.utils.differentiable import pendulum_revolute_minimal_to_maximal_velocities
+from axion.neural_solver.utils.loss_utils import angular_prediction_loss
 from axion.neural_solver.utils import warp_utils
 from axion.neural_solver.utils.python_utils import print_warning
 
@@ -54,6 +55,7 @@ class ResidualTrainer(SequenceModelTrainer):
         self.use_supervised_loss_state = bool(loss_cfg.get("use_supervised_loss_state", False))
         self.use_supervised_loss_lambdas = bool(loss_cfg.get("use_supervised_loss_lambdas", False))
         self.supervised_over_window = bool(loss_cfg.get("supervised_over_window", False))
+        self.angular_prediction_l2_weight = float(loss_cfg.get("angular_prediction_l2_weight", 0.5))
 
         # Residual-only default: disable rollout eval until residual path is stable.
         if bool(loss_cfg.get("disable_rollout_eval", True)) and self.eval_interval > 0:
@@ -113,8 +115,10 @@ class ResidualTrainer(SequenceModelTrainer):
                 target_states = data["next_states"][:, -1, :]
 
             # Periodic angular loss robust to wrap discontinuities.
-            q_loss = torch.mean(
-                1.0 - torch.cos(predicted_next_states[..., :q_dim] - target_states[..., :q_dim])
+            q_loss = angular_prediction_loss(
+                predicted_next_states[..., :q_dim],
+                target_states[..., :q_dim],
+                angular_prediction_l2_weight=self.angular_prediction_l2_weight,
             )
             qd_loss = F.mse_loss(
                 predicted_next_states[..., q_dim:],

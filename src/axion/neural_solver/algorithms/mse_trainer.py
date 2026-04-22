@@ -2,6 +2,7 @@ import torch
 import torch.nn.functional as F
 
 from axion.neural_solver.algorithms.sequence_model_trainer import SequenceModelTrainer
+from axion.neural_solver.utils.loss_utils import angular_prediction_loss
 
 
 class MSETrainer(SequenceModelTrainer):
@@ -28,6 +29,7 @@ class MSETrainer(SequenceModelTrainer):
         self.lambda_loss_weight = float(loss_cfg.get("lambda_loss_weight", 1.0))
         self.lambda_log_space_loss = bool(loss_cfg.get("lambda_log_space_loss", False))
         self.lambda_log_space_eps = float(loss_cfg.get("lambda_log_space_eps", 1e-6))
+        self.angular_prediction_l2_weight = float(loss_cfg.get("angular_prediction_l2_weight", 0.5))
 
         self._state_prediction_type = getattr(self.utils_provider, "state_prediction_type", "relative")
         self._lambda_prediction_type = getattr(self.utils_provider, "lambda_prediction_type", "relative")
@@ -76,7 +78,11 @@ class MSETrainer(SequenceModelTrainer):
         q_dim = self._dof_q_per_env
         pred_state = prediction[..., :state_dim]
         tgt_state = target[..., :state_dim]
-        q_loss = torch.mean(1.0 - torch.cos(pred_state[..., :q_dim] - tgt_state[..., :q_dim]))
+        q_loss = angular_prediction_loss(
+            pred_state[..., :q_dim],
+            tgt_state[..., :q_dim],
+            angular_prediction_l2_weight=self.angular_prediction_l2_weight,
+        )
         qd_loss = F.mse_loss(pred_state[..., q_dim:], tgt_state[..., q_dim:])
         return q_loss + qd_loss
 

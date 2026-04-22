@@ -6,7 +6,8 @@ env:
     states_frame: body
     anchor_frame_step: every
     states_embedding_type: identical
-    prediction_type: relative
+    state_prediction_type: relative
+    lambda_prediction_type: absolute
     num_states_history: 10
 
 algorithm:
@@ -23,6 +24,7 @@ algorithm:
   loss:
     regression_loss_weight: 1.0
     classification_loss_weight: 1.0
+    angular_prediction_l2_weight: 0.5
     classification_num_classes: 2
     classification_eps: 1.0e-8
     classification_prob_threshold: 0.5

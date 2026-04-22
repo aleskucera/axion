@@ -24,6 +24,7 @@ algorithm:
   loss:
     state_loss_weight: 1000.0    # weight on the state (q + qd) loss term
     lambda_loss_weight: 1.0   # weight on the lambda loss term
+    angular_prediction_l2_weight: 0.5
     lambda_log_space_loss: false   # compute lambda MSE in signed log space: z = sign(y)*ln(|y|+eps)
     lambda_log_space_eps: 1.0e-6  # epsilon inside ln(|y| + eps) for numerical stability
     
