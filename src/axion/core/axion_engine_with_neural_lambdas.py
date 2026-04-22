@@ -24,12 +24,12 @@ from axion.neural_solver.models import residual_model as residual_model_module
 from axion.neural_solver.utils.neural_lambda_hdf5_logger import NeuralLambdaHDF5Logger
 from axion.neural_solver.train.trained_models.selected_trained_models import CONTACT_MODELS
 
-NN_BASE_PATH = Path.cwd() /"src"/"axion"/"neural_solver"/"train"/"trained_models"/CONTACT_MODELS[8]
+NN_BASE_PATH = Path.cwd() /"src"/"axion"/"neural_solver"/"train"/"trained_models"/"mtl"/"04-22-2026-16-02-04"
 NN_PENDULUM_PT_PATH = NN_BASE_PATH/"nn"/"best_valid_valid_model.pt"
 NN_PENDULUM_CFG_PATH = NN_BASE_PATH/"cfg.yaml"
 
 # Binary simulator activity mask: |next_lambdas - lambdas| >= threshold (matches Pendulum MTL datasets "Th05" / cfg classification_prob_threshold).
-SIM_LAMBDA_ACTIVITY_ABS_DELTA_THRESHOLD = 0.5
+SIM_LAMBDA_ACTIVITY_ABS_DELTA_THRESHOLD = 100
 
 # Backward compatibility for checkpoints saved before residual_model.py rename.
 if not hasattr(residual_model_module, "VelAndLambdaModel"):
@@ -71,7 +71,15 @@ class AxionEngineWithNeuralLambdas(AxionEngineBase):
         model_cls = type(nn_model)
         if model_cls.__name__ != "MTLModel":
             return False
-        return hasattr(nn_model, "regression_head") and hasattr(nn_model, "classification_head")
+        # Support both legacy and current MTL head naming.
+        has_legacy_heads = hasattr(nn_model, "regression_head") and hasattr(
+            nn_model, "classification_head"
+        )
+        has_current_heads = all(
+            hasattr(nn_model, attr)
+            for attr in ("state_head", "cls_head", "base_head", "jump_head")
+        )
+        return has_legacy_heads or has_current_heads
 
     @staticmethod
     def _is_mse_model(nn_model: torch.nn.Module) -> bool:
@@ -107,6 +115,57 @@ class AxionEngineWithNeuralLambdas(AxionEngineBase):
         raise RuntimeError(
             f"Unexpected lambda/classification logits shape ndim={lambda_logits.ndim}"
         )
+
+    @staticmethod
+    def _squeeze_last_step_if_needed(tensor: torch.Tensor) -> torch.Tensor:
+        if tensor.ndim == 3:
+            return tensor[:, -1, :] if tensor.shape[1] > 1 else tensor.squeeze(1)
+        return tensor
+
+    def _parse_mtl_outputs(
+        self, out: dict[str, torch.Tensor]
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """
+        Normalize old/new MTL outputs to:
+          - state_prediction: (B, state_output_dim)
+          - lambda_prediction: (B, lambda_output_dim)
+          - lambda_activity_logits: (B, lambda_output_dim)
+        """
+        state_prediction = None
+        lambda_prediction = None
+        lambda_activity_logits = None
+
+        # New MTL output schema: state/logits/lambda_hat
+        if "state" in out and "lambda_hat" in out:
+            state_prediction = out["state"]
+            lambda_prediction = out["lambda_hat"]
+            lambda_activity_logits = out.get("logits", None)
+        # Legacy schema: regression (state + lambda) / classification
+        elif "regression" in out:
+            regression = out["regression"]
+            mtl = self.nn_predictor.nn_model
+            sod = int(mtl.state_output_dim)
+            regression = self._squeeze_last_step_if_needed(regression)
+            state_prediction = regression[:, :sod]
+            lambda_prediction = regression[:, sod:]
+            lambda_activity_logits = out.get("classification", None)
+
+        if state_prediction is None or lambda_prediction is None:
+            raise RuntimeError(
+                "MTL engine expected model.evaluate(...) to return either "
+                "new-style keys ('state', 'lambda_hat') or legacy key ('regression'). "
+                f"Got keys={sorted(list(out.keys()))} for model={type(self.nn_predictor.nn_model).__name__}."
+            )
+        if lambda_activity_logits is None:
+            raise RuntimeError(
+                "MTL engine expected classification/logit outputs under "
+                "'logits' (new) or 'classification' (legacy). "
+                f"Got keys={sorted(list(out.keys()))} for model={type(self.nn_predictor.nn_model).__name__}."
+            )
+
+        state_prediction = self._squeeze_last_step_if_needed(state_prediction)
+        lambda_prediction = self._squeeze_last_step_if_needed(lambda_prediction)
+        return state_prediction, lambda_prediction, lambda_activity_logits
 
     def __init__(
         self,
@@ -282,22 +341,12 @@ class AxionEngineWithNeuralLambdas(AxionEngineBase):
         if self._use_mtl_model:
             with torch.no_grad():
                 out = self.nn_predictor.nn_model.evaluate(nn_inputs)
-                regression = out.get("regression", None)
-                classification = out.get("classification", None)
-            if regression is None or classification is None:
+            if not isinstance(out, dict):
                 raise RuntimeError(
-                    "MTL engine expected model.evaluate(...) to return "
-                    "both 'regression' and 'classification' tensors."
+                    "MTL engine expected model.evaluate(...) to return a dict. "
+                    f"Got {type(out).__name__} for model={type(self.nn_predictor.nn_model).__name__}."
                 )
-            mtl = self.nn_predictor.nn_model
-            sod = int(mtl.state_output_dim)
-            regression = (
-                regression[:, -1, :]
-                if regression.shape[1] > 1
-                else regression.squeeze(1)
-            )
-            state_prediction = regression[:, :sod]
-            lambda_prediction = regression[:, sod:]
+            state_prediction, lambda_prediction, lambda_activity_logits = self._parse_mtl_outputs(out)
             cur_states = nn_inputs["states"][:, -1, :]
             predicted_next_states = self.nn_predictor._convert_prediction_to_next_states(  # noqa: SLF001
                 cur_states,
@@ -311,7 +360,7 @@ class AxionEngineWithNeuralLambdas(AxionEngineBase):
                     lambda_prediction,
                 )
                 self.nn_predictor.lambdas.copy_(predicted_next_lambdas)
-            lambda_activity = self._decode_lambda_activity_from_logits(classification)
+            lambda_activity = self._decode_lambda_activity_from_logits(lambda_activity_logits)
         elif self._use_lambda_classification:
             with torch.no_grad():
                 lambda_logits = self.nn_predictor.nn_model.evaluate(nn_inputs).get("lambda", None)
