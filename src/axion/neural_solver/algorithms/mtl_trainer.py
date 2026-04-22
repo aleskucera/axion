@@ -32,6 +32,7 @@ class MTLTrainer(SequenceModelTrainer):
         self.classification_prob_threshold = float(loss_cfg.get("classification_prob_threshold", 0.5))
         self.angular_prediction_l2_weight = float(loss_cfg.get("angular_prediction_l2_weight", 0.5))
         self.jump_target_scale = float(loss_cfg.get("jump_target_scale", 100.0))
+        self.neural_model.jump_target_scale = self.jump_target_scale
 
         self._bce_pos_weight = torch.tensor(self.positive_class_weight, device=self.device, dtype=torch.float32)
 
