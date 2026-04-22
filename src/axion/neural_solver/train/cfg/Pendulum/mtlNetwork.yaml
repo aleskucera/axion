@@ -30,7 +30,9 @@ algorithm:
     classification_num_classes: 2
     classification_eps: 1.0e-8
     classification_prob_threshold: 0.5
-    positive_class_weight: 50.0
+    classification_loss_type: focal_logits   # options: bce_logits, focal_logits
+    positive_class_weight: 50.0              # used only when classification_loss_type=bce_logits
+    focal_gamma: 2.0                       # used when classification_loss_type=focal_logits
     jump_target_scale: 100.0
 
   optimizer:
