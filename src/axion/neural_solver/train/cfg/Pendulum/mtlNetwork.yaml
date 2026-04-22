@@ -22,10 +22,10 @@ algorithm:
   grad_norm: 1.0
   eval_interval: 0 # disables rollout eval during training
   loss:
-    state_head_loss_weight: 100
-    base_head_loss_weight: 1.0
-    cls_head_loss_weight: 100.0
-    jump_head_loss_weight: 10.0
+    state_head_loss_weight: 0.0
+    base_head_loss_weight: 0.0
+    cls_head_loss_weight: 1.0
+    jump_head_loss_weight: 0.0
     angular_prediction_l2_weight: 0.5
     classification_num_classes: 2
     classification_eps: 1.0e-8

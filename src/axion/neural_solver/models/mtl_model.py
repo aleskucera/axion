@@ -70,6 +70,7 @@ class MTLModel(nn.Module):
         self.normalize_input = network_cfg.get("normalize_input", False)
         self.regression_output_rms = None
         self.normalize_output = network_cfg.get("normalize_output", False)
+        self.jump_target_scale = float(network_cfg.get("jump_target_scale", 1.0))
 
         self.encoders, self.feature_dim = self.construct_input_encoders(
             input_cfg, network_cfg["encoder"], input_sample, device=device
@@ -163,7 +164,7 @@ class MTLModel(nn.Module):
         jump = self.jump_head(features_flat).view(bsz, seq_len, -1)
 
         p = torch.sigmoid(logits)
-        lambda_hat = base + p * jump
+        lambda_hat = base + p.detach() * jump * self.jump_target_scale
 
         return {
             "state": state,
