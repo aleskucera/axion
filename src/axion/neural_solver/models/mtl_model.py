@@ -95,18 +95,11 @@ class MTLModel(nn.Module):
 
         self.state_output_dim = int(state_output_dim)
         self.lambda_output_dim = int(lambda_output_dim)
-        self.regression_output_dim = self.state_output_dim + self.lambda_output_dim
-        self.num_classes = int(network_cfg.get("classification_num_classes", 2))
-        self.classification_flat_dim = self.lambda_output_dim * (
-            self.num_classes if self.num_classes > 2 else 1
-        )
 
-        self.regression_head = RegressionHead(
-            self.feature_dim, self.regression_output_dim, device=device
-        )
-        self.classification_head = ClassificationHead(
-            self.feature_dim, self.classification_flat_dim, device=device
-        )
+        self.state_head = RegressionHead(self.feature_dim, self.state_output_dim, device=device)
+        self.cls_head = ClassificationHead(self.feature_dim, self.lambda_output_dim, device=device)
+        self.base_head = RegressionHead(self.feature_dim, self.lambda_output_dim, device=device)
+        self.jump_head = RegressionHead(self.feature_dim, self.lambda_output_dim, device=device)
 
     def construct_input_encoders(
         self, input_cfg, encoder_cfg, input_sample, device="cuda:0"
@@ -159,27 +152,26 @@ class MTLModel(nn.Module):
             features.append(self.encoders[input_name](cur_input))
         return torch.cat(features, dim=-1)
 
-    def _format_outputs(self, regression_output, classification_output):
-        if self.normalize_output and self.regression_output_rms is not None:
-            regression_output = self.regression_output_rms.normalize(
-                regression_output, un_norm=True
-            )
+    def _run_heads(self, features):
+        """Run all four heads on transformer features and return the output dict."""
+        bsz, seq_len, feature_dim = features.shape
+        features_flat = features.contiguous().view(-1, feature_dim)
 
-        if self.num_classes > 2:
-            classification_output = classification_output.view(
-                classification_output.shape[0],
-                classification_output.shape[1],
-                self.lambda_output_dim,
-                self.num_classes,
-            )
-        else:
-            p = torch.sigmoid(classification_output)
-            sod = self.state_output_dim
-            reg_state = regression_output[..., :sod]
-            reg_lambda = regression_output[..., sod:]
-            regression_output = torch.cat([reg_state, p * reg_lambda], dim=-1)
+        state = self.state_head(features_flat).view(bsz, seq_len, -1)
+        logits = self.cls_head(features_flat).view(bsz, seq_len, -1)
+        base = self.base_head(features_flat).view(bsz, seq_len, -1)
+        jump = self.jump_head(features_flat).view(bsz, seq_len, -1)
 
-        return regression_output, classification_output
+        p = torch.sigmoid(logits)
+        lambda_hat = base + p * jump
+
+        return {
+            "state": state,
+            "logits": logits,
+            "base": base,
+            "jump": jump,
+            "lambda_hat": lambda_hat,
+        }
 
     def evaluate(self, input_dict, deterministic=False):
         del deterministic
@@ -191,14 +183,8 @@ class MTLModel(nn.Module):
         if self.is_transformer:
             features = self.transformer_model(features)
 
-        reg_value = self.regression_head(features)
-        cls_logits = self.classification_head(features)
-        reg_value, cls_logits = self._format_outputs(reg_value, cls_logits)
-
-        return {
-            "classification": cls_logits[:, -1:, ...],
-            "regression": reg_value[:, -1:, ...],
-        }
+        out = self._run_heads(features)
+        return {k: v[:, -1:, ...] for k, v in out.items()}
 
     def forward(self, input_dict, deterministic=False, inject_noise=False):
         del deterministic
@@ -216,16 +202,7 @@ class MTLModel(nn.Module):
         if self.is_transformer:
             features = self.transformer_model(features)
 
-        bsz, seq_len, feature_dim = features.shape
-        features_flatten = features.contiguous().view(-1, feature_dim)
-
-        regression_flatten = self.regression_head(features_flatten)
-        classification_flatten = self.classification_head(features_flatten)
-        reg_value = regression_flatten.view(bsz, seq_len, -1)
-        cls_logits = classification_flatten.view(bsz, seq_len, -1)
-        reg_value, cls_logits = self._format_outputs(reg_value, cls_logits)
-
-        return {"classification": cls_logits, "regression": reg_value}
+        return self._run_heads(features)
 
     def to(self, device):
         self.device = device
@@ -234,8 +211,11 @@ class MTLModel(nn.Module):
         if self.transformer_model is not None:
             self.transformer_model.to(device)
 
-        self.regression_head.to(device)
-        self.classification_head.to(device)
+        self.state_head.to(device)
+        self.cls_head.to(device)
+        self.base_head.to(device)
+        self.jump_head.to(device)
+
         if self.input_rms is not None:
             for key in self.input_rms:
                 self.input_rms[key] = self.input_rms[key].to(device)

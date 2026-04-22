@@ -6,7 +6,7 @@ from axion.neural_solver.utils.loss_utils import angular_prediction_loss
 
 
 class MTLTrainer(SequenceModelTrainer):
-    """Supervised MTL trainer for joint regression + lambda classification."""
+    """Supervised MTL trainer for joint state regression, lambda regression, and jump classification."""
 
     def __init__(self, neural_env, cfg, model_checkpoint_path=None, device="cuda:0"):
         super().__init__(
@@ -16,77 +16,62 @@ class MTLTrainer(SequenceModelTrainer):
             device=device,
         )
 
-        if not hasattr(self.neural_model, "regression_head"):
-            raise ValueError(
-                "MTLTrainer requires model attribute `regression_head`."
-            )
-        if not hasattr(self.neural_model, "classification_head"):
-            raise ValueError(
-                "MTLTrainer requires model attribute `classification_head`."
-            )
+        for attr in ("cls_head", "base_head", "jump_head", "state_head"):
+            if not hasattr(self.neural_model, attr):
+                raise ValueError(
+                    f"MTLTrainer requires model attribute `{attr}`."
+                )
 
         loss_cfg = cfg["algorithm"].get("loss", {}) or {}
-        self.regression_loss_weight = float(loss_cfg.get("regression_loss_weight", 1.0))
-        self.classification_loss_weight = float(loss_cfg.get("classification_loss_weight", 1.0))
-        self.classification_num_classes = int(loss_cfg.get("classification_num_classes", 2))
+        self.state_head_loss_weight = float(loss_cfg.get("state_head_loss_weight", 1.0))
+        self.base_head_loss_weight = float(loss_cfg.get("base_head_loss_weight", 1.0))
+        self.cls_head_loss_weight = float(loss_cfg.get("cls_head_loss_weight", 1.0))
+        self.jump_head_loss_weight = float(loss_cfg.get("jump_head_loss_weight", 1.0))
         self.classification_eps = float(loss_cfg.get("classification_eps", 1e-8))
         self.positive_class_weight = float(loss_cfg.get("positive_class_weight", 1.0))
         self.classification_prob_threshold = float(loss_cfg.get("classification_prob_threshold", 0.5))
         self.angular_prediction_l2_weight = float(loss_cfg.get("angular_prediction_l2_weight", 0.5))
+        self.jump_target_scale = float(loss_cfg.get("jump_target_scale", 100.0))
 
         self._bce_pos_weight = torch.tensor(self.positive_class_weight, device=self.device, dtype=torch.float32)
 
         self._dof_q_per_env = int(self.neural_env.dof_q_per_env)
 
-    def _convert_regression_to_absolute(
-        self, data: dict, regression_prediction: torch.Tensor
-    ) -> torch.Tensor:
-        """Convert regression head output to absolute (next) values per branch type."""
-        state_dim = self.utils_provider.state_prediction_dim
-        state_pred = regression_prediction[..., :state_dim]
-        lambda_pred = regression_prediction[..., state_dim:]
+    # ------------------------------------------------------------------
+    # Coordinate conversion helpers
+    # ------------------------------------------------------------------
 
+    def _convert_state_to_absolute(self, data: dict, state_pred: torch.Tensor) -> torch.Tensor:
+        """Convert state head output to absolute next-state values."""
         if self.utils_provider.state_prediction_type == "relative":
-            next_states = self.utils_provider.convert_prediction_to_next_states(
+            return self.utils_provider.convert_prediction_to_next_states(
                 data["states"], state_pred
             )
-        else:
-            next_states = state_pred
+        return state_pred
 
+    def _convert_lambda_to_absolute(self, data: dict, lambda_pred: torch.Tensor) -> torch.Tensor:
+        """Convert lambda head output to absolute next-lambda values."""
         if self.utils_provider.lambda_prediction_type == "relative":
-            next_lambdas = self.utils_provider.convert_prediction_to_next_lambdas(
+            return self.utils_provider.convert_prediction_to_next_lambdas(
                 data["lambdas"], lambda_pred
             )
-        else:
-            next_lambdas = lambda_pred
+        return lambda_pred
 
-        return torch.cat([next_states, next_lambdas], dim=-1)
+    # ------------------------------------------------------------------
+    # Loss components
+    # ------------------------------------------------------------------
 
-    def _build_regression_target(self, data: dict, prediction: torch.Tensor) -> torch.Tensor:
-        regression_target = torch.cat([data["next_states"], data["next_lambdas"]], dim=-1)
-        if regression_target.shape != prediction.shape:
-            raise RuntimeError(
-                "Regression target/prediction shape mismatch: "
-                f"target={tuple(regression_target.shape)}, "
-                f"prediction={tuple(prediction.shape)}."
-            )
-        return regression_target
-
-    def _compute_regression_loss(
+    def _compute_state_regression_loss(
         self, prediction: torch.Tensor, target: torch.Tensor
     ) -> torch.Tensor:
-        """Angular generalized coordinates use 1-cos loss (wrap-safe); qd and lambdas use MSE."""
+        """Angular loss on generalised-coordinate q, MSE on the remaining dims (qd)."""
         q_dim = self._dof_q_per_env
-        pred_q = prediction[..., :q_dim]
-        tgt_q = target[..., :q_dim]
         q_loss = angular_prediction_loss(
-            pred_q,
-            tgt_q,
+            prediction[..., :q_dim],
+            target[..., :q_dim],
             angular_prediction_l2_weight=self.angular_prediction_l2_weight,
         )
-        rest_pred = prediction[..., q_dim:]
-        rest_tgt = target[..., q_dim:]
-        rest_loss = F.mse_loss(rest_pred, rest_tgt)
+        rest_loss = F.mse_loss(prediction[..., q_dim:], target[..., q_dim:])
         return q_loss + rest_loss
 
     def _build_classification_labels(self, data: dict, logits: torch.Tensor) -> torch.Tensor:
@@ -95,86 +80,15 @@ class MTLTrainer(SequenceModelTrainer):
                 "Batch is missing `lambda_activity`. "
                 "MTLTrainer expects per-step class labels in the dataset."
             )
-        labels = data["lambda_activity"]
-
-        if self.classification_num_classes == 2:
-            labels = labels.to(dtype=logits.dtype)
-            if labels.shape != logits.shape:
-                raise RuntimeError(
-                    "Label/logit shape mismatch (binary): "
-                    f"labels={tuple(labels.shape)}, logits={tuple(logits.shape)}."
-                )
-            return labels
-
-        if logits.ndim != 4 or logits.shape[-1] != self.classification_num_classes:
+        labels = data["lambda_activity"].to(dtype=logits.dtype)
+        if labels.shape != logits.shape:
             raise RuntimeError(
-                "Unexpected multiclass logits shape: "
-                f"logits={tuple(logits.shape)}, "
-                f"expected (B,T,C,{self.classification_num_classes})."
-            )
-        if labels.ndim == 4 and labels.shape[-1] == 1:
-            labels = labels[..., 0]
-        if labels.ndim != 3:
-            raise RuntimeError(
-                "Unexpected multiclass label shape: "
-                f"labels={tuple(labels.shape)}, expected (B,T,C)."
-            )
-        if (
-            labels.shape[0] != logits.shape[0]
-            or labels.shape[1] != logits.shape[1]
-            or labels.shape[2] != logits.shape[2]
-        ):
-            raise RuntimeError(
-                "Label/logit shape mismatch (multiclass): "
+                "Label/logit shape mismatch: "
                 f"labels={tuple(labels.shape)}, logits={tuple(logits.shape)}."
-            )
-
-        labels = labels.to(dtype=torch.long)
-        with torch.no_grad():
-            min_label = int(labels.min().item())
-            max_label = int(labels.max().item())
-        if min_label < 0 or max_label >= self.classification_num_classes:
-            raise RuntimeError(
-                "Multiclass labels out of range: "
-                f"min={min_label}, max={max_label}, expected in "
-                f"[0,{self.classification_num_classes - 1}]."
             )
         return labels
 
     def _classification_metrics(self, logits: torch.Tensor, labels: torch.Tensor) -> dict:
-        if self.classification_num_classes > 2:
-            preds = torch.argmax(logits, dim=-1)
-            accuracy = (preds == labels).float().mean()
-            out = {"classification_accuracy": accuracy.detach()}
-
-            preds_1d = preds.reshape(-1)
-            labels_1d = labels.reshape(-1)
-            eps = self.classification_eps
-            precision_per_class = []
-            recall_per_class = []
-            f1_per_class = []
-            for cls_idx in range(self.classification_num_classes):
-                pred_cls = preds_1d == cls_idx
-                label_cls = labels_1d == cls_idx
-                tp = (pred_cls & label_cls).float().sum()
-                fp = (pred_cls & (~label_cls)).float().sum()
-                fn = ((~pred_cls) & label_cls).float().sum()
-
-                precision = tp / (tp + fp + eps)
-                recall = tp / (tp + fn + eps)
-                f1 = 2.0 * precision * recall / (precision + recall + eps)
-                precision_per_class.append(precision)
-                recall_per_class.append(recall)
-                f1_per_class.append(f1)
-                out[f"classification_precision_class_{cls_idx}"] = precision.detach()
-                out[f"classification_recall_class_{cls_idx}"] = recall.detach()
-                out[f"classification_f1_class_{cls_idx}"] = f1.detach()
-
-            out["classification_precision_macro"] = torch.stack(precision_per_class).mean().detach()
-            out["classification_recall_macro"] = torch.stack(recall_per_class).mean().detach()
-            out["classification_f1_macro"] = torch.stack(f1_per_class).mean().detach()
-            return out
-
         probs = torch.sigmoid(logits)
         preds = probs >= self.classification_prob_threshold
         targets = labels >= 0.5
@@ -193,60 +107,67 @@ class MTLTrainer(SequenceModelTrainer):
             "classification_f1": f1.detach(),
         }
 
+    # ------------------------------------------------------------------
+    # Main training step
+    # ------------------------------------------------------------------
+
     def compute_loss(self, data, train):
-        # Get the prediction from the model:
         del train
         prediction = self.neural_model(data)
-        regression_prediction = prediction.get("regression")
-        classification_logits = prediction.get("classification")
 
-        # Build the regression target:
-        regression_prediction = self._convert_regression_to_absolute(
-            data, regression_prediction
-        )
-        regression_target = self._build_regression_target(data, regression_prediction)
-
-        # Build the classification labels:
-        classification_labels = self._build_classification_labels(data, classification_logits)
-
-        # Compute the regression loss (periodic q, same idea as ResidualTrainer supervised state):
-        regression_loss = self._compute_regression_loss(
-            regression_prediction, regression_target
-        )
-
-        # Compute the classification loss:
-        if self.classification_num_classes == 2:
-            classification_loss = F.binary_cross_entropy_with_logits(
-                classification_logits,
-                classification_labels,
-                pos_weight=self._bce_pos_weight,
+        # 1. State regression loss
+        state_abs = self._convert_state_to_absolute(data, prediction["state"])
+        state_target = data["next_states"]
+        if state_abs.shape != state_target.shape:
+            raise RuntimeError(
+                "State target/prediction shape mismatch: "
+                f"target={tuple(state_target.shape)}, prediction={tuple(state_abs.shape)}."
             )
-        else:
-            logits_2d = classification_logits.reshape(-1, self.classification_num_classes)
-            labels_1d = classification_labels.reshape(-1)
-            classification_loss = F.cross_entropy(logits_2d, labels_1d)
+        state_loss = self._compute_state_regression_loss(state_abs, state_target)
 
-        # Compute the total loss:
+        # 2. Classification loss (binary BCE)
+        logits = prediction["logits"]
+        cls_labels = self._build_classification_labels(data, logits)
+        cls_loss = F.binary_cross_entropy_with_logits(
+            logits, cls_labels, pos_weight=self._bce_pos_weight
+        )
+
+        # 3. Lambda regression loss — MSE on lambda_hat = base + p * jump
+        lambda_abs = self._convert_lambda_to_absolute(data, prediction["lambda_hat"])
+        lambda_target = data["next_lambdas"]
+        if lambda_abs.shape != lambda_target.shape:
+            raise RuntimeError(
+                "Lambda target/prediction shape mismatch: "
+                f"target={tuple(lambda_target.shape)}, prediction={tuple(lambda_abs.shape)}."
+            )
+        lambda_loss = F.mse_loss(lambda_abs, lambda_target)
+
+        # 4. Jump loss — GT-masked MSE on the jump head (active only on true jump labels)
+        jump_gt = (data["next_lambdas"] - data["lambdas"]) / self.jump_target_scale
+        jump_sq_error = (prediction["jump"] - jump_gt).pow(2)
+        jump_loss = (cls_labels * jump_sq_error).sum() / cls_labels.sum().clamp_min(1.0)
+
         total_loss = (
-            self.regression_loss_weight * regression_loss
-            + self.classification_loss_weight * classification_loss
+            self.state_head_loss_weight * state_loss
+            + self.base_head_loss_weight * lambda_loss
+            + self.cls_head_loss_weight * cls_loss
+            + self.jump_head_loss_weight * jump_loss
         )
 
         with torch.no_grad():
             loss_itemized = {
-                "regression_loss": regression_loss.detach(),
-                "classification_loss": classification_loss.detach(),
-                "weighted_regression_loss": (
-                    self.regression_loss_weight * regression_loss
-                ).detach(),
-                "weighted_classification_loss": (
-                    self.classification_loss_weight * classification_loss
-                ).detach(),
+                "state_loss": state_loss.detach(),
+                "lambda_loss": lambda_loss.detach(),
+                "classification_loss": cls_loss.detach(),
+                "jump_loss": jump_loss.detach(),
+                "weighted_state_loss": (self.state_head_loss_weight * state_loss).detach(),
+                "weighted_lambda_loss": (self.base_head_loss_weight * lambda_loss).detach(),
+                "weighted_classification_loss": (self.cls_head_loss_weight * cls_loss).detach(),
+                "weighted_jump_loss": (self.jump_head_loss_weight * jump_loss).detach(),
                 "total_loss": total_loss.detach(),
             }
-            loss_itemized.update(
-                self._classification_metrics(classification_logits, classification_labels)
-            )
+            loss_itemized.update(self._classification_metrics(logits, cls_labels))
+
         return total_loss, loss_itemized
 
     def compute_test_loss_reference(self, data):

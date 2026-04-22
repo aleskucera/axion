@@ -20,7 +20,7 @@ from pathlib import Path
 import h5py
 import numpy as np
 
-THRESHOLD_DEFAULT = 0.5
+THRESHOLD_DEFAULT = 100
 LOW_THRESHOLD_DEFAULT = 0.5
 
 
