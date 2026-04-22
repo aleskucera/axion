@@ -162,10 +162,17 @@ class MTLTrainer(SequenceModelTrainer):
             )
         lambda_loss = F.mse_loss(lambda_abs, lambda_target)
 
-        # 4. Jump loss — GT-masked MSE on the jump head (active only on true jump labels)
+        # 4. Jump loss — weighted SmoothL1:
+        #    active labels use SmoothL1(prediction, jump_gt),
+        #    inactive labels use 0.01 * SmoothL1(prediction, 0).
         jump_gt = (data["next_lambdas"] - data["lambdas"]) / self.jump_target_scale
-        jump_sq_error = (prediction["jump"] - jump_gt).pow(2)
-        jump_loss = (cls_labels * jump_sq_error).sum() / cls_labels.sum().clamp_min(1.0)
+        jump_pred = prediction["jump"]
+        jump_active = F.smooth_l1_loss(jump_pred, jump_gt, reduction="none")
+        jump_inactive = F.smooth_l1_loss(jump_pred, torch.zeros_like(jump_pred), reduction="none")
+        jump_loss = (
+            cls_labels * jump_active
+            + (1.0 - cls_labels) * 0.01 * jump_inactive
+        ).mean()
 
         total_loss = (
             self.state_head_loss_weight * state_loss
