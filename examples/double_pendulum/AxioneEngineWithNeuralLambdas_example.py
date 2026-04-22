@@ -144,8 +144,11 @@ def basic_pendulum_example(cfg: DictConfig):
     # - Regression / ModelMixedInput: `predicted_next_lambdas`
     # - ResidualModel: `predicted_next_states`, `predicted_next_lambdas`
     # - LambdaClassificationModel: `lambda_activity` (binary or multiclass indices)
-    # - MTLModel: same regression fields as ResidualModel plus `lambda_activity`; neural logger also
-    #   writes `lambda_activity_ground_truth` from simulator |next_lambdas - lambdas| (see engine constant).
+    # - MTLModel: same regression fields as ResidualModel plus `lambda_activity`.
+    #   New MTL checkpoints expose `state` + `lambda_hat` + `logits` from evaluate();
+    #   engine-side compatibility logic also accepts legacy `regression` + `classification`.
+    #   Neural logger also writes `lambda_activity_ground_truth` from simulator
+    #   |next_lambdas - lambdas| (see engine constant).
     # - MSEModel: `predicted_next_states`, `predicted_next_lambdas` (no `lambda_activity`).
 
     # Plane equation: nx*x + ny*y + nz*z + d = 0 (default: horizontal z=0)

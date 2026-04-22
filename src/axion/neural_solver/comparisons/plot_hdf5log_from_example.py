@@ -35,9 +35,15 @@ MODEL_INFOS = [
 
 ID = 8
 MODEL_INFO = MODEL_INFOS[ID]
-COMPARISON_CSV_PATH = Path(__file__).resolve().parent / "contacts_40k_with_lambda_tae.csv"
-DEFAULT_HDF5_PATH = Path(__file__).resolve().parents[4] / "data/logs" / HDF5_LOG_FILE_NAMES[ID]
+COMPARISON_CSV_PATH = None #Path(__file__).resolve().parent / "contacts_40k_with_lambda_tae.csv"
+DEFAULT_HDF5_PATH = Path(__file__).resolve().parents[4] / "data/logs" / "AxioneEngineWithNeuralLambdas_example_2026-04-22_16-22-00.h5"#HDF5_LOG_FILE_NAMES[ID]
 DEFAULT_LAMBDA_SLICE = slice(0, 21)
+
+
+def _parse_optional_path(value: str) -> Path | None:
+    if value.lower() in {"none", "null"}:
+        return None
+    return Path(value)
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
@@ -75,11 +81,11 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--csv",
-        type=Path,
+        type=_parse_optional_path,
         default=COMPARISON_CSV_PATH,
         help=(
             "Append one summary row to this CSV after a successful run "
-            "(creates file with header if missing)."
+            "(creates file with header if missing). Use 'none' to disable."
         ),
     )
     parser.add_argument(
@@ -460,7 +466,7 @@ def main() -> None:
         predicted_next_lambdas,
     )
     _plot_mae_summary(state_mae, lambda_mae, state_total_abs, lambda_total_abs)
-    if not args.no_csv:
+    if not args.no_csv and args.csv is not None:
         _append_comparison_csv(
             args.csv,
             log_filename=args.hdf5.name,
