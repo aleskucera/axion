@@ -13,22 +13,25 @@ env:
 algorithm:
   name: MTLTrainer # informational only; trainer class comes from train_mtl.py
   use_energy_loss: false # currently unused in MTLTrainer
-  num_epochs: 50
+  num_epochs: 100
   num_iters_per_epoch: -1
   sample_sequence_length: 10
-  batch_size: 256
+  batch_size: 512
   num_valid_batches: 256
   truncate_grad: true
   grad_norm: 1.0
   eval_interval: 0 # disables rollout eval during training
   loss:
-    regression_loss_weight: 1.0
-    classification_loss_weight: 1.0
+    state_head_loss_weight: 100
+    base_head_loss_weight: 1.0
+    cls_head_loss_weight: 100.0
+    jump_head_loss_weight: 10.0
     angular_prediction_l2_weight: 0.5
     classification_num_classes: 2
     classification_eps: 1.0e-8
     classification_prob_threshold: 0.5
-    positive_class_weight: 1.0
+    positive_class_weight: 50.0
+    jump_target_scale: 100.0
 
   optimizer:
     name: adamw
@@ -38,9 +41,9 @@ algorithm:
     weight_decay: 8e-4
 
   dataset:
-    train_dataset_path: [src/axion/neural_solver/datasets/Pendulum/pendulumTrainMtlNoContacts2000len500envs2seed0LabelsTh05.hdf5]
+    train_dataset_path: [src/axion/neural_solver/datasets/Pendulum/pendulumTrainMtlNoContacts2000len500envs2seed0LabelsTh100.hdf5]
     valid_datasets:
-      valid: src/axion/neural_solver/datasets/Pendulum/pendulumValidMtlNoContacts2000len500envs2seed1LabelsTh05.hdf5
+      valid: src/axion/neural_solver/datasets/Pendulum/pendulumValidMtlNoContacts2000len500envs2seed1LabelsTh100.hdf5
     max_capacity: 100000000
     num_data_workers: 4
 
@@ -48,7 +51,7 @@ algorithm:
     mode: dataset # inactive when eval_interval=0
     rollout_horizon: 10 # inactive when eval_interval=0
     num_rollouts: 20000 # inactive when eval_interval=0
-    dataset_path: src/axion/neural_solver/datasets/Pendulum/pendulumValidMtlNoContacts2000len500envs2seed1LabelsTh05.hdf5 # inactive when eval_interval=0
+    dataset_path: src/axion/neural_solver/datasets/Pendulum/pendulumValidMtlNoContacts2000len500envs2seed1LabelsTh100.hdf5 # inactive when eval_interval=0
     passive: true # inactive when eval_interval=0
 
 inputs:
