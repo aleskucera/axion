@@ -23,8 +23,8 @@ def _resolve_data_group(h5_file: h5py.File) -> h5py.Group:
 
 
 def _lambda_to_binary_labels(lambdas: np.ndarray, *, threshold: float) -> np.ndarray:
-    # Size label: 1 iff current lambda is strictly above threshold.
-    return (lambdas > float(threshold)).astype(np.uint8)
+    # Size label: 1 iff current lambda exceeds threshold in either direction.
+    return (np.abs(lambdas) > float(threshold)).astype(np.uint8)
 
 
 def add_lambda_labels_size(
@@ -60,7 +60,7 @@ def add_lambda_labels_size(
         )
         data_group[dataset_name].attrs["threshold"] = float(threshold)
         data_group[dataset_name].attrs["description"] = (
-            "Binary lambda size label where label=1 if lambdas > threshold, else 0."
+            "Binary lambda size label where label=1 if |lambdas| > threshold, else 0."
         )
 
 
@@ -68,7 +68,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
             "Add lambda-size labels to an HDF5 dataset. "
-            "Label is 1 when current lambda > threshold, otherwise 0."
+            "Label is 1 when |current lambda| > threshold, otherwise 0."
         )
     )
     parser.add_argument(
@@ -90,7 +90,7 @@ def parse_args() -> argparse.Namespace:
         "--threshold",
         type=float,
         default=THRESHOLD_DEFAULT,
-        help="Label threshold. Label is 1 when lambdas > threshold, else 0.",
+        help="Label threshold. Label is 1 when |lambdas| > threshold, else 0.",
     )
     parser.add_argument(
         "--dataset-name",

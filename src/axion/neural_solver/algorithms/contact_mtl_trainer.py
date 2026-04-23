@@ -161,7 +161,10 @@ class ContactMTLTrainer(SequenceModelTrainer):
             )
         lambda_mse = F.mse_loss(contact_lambda_pred, lambda_target, reduction="none")
         if self.condition_lambda_regression_on_activity:
-            lambda_loss = (cls_labels * lambda_mse).mean()
+            mask = cls_labels
+            masked_sum = (mask * lambda_mse).sum()
+            positive_count = mask.sum().clamp_min(1.0)
+            lambda_loss = masked_sum / positive_count
         else:
             lambda_loss = lambda_mse.mean()
 
@@ -171,12 +174,14 @@ class ContactMTLTrainer(SequenceModelTrainer):
         )
 
         with torch.no_grad():
+            zero_positive_batch = (cls_labels.sum() == 0).to(cls_labels.dtype)
             loss_itemized = {
                 "classification_loss": cls_loss.detach(),
                 "lambda_loss": lambda_loss.detach(),
                 "weighted_classification_loss": (self.cls_head_loss_weight * cls_loss).detach(),
                 "weighted_lambda_loss": (self.lambda_head_loss_weight * lambda_loss).detach(),
                 "total_loss": total_loss.detach(),
+                "zero_positive_batch": zero_positive_batch.detach(),
             }
             loss_itemized.update(self._classification_metrics(logits, cls_labels))
 
