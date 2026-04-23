@@ -260,7 +260,7 @@ def main():
         schedule = optax.cosine_decay_schedule(
             init_value=args.lr, decay_steps=args.iterations, alpha=0.1
         )
-        optimizer = optax.adam(learning_rate=schedule)
+        optimizer = optax.adam(learning_rate=schedule, b1=0.2, b2=0.999)
         opt_state = optimizer.init(params)
 
         trial = {

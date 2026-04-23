@@ -17,6 +17,7 @@ import tempfile
 import time
 
 import numpy as np
+
 try:
     import pytinydiffsim_ad as pd  # Google tiny-differentiable-simulator (AD build)
 except ModuleNotFoundError:
@@ -122,8 +123,17 @@ def make_interp_matrix(T, K):
 
 
 class SplineAdam:
-    def __init__(self, K, num_dofs, lr, total_steps=200, lr_min_ratio=0.05,
-                 betas=(0.9, 0.999), eps=1e-8, grad_clip=None):
+    def __init__(
+        self,
+        K,
+        num_dofs,
+        lr,
+        total_steps=200,
+        lr_min_ratio=0.05,
+        betas=(0.2, 0.999),
+        eps=1e-8,
+        grad_clip=None,
+    ):
         self.lr_init = lr
         self.lr_min = lr * lr_min_ratio
         self.total_steps = total_steps
@@ -242,7 +252,7 @@ def grad_and_loss_ad(params_np, W, target_xy, T):
 
     # Control regularization: diagonal approximation of sum_t (W @ params)[t]**2
     # = sum_k (W[:,k]**2).sum() * params[k,:]**2 (cross terms are small for linear-interp W)
-    w_sq = (W * W).sum(axis=0)   # shape (K,)
+    w_sq = (W * W).sum(axis=0)  # shape (K,)
     for k in range(W.shape[1]):
         coef = pd.ADDouble(float(w_sq[k]) * REGULARIZATION_WEIGHT / T)
         for j in range(NU):
@@ -279,22 +289,28 @@ def main():
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    parser.add_argument("--ground-truth", type=str,
-                        default=str(DATA_DIR / "right_turn_b.json"))
-    parser.add_argument("--save", metavar="PATH",
-                        default=str(RESULTS_DIR / "tinydiffsim.json"))
+    parser.add_argument("--ground-truth", type=str, default=str(DATA_DIR / "right_turn_b.json"))
+    parser.add_argument("--save", metavar="PATH", default=str(RESULTS_DIR / "tinydiffsim.json"))
     parser.add_argument("--iterations", type=int, default=200)
     parser.add_argument("--K", type=int, default=10)
     parser.add_argument("--lr", type=float, default=0.003)
     parser.add_argument("--noise-std", type=float, default=0.2)
-    parser.add_argument("--init", choices=["perturbed", "zeros", "forward"],
-                        default="perturbed")
-    parser.add_argument("--horizon-s", type=float, default=None,
-                        help="Truncate trajectory to first N seconds (default: full duration)")
-    parser.add_argument("--num-trials", type=int, default=3,
-                        help="Number of independent runs (different perturbed init guesses)")
-    parser.add_argument("--seed-base", type=int, default=42,
-                        help="First seed; trial k uses seed_base + k")
+    parser.add_argument("--init", choices=["perturbed", "zeros", "forward"], default="perturbed")
+    parser.add_argument(
+        "--horizon-s",
+        type=float,
+        default=None,
+        help="Truncate trajectory to first N seconds (default: full duration)",
+    )
+    parser.add_argument(
+        "--num-trials",
+        type=int,
+        default=3,
+        help="Number of independent runs (different perturbed init guesses)",
+    )
+    parser.add_argument(
+        "--seed-base", type=int, default=42, help="First seed; trial k uses seed_base + k"
+    )
     args = parser.parse_args()
 
     target_ctrl, duration, traj_xy_np = load_ground_truth(args.ground_truth)
@@ -312,16 +328,21 @@ def main():
     target_xy[:, 1] = np.interp(sim_t, real_t, traj_xy_np[:, 1])
 
     print(f"Target: real robot trajectory ({len(traj_xy_np)} pts -> {T} sim steps)")
-    print(f"Real robot ctrl: L={target_ctrl[0]:.3f} R={target_ctrl[1]:.3f} Rear={target_ctrl[2]:.3f}")
-    print(f"T={T}, dt={DT}, K={args.K}, kv={KV}, friction={FRICTION}, lr={args.lr}, "
-          f"num_trials={args.num_trials}")
+    print(
+        f"Real robot ctrl: L={target_ctrl[0]:.3f} R={target_ctrl[1]:.3f} Rear={target_ctrl[2]:.3f}"
+    )
+    print(
+        f"T={T}, dt={DT}, K={args.K}, kv={KV}, friction={FRICTION}, lr={args.lr}, "
+        f"num_trials={args.num_trials}"
+    )
 
     W = make_interp_matrix(T, args.K)
 
     def run_trial(init_ctrl):
         params = np.tile(init_ctrl, (args.K, 1)).astype(float)
-        adam = SplineAdam(K=args.K, num_dofs=NU, lr=args.lr,
-                          lr_min_ratio=0.1, total_steps=args.iterations)
+        adam = SplineAdam(
+            K=args.K, num_dofs=NU, lr=args.lr, lr_min_ratio=0.1, total_steps=args.iterations
+        )
         trial = {
             "init_ctrl": list(init_ctrl),
             "iterations": [],
@@ -337,10 +358,14 @@ def main():
             t_iter = (time.perf_counter() - t0) * 1000
 
             sim_xy = rollout_float(params, W, T)
-            rmse_m = float(np.sqrt(np.mean(
-                (sim_xy[:, 0] - target_xy[:, 0])**2 +
-                (sim_xy[:, 1] - target_xy[:, 1])**2
-            )))
+            rmse_m = float(
+                np.sqrt(
+                    np.mean(
+                        (sim_xy[:, 0] - target_xy[:, 0]) ** 2
+                        + (sim_xy[:, 1] - target_xy[:, 1]) ** 2
+                    )
+                )
+            )
 
             is_best = loss < best_loss
             if is_best:
@@ -348,8 +373,10 @@ def main():
                 trial["best_iters"].append(i)
 
             marker = " *" if is_best else ""
-            print(f"  Iter {i:3d}: loss={loss:.4f} | RMSE={rmse_m:.3f}m | "
-                  f"best={best_loss:.4f} | t={t_iter:.0f}ms{marker}")
+            print(
+                f"  Iter {i:3d}: loss={loss:.4f} | RMSE={rmse_m:.3f}m | "
+                f"best={best_loss:.4f} | t={t_iter:.0f}ms{marker}"
+            )
 
             trial["iterations"].append(i)
             trial["loss"].append(float(loss))
@@ -372,8 +399,10 @@ def main():
         else:
             init_ctrl = [c + np.random.randn() * args.noise_std for c in target_ctrl]
         print(f"\n=== Trial {k + 1}/{args.num_trials} (seed={seed}) ===")
-        print(f"Init ctrl ({args.init}): L={init_ctrl[0]:.3f} R={init_ctrl[1]:.3f} "
-              f"Rear={init_ctrl[2]:.3f}")
+        print(
+            f"Init ctrl ({args.init}): L={init_ctrl[0]:.3f} R={init_ctrl[1]:.3f} "
+            f"Rear={init_ctrl[2]:.3f}"
+        )
         trial = run_trial(init_ctrl)
         trial["seed"] = seed
         trials.append(trial)

@@ -63,7 +63,7 @@ def make_interp_matrix(T, K):
 
 class SplineAdam:
     def __init__(self, K, num_dofs, lr, total_steps=200, lr_min_ratio=0.05,
-                 betas=(0.9, 0.999), eps=1e-8, grad_clip=None):
+                 betas=(0.2, 0.999), eps=1e-8, grad_clip=None):
         self.lr_init = lr
         self.lr_min = lr * lr_min_ratio
         self.total_steps = total_steps
