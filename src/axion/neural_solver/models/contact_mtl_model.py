@@ -70,6 +70,7 @@ class ContactMTLModel(nn.Module):
         self.input_rms = None
         self.normalize_input = network_cfg.get("normalize_input", False)
         self.normalize_output = network_cfg.get("normalize_output", False)
+        self.use_asinh_transform = bool(network_cfg.get("use_asinh_transform", True))
 
         self.encoders, self.feature_dim = self.construct_input_encoders(
             input_cfg, network_cfg["encoder"], input_sample, device=device
@@ -94,7 +95,7 @@ class ContactMTLModel(nn.Module):
             raise NotImplementedError
 
         self.contact_lambda_dim = int(contact_lambda_dim)
-        self.asinh_contact_lambda_rms = None
+        self.contact_lambda_transform_rms = None
 
         self.cls_head = ClassificationHead(self.feature_dim, self.contact_lambda_dim, device=device)
         self.contact_lambda_head = ContactLambdaPredictionHead(self.feature_dim, self.contact_lambda_dim, device=device)
@@ -133,8 +134,8 @@ class ContactMTLModel(nn.Module):
             else:
                 self.input_rms[input_name] = data_rms[input_name]
 
-    def set_output_rms(self, output_rms=None, lambda_output_rms=None, asinh_contact_lambda_rms=None):
-        self.asinh_contact_lambda_rms = asinh_contact_lambda_rms
+    def set_output_rms(self, output_rms=None, lambda_output_rms=None, contact_lambda_transform_rms=None):
+        self.contact_lambda_transform_rms = contact_lambda_transform_rms
 
     def extract_input_features(self, input_dict):
         features = []
@@ -175,11 +176,13 @@ class ContactMTLModel(nn.Module):
         out = self._run_heads(features)
         out = {k: v[:, -1:, ...] for k, v in out.items()}
 
-        # Invert the asinh-space normalization applied during training to recover actual lambda values.
+        # Invert the configured target transform applied during training to recover actual lambda values.
         p = out["contact_lambda_hat"]
-        if self.normalize_output and self.asinh_contact_lambda_rms is not None:
-            p = self.asinh_contact_lambda_rms.normalize(p, un_norm=True)
-        out["contact_lambda_hat"] = torch.sinh(p)
+        if self.normalize_output and self.contact_lambda_transform_rms is not None:
+            p = self.contact_lambda_transform_rms.normalize(p, un_norm=True)
+        if self.use_asinh_transform:
+            p = torch.sinh(p)
+        out["contact_lambda_hat"] = p
         return out
 
     def forward(self, input_dict, deterministic=False, inject_noise=False):
@@ -213,6 +216,6 @@ class ContactMTLModel(nn.Module):
         if self.input_rms is not None:
             for key in self.input_rms:
                 self.input_rms[key] = self.input_rms[key].to(device)
-        if self.asinh_contact_lambda_rms is not None:
-            self.asinh_contact_lambda_rms = self.asinh_contact_lambda_rms.to(device)
+        if self.contact_lambda_transform_rms is not None:
+            self.contact_lambda_transform_rms = self.contact_lambda_transform_rms.to(device)
         return self
