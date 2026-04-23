@@ -8,12 +8,12 @@ class ContactMTLTrainer(SequenceModelTrainer):
     """Supervised MTL trainer for joint contact classification and contact lambda regression.
 
     Target transform (training):
-        z = ln(clamp(next_lambdas[..., start:], 1e-8))
+        z = asinh(next_lambdas[..., start:])
         t = (z - μ) / σ   if normalize_output else z
     Loss: MSE(p, t)
 
     Inverse transform (inference, inside ContactMTLModel.evaluate):
-        y = exp(p * σ + μ)   if normalize_output else exp(p)
+        y = sinh(p * σ + μ)   if normalize_output else sinh(p)
     """
 
     def __init__(self, neural_env, cfg, model_checkpoint_path=None, device="cuda:0"):
@@ -35,11 +35,11 @@ class ContactMTLTrainer(SequenceModelTrainer):
                     f"ContactMTLTrainer requires model attribute `{attr}`."
                 )
 
-        # Wire log-space RMS to the model (overwrites the base-class set_output_rms call,
+        # Wire asinh-space RMS to the model (overwrites the base-class set_output_rms call,
         # which passed target/lambda_target RMS that are unused in this pipeline).
         if hasattr(self, "dataset_rms"):
             self.neural_model.set_output_rms(
-                log_contact_lambda_rms=self.dataset_rms.get("contact_lambda_log_target")
+                asinh_contact_lambda_rms=self.dataset_rms.get("contact_lambda_asinh_target")
             )
 
         loss_cfg = cfg["algorithm"].get("loss", {}) or {}
@@ -61,7 +61,7 @@ class ContactMTLTrainer(SequenceModelTrainer):
     def preprocess_data_batch(self, data):
         data = super().preprocess_data_batch(data)
         contact_lambdas = data["next_lambdas"][..., self.contact_lambda_start_index:]
-        data["contact_lambda_log_target"] = torch.log(contact_lambdas.clamp(min=1e-8))
+        data["contact_lambda_asinh_target"] = torch.asinh(contact_lambdas)
         return data
 
     # ------------------------------------------------------------------
@@ -138,14 +138,14 @@ class ContactMTLTrainer(SequenceModelTrainer):
                 "Expected 'bce_logits' or 'focal_logits'."
             )
 
-        # 2. Contact lambda regression loss — MSE in log (optionally normalized) space.
+        # 2. Contact lambda regression loss — MSE in asinh (optionally normalized) space.
         #    The model outputs raw predictions p; targets are log-transformed and optionally
         #    normalized to zero-mean/unit-variance per channel.
-        log_target = data["contact_lambda_log_target"]
-        if self.neural_model.normalize_output and self.neural_model.log_contact_lambda_rms is not None:
-            lambda_target = self.neural_model.log_contact_lambda_rms.normalize(log_target)
+        asinh_target = data["contact_lambda_asinh_target"]
+        if self.neural_model.normalize_output and self.neural_model.asinh_contact_lambda_rms is not None:
+            lambda_target = self.neural_model.asinh_contact_lambda_rms.normalize(asinh_target)
         else:
-            lambda_target = log_target
+            lambda_target = asinh_target
 
         contact_lambda_pred = prediction["contact_lambda_hat"]
         if contact_lambda_pred.shape != lambda_target.shape:
