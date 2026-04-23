@@ -9,26 +9,39 @@ import h5py
 import matplotlib.pyplot as plt
 import numpy as np
 
-HDF5_LOG_FILE_NAMES = [
+MTL_JUMP_MODELS_HDF5_LOG_FILE_NAMES = [
     "AxioneEngineWithNeuralLambdas_example_2026-04-23_10-06-11.h5",
     "AxioneEngineWithNeuralLambdas_example_2026-04-23_10-06-39.h5",
     "AxioneEngineWithNeuralLambdas_example_2026-04-23_10-07-02.h5",
     "AxioneEngineWithNeuralLambdas_example_2026-04-23_10-07-23.h5",
 ]
 
-MODEL_INFOS = [
+CONTACT_MTL_MODELS_LAMBDA_REGR_ONLY_HDF5_LOG_FILE_NAMES = [
+    "AxioneEngineWithNeuralLambdas_example_2026-04-23_17-25-41.h5",
+    "AxioneEngineWithNeuralLambdas_example_2026-04-23_17-26-10.h5",
+    "AxioneEngineWithNeuralLambdas_example_2026-04-23_17-26-32.h5",
+]
+
+MTL_JUMP_MODELS_MODEL_INFOS = [
     "with 0.01*(1-y_{cls}) * SmoothL1(jump_pred, 0) term",
     "y_{cls} * SmoothL1(jump_pred, jump_gt)",
     "y_{cls} * MSE(jump_pred, jump_gt)",
     "y_{cls} * SmoothL1(jump_pred, jump_gt), 200 epoch",
 ]
 
-ID = 3
-MODEL_INFO = MODEL_INFOS[ID]
-COMPARISON_CSV_PATH = None # Path(__file__).resolve().parent / "mtl_400k_classAndJumps.csv" # None
-DEFAULT_HDF5_PATH = Path(__file__).resolve().parents[4] / "data/logs" / "AxioneEngineWithNeuralLambdas_example_2026-04-20_21-41-08.h5" #"AxioneEngineWithNeuralLambdas_example_2026-04-23_11-16-01.h5" #HDF5_LOG_FILE_NAMES[ID]
-DEFAULT_LAMBDA_SLICE = slice(0, 22)
+CONTACT_MTL_MODELS_LAMBDA_REGR_ONLY_MODEL_INFOS = [
+    "contact_mtl, asinh, mse",
+    "contact_mtl, asinh + ouput normal, mse",
+    "contact_mtl, no tranform, mse",
+]
+
+ID = 2
+MODEL_INFO = CONTACT_MTL_MODELS_LAMBDA_REGR_ONLY_MODEL_INFOS[ID]
+COMPARISON_CSV_PATH =  Path(__file__).resolve().parent / "contact_mtl_lambda_regr_only.csv" # None
+DEFAULT_HDF5_PATH = Path(__file__).resolve().parents[4] / "data/logs" / CONTACT_MTL_MODELS_LAMBDA_REGR_ONLY_HDF5_LOG_FILE_NAMES[ID]
+DEFAULT_LAMBDA_SLICE = slice(10, 22)
 ANALYZE_INCOMPLETE_MTL = False
+ANALYZE_CONTACT_MTL_LAMBDA_REGR_ONLY = True
 # Must match `jump_target_scale` / MTLModel.jump_target_scale for the checkpoint that produced the log.
 DEFAULT_JUMP_TARGET_SCALE = 100.0
 SIM_COLOR = "tab:blue"
@@ -90,16 +103,20 @@ def _parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def _load_and_validate(hdf5_path: Path) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+def _load_and_validate(
+    hdf5_path: Path,
+) -> tuple[np.ndarray, np.ndarray | None, np.ndarray, np.ndarray]:
     if not hdf5_path.exists():
         raise FileNotFoundError(f"HDF5 file not found: {hdf5_path}")
 
-    required = (
+    required = [
         "next_states",
-        "predicted_next_states",
         "next_lambdas",
         "predicted_next_lambdas",
-    )
+    ]
+    require_predicted_states = not ANALYZE_CONTACT_MTL_LAMBDA_REGR_ONLY
+    if require_predicted_states:
+        required.append("predicted_next_states")
 
     with h5py.File(hdf5_path, "r") as h5f:
         if "data" not in h5f:
@@ -112,21 +129,29 @@ def _load_and_validate(hdf5_path: Path) -> tuple[np.ndarray, np.ndarray, np.ndar
             )
 
         next_states = np.asarray(group["next_states"][:]).squeeze()
-        predicted_next_states = np.asarray(group["predicted_next_states"][:]).squeeze()
+        predicted_next_states = (
+            np.asarray(group["predicted_next_states"][:]).squeeze()
+            if "predicted_next_states" in group
+            else None
+        )
         next_lambdas = np.asarray(group["next_lambdas"][:]).squeeze()
         predicted_next_lambdas = np.asarray(group["predicted_next_lambdas"][:]).squeeze()
 
-    if next_states.ndim != 2 or predicted_next_states.ndim != 2:
+    if next_states.ndim != 2:
         raise ValueError(
-            "State arrays must become shape (T, 4) after squeezing; "
-            f"got {next_states.shape} and {predicted_next_states.shape}"
+            f"next_states must become shape (T, 4) after squeezing; got {next_states.shape}"
+        )
+    if predicted_next_states is not None and predicted_next_states.ndim != 2:
+        raise ValueError(
+            "predicted_next_states must become shape (T, 4) after squeezing; "
+            f"got {predicted_next_states.shape}"
         )
     if next_lambdas.ndim != 2 or predicted_next_lambdas.ndim != 2:
         raise ValueError(
             "Lambda arrays must become shape (T, N) after squeezing; "
             f"got {next_lambdas.shape} and {predicted_next_lambdas.shape}"
         )
-    if next_states.shape != predicted_next_states.shape:
+    if predicted_next_states is not None and next_states.shape != predicted_next_states.shape:
         raise ValueError(
             "next_states and predicted_next_states shape mismatch: "
             f"{next_states.shape} vs {predicted_next_states.shape}"
@@ -404,7 +429,7 @@ def _plot_lambda_activity_labels(
 
 def _compute_prediction_metrics(
     next_states: np.ndarray,
-    predicted_next_states: np.ndarray,
+    predicted_next_states: np.ndarray | None,
     next_lambdas: np.ndarray,
     predicted_next_lambdas: np.ndarray,
 ) -> tuple[float, float, float, float, float, float]:
@@ -414,12 +439,19 @@ def _compute_prediction_metrics(
     total_abs_error is sum of absolute errors over all state and lambda elements.
     total_squared_error is sum of squared errors over all state and lambda elements.
     """
-    state_abs_err = np.abs(next_states - predicted_next_states)
+    if predicted_next_states is not None:
+        state_abs_err = np.abs(next_states - predicted_next_states)
+        state_mae = float(np.mean(state_abs_err))
+        state_total = float(np.sum(state_abs_err))
+        state_sq = np.sum((next_states - predicted_next_states) ** 2)
+    else:
+        state_mae = float("nan")
+        state_total = 0.0
+        state_sq = 0.0
     lambda_diff = next_lambdas - predicted_next_lambdas
     lambda_valid = np.isfinite(lambda_diff)
     lambda_abs_err = np.abs(lambda_diff)
 
-    state_mae = float(np.mean(state_abs_err))
     if np.any(lambda_valid):
         lambda_mae = float(np.mean(lambda_abs_err[lambda_valid]))
         lambda_total = float(np.sum(lambda_abs_err[lambda_valid]))
@@ -428,10 +460,8 @@ def _compute_prediction_metrics(
         lambda_mae = float("nan")
         lambda_total = 0.0
         lambda_sq = 0.0
-    state_total = float(np.sum(state_abs_err))
     total_abs_error = state_total + lambda_total
 
-    state_sq = np.sum((next_states - predicted_next_states) ** 2)
     total_squared_error = float(state_sq + lambda_sq)
 
     return (
@@ -494,7 +524,8 @@ def _plot_mae_summary(
     fig, (ax_mae, ax_total) = plt.subplots(1, 2, figsize=(14, 4))
     fig.suptitle("Overall Prediction Error Summary")
 
-    mae_labels = ["State MAE", "Lambda MAE"]
+    state_label = "State MAE" if not math.isnan(state_mae) else "State MAE (N/A)"
+    mae_labels = [state_label, "Lambda MAE"]
     mae_values = [state_mae, lambda_mae]
     mae_bars = ax_mae.bar(mae_labels, mae_values, width=0.45)
     for bar, value in zip(mae_bars, mae_values):
@@ -553,7 +584,8 @@ def main() -> None:
 
     time_axis, x_label = _build_time_axis(next_states.shape[0], args.dt)
 
-    _plot_states(time_axis, x_label, next_states, predicted_next_states)
+    if predicted_next_states is not None:
+        _plot_states(time_axis, x_label, next_states, predicted_next_states)
     _plot_lambdas(
         time_axis=time_axis,
         x_label=x_label,

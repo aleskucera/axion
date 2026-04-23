@@ -149,6 +149,11 @@ def basic_pendulum_example(cfg: DictConfig):
     #   engine-side compatibility logic also accepts legacy `regression` + `classification`.
     #   Neural logger also writes `lambda_activity_ground_truth` from simulator
     #   |next_lambdas - lambdas| (see engine constant).
+    # - ContactMTLModel: evaluate() exposes contact-channel-only outputs
+    #   (`contact_lambda_hat`, `logits`) for channels [contact_lambda_start_index:].
+    #   For HDF5 schema consistency, engine logger expands them to full lambda width:
+    #   prefix channels [0:contact_lambda_start_index] are NaN for every timestep,
+    #   while suffix channels store model predictions/activity.
     # - MSEModel: `predicted_next_states`, `predicted_next_lambdas` (no `lambda_activity`).
 
     # Plane equation: nx*x + ny*y + nz*z + d = 0 (default: horizontal z=0)

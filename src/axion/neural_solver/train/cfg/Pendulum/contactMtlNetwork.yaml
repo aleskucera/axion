@@ -22,6 +22,7 @@ algorithm:
   loss:
     cls_head_loss_weight: 0.0
     lambda_head_loss_weight: 1.0
+    condition_lambda_regression_on_activity: false  # when true, lambda regression is weighted by ground-truth lambda_activity
     classification_eps: 1.0e-8
     classification_prob_threshold: 0.5
     classification_loss_type: focal_logits   # options: bce_logits, focal_logits
@@ -64,6 +65,11 @@ network:
   use_asinh_transform: true
   normalize_input: true
   normalize_output: false
+  model:
+    mlp:
+      layer_sizes: []
+      activation: relu
+      layernorm: false
 
   encoder:
     low_dim:
