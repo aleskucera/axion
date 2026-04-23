@@ -1,0 +1,79 @@
+env:
+  env_name: Pendulum
+  num_envs: 512
+  utils_provider_cfg:
+    name: TransformerNeuralModelUtilsProvider
+    states_frame: body
+    anchor_frame_step: every
+    states_embedding_type: identical
+    # lambda prediction is absolute (no relative conversion applied in ContactMTLTrainer)
+    num_states_history: 10
+
+algorithm:
+  name: ContactMTLTrainer
+  num_epochs: 40
+  num_iters_per_epoch: -1
+  sample_sequence_length: 10
+  batch_size: 512
+  num_valid_batches: 256
+  truncate_grad: true
+  grad_norm: 1.0
+  eval_interval: 0 # disables rollout eval during training
+  loss:
+    cls_head_loss_weight: 0.0
+    lambda_head_loss_weight: 1.0
+    classification_eps: 1.0e-8
+    classification_prob_threshold: 0.5
+    classification_loss_type: focal_logits   # options: bce_logits, focal_logits
+    positive_class_weight: 50.0              # used only when classification_loss_type=bce_logits
+    focal_gamma: 2.0                         # used when classification_loss_type=focal_logits
+
+  optimizer:
+    name: adamw
+    lr_start: 5e-3
+    lr_end: 1e-4
+    lr_schedule: cosine
+    weight_decay: 8e-4
+
+  dataset:
+    train_dataset_path: [src/axion/neural_solver/datasets/Pendulum/pendulumTrain400klen400envs50seed0LabelsTh100.hdf5]
+    valid_datasets:
+      valid: src/axion/neural_solver/datasets/Pendulum/pendulumValid40klen400envs5seed1LabelsTh100.hdf5
+    max_capacity: 100000000
+    num_data_workers: 4
+
+  eval:
+    mode: dataset # inactive when eval_interval=0
+    rollout_horizon: 10 # inactive when eval_interval=0
+    num_rollouts: 20000 # inactive when eval_interval=0
+    dataset_path: src/axion/neural_solver/datasets/Pendulum/pendulumValid40klen400envs5seed1LabelsTh100.hdf5 # inactive when eval_interval=0
+    passive: true # inactive when eval_interval=0
+
+inputs:
+  low_dim: [
+    states_embedding,
+    contact_normals,
+    contact_points_1,
+    contact_depths,
+    gravity_dir
+  ]
+
+network:
+  model_impl: contact_mtl
+  contact_lambda_start_index: 10
+  normalize_input: true
+  normalize_output: false
+
+  encoder:
+    low_dim:
+      layer_sizes: []
+      activation: relu
+      layernorm: false
+
+  transformer:
+    block_size: 16
+    n_layer: 6
+    n_head: 12
+    n_embd: 192
+    dropout: 0.0
+    bias: false

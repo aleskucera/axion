@@ -37,6 +37,7 @@ from axion.neural_solver.models.lambda_models import LambdaClassificationModel
 from axion.neural_solver.models.residual_model import ResidualModel
 from axion.neural_solver.models.mtl_model import MTLModel
 from axion.neural_solver.models.mse_model import MSEModel
+from axion.neural_solver.models.contact_mtl_model import ContactMTLModel
 from axion.neural_solver.utils.datasets import TrajectoryDataset
 from axion.neural_solver.utils.evaluator import NeuralSimEvaluator
 from axion.neural_solver.utils.python_utils import (
@@ -137,6 +138,17 @@ class SequenceModelTrainer:
                     input_sample=input_sample,
                     state_output_dim=state_output_dim,
                     lambda_output_dim=engine_dims.num_constraints,
+                    input_cfg=cfg['inputs'],
+                    network_cfg=cfg['network'],
+                    device=self.device,
+                )
+            elif model_impl == 'contact_mtl':
+                engine_dims = self.neural_env.simulator_wrapper.engine.dims
+                contact_lambda_start = int(cfg['network'].get('contact_lambda_start_index', 10))
+                contact_lambda_dim = engine_dims.num_constraints - contact_lambda_start
+                self.neural_model = ContactMTLModel(
+                    input_sample=input_sample,
+                    contact_lambda_dim=contact_lambda_dim,
                     input_cfg=cfg['inputs'],
                     network_cfg=cfg['network'],
                     device=self.device,
