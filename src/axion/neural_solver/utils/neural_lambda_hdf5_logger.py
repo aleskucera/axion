@@ -22,6 +22,8 @@ class NeuralLambdaHDF5Logger:
         - multiclass activity indices (0/1/2)
     - `lambda_activity_ground_truth` is the simulator-derived binary mask
       (|next_lambdas - lambdas| >= threshold) per constraint channel, when enabled by the engine.
+    - `lambda_jump` is the raw MTL jump-head output (before `jump_target_scale` in lambda_hat),
+      when the loaded model exposes a jump head.
     """
 
     def __init__(self, output_path: str):
@@ -47,6 +49,7 @@ class NeuralLambdaHDF5Logger:
         predicted_next_states: Optional[np.ndarray] = None,
         lambda_activity: Optional[np.ndarray] = None,
         lambda_activity_ground_truth: Optional[np.ndarray] = None,
+        lambda_jump: Optional[np.ndarray] = None,
     ) -> None:
         step_payload = {
             "states": states,
@@ -70,6 +73,8 @@ class NeuralLambdaHDF5Logger:
             step_payload["lambda_activity"] = lambda_activity
         if lambda_activity_ground_truth is not None:
             step_payload["lambda_activity_ground_truth"] = lambda_activity_ground_truth
+        if lambda_jump is not None:
+            step_payload["lambda_jump"] = lambda_jump
 
         for key, value in step_payload.items():
             arr = np.asarray(value)
