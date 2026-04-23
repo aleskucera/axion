@@ -1,7 +1,9 @@
 import torch
 import torch.nn.functional as F
+from torch.utils.data import DataLoader
 
 from axion.neural_solver.algorithms.sequence_model_trainer import SequenceModelTrainer
+from axion.neural_solver.utils.running_mean_std import RunningMeanStd
 
 
 class ContactMTLTrainer(SequenceModelTrainer):
@@ -19,10 +21,14 @@ class ContactMTLTrainer(SequenceModelTrainer):
 
     def __init__(self, neural_env, cfg, model_checkpoint_path=None, device="cuda:0"):
         # Must be set before super().__init__() because Python's dynamic dispatch
-        # means preprocess_data_batch (overridden below) is called during
-        # compute_dataset_statistics inside super().__init__().
+        # means preprocess_data_batch and compute_dataset_statistics (both overridden
+        # below) are called during super().__init__().
         self.contact_lambda_start_index = int(cfg["network"].get("contact_lambda_start_index", 10))
         self.use_asinh_transform = bool(cfg["network"].get("use_asinh_transform", True))
+        _loss_cfg = cfg["algorithm"].get("loss", {}) or {}
+        self.condition_lambda_regression_on_activity = bool(
+            _loss_cfg.get("condition_lambda_regression_on_activity", False)
+        )
 
         super().__init__(
             neural_env=neural_env,
@@ -52,7 +58,6 @@ class ContactMTLTrainer(SequenceModelTrainer):
         self.classification_prob_threshold = float(loss_cfg.get("classification_prob_threshold", 0.5))
         self.classification_loss_type = str(loss_cfg.get("classification_loss_type", "bce_logits")).lower()
         self.focal_gamma = float(loss_cfg.get("focal_gamma", 2.0))
-        self.condition_lambda_regression_on_activity = bool(loss_cfg.get("condition_lambda_regression_on_activity", False))
 
         self._bce_pos_weight = torch.tensor(self.positive_class_weight, device=self.device, dtype=torch.float32)
 
@@ -69,6 +74,43 @@ class ContactMTLTrainer(SequenceModelTrainer):
         else:
             data["contact_lambda_regression_target"] = contact_lambdas
         return data
+
+    def compute_dataset_statistics(self, dataset):
+        super().compute_dataset_statistics(dataset)
+
+        if not self.condition_lambda_regression_on_activity:
+            return
+
+        # Recompute contact_lambda_regression_target statistics using only
+        # positive-labeled timesteps so normalization reflects active-contact
+        # distribution rather than the full (mostly-zero) distribution.
+        dataloader = DataLoader(
+            dataset=dataset,
+            batch_size=max(512, self.batch_size),
+            collate_fn=self.collate_fn,
+            shuffle=False,
+            num_workers=self.num_data_workers,
+            drop_last=True,
+        )
+        masked_rms = None
+        for data in dataloader:
+            data = self.preprocess_data_batch(data)
+            target = data["contact_lambda_regression_target"]  # [B, T, D]
+            labels = data["lambda_size_labels"][
+                ..., self.contact_lambda_start_index:
+            ]  # [B, T, D]
+            mask = labels >= 0.5  # [B, T, D] bool
+            positive_targets = target[mask]  # [N_pos, D]
+            if positive_targets.shape[0] == 0:
+                continue
+            if masked_rms is None:
+                masked_rms = RunningMeanStd(
+                    shape=target.shape[2:], device=self.device
+                )
+            masked_rms.update(positive_targets, batch_dim=True, time_dim=False)
+
+        if masked_rms is not None:
+            self.dataset_rms["contact_lambda_regression_target"] = masked_rms
 
     # ------------------------------------------------------------------
     # Loss components
