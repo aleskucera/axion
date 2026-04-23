@@ -61,6 +61,7 @@ inputs:
 network:
   model_impl: contact_mtl
   contact_lambda_start_index: 10
+  use_asinh_transform: true
   normalize_input: true
   normalize_output: false
 

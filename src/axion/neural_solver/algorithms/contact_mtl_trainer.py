@@ -8,12 +8,13 @@ class ContactMTLTrainer(SequenceModelTrainer):
     """Supervised MTL trainer for joint contact classification and contact lambda regression.
 
     Target transform (training):
-        z = asinh(next_lambdas[..., start:])
+        z = asinh(next_lambdas[..., start:]) if use_asinh_transform else next_lambdas[..., start:]
         t = (z - μ) / σ   if normalize_output else z
     Loss: MSE(p, t)
 
     Inverse transform (inference, inside ContactMTLModel.evaluate):
-        y = sinh(p * σ + μ)   if normalize_output else sinh(p)
+        y = sinh(p * σ + μ) if use_asinh_transform else (p * σ + μ)   when normalize_output is enabled
+        y = sinh(p) if use_asinh_transform else p                     when normalize_output is disabled
     """
 
     def __init__(self, neural_env, cfg, model_checkpoint_path=None, device="cuda:0"):
@@ -21,6 +22,7 @@ class ContactMTLTrainer(SequenceModelTrainer):
         # means preprocess_data_batch (overridden below) is called during
         # compute_dataset_statistics inside super().__init__().
         self.contact_lambda_start_index = int(cfg["network"].get("contact_lambda_start_index", 10))
+        self.use_asinh_transform = bool(cfg["network"].get("use_asinh_transform", True))
 
         super().__init__(
             neural_env=neural_env,
@@ -35,11 +37,11 @@ class ContactMTLTrainer(SequenceModelTrainer):
                     f"ContactMTLTrainer requires model attribute `{attr}`."
                 )
 
-        # Wire asinh-space RMS to the model (overwrites the base-class set_output_rms call,
+        # Wire transformed-target RMS to the model (overwrites the base-class set_output_rms call,
         # which passed target/lambda_target RMS that are unused in this pipeline).
         if hasattr(self, "dataset_rms"):
             self.neural_model.set_output_rms(
-                asinh_contact_lambda_rms=self.dataset_rms.get("contact_lambda_asinh_target")
+                contact_lambda_transform_rms=self.dataset_rms.get("contact_lambda_regression_target")
             )
 
         loss_cfg = cfg["algorithm"].get("loss", {}) or {}
@@ -61,7 +63,10 @@ class ContactMTLTrainer(SequenceModelTrainer):
     def preprocess_data_batch(self, data):
         data = super().preprocess_data_batch(data)
         contact_lambdas = data["next_lambdas"][..., self.contact_lambda_start_index:]
-        data["contact_lambda_asinh_target"] = torch.asinh(contact_lambdas)
+        if self.use_asinh_transform:
+            data["contact_lambda_regression_target"] = torch.asinh(contact_lambdas)
+        else:
+            data["contact_lambda_regression_target"] = contact_lambdas
         return data
 
     # ------------------------------------------------------------------
@@ -138,14 +143,14 @@ class ContactMTLTrainer(SequenceModelTrainer):
                 "Expected 'bce_logits' or 'focal_logits'."
             )
 
-        # 2. Contact lambda regression loss — MSE in asinh (optionally normalized) space.
-        #    The model outputs raw predictions p; targets are log-transformed and optionally
+        # 2. Contact lambda regression loss — MSE in transformed (optionally normalized) space.
+        #    The model outputs raw predictions p; targets are transformed and optionally
         #    normalized to zero-mean/unit-variance per channel.
-        asinh_target = data["contact_lambda_asinh_target"]
-        if self.neural_model.normalize_output and self.neural_model.asinh_contact_lambda_rms is not None:
-            lambda_target = self.neural_model.asinh_contact_lambda_rms.normalize(asinh_target)
+        regression_target = data["contact_lambda_regression_target"]
+        if self.neural_model.normalize_output and self.neural_model.contact_lambda_transform_rms is not None:
+            lambda_target = self.neural_model.contact_lambda_transform_rms.normalize(regression_target)
         else:
-            lambda_target = asinh_target
+            lambda_target = regression_target
 
         contact_lambda_pred = prediction["contact_lambda_hat"]
         if contact_lambda_pred.shape != lambda_target.shape:
