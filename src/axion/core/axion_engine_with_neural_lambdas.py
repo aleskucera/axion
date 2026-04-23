@@ -20,12 +20,13 @@ from axion.neural_solver.standalone.neural_predictor import NeuralPredictor
 from axion.neural_solver.models.lambda_models import LambdaClassificationModel
 from axion.neural_solver.models.mse_model import MSEModel
 from axion.neural_solver.models.mtl_model import MTLModel
+from axion.neural_solver.models.contact_mtl_model import ContactMTLModel
 from axion.neural_solver.models import residual_model as residual_model_module
 from axion.neural_solver.utils.neural_lambda_hdf5_logger import NeuralLambdaHDF5Logger
-from axion.neural_solver.train.trained_models.selected_trained_models import CONTACT_MODELS, MTL_JUMP_MODELS
+from axion.neural_solver.train.trained_models.selected_trained_models import CONTACT_MODELS, MTL_JUMP_MODELS, MTL_CONTACT_MODELS_LAMBDA_REGR_ONLY
 
-NN_BASE_PATH = Path.cwd() /"src"/"axion"/"neural_solver"/"train"/"trained_models"/MTL_JUMP_MODELS[0]
-NN_PENDULUM_PT_PATH = NN_BASE_PATH/"nn"/"final_model.pt"
+NN_BASE_PATH = Path.cwd() /"src"/"axion"/"neural_solver"/"train"/"trained_models"/MTL_CONTACT_MODELS_LAMBDA_REGR_ONLY[2]
+NN_PENDULUM_PT_PATH = NN_BASE_PATH/"nn"/"best_valid_valid_model.pt"
 NN_PENDULUM_CFG_PATH = NN_BASE_PATH/"cfg.yaml"
 
 # Binary simulator activity mask: |next_lambdas - lambdas| >= threshold (matches Pendulum MTL datasets "Th05" / cfg classification_prob_threshold).
@@ -97,6 +98,18 @@ class AxionEngineWithNeuralLambdas(AxionEngineBase):
         )
 
     @staticmethod
+    def _is_contact_mtl_model(nn_model: torch.nn.Module) -> bool:
+        if isinstance(nn_model, ContactMTLModel):
+            return True
+        model_cls = type(nn_model)
+        if model_cls.__name__ != "ContactMTLModel":
+            return False
+        return all(
+            hasattr(nn_model, attr)
+            for attr in ("cls_head", "contact_lambda_head", "contact_lambda_dim")
+        )
+
+    @staticmethod
     def _decode_lambda_activity_from_logits(lambda_logits: torch.Tensor) -> torch.Tensor:
         if lambda_logits.ndim == 3:
             lambda_logits = (
@@ -121,6 +134,61 @@ class AxionEngineWithNeuralLambdas(AxionEngineBase):
         if tensor.ndim == 3:
             return tensor[:, -1, :] if tensor.shape[1] > 1 else tensor.squeeze(1)
         return tensor
+
+    @staticmethod
+    def _resolve_contact_lambda_start_index(
+        nn_cfg: dict,
+        full_lambda_dim: int,
+        contact_lambda_dim: int,
+    ) -> int:
+        cfg_network = nn_cfg.get("network", {}) if isinstance(nn_cfg, dict) else {}
+        cfg_start = cfg_network.get("contact_lambda_start_index", None)
+        if cfg_start is not None:
+            start_idx = int(cfg_start)
+        else:
+            start_idx = int(full_lambda_dim - contact_lambda_dim)
+        if start_idx < 0 or start_idx > full_lambda_dim:
+            raise RuntimeError(
+                "Invalid contact_lambda_start_index resolved for ContactMTLModel: "
+                f"start={start_idx}, full_lambda_dim={full_lambda_dim}."
+            )
+        if (full_lambda_dim - start_idx) != contact_lambda_dim:
+            raise RuntimeError(
+                "ContactMTLModel output channels do not match full lambda channels and start index: "
+                f"full_lambda_dim={full_lambda_dim}, start={start_idx}, "
+                f"contact_lambda_dim={contact_lambda_dim}, expected_suffix_dim={full_lambda_dim - start_idx}."
+            )
+        return start_idx
+
+    @staticmethod
+    def _expand_contact_channels_to_full(
+        *,
+        contact_tensor: torch.Tensor,
+        full_lambda_dim: int,
+        contact_lambda_start_index: int,
+        field_name: str,
+    ) -> torch.Tensor:
+        if contact_tensor.ndim != 2:
+            raise RuntimeError(
+                f"{field_name} must be rank-2 (B, C) after squeeze. "
+                f"Got shape={tuple(contact_tensor.shape)}."
+            )
+        batch_size, contact_dim = contact_tensor.shape
+        expected_contact_dim = full_lambda_dim - contact_lambda_start_index
+        if contact_dim != expected_contact_dim:
+            raise RuntimeError(
+                f"{field_name} shape mismatch for ContactMTLModel: "
+                f"got contact_dim={contact_dim}, expected={expected_contact_dim} "
+                f"(full_lambda_dim={full_lambda_dim}, start={contact_lambda_start_index})."
+            )
+        full = torch.full(
+            (batch_size, full_lambda_dim),
+            float("nan"),
+            dtype=contact_tensor.dtype,
+            device=contact_tensor.device,
+        )
+        full[:, contact_lambda_start_index:] = contact_tensor
+        return full
 
     def _parse_mtl_outputs(
         self, out: dict[str, torch.Tensor]
@@ -218,11 +286,14 @@ class AxionEngineWithNeuralLambdas(AxionEngineBase):
             nn_model_path, map_location=str(self.device), weights_only=False
         )
         self._use_mtl_model = self._is_mtl_model(loaded_nn_model)
+        self._use_contact_mtl_model = self._is_contact_mtl_model(loaded_nn_model)
         self._use_residual_model = self._is_residual_model(loaded_nn_model)
         self._use_lambda_classification = self._is_lambda_classification_model(loaded_nn_model)
         self._use_mse_model = self._is_mse_model(loaded_nn_model)
         print(f"Loaded model for robot: {robot_name}")
-        if self._use_mtl_model:
+        if self._use_contact_mtl_model:
+            model_mode = "contact_mtl"
+        elif self._use_mtl_model:
             model_mode = "mtl"
         elif self._use_lambda_classification:
             model_mode = "classification"
@@ -236,6 +307,7 @@ class AxionEngineWithNeuralLambdas(AxionEngineBase):
         print(f"Loading configuration from: {nn_cfg_path}")
         with open(nn_cfg_path, "r") as f:
             loaded_nn_cfg = yaml.load(f, Loader=yaml.SafeLoader)
+        self._loaded_nn_cfg = loaded_nn_cfg
 
         # Initialize NeRDPredictor: robot config is inferred from self.model (newton.Model)
         self.nn_predictor = NeuralPredictor(
@@ -351,6 +423,7 @@ class AxionEngineWithNeuralLambdas(AxionEngineBase):
         predicted_next_states = None
         lambda_activity = None
         lambda_jump = None
+        full_lambda_dim = int(sim_lambdas_before_step.shape[-1])
         if self._use_mtl_model:
             with torch.no_grad():
                 out = self.nn_predictor.nn_model.evaluate(nn_inputs)
@@ -379,6 +452,40 @@ class AxionEngineWithNeuralLambdas(AxionEngineBase):
                 )
                 self.nn_predictor.lambdas.copy_(predicted_next_lambdas)
             lambda_activity = self._decode_lambda_activity_from_logits(lambda_activity_logits)
+        elif self._use_contact_mtl_model:
+            with torch.no_grad():
+                out = self.nn_predictor.nn_model.evaluate(nn_inputs)
+            if not isinstance(out, dict):
+                raise RuntimeError(
+                    "ContactMTL engine expected model.evaluate(...) to return a dict. "
+                    f"Got {type(out).__name__} for model={type(self.nn_predictor.nn_model).__name__}."
+                )
+            contact_lambda_prediction = out.get("contact_lambda_hat", None)
+            lambda_activity_logits = out.get("logits", None)
+            if contact_lambda_prediction is None or lambda_activity_logits is None:
+                raise RuntimeError(
+                    "ContactMTL engine expected keys 'contact_lambda_hat' and 'logits'. "
+                    f"Got keys={sorted(list(out.keys()))} for model={type(self.nn_predictor.nn_model).__name__}."
+                )
+            contact_lambda_prediction = self._squeeze_last_step_if_needed(contact_lambda_prediction)
+            lambda_activity_contact = self._decode_lambda_activity_from_logits(lambda_activity_logits)
+            contact_lambda_start = self._resolve_contact_lambda_start_index(
+                nn_cfg=self._loaded_nn_cfg,
+                full_lambda_dim=full_lambda_dim,
+                contact_lambda_dim=int(self.nn_predictor.nn_model.contact_lambda_dim),
+            )
+            predicted_next_lambdas = self._expand_contact_channels_to_full(
+                contact_tensor=contact_lambda_prediction,
+                full_lambda_dim=full_lambda_dim,
+                contact_lambda_start_index=contact_lambda_start,
+                field_name="contact_lambda_hat",
+            )
+            lambda_activity = self._expand_contact_channels_to_full(
+                contact_tensor=lambda_activity_contact,
+                full_lambda_dim=full_lambda_dim,
+                contact_lambda_start_index=contact_lambda_start,
+                field_name="logits(decoded)",
+            )
         elif self._use_lambda_classification:
             with torch.no_grad():
                 lambda_logits = self.nn_predictor.nn_model.evaluate(nn_inputs).get("lambda", None)

@@ -21,14 +21,26 @@ from axion.neural_solver.models.model_transformer import GPT, GPTConfig
 
 
 class ClassificationHead(nn.Module):
-    def __init__(self, input_dim, output_dim, device="cuda:0"):
+    def __init__(self, input_dim, output_dim, mlp_cfg=None, device="cuda:0"):
         super().__init__()
         self.device = device
-        self.output_net = nn.Linear(input_dim, output_dim)
+        mlp_cfg = mlp_cfg or {}
+        hidden_cfg = {
+            "layer_sizes": list(mlp_cfg.get("layer_sizes", [])),
+            "activation": mlp_cfg.get("activation", "relu"),
+            "layernorm": bool(mlp_cfg.get("layernorm", False)),
+        }
+        self.feature_net = MLPBase(input_dim, hidden_cfg, device=device)
+        self.output_net = nn.Linear(self.feature_net.out_features, output_dim)
         self.to(device)
 
     def forward(self, inputs):
-        return self.output_net(inputs)
+        # Backward compatibility for checkpoints created before configurable
+        # head depth/width, where ClassificationHead only had a linear layer.
+        if not hasattr(self, "feature_net"):
+            return self.output_net(inputs)
+        features = self.feature_net(inputs)
+        return self.output_net(features)
 
     def to(self, device):
         super().to(device)
@@ -39,14 +51,26 @@ class ClassificationHead(nn.Module):
 class ContactLambdaPredictionHead(nn.Module):
     """Regression head that predicts the contact-related channels of the lambda vector."""
 
-    def __init__(self, input_dim, output_dim, device="cuda:0"):
+    def __init__(self, input_dim, output_dim, mlp_cfg=None, device="cuda:0"):
         super().__init__()
         self.device = device
-        self.output_net = nn.Linear(input_dim, output_dim)
+        mlp_cfg = mlp_cfg or {}
+        hidden_cfg = {
+            "layer_sizes": list(mlp_cfg.get("layer_sizes", [])),
+            "activation": mlp_cfg.get("activation", "relu"),
+            "layernorm": bool(mlp_cfg.get("layernorm", False)),
+        }
+        self.feature_net = MLPBase(input_dim, hidden_cfg, device=device)
+        self.output_net = nn.Linear(self.feature_net.out_features, output_dim)
         self.to(device)
 
     def forward(self, inputs):
-        return self.output_net(inputs)
+        # Backward compatibility for checkpoints created before configurable
+        # head depth/width, where ContactLambdaPredictionHead only had linear output.
+        if not hasattr(self, "feature_net"):
+            return self.output_net(inputs)
+        features = self.feature_net(inputs)
+        return self.output_net(features)
 
     def to(self, device):
         super().to(device)
@@ -97,8 +121,23 @@ class ContactMTLModel(nn.Module):
         self.contact_lambda_dim = int(contact_lambda_dim)
         self.contact_lambda_transform_rms = None
 
-        self.cls_head = ClassificationHead(self.feature_dim, self.contact_lambda_dim, device=device)
-        self.contact_lambda_head = ContactLambdaPredictionHead(self.feature_dim, self.contact_lambda_dim, device=device)
+        head_mlp_cfg = (
+            network_cfg.get("model", {}).get("mlp", {})
+            if isinstance(network_cfg.get("model", {}), dict)
+            else {}
+        )
+        self.cls_head = ClassificationHead(
+            self.feature_dim,
+            self.contact_lambda_dim,
+            mlp_cfg=head_mlp_cfg,
+            device=device,
+        )
+        self.contact_lambda_head = ContactLambdaPredictionHead(
+            self.feature_dim,
+            self.contact_lambda_dim,
+            mlp_cfg=head_mlp_cfg,
+            device=device,
+        )
 
     def construct_input_encoders(
         self, input_cfg, encoder_cfg, input_sample, device="cuda:0"
@@ -123,6 +162,19 @@ class ContactMTLModel(nn.Module):
             feature_dim += encoders[input_name].out_features
 
         return encoders, feature_dim
+
+    def __setstate__(self, state):
+        # Migrate checkpoint saved before attribute rename (log_contact_lambda_rms →
+        # contact_lambda_transform_rms, introduced in af3f7e7) and backfill any
+        # other fields added to __init__ after the checkpoint was saved.
+        if "log_contact_lambda_rms" in state and "contact_lambda_transform_rms" not in state:
+            state["contact_lambda_transform_rms"] = state.pop("log_contact_lambda_rms")
+        state.setdefault("contact_lambda_transform_rms", None)
+        state.setdefault("input_rms", None)
+        state.setdefault("normalize_input", False)
+        state.setdefault("normalize_output", False)
+        state.setdefault("use_asinh_transform", True)
+        super().__setstate__(state)
 
     def set_input_rms(self, data_rms):
         self.input_rms = {}

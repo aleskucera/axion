@@ -52,6 +52,7 @@ class ContactMTLTrainer(SequenceModelTrainer):
         self.classification_prob_threshold = float(loss_cfg.get("classification_prob_threshold", 0.5))
         self.classification_loss_type = str(loss_cfg.get("classification_loss_type", "bce_logits")).lower()
         self.focal_gamma = float(loss_cfg.get("focal_gamma", 2.0))
+        self.condition_lambda_regression_on_activity = bool(loss_cfg.get("condition_lambda_regression_on_activity", False))
 
         self._bce_pos_weight = torch.tensor(self.positive_class_weight, device=self.device, dtype=torch.float32)
 
@@ -158,7 +159,11 @@ class ContactMTLTrainer(SequenceModelTrainer):
                 "Contact lambda target/prediction shape mismatch: "
                 f"target={tuple(lambda_target.shape)}, prediction={tuple(contact_lambda_pred.shape)}."
             )
-        lambda_loss = F.mse_loss(contact_lambda_pred, lambda_target)
+        lambda_mse = F.mse_loss(contact_lambda_pred, lambda_target, reduction="none")
+        if self.condition_lambda_regression_on_activity:
+            lambda_loss = (cls_labels * lambda_mse).mean()
+        else:
+            lambda_loss = lambda_mse.mean()
 
         total_loss = (
             self.cls_head_loss_weight * cls_loss
