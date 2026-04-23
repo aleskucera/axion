@@ -93,19 +93,53 @@ def main():
 
     # ---------- Left: Max stable dt bar chart (vertical) ----------
     sims = [s for s in SIM_ORDER if s in stability]
-    max_dts = [stability[s].get("max_stable_dt", 0.0) for s in sims]
+
+    def _stability_stats(entry: dict) -> tuple[float, float, float]:
+        """Return (height, err_lo, err_hi). Bar = min (worst-case stable dt);
+        upper whisker spans up to max (best-case stable dt in the sweep)."""
+        trials = entry.get("trials")
+        if not trials:
+            return entry.get("max_stable_dt", 0.0) or 0.0, 0.0, 0.0
+        dts = [t["max_stable_dt"] for t in trials if t["max_stable_dt"] > 0]
+        if not dts:
+            return 0.0, 0.0, 0.0
+        dts_min = min(dts)
+        dts_max = max(dts)
+        return dts_min, 0.0, max(dts_max - dts_min, 0.0)
+
+    heights = []
+    err_lo = []
+    err_hi = []
+    for s in sims:
+        h, el, eh = _stability_stats(stability[s])
+        heights.append(h)
+        err_lo.append(el)
+        err_hi.append(eh)
     colors = [STYLES[s]["color"] for s in sims]
     x_pos = np.arange(len(sims))
 
+    has_errs = any(el > 0 or eh > 0 for el, eh in zip(err_lo, err_hi))
+
     bars = ax_bar.bar(
         x_pos,
-        max_dts,
+        heights,
         color=colors,
         width=0.6,
         edgecolor="black",
         linewidth=0.6,
         zorder=3,
     )
+    if has_errs:
+        ax_bar.errorbar(
+            x_pos,
+            heights,
+            yerr=[err_lo, err_hi],
+            fmt="none",
+            ecolor="black",
+            capsize=4,
+            linewidth=1.0,
+            zorder=4,
+        )
     ax_bar.set_xticks(x_pos)
     ax_bar.set_xticklabels([LABELS[s] for s in sims])
     ax_bar.set_ylabel(r"Max stable $\Delta t$ (s)")
@@ -113,13 +147,15 @@ def main():
     ax_bar.grid(True, axis="y", which="both", alpha=0.35, linewidth=0.6, zorder=0)
     ax_bar.set_xlim(-0.5, len(sims) - 0.5)
 
-    for bar, dt in zip(bars, max_dts):
+    for bar, dt, eh in zip(bars, heights, err_hi):
         cx = bar.get_x() + bar.get_width() / 2
         label = "unstable" if dt <= 0 else rf"${dt * 1000:.4g}$\,ms"
-        ax_bar.text(cx, max(dt, 1e-5) * 1.25, label, va="bottom", ha="center", fontsize=10)
+        top = max(dt + eh, 1e-5)
+        ax_bar.text(cx, top * 1.25, label, va="bottom", ha="center", fontsize=10)
 
-    if max_dts:
-        ax_bar.set_ylim(top=max(max_dts) * 8)
+    if heights:
+        top_bound = max((h + eh) for h, eh in zip(heights, err_hi))
+        ax_bar.set_ylim(top=top_bound * 8)
 
     # ---------- Right: Error vs dt ----------
     for sim in SIM_ORDER:
@@ -146,9 +182,12 @@ def main():
             zorder=style["zorder"],
         )
 
-        # Mark max stable dt from Exp 2 as vertical dashed line
+        # Mark max stable dt from Exp 2 as vertical dashed line (worst-case: min across trials)
         if sim in stability:
-            stable_dt = stability[sim].get("max_stable_dt", 0)
+            entry = stability[sim]
+            trials = entry.get("trials") or []
+            dts = [t["max_stable_dt"] for t in trials if t.get("max_stable_dt", 0) > 0]
+            stable_dt = min(dts) if dts else (entry.get("max_stable_dt") or 0)
             if stable_dt > 0:
                 ax_curve.axvline(
                     stable_dt,

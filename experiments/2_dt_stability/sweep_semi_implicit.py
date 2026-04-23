@@ -37,12 +37,20 @@ KE = 8000.0
 KD_CONTACT = 2000.0
 KF = 1500.0
 
-# Obstacle config
+# Obstacle config (nominal — trials perturb these)
 OBSTACLE_X = 2.0
 OBSTACLE_HEIGHT = 0.1
 WHEEL_VEL = 4.0
 RAMP_TIME = 1.0
 DURATION = 8.0
+
+# Perturbation ranges
+OBSTACLE_HEIGHT_RANGE = (0.07, 0.12)
+OBSTACLE_X_RANGE = (1.5, 2.5)
+WHEEL_VEL_RANGE = (4.8, 5.8)
+INITIAL_YAW_RANGE = (-0.1, 0.1)
+
+DT_PROBES = [0.01, 0.005, 0.002, 0.001, 0.0005, 0.0002, 0.0001]
 
 
 @wp.kernel
@@ -83,6 +91,7 @@ class HelhestObstacleSim(InteractiveSimulator):
         wheel_vel: float = WHEEL_VEL,
         obstacle_x: float = OBSTACLE_X,
         obstacle_height: float = OBSTACLE_HEIGHT,
+        initial_yaw: float = 0.0,
     ):
         self._k_p = k_p
         self._k_d = k_d
@@ -92,6 +101,7 @@ class HelhestObstacleSim(InteractiveSimulator):
         self._kf = kf
         self._obstacle_x = obstacle_x
         self._obstacle_height = obstacle_height
+        self._initial_yaw = initial_yaw
         super().__init__(sim_config, render_config, exec_config, engine_config, logging_config)
 
         # Build ramped control sequence
@@ -136,9 +146,10 @@ class HelhestObstacleSim(InteractiveSimulator):
         )
         self.builder.add_ground_plane(cfg=ground_cfg)
 
+        yaw_quat = wp.quat_from_axis_angle(wp.vec3(0.0, 0.0, 1.0), self._initial_yaw)
         create_helhest_model(
             self.builder,
-            xform=wp.transform(wp.vec3(0.0, 0.0, 0.5), wp.quat_identity()),
+            xform=wp.transform(wp.vec3(0.0, 0.0, 0.5), yaw_quat),
             control_mode="velocity",
             k_p=self._k_p,
             k_d=self._k_d,
@@ -202,11 +213,11 @@ class HelhestObstacleSim(InteractiveSimulator):
         z_max = max(z_values)
         x_final = x_values[-1]
         y_max_abs = max(abs(y) for y in y_values)
+        # y_max not part of stability predicate — initial_yaw perturbation makes lateral motion expected
         stable = (not has_nan
                   and z_min > 0.05
-                  and z_max < 1.0
-                  and y_max_abs < 0.5
-                  and x_final > OBSTACLE_X)
+                  and z_max < 2.0
+                  and x_final > self._obstacle_x + 1.0)
 
         return {
             "stable": stable,
@@ -219,17 +230,74 @@ class HelhestObstacleSim(InteractiveSimulator):
         }
 
 
+def find_max_stable_dt(run_one, dt_probes, *, label: str) -> tuple[float, list[dict]]:
+    results = []
+    lo = None
+    for dt in dt_probes:
+        t0 = time.perf_counter()
+        metrics = run_one(dt)
+        elapsed = time.perf_counter() - t0
+        metrics["dt"] = dt
+        metrics["time_s"] = round(elapsed, 2)
+        results.append(metrics)
+        status = "STABLE" if metrics["stable"] else "UNSTABLE"
+        print(
+            f"  [{label}] probe dt={dt:.5f} | {status:8s} | "
+            f"z=[{metrics['z_min']:.3f}, {metrics['z_max']:.3f}] "
+            f"| x_final={metrics['x_final']:.3f} | {elapsed:.1f}s"
+        )
+        if metrics["stable"]:
+            lo = dt
+            break
+
+    if lo is None:
+        return 0.0, results
+
+    unstable_above = [r["dt"] for r in results if not r["stable"] and r["dt"] > lo]
+    hi = min(unstable_above) if unstable_above else lo * 2.0
+    tol = lo * 0.1
+    while hi - lo > tol:
+        mid = (lo + hi) / 2.0
+        t0 = time.perf_counter()
+        metrics = run_one(mid)
+        elapsed = time.perf_counter() - t0
+        metrics["dt"] = mid
+        metrics["time_s"] = round(elapsed, 2)
+        results.append(metrics)
+        status = "STABLE" if metrics["stable"] else "UNSTABLE"
+        print(
+            f"  [{label}] bisect dt={mid:.5f} | {status:8s} | "
+            f"x_final={metrics['x_final']:.3f} | {elapsed:.1f}s"
+        )
+        if metrics["stable"]:
+            lo = mid
+        else:
+            hi = mid
+    return lo, results
+
+
 def main():
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
     parser.add_argument("--save", metavar="PATH", help="Save results to JSON")
+    parser.add_argument(
+        "--num-trials", type=int, default=1,
+        help="Number of perturbed trials to run (default: 1 — nominal config only)",
+    )
+    parser.add_argument("--seed", type=int, default=0, help="RNG seed for perturbations")
     args = parser.parse_args()
 
-    print(f"Semi-Implicit obstacle dt sweep (binary search)")
-    print(f"  obstacle: x={OBSTACLE_X}, height={OBSTACLE_HEIGHT*2:.2f}m")
+    print(f"Semi-Implicit obstacle dt sweep — {args.num_trials} trial(s)")
+    print(f"  nominal obstacle: x={OBSTACLE_X}, height={OBSTACLE_HEIGHT*2:.2f}m, "
+          f"wheel_vel={WHEEL_VEL} rad/s")
+    if args.num_trials > 1:
+        print(f"  perturbations (seed={args.seed}):")
+        print(f"    obstacle_height ~ U{OBSTACLE_HEIGHT_RANGE}")
+        print(f"    obstacle_x      ~ U{OBSTACLE_X_RANGE}")
+        print(f"    wheel_vel       ~ U{WHEEL_VEL_RANGE}")
+        print(f"    initial_yaw     ~ U{INITIAL_YAW_RANGE}")
     print(f"  params: k_d={K_D}, mu={MU}, ke={KE}, kf={KF}")
-    print(f"  wheel_vel={WHEEL_VEL} rad/s, ramp={RAMP_TIME}s, duration={DURATION}s")
     print()
 
     render_config = RenderingConfig(
@@ -237,95 +305,105 @@ def main():
     )
     logging_config = LoggingConfig(enable_timing=False, enable_hdf5_logging=False)
 
-    def run_one(dt):
-        sim_config = SimulationConfig(
-            duration_seconds=DURATION,
-            target_timestep_seconds=dt,
-            num_worlds=1,
-        )
-        exec_config = ExecutionConfig(use_cuda_graph=False, headless_steps_per_segment=1)
-        engine_config = SemiImplicitEngineConfig(angular_damping=0.05, friction_smoothing=0.1)
-        try:
-            sim = HelhestObstacleSim(
-                sim_config, render_config, exec_config, engine_config, logging_config,
-                k_p=K_P, k_d=K_D, mu=MU, ke=KE, kd_contact=KD_CONTACT, kf=KF,
-                wheel_vel=WHEEL_VEL, obstacle_x=OBSTACLE_X, obstacle_height=OBSTACLE_HEIGHT,
+    def make_run_one(trial_params: dict):
+        def run_one(dt):
+            sim_config = SimulationConfig(
+                duration_seconds=DURATION,
+                target_timestep_seconds=dt,
+                num_worlds=1,
             )
-            return sim.simulate_and_check()
-        except Exception as e:
-            return {
-                "stable": False, "has_nan": True,
-                "z_min": 0, "z_max": 0, "x_final": 0, "y_max_abs": 0,
-                "num_steps": 0, "exception": str(e)[:200],
+            exec_config = ExecutionConfig(use_cuda_graph=False, headless_steps_per_segment=1)
+            engine_config = SemiImplicitEngineConfig(angular_damping=0.05, friction_smoothing=0.1)
+            try:
+                sim = HelhestObstacleSim(
+                    sim_config, render_config, exec_config, engine_config, logging_config,
+                    k_p=K_P, k_d=K_D, mu=MU, ke=KE, kd_contact=KD_CONTACT, kf=KF,
+                    wheel_vel=trial_params["wheel_vel"],
+                    obstacle_x=trial_params["obstacle_x"],
+                    obstacle_height=trial_params["obstacle_height"],
+                    initial_yaw=trial_params["initial_yaw"],
+                )
+                return sim.simulate_and_check()
+            except Exception as e:
+                return {
+                    "stable": False, "has_nan": True,
+                    "z_min": 0, "z_max": 0, "x_final": 0, "y_max_abs": 0,
+                    "num_steps": 0, "exception": str(e)[:200],
+                }
+        return run_one
+
+    rng = np.random.default_rng(args.seed)
+    trials = []
+    for i in range(args.num_trials):
+        if args.num_trials == 1:
+            trial_params = {
+                "obstacle_height": OBSTACLE_HEIGHT,
+                "obstacle_x": OBSTACLE_X,
+                "wheel_vel": WHEEL_VEL,
+                "initial_yaw": 0.0,
             }
-
-    # Phase 1: find a stable dt by probing downward
-    results = []
-    lo = None
-    for dt in [0.01, 0.005, 0.002, 0.001, 0.0005, 0.0002, 0.0001]:
+        else:
+            trial_params = {
+                "obstacle_height": float(rng.uniform(*OBSTACLE_HEIGHT_RANGE)),
+                "obstacle_x": float(rng.uniform(*OBSTACLE_X_RANGE)),
+                "wheel_vel": float(rng.uniform(*WHEEL_VEL_RANGE)),
+                "initial_yaw": float(rng.uniform(*INITIAL_YAW_RANGE)),
+            }
+        label = f"trial {i + 1}/{args.num_trials}"
+        print(f"\n=== {label} ===")
+        for k, v in trial_params.items():
+            print(f"    {k} = {v:.4f}")
         t0 = time.perf_counter()
-        metrics = run_one(dt)
+        dt_max, search_results = find_max_stable_dt(
+            make_run_one(trial_params), DT_PROBES, label=label,
+        )
         elapsed = time.perf_counter() - t0
-        metrics["dt"] = dt
-        metrics["time_s"] = round(elapsed, 2)
-        results.append(metrics)
+        print(f"  -> max_stable_dt = {dt_max:.5f}  ({elapsed:.1f}s)")
+        trials.append({
+            "config": trial_params,
+            "max_stable_dt": dt_max,
+            "total_time_s": round(elapsed, 2),
+            "search": search_results,
+        })
 
-        status = "STABLE" if metrics["stable"] else "UNSTABLE"
-        print(f"  probe dt={dt:.5f} | {status:8s} | z=[{metrics['z_min']:.3f}, {metrics['z_max']:.3f}] "
-              f"| x_final={metrics['x_final']:.3f} | y_max={metrics['y_max_abs']:.3f} | {elapsed:.1f}s")
-
-        if metrics["stable"]:
-            lo = dt
-            break
-
-    if lo is None:
-        print("\nNo stable dt found!")
-        max_stable_dt = 0.0
-    else:
-        # Phase 2: binary search between last unstable and first stable
-        hi_candidates = [r["dt"] for r in results if not r["stable"]]
-        hi = min(hi_candidates) if hi_candidates else lo * 2
-        # Find the tightest unstable dt above lo
-        hi = min(r["dt"] for r in results if not r["stable"] and r["dt"] > lo) if any(
-            not r["stable"] and r["dt"] > lo for r in results) else lo * 2
-
-        print(f"\n  Binary search: lo={lo:.5f} (stable), hi={hi:.5f} (unstable)")
-        tol = lo * 0.1  # 10% relative tolerance
-
-        while hi - lo > tol:
-            mid = (lo + hi) / 2.0
-            t0 = time.perf_counter()
-            metrics = run_one(mid)
-            elapsed = time.perf_counter() - t0
-            metrics["dt"] = mid
-            metrics["time_s"] = round(elapsed, 2)
-            results.append(metrics)
-
-            status = "STABLE" if metrics["stable"] else "UNSTABLE"
-            print(f"  bisect dt={mid:.5f} | {status:8s} | x_final={metrics['x_final']:.3f} | {elapsed:.1f}s")
-
-            if metrics["stable"]:
-                lo = mid
-            else:
-                hi = mid
-
-        max_stable_dt = lo
-        print(f"\n  Max stable dt: {max_stable_dt:.5f}")
+    dt_maxes = [t["max_stable_dt"] for t in trials if t["max_stable_dt"] > 0]
+    if dt_maxes:
+        print("\n=== summary ===")
+        print(f"  n={len(dt_maxes)}/{args.num_trials} trials with dt_max > 0")
+        print(f"  median = {float(np.median(dt_maxes)):.5f}")
+        print(f"  IQR    = [{float(np.quantile(dt_maxes, 0.25)):.5f}, "
+              f"{float(np.quantile(dt_maxes, 0.75)):.5f}]")
+        print(f"  range  = [{min(dt_maxes):.5f}, {max(dt_maxes):.5f}]")
 
     if args.save:
         output = {
             "simulator": "Semi-Implicit",
             "experiment": "obstacle_dt_sweep",
-            "obstacle": {"x": OBSTACLE_X, "height": OBSTACLE_HEIGHT},
+            "nominal": {
+                "obstacle_x": OBSTACLE_X, "obstacle_height": OBSTACLE_HEIGHT,
+                "wheel_vel": WHEEL_VEL,
+            },
+            "perturbation_ranges": {
+                "obstacle_height": OBSTACLE_HEIGHT_RANGE,
+                "obstacle_x": OBSTACLE_X_RANGE,
+                "wheel_vel": WHEEL_VEL_RANGE,
+                "initial_yaw": INITIAL_YAW_RANGE,
+            },
+            "num_trials": args.num_trials,
+            "seed": args.seed,
             "calibrated_params": {
                 "k_p": K_P, "k_d": K_D, "mu": MU,
                 "ke": KE, "kd_contact": KD_CONTACT, "kf": KF,
             },
-            "wheel_vel": WHEEL_VEL,
             "ramp_time": RAMP_TIME,
             "duration": DURATION,
-            "max_stable_dt": max_stable_dt,
-            "results": results,
+            "max_stable_dt": trials[0]["max_stable_dt"] if len(trials) == 1 else None,
+            "max_stable_dt_median": float(np.median(dt_maxes)) if dt_maxes else 0.0,
+            "max_stable_dt_iqr": (
+                [float(np.quantile(dt_maxes, 0.25)), float(np.quantile(dt_maxes, 0.75))]
+                if dt_maxes else [0.0, 0.0]
+            ),
+            "trials": trials,
         }
         save_path = pathlib.Path(args.save)
         save_path.parent.mkdir(parents=True, exist_ok=True)
