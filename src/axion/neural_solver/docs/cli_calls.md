@@ -39,6 +39,11 @@ python src/axion/neural_solver/train/train_residual_network.py --cfg src/axion/n
 python src/axion/neural_solver/train/train_mtl.py --cfg src/axion/neural_solver/train/cfg/Pendulum/mtlNetwork.yaml --logdir src/axion/neural_solver/train/trained_models/mtl
 ```
 
+### Begin Contact MTL training (contact lambda classification + contact lambda regression, example)
+```
+python src/axion/neural_solver/train/train_contact_mtl.py --cfg src/axion/neural_solver/train/cfg/Pendulum/contactMtlNetwork.yaml --logdir src/axion/neural_solver/train/trained_models/contact_mtl
+```
+
 ### Begin MSE training (pure regression of [q, qd, lambda], example)
 ```
 python src/axion/neural_solver/train/train_mse.py --cfg src/axion/neural_solver/train/cfg/Pendulum/mseNetwork.yaml --logdir src/axion/neural_solver/train/trained_models/mse
