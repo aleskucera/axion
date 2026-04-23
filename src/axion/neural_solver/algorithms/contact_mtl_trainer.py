@@ -75,12 +75,12 @@ class ContactMTLTrainer(SequenceModelTrainer):
     # ------------------------------------------------------------------
 
     def _build_classification_labels(self, data: dict, logits: torch.Tensor) -> torch.Tensor:
-        if "lambda_activity" not in data:
+        if "lambda_size_labels" not in data:
             raise KeyError(
-                "Batch is missing `lambda_activity`. "
+                "Batch is missing `lambda_size_labels`. "
                 "ContactMTLTrainer expects per-step class labels in the dataset."
             )
-        labels = data["lambda_activity"][..., self.contact_lambda_start_index:].to(dtype=logits.dtype)
+        labels = data["lambda_size_labels"][..., self.contact_lambda_start_index:].to(dtype=logits.dtype)
         if labels.shape != logits.shape:
             raise RuntimeError(
                 "Label/logit shape mismatch: "
