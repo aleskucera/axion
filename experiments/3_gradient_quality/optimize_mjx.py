@@ -30,8 +30,8 @@ RESULTS_DIR = pathlib.Path(__file__).parent / "results"
 DATA_DIR = pathlib.Path(__file__).parent.parent / "data"
 
 # Calibrated params from Experiment 1 (sweep_mujoco.json), using
-# dt = largest value satisfying both stability (Exp 2: 1.25 ms) and accuracy.
-DT = 0.00125
+# dt = largest value satisfying both stability (Exp 2: 1.5 ms) and accuracy.
+DT = 0.0015
 KV = 4000.0
 MU = 0.2
 

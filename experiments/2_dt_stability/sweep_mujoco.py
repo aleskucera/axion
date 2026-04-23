@@ -26,15 +26,15 @@ OBSTACLE_MU = 1.0
 
 # Obstacle config (nominal — trials perturb these)
 OBSTACLE_X = 2.0
-OBSTACLE_HEIGHT = 0.1  # half-height
+OBSTACLE_HEIGHT = 0.08  # half-height (full step 0.12m ≈ 28% of wheel radius)
 WHEEL_VEL = 4.0
 RAMP_TIME = 1.0  # seconds to ramp from 0 to WHEEL_VEL
 DURATION = 8.0
 
 # Perturbation ranges
-OBSTACLE_HEIGHT_RANGE = (0.07, 0.12)
+OBSTACLE_HEIGHT_RANGE = (0.07, 0.09)
 OBSTACLE_X_RANGE = (1.5, 2.5)
-WHEEL_VEL_RANGE = (4.8, 5.8)
+WHEEL_VEL_RANGE = (3.5, 4.5)
 INITIAL_YAW_RANGE = (-0.1, 0.1)
 
 DT_PROBES = [0.5, 0.3, 0.2, 0.15, 0.1, 0.08, 0.05, 0.02, 0.01, 0.005, 0.002, 0.001, 0.0005]
@@ -48,7 +48,7 @@ HELHEST_OBSTACLE_XML = """<mujoco model="helhest_obstacle">
     <geom name="ground" type="plane" pos="0 0 0" size="100 100 0.1"
           friction="{mu} 0.1 0.01"
           solref="0.005 1.0" solimp="0.9 0.95 0.001 0.5 2"
-          condim="3"/>
+          condim="6"/>
 
     <!-- Obstacle box -->
     <geom name="obstacle" type="box"
@@ -56,7 +56,7 @@ HELHEST_OBSTACLE_XML = """<mujoco model="helhest_obstacle">
           size="0.5 1.0 {obstacle_height}"
           friction="{obstacle_mu} 0.1 0.01"
           solref="0.005 1.0" solimp="0.9 0.95 0.001 0.5 2"
-          condim="3"/>
+          condim="6"/>
 
     <body name="chassis" pos="0 0 0.37" quat="{chassis_qw} 0 0 {chassis_qz}">
       <freejoint name="base_joint"/>
@@ -96,7 +96,7 @@ HELHEST_OBSTACLE_XML = """<mujoco model="helhest_obstacle">
         <geom type="cylinder" fromto="0 -0.055 0 0 0.055 0" size="0.36"
               friction="{mu} 0.1 0.01"
               solref="0.005 1.0" solimp="0.9 0.95 0.001 0.5 2"
-              condim="3"/>
+              condim="6"/>
       </body>
       <body name="right_wheel" pos="0 -0.36 0">
         <joint name="right_wheel_j" type="hinge" axis="0 1 0"/>
@@ -104,7 +104,7 @@ HELHEST_OBSTACLE_XML = """<mujoco model="helhest_obstacle">
         <geom type="cylinder" fromto="0 -0.055 0 0 0.055 0" size="0.36"
               friction="{mu} 0.1 0.01"
               solref="0.005 1.0" solimp="0.9 0.95 0.001 0.5 2"
-              condim="3"/>
+              condim="6"/>
       </body>
       <body name="rear_wheel" pos="-0.697 0 0">
         <joint name="rear_wheel_j" type="hinge" axis="0 1 0"/>
@@ -112,7 +112,7 @@ HELHEST_OBSTACLE_XML = """<mujoco model="helhest_obstacle">
         <geom type="cylinder" fromto="0 -0.055 0 0 0.055 0" size="0.36"
               friction="{mu} 0.1 0.01"
               solref="0.005 1.0" solimp="0.9 0.95 0.001 0.5 2"
-              condim="3"/>
+              condim="6"/>
       </body>
     </body>
   </worldbody>
@@ -125,15 +125,21 @@ HELHEST_OBSTACLE_XML = """<mujoco model="helhest_obstacle">
 </mujoco>"""
 
 
-def simulate_and_check(dt, kv, mu, obstacle_mu, obstacle_x, obstacle_height,
-                       wheel_vel, duration, initial_yaw=0.0) -> dict:
+def simulate_and_check(
+    dt, kv, mu, obstacle_mu, obstacle_x, obstacle_height, wheel_vel, duration, initial_yaw=0.0
+) -> dict:
     """Run one MuJoCo simulation and return stability metrics."""
     qw = math.cos(initial_yaw / 2.0)
     qz = math.sin(initial_yaw / 2.0)
     xml = HELHEST_OBSTACLE_XML.format(
-        dt=dt, kv=kv, mu=mu, obstacle_mu=obstacle_mu,
-        obstacle_x=obstacle_x, obstacle_height=obstacle_height,
-        chassis_qw=qw, chassis_qz=qz,
+        dt=dt,
+        kv=kv,
+        mu=mu,
+        obstacle_mu=obstacle_mu,
+        obstacle_x=obstacle_x,
+        obstacle_height=obstacle_height,
+        chassis_qw=qw,
+        chassis_qz=qz,
     )
     model = mujoco.MjModel.from_xml_string(xml)
     data = mujoco.MjData(model)
@@ -169,10 +175,7 @@ def simulate_and_check(dt, kv, mu, obstacle_mu, obstacle_x, obstacle_height,
     x_final = x_values[-1]
     y_max_abs = max(abs(y) for y in y_values)
     # y_max not part of stability predicate — initial_yaw perturbation makes lateral motion expected
-    stable = (not has_nan
-              and z_min > 0.05
-              and z_max < 2.0
-              and x_final > obstacle_x + 1.0)
+    stable = not has_nan and z_min > 0.05 and z_max < 2.0 and x_final > obstacle_x + 1.0
 
     return {
         "stable": stable,
@@ -237,15 +240,19 @@ def main():
     )
     parser.add_argument("--save", metavar="PATH", help="Save results to JSON")
     parser.add_argument(
-        "--num-trials", type=int, default=1,
+        "--num-trials",
+        type=int,
+        default=1,
         help="Number of perturbed trials to run (default: 1 — nominal config only)",
     )
     parser.add_argument("--seed", type=int, default=0, help="RNG seed for perturbations")
     args = parser.parse_args()
 
     print(f"MuJoCo obstacle dt sweep — {args.num_trials} trial(s)")
-    print(f"  nominal obstacle: x={OBSTACLE_X}, height={OBSTACLE_HEIGHT*2:.2f}m, "
-          f"wheel_vel={WHEEL_VEL} rad/s")
+    print(
+        f"  nominal obstacle: x={OBSTACLE_X}, height={OBSTACLE_HEIGHT*2:.2f}m, "
+        f"wheel_vel={WHEEL_VEL} rad/s"
+    )
     if args.num_trials > 1:
         print(f"  perturbations (seed={args.seed}):")
         print(f"    obstacle_height ~ U{OBSTACLE_HEIGHT_RANGE}")
@@ -258,13 +265,17 @@ def main():
     def make_run_one(trial_params: dict):
         def run_one(dt):
             return simulate_and_check(
-                dt=dt, kv=KV, mu=MU, obstacle_mu=OBSTACLE_MU,
+                dt=dt,
+                kv=KV,
+                mu=MU,
+                obstacle_mu=OBSTACLE_MU,
                 obstacle_x=trial_params["obstacle_x"],
                 obstacle_height=trial_params["obstacle_height"],
                 wheel_vel=trial_params["wheel_vel"],
                 duration=DURATION,
                 initial_yaw=trial_params["initial_yaw"],
             )
+
         return run_one
 
     rng = np.random.default_rng(args.seed)
@@ -290,32 +301,40 @@ def main():
             print(f"    {k} = {v:.4f}")
         t0 = time.perf_counter()
         dt_max, search_results = find_max_stable_dt(
-            make_run_one(trial_params), DT_PROBES, label=label,
+            make_run_one(trial_params),
+            DT_PROBES,
+            label=label,
         )
         elapsed = time.perf_counter() - t0
         print(f"  -> max_stable_dt = {dt_max:.5f}  ({elapsed:.1f}s)")
-        trials.append({
-            "config": trial_params,
-            "max_stable_dt": dt_max,
-            "total_time_s": round(elapsed, 2),
-            "search": search_results,
-        })
+        trials.append(
+            {
+                "config": trial_params,
+                "max_stable_dt": dt_max,
+                "total_time_s": round(elapsed, 2),
+                "search": search_results,
+            }
+        )
 
     dt_maxes = [t["max_stable_dt"] for t in trials if t["max_stable_dt"] > 0]
     if dt_maxes:
         print("\n=== summary ===")
         print(f"  n={len(dt_maxes)}/{args.num_trials} trials with dt_max > 0")
         print(f"  median = {float(np.median(dt_maxes)):.5f}")
-        print(f"  IQR    = [{float(np.quantile(dt_maxes, 0.25)):.5f}, "
-              f"{float(np.quantile(dt_maxes, 0.75)):.5f}]")
-        print(f"  range  = [{min(dt_maxes):.5f}, {max(dt_maxes):.5f}]")
+        print(
+            f"  IQR    = [{float(np.quantile(dt_maxes, 0.25)):.5f}, "
+            f"{float(np.quantile(dt_maxes, 0.75)):.5f}]"
+        )
+        print(f"  min    = {min(dt_maxes):.5f}")
+        print(f"  max    = {max(dt_maxes):.5f}")
 
     if args.save:
         output = {
             "simulator": "MuJoCo",
             "experiment": "obstacle_dt_sweep",
             "nominal": {
-                "obstacle_x": OBSTACLE_X, "obstacle_height": OBSTACLE_HEIGHT,
+                "obstacle_x": OBSTACLE_X,
+                "obstacle_height": OBSTACLE_HEIGHT,
                 "wheel_vel": WHEEL_VEL,
             },
             "perturbation_ranges": {
@@ -332,7 +351,8 @@ def main():
             "max_stable_dt_median": float(np.median(dt_maxes)) if dt_maxes else 0.0,
             "max_stable_dt_iqr": (
                 [float(np.quantile(dt_maxes, 0.25)), float(np.quantile(dt_maxes, 0.75))]
-                if dt_maxes else [0.0, 0.0]
+                if dt_maxes
+                else [0.0, 0.0]
             ),
             "trials": trials,
         }

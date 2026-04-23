@@ -45,15 +45,15 @@ CONTACT_COMPLIANCE = 1e-1
 
 # Obstacle config (nominal — trials perturb these)
 OBSTACLE_X = 2.0
-OBSTACLE_HEIGHT = 0.1  # half-height (total 0.2m)
+OBSTACLE_HEIGHT = 0.08  # half-height (full step 0.16m ≈ 44% of wheel radius)
 WHEEL_VEL = 4.0
 RAMP_TIME = 1.0  # seconds to ramp from 0 to WHEEL_VEL
 DURATION = 8.0
 
 # Perturbation ranges (uniform sampling per trial)
-OBSTACLE_HEIGHT_RANGE = (0.07, 0.12)
+OBSTACLE_HEIGHT_RANGE = (0.07, 0.09)
 OBSTACLE_X_RANGE = (1.5, 2.5)
-WHEEL_VEL_RANGE = (4.8, 5.8)
+WHEEL_VEL_RANGE = (3.5, 4.5)
 INITIAL_YAW_RANGE = (-0.1, 0.1)  # radians
 
 # Phase-1 dt probe ladder (descending) — first stable dt anchors bisection
@@ -412,7 +412,8 @@ def main():
         print(f"  median = {float(np.median(dt_maxes)):.4f}")
         print(f"  IQR    = [{float(np.quantile(dt_maxes, 0.25)):.4f}, "
               f"{float(np.quantile(dt_maxes, 0.75)):.4f}]")
-        print(f"  range  = [{min(dt_maxes):.4f}, {max(dt_maxes):.4f}]")
+        print(f"  min    = {min(dt_maxes):.4f}")
+        print(f"  max    = {max(dt_maxes):.4f}")
 
     if args.save:
         output = {
