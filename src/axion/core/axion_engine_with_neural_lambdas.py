@@ -22,10 +22,10 @@ from axion.neural_solver.models.mse_model import MSEModel
 from axion.neural_solver.models.mtl_model import MTLModel
 from axion.neural_solver.models import residual_model as residual_model_module
 from axion.neural_solver.utils.neural_lambda_hdf5_logger import NeuralLambdaHDF5Logger
-from axion.neural_solver.train.trained_models.selected_trained_models import CONTACT_MODELS
+from axion.neural_solver.train.trained_models.selected_trained_models import CONTACT_MODELS, MTL_JUMP_MODELS
 
-NN_BASE_PATH = Path.cwd() /"src"/"axion"/"neural_solver"/"train"/"trained_models"/"mtl"/"04-22-2026-16-02-04"
-NN_PENDULUM_PT_PATH = NN_BASE_PATH/"nn"/"best_valid_valid_model.pt"
+NN_BASE_PATH = Path.cwd() /"src"/"axion"/"neural_solver"/"train"/"trained_models"/MTL_JUMP_MODELS[0]
+NN_PENDULUM_PT_PATH = NN_BASE_PATH/"nn"/"final_model.pt"
 NN_PENDULUM_CFG_PATH = NN_BASE_PATH/"cfg.yaml"
 
 # Binary simulator activity mask: |next_lambdas - lambdas| >= threshold (matches Pendulum MTL datasets "Th05" / cfg classification_prob_threshold).
@@ -124,22 +124,25 @@ class AxionEngineWithNeuralLambdas(AxionEngineBase):
 
     def _parse_mtl_outputs(
         self, out: dict[str, torch.Tensor]
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, Optional[torch.Tensor]]:
         """
         Normalize old/new MTL outputs to:
           - state_prediction: (B, state_output_dim)
           - lambda_prediction: (B, lambda_output_dim)
           - lambda_activity_logits: (B, lambda_output_dim)
+          - lambda_jump: (B, lambda_output_dim) or None if the model has no jump head
         """
         state_prediction = None
         lambda_prediction = None
         lambda_activity_logits = None
+        lambda_jump = None
 
         # New MTL output schema: state/logits/lambda_hat
         if "state" in out and "lambda_hat" in out:
             state_prediction = out["state"]
             lambda_prediction = out["lambda_hat"]
             lambda_activity_logits = out.get("logits", None)
+            lambda_jump = out.get("jump", None)
         # Legacy schema: regression (state + lambda) / classification
         elif "regression" in out:
             regression = out["regression"]
@@ -165,7 +168,12 @@ class AxionEngineWithNeuralLambdas(AxionEngineBase):
 
         state_prediction = self._squeeze_last_step_if_needed(state_prediction)
         lambda_prediction = self._squeeze_last_step_if_needed(lambda_prediction)
-        return state_prediction, lambda_prediction, lambda_activity_logits
+        lambda_jump_out = (
+            self._squeeze_last_step_if_needed(lambda_jump)
+            if lambda_jump is not None
+            else None
+        )
+        return state_prediction, lambda_prediction, lambda_activity_logits, lambda_jump_out
 
     def __init__(
         self,
@@ -253,6 +261,7 @@ class AxionEngineWithNeuralLambdas(AxionEngineBase):
         predicted_next_lambdas: Optional[torch.Tensor],
         predicted_next_states: Optional[torch.Tensor],
         lambda_activity: Optional[torch.Tensor],
+        lambda_jump: Optional[torch.Tensor] = None,
     ) -> None:
         if self.neural_dataset_logger is None:
             return
@@ -304,6 +313,9 @@ class AxionEngineWithNeuralLambdas(AxionEngineBase):
             lambda_activity_ground_truth=self._to_numpy(lambda_activity_gt),
             gravity_dir=self._to_numpy(nn_inputs["gravity_dir"][:, -1, :]),
             root_body_q=self._to_numpy(nn_inputs["root_body_q"][:, -1, :]),
+            lambda_jump=(
+                self._to_numpy(lambda_jump) if lambda_jump is not None else None
+            ),
         )
         self._neural_steps_logged += 1
 
@@ -338,6 +350,7 @@ class AxionEngineWithNeuralLambdas(AxionEngineBase):
         predicted_next_lambdas = None
         predicted_next_states = None
         lambda_activity = None
+        lambda_jump = None
         if self._use_mtl_model:
             with torch.no_grad():
                 out = self.nn_predictor.nn_model.evaluate(nn_inputs)
@@ -346,7 +359,12 @@ class AxionEngineWithNeuralLambdas(AxionEngineBase):
                     "MTL engine expected model.evaluate(...) to return a dict. "
                     f"Got {type(out).__name__} for model={type(self.nn_predictor.nn_model).__name__}."
                 )
-            state_prediction, lambda_prediction, lambda_activity_logits = self._parse_mtl_outputs(out)
+            (
+                state_prediction,
+                lambda_prediction,
+                lambda_activity_logits,
+                lambda_jump,
+            ) = self._parse_mtl_outputs(out)
             cur_states = nn_inputs["states"][:, -1, :]
             predicted_next_states = self.nn_predictor._convert_prediction_to_next_states(  # noqa: SLF001
                 cur_states,
@@ -440,4 +458,5 @@ class AxionEngineWithNeuralLambdas(AxionEngineBase):
             predicted_next_lambdas=predicted_next_lambdas,
             predicted_next_states=predicted_next_states,
             lambda_activity=lambda_activity,
+            lambda_jump=lambda_jump,
         )
