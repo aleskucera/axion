@@ -9,6 +9,10 @@ import h5py
 import matplotlib.pyplot as plt
 import numpy as np
 
+NO_CONTACT_MODELS_HDF5_LOG_FILE_NAMES = [
+    "AxioneEngineWithNeuralLambdas_example_2026-04-24_14-01-52.h5"
+]
+
 MTL_JUMP_MODELS_HDF5_LOG_FILE_NAMES = [
     "AxioneEngineWithNeuralLambdas_example_2026-04-23_10-06-11.h5",
     "AxioneEngineWithNeuralLambdas_example_2026-04-23_10-06-39.h5",
@@ -20,6 +24,21 @@ CONTACT_MTL_MODELS_LAMBDA_REGR_ONLY_HDF5_LOG_FILE_NAMES = [
     "AxioneEngineWithNeuralLambdas_example_2026-04-23_17-25-41.h5",
     "AxioneEngineWithNeuralLambdas_example_2026-04-23_17-26-10.h5",
     "AxioneEngineWithNeuralLambdas_example_2026-04-23_17-26-32.h5",
+]
+
+CONTACT_MTL_MODELS_CONDITIONED_LAMBDA_REGR_ONLY_HDF5_LOG_FILE_NAMES = [
+    "AxioneEngineWithNeuralLambdas_example_2026-04-23_23-53-39.h5",
+    "AxioneEngineWithNeuralLambdas_example_2026-04-23_23-54-04.h5",
+    "AxioneEngineWithNeuralLambdas_example_2026-04-23_23-54-26.h5",
+    "AxioneEngineWithNeuralLambdas_example_2026-04-23_23-54-49.h5",
+]
+
+NO_CONTACT_MODELS_INFO = [
+    "pure mse, w_state = 500",
+    "mse with lambda in log space, w_state = 2",
+    "residual pure",
+    "residual + mse on last timestep, w_state = 500",
+    "residual + mse on whole window T, w_state = 500"
 ]
 
 MTL_JUMP_MODELS_MODEL_INFOS = [
@@ -35,13 +54,21 @@ CONTACT_MTL_MODELS_LAMBDA_REGR_ONLY_MODEL_INFOS = [
     "contact_mtl, no tranform, mse",
 ]
 
-ID = 2
-MODEL_INFO = CONTACT_MTL_MODELS_LAMBDA_REGR_ONLY_MODEL_INFOS[ID]
-COMPARISON_CSV_PATH =  Path(__file__).resolve().parent / "contact_mtl_lambda_regr_only.csv" # None
-DEFAULT_HDF5_PATH = Path(__file__).resolve().parents[4] / "data/logs" / CONTACT_MTL_MODELS_LAMBDA_REGR_ONLY_HDF5_LOG_FILE_NAMES[ID]
-DEFAULT_LAMBDA_SLICE = slice(10, 22)
+CONTACT_MTL_MODELS_CONDITIONED_LAMBDA_REGR_ONLY_MODEL_INFOS = [
+    "contact_mtl, pure mse",
+    "contact_mtl, asinh, mse",
+    "contact_mtl, asinh + output normal, mse",
+    "contact_mtl, asinh + output normal, mse, 1M dataset"
+]
+
+ID = 0
+MODEL_INFO = NO_CONTACT_MODELS_INFO[ID]
+COMPARISON_CSV_PATH =  None #Path(__file__).resolve().parent / "contact_mtl_conditioned_lambda_regr.csv" # None
+DEFAULT_HDF5_PATH = Path(__file__).resolve().parents[4] / "data/logs" / NO_CONTACT_MODELS_HDF5_LOG_FILE_NAMES[ID]
+DEFAULT_LAMBDA_SLICE = slice(0, 9)
 ANALYZE_INCOMPLETE_MTL = False
-ANALYZE_CONTACT_MTL_LAMBDA_REGR_ONLY = True
+ANALYZE_CONTACT_MTL_LAMBDA_REGR_ONLY = False
+ANALYZE_CONTACT_MTL_CONDITIONED_LAMBDA_REGR_ONLY = False
 # Must match `jump_target_scale` / MTLModel.jump_target_scale for the checkpoint that produced the log.
 DEFAULT_JUMP_TARGET_SCALE = 100.0
 SIM_COLOR = "tab:blue"
@@ -114,7 +141,10 @@ def _load_and_validate(
         "next_lambdas",
         "predicted_next_lambdas",
     ]
-    require_predicted_states = not ANALYZE_CONTACT_MTL_LAMBDA_REGR_ONLY
+    require_predicted_states = not (
+        ANALYZE_CONTACT_MTL_LAMBDA_REGR_ONLY
+        or ANALYZE_CONTACT_MTL_CONDITIONED_LAMBDA_REGR_ONLY
+    )
     if require_predicted_states:
         required.append("predicted_next_states")
 
@@ -254,6 +284,26 @@ def _reconstruct_incomplete_mtl_pred_lambdas(
     return reconstructed
 
 
+def _mask_predicted_lambdas_by_gt_activity(
+    predicted_next_lambdas: np.ndarray,
+    lambda_activity_ground_truth: np.ndarray,
+) -> np.ndarray:
+    """
+    For conditioned lambda-regression analysis: keep predicted next lambda where the
+    simulator GT activity label is active (>= 0.5); set to NaN elsewhere.
+    """
+    if predicted_next_lambdas.shape != lambda_activity_ground_truth.shape:
+        raise ValueError(
+            "Shape mismatch masking predictions by GT activity: "
+            f"predicted_next_lambdas {predicted_next_lambdas.shape}, "
+            f"lambda_activity_ground_truth {lambda_activity_ground_truth.shape}"
+        )
+    out = predicted_next_lambdas.astype(np.float64, copy=True)
+    inactive = lambda_activity_ground_truth < 0.5
+    out[inactive] = np.nan
+    return out
+
+
 def _build_time_axis(length: int, dt: float | None) -> tuple[np.ndarray, str]:
     if dt is None:
         return np.arange(length), "Step"
@@ -349,6 +399,19 @@ def _plot_lambdas(
                         fontsize=7,
                         color="black",
                     )
+        elif (
+            ANALYZE_CONTACT_MTL_CONDITIONED_LAMBDA_REGR_ONLY
+            and not ANALYZE_CONTACT_MTL_LAMBDA_REGR_ONLY
+            and not ANALYZE_INCOMPLETE_MTL
+        ):
+            ax.scatter(
+                time_axis[valid],
+                pred_series[valid],
+                label="Predicted next lambda (GT-active only)",
+                s=22.0,
+                marker="o",
+                color=PRED_COLOR,
+            )
         else:
             ax.plot(
                 time_axis,
@@ -580,6 +643,21 @@ def main() -> None:
             lambda_activity_pred,
             lambda_jump_arr,
             DEFAULT_JUMP_TARGET_SCALE,
+        )
+    elif (
+        ANALYZE_CONTACT_MTL_CONDITIONED_LAMBDA_REGR_ONLY
+        and not ANALYZE_CONTACT_MTL_LAMBDA_REGR_ONLY
+        and not ANALYZE_INCOMPLETE_MTL
+    ):
+        if activity_pair is None:
+            raise ValueError(
+                "ANALYZE_CONTACT_MTL_CONDITIONED_LAMBDA_REGR_ONLY requires "
+                "lambda_activity and lambda_activity_ground_truth under data/."
+            )
+        _, lambda_activity_gt = activity_pair
+        predicted_next_lambdas = _mask_predicted_lambdas_by_gt_activity(
+            predicted_next_lambdas,
+            lambda_activity_gt,
         )
 
     time_axis, x_label = _build_time_axis(next_states.shape[0], args.dt)

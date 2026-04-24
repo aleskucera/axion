@@ -1,8 +1,9 @@
 from pathlib import Path
 import csv
+import textwrap
 import matplotlib.pyplot as plt
 
-CSV_PATH = Path(__file__).with_name("contacts_40k_with_lambda_tae.csv")
+CSV_PATH = Path(__file__).with_name("contact_mtl_lambda_regr_only.csv")
 
 
 def format_value(value: float) -> str:
@@ -24,20 +25,19 @@ def add_bar_labels(ax: plt.Axes, bars) -> None:
             va="bottom",
         )
 
-def shorten_model_names(model_names: list[str], max_len: int = 24) -> list[str]:
-    short_names = []
+def wrap_model_names(model_names: list[str], line_width: int = 16) -> list[str]:
+    wrapped_names = []
     for i, name in enumerate(model_names, start=1):
         compact = " ".join(name.split())
-        if len(compact) > max_len:
-            compact = compact[: max_len - 3] + "..."
-        short_names.append(f"{i}: {compact}")
-    return short_names
+        wrapped = textwrap.fill(compact, width=line_width, break_long_words=False)
+        wrapped_names.append(f"{i}: {wrapped}")
+    return wrapped_names
 
 
 def style_x_labels(ax: plt.Axes) -> None:
-    ax.tick_params(axis="x", labelrotation=28, labelsize=8)
+    ax.tick_params(axis="x", labelrotation=0, labelsize=8)
     for tick in ax.get_xticklabels():
-        tick.set_horizontalalignment("right")
+        tick.set_horizontalalignment("center")
 
 
 def plot_metric(model_names, values, title: str, y_label: str, color: str) -> None:
@@ -114,7 +114,7 @@ def main() -> None:
         (row.get("model_info") or f"model_{i + 1}").strip()
         for i, row in enumerate(rows)
     ]
-    display_names = shorten_model_names(model_names)
+    display_names = wrap_model_names(model_names)
     total_abs_error = [float(row["total_absolute_error"]) for row in rows]
     lambda_total_abs_error = [float(row["lambda_total_absolute_error"]) for row in rows]
     total_sq_error = [float(row["total_squared_error"]) for row in rows]

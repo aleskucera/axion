@@ -153,7 +153,7 @@ def run_prediction_example(model_path, cfg_path, device='cuda:0', num_steps=10):
             root_body_q=root_body_q,
             gravity_dir=gravity_dir,
         )
-        next_states = predictor.predict()
+        next_states, _ = predictor.predict()
         
         print(f"  Next state: {next_states[0].cpu().numpy()}")
         print(f"    Joint angles (deg): {np.rad2deg(next_states[0, :2].cpu().numpy())}")

@@ -111,7 +111,7 @@ class GPTEngine(SolverBase):
         self.nn_predictor.process_inputs(state_in, axion_contacts, dt)
 
         # Predict using self.nn_predictor
-        state_predicted = self.nn_predictor.predict(dt = dt)
+        state_predicted, _ = self.nn_predictor.predict(dt=dt)
 
         # Write into state_out 
         state_out.joint_q = wp.from_torch(state_predicted[0,:2].reshape(2,))

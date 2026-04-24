@@ -29,6 +29,7 @@ try:
     from src.axion.types import reorder_ground_contacts_kernel, contact_penetration_depth_kernel
     from src.axion.core.contacts import AxionContacts
     from src.axion.neural_solver.models.mtl_model import MTLModel as _MTLModel
+    from src.axion.neural_solver.models.mse_model import MSEModel as _MSEModel
 
 except ModuleNotFoundError:
     from axion.neural_solver.neural_model_utils_providers.transformer_neural_utils_provider_new import (
@@ -47,6 +48,7 @@ except ModuleNotFoundError:
     from axion.types import reorder_ground_contacts_kernel, contact_penetration_depth_kernel
     from axion.core.contacts import AxionContacts
     from axion.neural_solver.models.mtl_model import MTLModel as _MTLModel
+    from axion.neural_solver.models.mse_model import MSEModel as _MSEModel
 
 
 
@@ -129,11 +131,27 @@ class NeuralPredictor:
                 nn_model, "classification_head"
             )
 
+        self._use_mse_model = (
+            isinstance(nn_model, _MSEModel)
+            or type(nn_model).__name__ == "MSEModel"
+            or (
+                hasattr(nn_model, "regression_head")
+                and not hasattr(nn_model, "classification_head")
+                and hasattr(nn_model, "state_output_dim")
+                and hasattr(nn_model, "lambda_output_dim")
+                and hasattr(nn_model, "regression_output_dim")
+            )
+        )
+
         lambda_model = getattr(self.nn_model, "lambda_model", None)
         lambda_output_net = getattr(lambda_model, "output_net", None) if lambda_model is not None else None
         self.has_lambda_prediction_module = lambda_output_net is not None
 
         if is_mtl_model:
+            self.has_lambda_prediction_module = True
+            self.lambda_dim = int(nn_model.lambda_output_dim)
+            self.lambdas = torch.zeros((self.num_worlds, self.lambda_dim), device=self.device)
+        elif self._use_mse_model:
             self.has_lambda_prediction_module = True
             self.lambda_dim = int(nn_model.lambda_output_dim)
             self.lambdas = torch.zeros((self.num_worlds, self.lambda_dim), device=self.device)
@@ -386,59 +404,50 @@ class NeuralPredictor:
         
         return self.nn_model_inputs
     
-    def predict(self, dt: float) -> torch.Tensor:
+    def predict(self, dt: float) -> tuple[torch.Tensor, Optional[torch.Tensor]]:
         """
-        Predict next robot state.
-        
-        Args:
-            states: Current states (num_envs, state_dim) in generalized coordinates [joint_q, joint_qd]
-            joint_acts: Joint actions/torques (num_envs, joint_act_dim)
-            root_body_q: Root body pose (num_envs, 7) [x, y, z, qx, qy, qz, qw]
-            contacts: Dictionary with contact information:
-                - 'contact_normals': (num_envs, num_contacts * 3)
-                - 'contact_depths': (num_envs, num_contacts)
-                - 'contact_thicknesses': (num_envs, num_contacts)
-                - 'contact_points_0': (num_envs, num_contacts * 3)
-                - 'contact_points_1': (num_envs, num_contacts * 3)
-            gravity_dir: Gravity direction vector (num_envs, 3)
-            dt: Time step (optional, not used in current implementation)
-        
-        Returns:
-            next_states: Next states (num_envs, state_dim)
-        """
+        Predict next robot state and, when available, next constraint forces (lambdas).
 
-        # Run model inference
+        Returns:
+            next_states: Next states (num_envs, state_dim) in generalized coordinates.
+            next_lambdas: Next constraint forces (num_envs, lambda_dim), or None
+                if the model does not produce lambda predictions.
+        """
         with torch.no_grad():
-            prediction = self.nn_model.evaluate(self.nn_model_inputs)  # (num_envs, 1, pred_dim)
-            state_prediction = prediction['state']
-            lambda_prediction = prediction.get('lambda', None)
-            # Take prediction from last timestep
-            if state_prediction.shape[1] > 1:
-                state_prediction = state_prediction[:, -1, :]  # (num_envs, pred_dim)
+            if self._use_mse_model:
+                # MSEModel returns a plain tensor (B, 1, state_dim+lambda_dim), not a dict.
+                regression = self.nn_model.evaluate(self.nn_model_inputs)
+                sod = int(self.nn_model.state_output_dim)
+                regression = regression[:, -1, :] if regression.shape[1] > 1 else regression.squeeze(1)
+                state_prediction = regression[:, :sod]
+                next_lambdas = regression[:, sod:]  # absolute prediction
             else:
-                state_prediction = state_prediction.squeeze(1)  # (num_envs, pred_dim)
-            if lambda_prediction is not None:
-                if lambda_prediction.shape[1] > 1:
-                    lambda_prediction = lambda_prediction[:, -1, :]
+                prediction = self.nn_model.evaluate(self.nn_model_inputs)  # (num_envs, 1, pred_dim)
+                state_prediction = prediction['state']
+                lambda_prediction = prediction.get('lambda', None)
+                # Take prediction from last timestep
+                if state_prediction.shape[1] > 1:
+                    state_prediction = state_prediction[:, -1, :]
                 else:
-                    lambda_prediction = lambda_prediction.squeeze(1)
-        
-        # Convert prediction to next states
+                    state_prediction = state_prediction.squeeze(1)
+                if lambda_prediction is not None:
+                    if lambda_prediction.shape[1] > 1:
+                        lambda_prediction = lambda_prediction[:, -1, :]
+                    else:
+                        lambda_prediction = lambda_prediction.squeeze(1)
+                next_lambdas = None
+                if (self.lambdas is not None) and (lambda_prediction is not None) and ("lambdas" in self.nn_model_inputs):
+                    cur_lambdas = self.nn_model_inputs["lambdas"][:, -1, :]
+                    next_lambdas = self._convert_prediction_to_next_lambdas(cur_lambdas, lambda_prediction)
+                    self.lambdas.copy_(next_lambdas)
+
         cur_states = self.nn_model_inputs["states"][:, -1, :]  # (num_envs, state_dim)
         next_states = self._convert_prediction_to_next_states(cur_states, state_prediction, dt)
-        if (self.lambdas is not None) and (lambda_prediction is not None) and ("lambdas" in self.nn_model_inputs):
-            cur_lambdas = self.nn_model_inputs["lambdas"][:, -1, :]
-            next_lambdas = self._convert_prediction_to_next_lambdas(cur_lambdas, lambda_prediction)
-            self.lambdas.copy_(next_lambdas)
-        
-        # Convert back to world frame if needed
-        #print("After _convert_prediction_to_next_states", next_states)
-        
-        # Wrap continuous DOFs
+
         if self.prediction_quantity_type == "full_state":
             wrap2PI(next_states, self.is_continuous_dof)
-        
-        return next_states
+
+        return next_states, next_lambdas
 
     def predict_lambdas_only(self, dt: float) -> torch.Tensor:
         """

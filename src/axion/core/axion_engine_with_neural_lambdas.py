@@ -23,14 +23,24 @@ from axion.neural_solver.models.mtl_model import MTLModel
 from axion.neural_solver.models.contact_mtl_model import ContactMTLModel
 from axion.neural_solver.models import residual_model as residual_model_module
 from axion.neural_solver.utils.neural_lambda_hdf5_logger import NeuralLambdaHDF5Logger
-from axion.neural_solver.train.trained_models.selected_trained_models import CONTACT_MODELS, MTL_JUMP_MODELS, MTL_CONTACT_MODELS_LAMBDA_REGR_ONLY
+from axion.neural_solver.train.trained_models.selected_trained_models import (
+    NO_CONTACT_MODELS,
+    CONTACT_MODELS,
+    MTL_JUMP_MODELS,
+    MTL_CONTACT_MODELS_LAMBDA_REGR_ONLY,
+    MTL_CONTACT_MODELS_LAMBDA_REGR_ONLY_Y_CLS_1,
+)
 
-NN_BASE_PATH = Path.cwd() /"src"/"axion"/"neural_solver"/"train"/"trained_models"/MTL_CONTACT_MODELS_LAMBDA_REGR_ONLY[2]
+NN_BASE_PATH = Path.cwd() /"src"/"axion"/"neural_solver"/"train"/"trained_models"/NO_CONTACT_MODELS[0]
 NN_PENDULUM_PT_PATH = NN_BASE_PATH/"nn"/"best_valid_valid_model.pt"
 NN_PENDULUM_CFG_PATH = NN_BASE_PATH/"cfg.yaml"
 
-# Binary simulator activity mask: |next_lambdas - lambdas| >= threshold (matches Pendulum MTL datasets "Th05" / cfg classification_prob_threshold).
-SIM_LAMBDA_ACTIVITY_ABS_DELTA_THRESHOLD = 100
+# Ground-truth lambda activity for neural logging (binary mask, float 0/1).
+# If SIM_LAMBDA_ACTIVITY_ABS_DELTA_THRESHOLD is set: mask = (|next_lambdas - lambdas| >= threshold)
+#   (matches Pendulum MTL datasets "Th05" / cfg classification_prob_threshold).
+# If it is None: mask = (|lambdas| >= SIM_LAMBDA_ABS_SIZE_THRESHOLD) instead.
+SIM_LAMBDA_ACTIVITY_ABS_DELTA_THRESHOLD: Optional[float] = None
+SIM_LAMBDA_ABS_SIZE_THRESHOLD = 500
 
 # Backward compatibility for checkpoints saved before residual_model.py rename.
 if not hasattr(residual_model_module, "VelAndLambdaModel"):
@@ -356,10 +366,15 @@ class AxionEngineWithNeuralLambdas(AxionEngineBase):
         )
 
         next_lambdas_torch = wp.to_torch(self.data._constr_force)
-        lambda_activity_gt = (
-            (next_lambdas_torch - sim_lambdas_before_step).abs()
-            >= SIM_LAMBDA_ACTIVITY_ABS_DELTA_THRESHOLD
-        ).to(dtype=torch.float32)
+        if SIM_LAMBDA_ACTIVITY_ABS_DELTA_THRESHOLD is not None:
+            lambda_activity_gt = (
+                (next_lambdas_torch - sim_lambdas_before_step).abs()
+                >= SIM_LAMBDA_ACTIVITY_ABS_DELTA_THRESHOLD
+            ).to(dtype=torch.float32)
+        else:
+            lambda_activity_gt = (
+                sim_lambdas_before_step.abs() >= SIM_LAMBDA_ABS_SIZE_THRESHOLD
+            ).to(dtype=torch.float32)
 
         self.neural_dataset_logger.append_step(
             states=self._to_numpy(nn_inputs["states"][:, -1, :]),
