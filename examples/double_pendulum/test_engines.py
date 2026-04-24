@@ -7,11 +7,16 @@ converged values) to a new HDF5 file.
 Usage:
     python test_engines.py --num-runs 5 --num-steps 300 \
         --input-hdf5 ../../src/axion/neural_solver/datasets/Pendulum/pendulumContactsValid250klen500envs250seed1.hdf5 \
-        --output-hdf5 ../../data/engine_comparison.hdf5
+        --output-hdf5 ../../data/engine_comparison_YYYYMMDD_HHMMSS.hdf5 \
+        --hybrid-mode neural-warm-start-forces
+
+    # Optional: disable tilted contact plane construction in the model
+    python test_engines.py --no-contacts
 """
 from __future__ import annotations
 import argparse
 import pathlib
+from datetime import datetime
 from collections import defaultdict
 from typing import override
 
@@ -26,6 +31,7 @@ from tqdm import tqdm
 
 from axion import EngineConfig, ExecutionConfig, InteractiveSimulator
 from axion import LoggingConfig, RenderingConfig, SimulationConfig
+from axion.core.hybrid_gpt_engine import HybridGPTEngine
 from axion.core.repeated_engine import RepeatedAxionEngine
 from pendulum_articulation_definition import build_pendulum_model
 from pendulum_utils import set_tilted_plane_from_coefficients
@@ -42,7 +48,9 @@ DEFAULT_INPUT_HDF5 = (
     / "Pendulum"
     / "pendulumContactsValid250klen500envs250seed1.hdf5"
 )
-DEFAULT_OUTPUT_HDF5 = REPO_ROOT / "data" / "engine_comparison.hdf5"
+def default_output_hdf5_path() -> pathlib.Path:
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    return REPO_ROOT / "data" / f"engine_comparison_{timestamp}.hdf5"
 
 
 # ---------------------------------------------------------------------------
@@ -101,10 +109,12 @@ class Simulator(InteractiveSimulator):
         engine_config: EngineConfig,
         logging_config: LoggingConfig,
         plane_coefficients: tuple[float, float, float, float] = (0.0, 0.0, 1.0, 0.0),
+        with_contacts: bool = True,
         initial_state: tuple[float, float, float, float] | None = None,
         captured_data: dict | None = None,
     ):
         self.plane_coefficients = plane_coefficients
+        self.with_contacts = with_contacts
         self.captured_data = captured_data
         super().__init__(
             sim_config,
@@ -142,13 +152,35 @@ class Simulator(InteractiveSimulator):
             self.captured_data["init_guess_body_pose"].append(d.init_guess_body_pose.numpy().copy())
             self.captured_data["init_guess_body_vel"].append(d.init_guess_body_vel.numpy().copy())
             self.captured_data["init_guess_constr_force"].append(d._init_guess_constr_force.numpy().copy())
+            # Final converged values after the Newton solve for this timestep.
+            self.captured_data["converged_body_pose"].append(d.body_pose.numpy().copy())
+            self.captured_data["converged_body_vel"].append(d.body_vel.numpy().copy())
+            self.captured_data["converged_constr_force"].append(d._constr_force.numpy().copy())
+            # Backward-compatible aliases used by existing analysis scripts.
             self.captured_data["body_pose"].append(d.body_pose.numpy().copy())
             self.captured_data["body_vel"].append(d.body_vel.numpy().copy())
+            self.captured_data["constr_force"].append(d._constr_force.numpy().copy())
             self.captured_data["body_pose_prev"].append(d.body_pose_prev.numpy().copy())
             self.captured_data["body_vel_prev"].append(d.body_vel_prev.numpy().copy())
-            self.captured_data["constr_force"].append(d._constr_force.numpy().copy())
             self.captured_data["constr_force_prev_iter"].append(d._constr_force_prev_iter.numpy().copy())
 
+            if isinstance(self.solver, HybridGPTEngine):
+                pred_state = getattr(self.solver, "last_predicted_next_state", None)
+                pred_lambda = getattr(self.solver, "last_predicted_next_lambdas", None)
+                pred_body_pose = getattr(self.solver, "last_predicted_next_body_pose", None)
+                pred_body_vel = getattr(self.solver, "last_predicted_next_body_vel", None)
+                if pred_state is not None:
+                    self.captured_data["hybrid_predicted_next_state"].append(pred_state.copy())
+                if pred_lambda is not None:
+                    self.captured_data["hybrid_predicted_next_lambdas"].append(pred_lambda.copy())
+                if pred_body_pose is not None:
+                    self.captured_data["hybrid_predicted_next_body_pose"].append(
+                        pred_body_pose.copy()
+                    )
+                if pred_body_vel is not None:
+                    self.captured_data["hybrid_predicted_next_body_vel"].append(
+                        pred_body_vel.copy()
+                    )
             # RepeatedAxionEngine: warm-start guess for NR#2
             if isinstance(self.solver, RepeatedAxionEngine):
                 rlog = getattr(self.solver, "_repeated_step_log", None) or {}
@@ -156,9 +188,14 @@ class Simulator(InteractiveSimulator):
                     self.captured_data[key].append(arr)
 
     def build_model(self) -> newton.Model:
-        model = build_pendulum_model(num_worlds=1, device="cuda:0")
-        a, b, c, d = self.plane_coefficients
-        set_tilted_plane_from_coefficients(model, a, b, c, d, world_idx=0)
+        model = build_pendulum_model(
+            num_worlds=1,
+            device="cuda:0",
+            with_contacts=self.with_contacts,
+        )
+        if self.with_contacts:
+            a, b, c, d = self.plane_coefficients
+            set_tilted_plane_from_coefficients(model, a, b, c, d, world_idx=0)
         return model
 
 # ---------------------------------------------------------------------------
@@ -192,6 +229,7 @@ def run_engine(
     plane_coefficients: np.ndarray,
     num_steps: int,
     dt: float,
+    with_contacts: bool,
     engine_overrides: list[str] | None = None,
 ) -> list[dict[str, np.ndarray]]:
     """Return a list (one per run) of dicts mapping field name -> (num_steps, ...) array."""
@@ -225,6 +263,7 @@ def run_engine(
             engine_config=engine_cfg,
             logging_config=log_cfg,
             plane_coefficients=pc,
+            with_contacts=with_contacts,
             initial_state=ic,
             captured_data=captured,
         )
@@ -234,6 +273,37 @@ def run_engine(
         all_runs.append(run_data)
 
     return all_runs
+
+
+def hybrid_engine_entry(hybrid_mode: str) -> tuple[str, str, list[str]]:
+    if hybrid_mode == "no-warm-start-forces":
+        return (
+            "hybrid_gpt_pendulum",
+            "hybrid_gpt_engine_no_warm_start_forces",
+            [
+                "+engine.use_warm_start_forces=false",
+                "+engine.use_neural_lambda_init=false",
+            ],
+        )
+    if hybrid_mode == "calculated-warm-start-forces":
+        return (
+            "hybrid_gpt_pendulum",
+            "hybrid_gpt_engine_calculated_warm_start_forces",
+            [
+                "+engine.use_warm_start_forces=true",
+                "+engine.use_neural_lambda_init=false",
+            ],
+        )
+    if hybrid_mode == "neural-warm-start-forces":
+        return (
+            "hybrid_gpt_pendulum",
+            "hybrid_gpt_engine_neural_warm_start_forces",
+            [
+                "+engine.use_warm_start_forces=false",
+                "+engine.use_neural_lambda_init=true",
+            ],
+        )
+    raise ValueError(f"Unsupported hybrid mode: {hybrid_mode}")
 
 
 # ---------------------------------------------------------------------------
@@ -301,8 +371,29 @@ def parse_args():
         help="Path to the source dataset HDF5 file",
     )
     p.add_argument(
-        "--output-hdf5", type=str, default=str(DEFAULT_OUTPUT_HDF5),
+        "--output-hdf5", type=str, default=str(default_output_hdf5_path()),
         help="Path for the output comparison HDF5 file",
+    )
+    p.add_argument(
+        "--no-contacts",
+        action="store_true",
+        help="Disable tilted contact-plane construction in the pendulum model.",
+    )
+    p.add_argument(
+        "--hybrid-mode",
+        type=str,
+        default="neural-warm-start-forces",
+        choices=[
+            "no-warm-start-forces",
+            "calculated-warm-start-forces",
+            "neural-warm-start-forces",
+        ],
+        help=(
+            "Hybrid engine force initialization mode: "
+            "'no-warm-start-forces' (zero init), "
+            "'calculated-warm-start-forces' (analytical warm start), or "
+            "'neural-warm-start-forces' (neural lambda init)."
+        ),
     )
     return p.parse_args()
 
@@ -316,18 +407,10 @@ def main():
     print(f"Reading {args.num_runs} environments from {input_path} ...")
     initial_states, plane_coefficients = read_dataset(input_path, args.num_runs)
 
+    hybrid_config_name, hybrid_label, hybrid_overrides = hybrid_engine_entry(args.hybrid_mode)
     engines_config = [
         ("pendulum", "axion_engine", None),
-        (
-            "hybrid_gpt_pendulum",
-            "hybrid_gpt_engine_use_warm_start_forces_false",
-            ["+engine.use_warm_start_forces=false"],
-        ),
-        (
-            "hybrid_gpt_pendulum",
-            "hybrid_gpt_engine_use_warm_start_forces_true",
-            ["+engine.use_warm_start_forces=true"],
-        ),
+        (hybrid_config_name, hybrid_label, hybrid_overrides),
         ("repeated_pendulum", "repeated_axion_engine", None),
     ]
 
@@ -343,6 +426,7 @@ def main():
             plane_coefficients=plane_coefficients,
             num_steps=args.num_steps,
             dt=args.dt,
+            with_contacts=not args.no_contacts,
             engine_overrides=engine_overrides,
         )
 
