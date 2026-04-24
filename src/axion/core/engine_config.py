@@ -321,6 +321,11 @@ class HybridGPTEngineConfig(AxionEngineConfig):
     # (warm-start Newton-Raphson). If False, use a zero initial guess for forces.
     use_warm_start_forces: bool = False
 
+    # If True (default), use the MSEModel's lambda predictions to warm-start
+    # data._constr_force before the Newton solve. Set to False to disable and
+    # fall back to use_warm_start_forces / zero init (useful for ablations).
+    use_neural_lambda_init: bool = True
+
     def _get_solver_class(self):
         from axion.core.hybrid_gpt_engine import HybridGPTEngine
 

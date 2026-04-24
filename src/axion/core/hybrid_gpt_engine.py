@@ -16,8 +16,8 @@ import yaml
 import torch
 from newton import eval_fk
 from axion.neural_solver.standalone.neural_predictor import NeuralPredictor
-NN_BASE_PATH = Path.cwd() /"src"/"axion"/"neural_solver"/"train"/"trained_models"/"03-14-2026-13-48-45" 
-NN_PENDULUM_PT_PATH = NN_BASE_PATH/"nn"/"best_eval_model.pt"
+NN_BASE_PATH = Path.cwd() /"src"/"axion"/"neural_solver"/"train"/"trained_models"/"mse"/"04-19-2026-21-43-43" 
+NN_PENDULUM_PT_PATH = NN_BASE_PATH/"nn"/"best_valid_valid_model.pt"
 NN_PENDULUM_CFG_PATH = NN_BASE_PATH/"cfg.yaml"
 
 
@@ -26,6 +26,7 @@ class HybridGPTEngine(AxionEngineBase):
     Engine that uses GPT to predict initial guess for the Newton-Raphson solver.
     After that, it uses AxionEngine to solve the system of equations.
     """
+
     def __init__(
         self,
         model: Model,
@@ -68,29 +69,35 @@ class HybridGPTEngine(AxionEngineBase):
         dt: float,
     ) -> None:
         """
-        Perform neural network model inference to get a initial guess for the Newton method.
-        WARNING: For planar double pendulum only!
+        Perform neural network model inference to get an initial guess for the Newton method.
+        For MSEModel: extracts both state and lambda predictions from the joint regression output.
         """
         # Process inputs: coordinate frame conversion, state embedding.
         self.nn_predictor.process_inputs(state_in, axion_contacts, dt)
-        
-        # Predict using self.nn_predictor
-        state_predicted = self.nn_predictor.predict() # (1, 4)
-        pred_joint_q = wp.from_torch(state_predicted[0, :2].reshape(2,))
-        pred_joint_qd = wp.from_torch(state_predicted[0, 2:].reshape(2,))
-        
-        # Perfrom FK: joint_q -> body_q
+
+        # Trigger neural network inference:
+        next_states, next_lambdas = self.nn_predictor.predict(dt)
+
+        dof_q = self.nn_predictor.dof_q_per_env
+        dof_qd = self.nn_predictor.dof_qd_per_env
+        pred_joint_q = wp.from_torch(next_states[0, :dof_q].reshape(dof_q,).contiguous())
+        pred_joint_qd = wp.from_torch(next_states[0, dof_q:dof_q + dof_qd].reshape(dof_qd,).contiguous())
+
+        # Perform FK: joint_q -> body_q
         wp.copy(dest=state_out.joint_q, src=pred_joint_q)
         wp.copy(dest=state_out.joint_qd, src=pred_joint_qd)
-        eval_fk(self.model, state_out.joint_q, state_out.joint_qd, state_out)   # newton.eval_fk()
-    
+        eval_fk(self.model, state_out.joint_q, state_out.joint_qd, state_out)
+
         # Transfer neural prediction of states into solver's working arrays:
         wp.copy(dest=self.data.body_pose, src=state_out.body_q)
         wp.copy(dest=self.data.body_vel, src=state_out.body_qd)
 
         # Initial guess of lambda (constraint forces).
-        # Optionally warm-start using the predicted body state.
-        if getattr(self.config, "use_warm_start_forces", False):
+        if next_lambdas is not None and getattr(self.config, "use_neural_lambda_init", True):
+            lambdas_wp = wp.from_torch(next_lambdas.squeeze(0).contiguous())
+            wp.copy(dest=self.data._constr_force, src=lambdas_wp)
+            wp.copy(dest=self.data._constr_force_prev_iter, src=lambdas_wp)
+        elif getattr(self.config, "use_warm_start_forces", False):
             self.compute_warm_start_forces()
         else:
             self.data._constr_force.zero_()
