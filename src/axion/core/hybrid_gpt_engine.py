@@ -60,6 +60,10 @@ class HybridGPTEngine(AxionEngineBase):
             nn_cfg=loaded_nn_cfg,
             device=str(self.device),
         )
+        # Exposed for external diagnostics capture (e.g., engine comparison scripts).
+        self.last_predicted_next_lambdas = None
+        self.last_predicted_next_body_pose = None
+        self.last_predicted_next_body_vel = None
 
     def _neural_init_state_fn(
         self,
@@ -78,6 +82,8 @@ class HybridGPTEngine(AxionEngineBase):
         # Trigger neural network inference:
         next_states, next_lambdas = self.nn_predictor.predict(dt)
 
+
+
         dof_q = self.nn_predictor.dof_q_per_env
         dof_qd = self.nn_predictor.dof_qd_per_env
         pred_joint_q = wp.from_torch(next_states[0, :dof_q].reshape(dof_q,).contiguous())
@@ -87,6 +93,16 @@ class HybridGPTEngine(AxionEngineBase):
         wp.copy(dest=state_out.joint_q, src=pred_joint_q)
         wp.copy(dest=state_out.joint_qd, src=pred_joint_qd)
         eval_fk(self.model, state_out.joint_q, state_out.joint_qd, state_out)
+
+
+        #-This part is only for exposing it to test_engines.py ---------------------------
+        self.last_predicted_next_body_pose = state_out.body_q.numpy().copy()
+        self.last_predicted_next_body_vel = state_out.body_qd.numpy().copy()
+        if next_lambdas is None:
+            self.last_predicted_next_lambdas = None
+        else:
+            self.last_predicted_next_lambdas = next_lambdas.detach().cpu().numpy().copy()
+        #---------------------------------------------------------------------------------
 
         # Transfer neural prediction of states into solver's working arrays:
         wp.copy(dest=self.data.body_pose, src=state_out.body_q)
