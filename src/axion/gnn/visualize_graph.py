@@ -30,14 +30,11 @@ from axion.gnn.dataset import AxionDatasetGNN
 NODE_COLORS = {
     "object": "#006EFF",
     "floor": "#32532E",
-    "contact_point": "#C0C0C0",
 }
 
 EDGE_COLORS = {
-    ("object", "inter_object", "contact_point"): ("#FF4444", "solid"),
-    ("contact_point", "inter_object", "object"): ("#FF8800", "solid"),
-    ("floor", "inter_object", "contact_point"): ("#FC802E", "solid"),
-    ("contact_point", "contact", "contact_point"): ("#AA00FF", "solid"),
+    ("object", "contact", "object"): ("#AA00FF", "solid"),
+    ("floor", "contact", "object"): ("#FC802E", "solid"),
     ("object", "fixed_joint", "object"): ("#8A2BE2", "dashed"),
     ("object", "revolute_joint", "object"): ("#FFD700", "dashed"),
     ("object", "prismatic_joint", "object"): ("#20B2AA", "dashed"),
@@ -297,15 +294,31 @@ def _draw_into_axes(
             ax=ax,
         )
 
-    # ── Edges (batched by style) ──
-    edge_batches: dict[str, dict] = {}
-    for u, v, attr in G.edges(data=True):
+    # ── Edges ──
+    # Assign a unique arc radius to each edge based on its position among
+    # parallel siblings (same u→v), so multiple contact edges don't overlap.
+    BASE_RAD = 0.1
+    RAD_STEP = 0.15
+    pair_edges: dict[tuple[int, int], list] = {}
+    for u, v, nx_key in G.edges(keys=True):
+        pair_edges.setdefault((u, v), []).append(nx_key)
+
+    edge_rads: dict[tuple[int, int, int], float] = {}
+    for (u, v), keys in pair_edges.items():
+        n = len(keys)
+        for i, nx_key in enumerate(keys):
+            edge_rads[(u, v, nx_key)] = BASE_RAD + RAD_STEP * (i - (n - 1) / 2)
+
+    # Batch by (edge_type, rad) so each distinct arc gets one draw call.
+    edge_batches: dict[tuple, dict] = {}
+    for u, v, nx_key, attr in G.edges(data=True, keys=True):
         et = attr["edge_type"]
+        rad = edge_rads[(u, v, nx_key)]
         color, style = EDGE_COLORS.get(et, DEFAULT_EDGE_COLOR)
-        key = str(et)
-        if key not in edge_batches:
-            edge_batches[key] = {"edge_type": et, "color": color, "style": style, "edges": []}
-        edge_batches[key]["edges"].append((u, v))
+        batch_key = (str(et), rad)
+        if batch_key not in edge_batches:
+            edge_batches[batch_key] = {"edge_type": et, "color": color, "style": style, "rad": rad, "edges": []}
+        edge_batches[batch_key]["edges"].append((u, v))
 
     for batch in edge_batches.values():
         nx.draw_networkx_edges(
@@ -317,7 +330,7 @@ def _draw_into_axes(
             width=1.8,
             arrowsize=ARROW_SIZE,
             node_size=NODE_SIZE,
-            connectionstyle="arc3,rad=0.1",
+            connectionstyle=f"arc3,rad={batch['rad']:.3f}",
             ax=ax,
         )
 
@@ -354,9 +367,8 @@ def _draw_into_axes(
             )
             draggable_annotations.append(ann)
 
-        # Edge features — annotate at geometric midpoint, offset by edge key to
-        # avoid overlapping labels on parallel edges
-        for u, v, key, attr in G.edges(data=True, keys=True):
+        # Edge features — place annotation along the arc using the same rad offset.
+        for u, v, nx_key, attr in G.edges(data=True, keys=True):
             feats = attr.get("feats", [])
             if not feats:
                 continue
@@ -364,9 +376,9 @@ def _draw_into_axes(
             dx, dy = pv[0] - pu[0], pv[1] - pu[1]
             length = max((dx**2 + dy**2) ** 0.5, 1e-6)
             perp_x, perp_y = -dy / length, dx / length
-            offset = 0.15 * (key - 0.5)
-            mx = (pu[0] + pv[0]) / 2 + perp_x * offset
-            my = (pu[1] + pv[1]) / 2 + perp_y * offset
+            rad = edge_rads[(u, v, nx_key)]
+            mx = (pu[0] + pv[0]) / 2 + perp_x * rad
+            my = (pu[1] + pv[1]) / 2 + perp_y * rad
             text = "\n".join(str(v) for v in feats)
             ann = ax.annotate(
                 text,
@@ -385,14 +397,19 @@ def _draw_into_axes(
 
         _AnnotationDragManager(fig, draggable_annotations)
 
-    # ── Legend ──
+    # ── Legend (one entry per edge type, not per batch) ──
     legend_handles = []
     for nt in sorted(seen_node_types):
         legend_handles.append(
             mpatches.Patch(color=NODE_COLORS.get(nt, DEFAULT_NODE_COLOR), label=f"Node: {nt}")
         )
+    seen_legend_types: set[str] = set()
     for batch in edge_batches.values():
         et = batch["edge_type"]
+        et_str = str(et)
+        if et_str in seen_legend_types:
+            continue
+        seen_legend_types.add(et_str)
         label = " → ".join(et) if isinstance(et, tuple) else str(et)
         legend_handles.append(
             Line2D(

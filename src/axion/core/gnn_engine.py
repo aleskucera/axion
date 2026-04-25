@@ -69,6 +69,17 @@ class GNNEngine(AxionEngineBase):
         contact_thickness1 = wp.to_torch(self.axion_contacts.contact_thickness1)
         shape_body = wp.to_torch(self.axion_model.shape_body).to(torch.long)
 
+        joint_type = wp.to_torch(self.axion_model.joint_type).to(torch.long)
+        joint_parent = wp.to_torch(self.axion_model.joint_parent).to(torch.long)
+        joint_child = wp.to_torch(self.axion_model.joint_child).to(torch.long)
+        joint_X_p = wp.to_torch(self.axion_model.joint_X_p)
+        joint_X_c = wp.to_torch(self.axion_model.joint_X_c)
+        joint_axis = wp.to_torch(self.axion_model.joint_axis)
+        joint_qd_start = wp.to_torch(self.axion_model.joint_qd_start).to(torch.long)
+        joint_enabled = wp.to_torch(self.axion_model.joint_enabled)
+        joint_compliance = wp.to_torch(self.axion_model.joint_compliance)
+        num_joints = self.dims.joint_count
+
         graph = build_graph(
             body_vel_prev,
             body_mass,
@@ -85,6 +96,16 @@ class GNNEngine(AxionEngineBase):
             shape_material_mu,
             contact_thickness0,
             contact_thickness1,
+            joint_type,
+            joint_parent,
+            joint_child,
+            joint_X_p,
+            joint_X_c,
+            joint_axis,
+            joint_qd_start,
+            joint_enabled,
+            joint_compliance,
+            num_joints,
             num_bodies,
             device,
             shape_body,

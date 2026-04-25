@@ -177,15 +177,13 @@ if __name__ == "__main__":
     parser.add_argument("--hidden_layers", type=int, default=2)
     parser.add_argument("--hidden_dims", type=int, default=128)
     parser.add_argument("--normalize", action="store_true", default=True)
-    parser.add_argument("--no_normalize", action="store_false", dest="normalize")
     parser.add_argument("--normalize_input", action="store_true", default=True)
-    parser.add_argument("--no_normalize_input", action="store_false", dest="normalize_input")
 
     parser.add_argument("--noise_std", type=float, default=3e-4)
     parser.add_argument("--loss_type", type=str, default="mse_loss")
     parser.add_argument("--lr_init", type=float, default=1e-4)
     parser.add_argument("--lr_final", type=float, default=1e-6)
-    parser.add_argument("--batch_size", type=int, default=1)
+    parser.add_argument("--batch_size", type=int, default=8)
     parser.add_argument("--epochs", type=int, default=300)
 
     parser.add_argument("--device", type=str, default=None)

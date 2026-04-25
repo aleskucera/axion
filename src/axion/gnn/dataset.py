@@ -112,6 +112,19 @@ class AxionDatasetGNN(InMemoryDataset):
         shape_body = torch.tensor(model["shape_body"][world_indices], dtype=torch.long)
         world_indices_tensor = torch.tensor(world_indices, dtype=torch.long)
 
+        joint_type = torch.tensor(model["joint_type"][world_indices], dtype=torch.long)
+        joint_parent = torch.tensor(model["joint_parent"][world_indices], dtype=torch.long)
+        joint_child = torch.tensor(model["joint_child"][world_indices], dtype=torch.long)
+        joint_X_p = torch.tensor(model["joint_X_p"][world_indices], dtype=torch.float32)
+        joint_X_c = torch.tensor(model["joint_X_c"][world_indices], dtype=torch.float32)
+        joint_axis = torch.tensor(model["joint_axis"][world_indices], dtype=torch.float32)
+        joint_qd_start = torch.tensor(model["joint_qd_start"][world_indices], dtype=torch.long)
+        joint_enabled = torch.tensor(model["joint_enabled"][world_indices])
+        joint_compliance = torch.tensor(
+            model["joint_compliance"][world_indices], dtype=torch.float32
+        )
+        num_joints = int(dims["joint_count"][()])
+
         graph = build_graph(
             body_vel_prev,
             body_mass,
@@ -128,6 +141,16 @@ class AxionDatasetGNN(InMemoryDataset):
             shape_material_mu,
             contact_thickness0,
             contact_thickness1,
+            joint_type,
+            joint_parent,
+            joint_child,
+            joint_X_p,
+            joint_X_c,
+            joint_axis,
+            joint_qd_start,
+            joint_enabled,
+            joint_compliance,
+            num_joints,
             num_bodies,
             device,
             shape_body,
