@@ -154,9 +154,10 @@ class HelhestTrajectorySplineSurfaceOptimizer(AxionDifferentiableSimulator):
         self.regularization_weight = 1e-7
 
         self.frame = 0
+        self.best_loss = float("inf")
 
         # Initial guess (Left, Right, Rear)
-        self.init_wheel_vel = (2.0, 2.0, 1.0)
+        self.init_wheel_vel = (4.0, 4.0, 3.0)
 
         self.track_body(body_idx=0, name="chassis", color=(0.0, 0.5, 1.0))
 
@@ -279,6 +280,9 @@ class HelhestTrajectorySplineSurfaceOptimizer(AxionDifferentiableSimulator):
             return
 
         loss_val = self.loss.numpy()[0]
+        if loss_val >= self.best_loss:
+            return
+        self.best_loss = loss_val
 
         target_poses = self.trajectory.target_body_pose.numpy()
         num_steps = target_poses.shape[0]
@@ -339,9 +343,9 @@ class HelhestTrajectorySplineSurfaceOptimizer(AxionDifferentiableSimulator):
 
         for i in range(T):
             target_ctrl = np.zeros(num_dofs, dtype=np.float32)
-            target_ctrl[WHEEL_DOF_OFFSET + 0] = 3.0
-            target_ctrl[WHEEL_DOF_OFFSET + 1] = 1.0
-            target_ctrl[WHEEL_DOF_OFFSET + 2] = 2.0
+            target_ctrl[WHEEL_DOF_OFFSET + 0] = 5.0
+            target_ctrl[WHEEL_DOF_OFFSET + 1] = 3.0
+            target_ctrl[WHEEL_DOF_OFFSET + 2] = 4.0
 
             target_ctrl_wp = wp.array(target_ctrl, dtype=wp.float32, device=self.model.device)
             wp.copy(self.target_controls[i].joint_target_vel, target_ctrl_wp)
@@ -365,7 +369,7 @@ class HelhestTrajectorySplineSurfaceOptimizer(AxionDifferentiableSimulator):
         )  # [K, 3]
 
         self.spline_adam = SplineAdam(
-            K=self.K, num_dofs=NUM_WHEEL_DOFS, lr=0.1, lr_min_ratio=0.2, total_steps=50
+            K=self.K, num_dofs=NUM_WHEEL_DOFS, lr=0.11, lr_min_ratio=0.2, total_steps=50
         )
 
         self._apply_params(self.spline_params)
@@ -416,7 +420,7 @@ def main():
         vis_type = "gl"
 
     sim_config = SimulationConfig(
-        duration_seconds=6.0,
+        duration_seconds=5.0,
         target_timestep_seconds=5e-2,
         num_worlds=1,
     )
