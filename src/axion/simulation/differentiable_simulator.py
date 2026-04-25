@@ -70,6 +70,13 @@ class DifferentiableSimulator(BaseSimulator, ABC):
         self.loss = wp.zeros(1, dtype=wp.float32, requires_grad=True)
 
         self._tracked_bodies = {}
+        self._render_time_offset = 0.0
+
+    def close(self):
+        """Flush the viewer to disk. ViewerUSD only writes the file on close()."""
+        if self.viewer is not None and self.rendering_config.vis_type == "usd":
+            self.viewer.close()
+            self.viewer = None
 
     # ============== ABSTRACT METHODS ==============
     @abstractmethod
@@ -168,16 +175,17 @@ class DifferentiableSimulator(BaseSimulator, ABC):
                 step_idx = min(step_idx, len(self.states) - 1)
                 state = self.states[step_idx]
 
-                self.viewer.begin_frame(elapsed_sim_time)
+                self.viewer.begin_frame(self._render_time_offset + elapsed_sim_time)
 
                 # A. Log Physics State
                 self.viewer.log_state(state)
 
                 # B. Log Trajectories
+                iter_tag = str(iteration) if iteration >= 0 else f"n{-iteration}"
                 for body_idx, metadata in self._tracked_bodies.items():
                     pts = trajectories[body_idx]
                     if len(pts) > 1:
-                        line_name = f"/traj_{iteration}/{metadata['name']}"
+                        line_name = f"/traj_{iter_tag}/{metadata['name']}"
                         self.viewer.log_lines(
                             line_name,
                             wp.array(pts[:-1], dtype=wp.vec3),
@@ -190,6 +198,8 @@ class DifferentiableSimulator(BaseSimulator, ABC):
                     callback(self.viewer, step_idx, state)
 
                 self.viewer.end_frame()
+
+            self._render_time_offset += total_sim_time
 
 
 class AxionDifferentiableSimulator(DifferentiableSimulator, ABC):

@@ -225,7 +225,15 @@ def main():
         "--k-p", type=float, default=2000.0, help="Velocity servo gain (default: 150)"
     )
     parser.add_argument("--mu", type=float, default=0.1, help="Coefficient of friction")
-    parser.add_argument("--headless", action="store_true", help="Run without viewer")
+    output_group = parser.add_mutually_exclusive_group()
+    output_group.add_argument("--headless", action="store_true", help="Run without viewer")
+    output_group.add_argument(
+        "--usd",
+        type=str,
+        default=None,
+        metavar="PATH",
+        help="Render to a USD file at PATH instead of opening the GL viewer",
+    )
     args = parser.parse_args()
 
     # Determine target_ctrl, duration, and ground truth trajectory
@@ -282,10 +290,16 @@ def main():
         target_timestep_seconds=args.dt,
         num_worlds=1,
     )
+    if args.headless:
+        vis_type = "null"
+    elif args.usd:
+        vis_type = "usd"
+    else:
+        vis_type = "gl"
     render_config = RenderingConfig(
-        vis_type="null" if args.headless else "gl",
+        vis_type=vis_type,
         target_fps=30,
-        usd_file=None,
+        usd_file=args.usd,
         start_paused=False,
     )
     exec_config = ExecutionConfig(

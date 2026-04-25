@@ -1,26 +1,24 @@
+import argparse
 import os
 import pathlib
 import time
 
-import hydra
 import newton
 import numpy as np
 import openmesh
 import warp as wp
 from axion import AxionDifferentiableSimulator
-from axion import EngineConfig
+from axion import AxionEngineConfig
 from axion import ExecutionConfig
 from axion import LoggingConfig
 from axion import RenderingConfig
 from axion import SimulationConfig
 from newton import Model
-from omegaconf import DictConfig
 
 from examples.helhest.common import create_helhest_model
 from examples.helhest.common import HelhestConfig
 
 os.environ["PYOPENGL_PLATFORM"] = "glx"
-CONFIG_PATH = pathlib.Path(__file__).parent.parent.parent.joinpath("conf")
 ASSETS_DIR = pathlib.Path(__file__).parent.parent.parent.joinpath("assets")
 
 # DOF layout: [0..5] = free base joint, [6] = left wheel, [7] = right wheel, [8] = rear wheel
@@ -57,7 +55,7 @@ class SplineAdam:
         lr: float,
         total_steps: int = 200,
         lr_min_ratio: float = 0.05,
-        betas=(0.9, 0.999),
+        betas=(0.1, 0.999),
         eps=1e-8,
     ):
         self.lr_init = lr
@@ -136,7 +134,7 @@ class HelhestTrajectorySplineSurfaceOptimizer(AxionDifferentiableSimulator):
         sim_config: SimulationConfig,
         render_config: RenderingConfig,
         exec_config: ExecutionConfig,
-        engine_config: EngineConfig,
+        engine_config: AxionEngineConfig,
         logging_config: LoggingConfig,
         num_control_points: int = 10,
     ):
@@ -277,7 +275,7 @@ class HelhestTrajectorySplineSurfaceOptimizer(AxionDifferentiableSimulator):
         self._apply_params(self.spline_params)
 
     def render(self, train_iter):
-        if self.frame > 0 and train_iter % 5 != 0:
+        if train_iter % 2 != 0:
             return
 
         loss_val = self.loss.numpy()[0]
@@ -326,6 +324,12 @@ class HelhestTrajectorySplineSurfaceOptimizer(AxionDifferentiableSimulator):
         self.frame += 1
 
     def train(self, iterations=200):
+        try:
+            self._train_impl(iterations)
+        finally:
+            self.close()
+
+    def _train_impl(self, iterations):
         newton.eval_fk(self.model, self.model.joint_q, self.model.joint_qd, self.states[0])
         newton.eval_fk(self.model, self.model.joint_q, self.model.joint_qd, self.target_states[0])
 
@@ -361,7 +365,7 @@ class HelhestTrajectorySplineSurfaceOptimizer(AxionDifferentiableSimulator):
         )  # [K, 3]
 
         self.spline_adam = SplineAdam(
-            K=self.K, num_dofs=NUM_WHEEL_DOFS, lr=0.1, lr_min_ratio=0.2, total_steps=iterations
+            K=self.K, num_dofs=NUM_WHEEL_DOFS, lr=0.1, lr_min_ratio=0.2, total_steps=50
         )
 
         self._apply_params(self.spline_params)
@@ -386,13 +390,70 @@ class HelhestTrajectorySplineSurfaceOptimizer(AxionDifferentiableSimulator):
             self.loss.zero_()
 
 
-@hydra.main(version_base=None, config_path=str(CONFIG_PATH), config_name="helhest_diff")
-def main(cfg: DictConfig):
-    sim_config: SimulationConfig = hydra.utils.instantiate(cfg.simulation)
-    render_config: RenderingConfig = hydra.utils.instantiate(cfg.rendering)
-    exec_config: ExecutionConfig = hydra.utils.instantiate(cfg.execution)
-    engine_config: EngineConfig = hydra.utils.instantiate(cfg.engine)
-    logging_config: LoggingConfig = hydra.utils.instantiate(cfg.logging)
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    output_group = parser.add_mutually_exclusive_group()
+    output_group.add_argument(
+        "--vis",
+        choices=["gl", "headless"],
+        default="gl",
+        help="Viewer backend (default: gl)",
+    )
+    output_group.add_argument(
+        "--usd",
+        type=str,
+        default=None,
+        metavar="PATH",
+        help="Render to a USD file at PATH instead of opening the GL viewer",
+    )
+    args = parser.parse_args()
+
+    if args.usd:
+        vis_type = "usd"
+    elif args.vis == "headless":
+        vis_type = "null"
+    else:
+        vis_type = "gl"
+
+    sim_config = SimulationConfig(
+        duration_seconds=6.0,
+        target_timestep_seconds=6e-2,
+        num_worlds=1,
+    )
+    render_config = RenderingConfig(
+        vis_type=vis_type,
+        target_fps=30,
+        usd_file=args.usd,
+        world_offset_x=20.0,
+        world_offset_y=20.0,
+    )
+    exec_config = ExecutionConfig(
+        use_cuda_graph=True,
+        headless_steps_per_segment=10,
+    )
+    engine_config = AxionEngineConfig(
+        max_newton_iters=16,
+        max_linear_iters=16,
+        backtrack_min_iter=12,
+        newton_atol=1e-3,
+        linear_atol=1e-3,
+        linear_tol=1e-3,
+        enable_linesearch=False,
+        joint_compliance=6e-8,
+        contact_compliance=0.1,
+        friction_compliance=1e-6,
+        regularization=1e-6,
+        contact_fb_alpha=0.5,
+        contact_fb_beta=1.0,
+        friction_fb_alpha=1.0,
+        friction_fb_beta=1.0,
+        max_contacts_per_world=256,
+        differentiable_simulation=False,
+    )
+    logging_config = LoggingConfig(
+        enable_timing=False,
+        enable_hdf5_logging=False,
+    )
 
     sim = HelhestTrajectorySplineSurfaceOptimizer(
         sim_config,
@@ -402,7 +463,7 @@ def main(cfg: DictConfig):
         logging_config,
         num_control_points=10,
     )
-    sim.train(iterations=200)
+    sim.train(iterations=24)
 
 
 if __name__ == "__main__":
