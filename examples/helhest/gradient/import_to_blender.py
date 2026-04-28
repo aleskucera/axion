@@ -438,6 +438,17 @@ def setup_camera(
         cam_data.dof.use_dof = True
         cam_data.dof.focus_object = aim_obj
         cam_data.dof.aperture_fstop = float(fstop)
+        # Eevee defaults to a "fast path" that drops below-threshold defocus to
+        # save shading; with our distant subject the geometric blur is tiny so
+        # the fast path culls it entirely. Force the high-quality path so f/4-ish
+        # blurs are still rendered.
+        if hasattr(scene, "eevee"):
+            for attr in (
+                "use_bokeh_high_quality_slight_defocus",
+                "use_high_quality_slight_defocus",
+            ):
+                if hasattr(scene.eevee, attr):
+                    setattr(scene.eevee, attr, True)
 
     dof_str = f"f/{fstop:.1f}" if fstop > 0.0 else "DoF off"
     print(
