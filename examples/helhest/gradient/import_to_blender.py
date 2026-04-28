@@ -87,6 +87,17 @@ def parse_args() -> argparse.Namespace:
         metavar=("X", "Y", "Z"),
         help="Explicit look-at point. Defaults to the padded bbox center.",
     )
+    p.add_argument(
+        "--terrain-skirt",
+        type=float,
+        default=15.0,
+        help=(
+            "Extend the heightfield outward by this many meters on each "
+            "side as a flat skirt at the boundary heights. Original mesh "
+            "is left untouched (the trajectory region is bit-exact). "
+            "Pass 0 to disable."
+        ),
+    )
     return p.parse_args(argv)
 
 
@@ -886,6 +897,250 @@ def make_target_trail(
             seg.keyframe_insert("hide_viewport", frame=spawn_frame)
 
 
+def extend_terrain_skirt(collection: bpy.types.Collection, extent: float):
+    """Append a flat skirt around each static mesh's boundary.
+
+    The original verts and faces are preserved exactly — the trajectory
+    region of the heightfield is untouched. For each boundary edge (an
+    edge belonging to a single face), a new outer vertex is created by
+    snapping the original vertex to the local-XY bbox side it lies on
+    and pushing outward by ``extent``. The skirt vert keeps the original
+    boundary z, so the new ground continues at whatever height the
+    heightfield ended at on that side.
+    """
+    if extent <= 0:
+        return
+
+    for obj in collection.objects:
+        if obj.type != "MESH":
+            continue
+
+        mesh = obj.data
+        n_verts_orig = len(mesh.vertices)
+        if n_verts_orig == 0 or len(mesh.polygons) == 0:
+            continue
+
+        # Count face uses per edge to find boundary edges.
+        edge_count: dict[frozenset[int], int] = {}
+        for poly in mesh.polygons:
+            verts = list(poly.vertices)
+            for i in range(len(verts)):
+                key = frozenset((verts[i], verts[(i + 1) % len(verts)]))
+                edge_count[key] = edge_count.get(key, 0) + 1
+        boundary_edge_keys = {k for k, c in edge_count.items() if c == 1}
+        if not boundary_edge_keys:
+            continue
+
+        # Re-walk faces in order to capture each boundary edge's face-CCW
+        # traversal direction. Needed for winding the skirt quads so their
+        # normal matches the parent face's normal.
+        oriented_edges: list[tuple[int, int]] = []
+        for poly in mesh.polygons:
+            verts = list(poly.vertices)
+            for i in range(len(verts)):
+                v0 = verts[i]
+                v1 = verts[(i + 1) % len(verts)]
+                if frozenset((v0, v1)) in boundary_edge_keys:
+                    oriented_edges.append((v0, v1))
+
+        boundary_vert_set: set[int] = set()
+        for v0, v1 in oriented_edges:
+            boundary_vert_set.add(v0)
+            boundary_vert_set.add(v1)
+
+        # Local-XY bbox of the boundary itself (used to snap each boundary
+        # vert to the side it sits on).
+        boundary_coords = [mesh.vertices[i].co for i in boundary_vert_set]
+        xs = [c.x for c in boundary_coords]
+        ys = [c.y for c in boundary_coords]
+        xmin, xmax = min(xs), max(xs)
+        ymin, ymax = min(ys), max(ys)
+        tol_x = max((xmax - xmin) * 0.01, 1e-4)
+        tol_y = max((ymax - ymin) * 0.01, 1e-4)
+
+        # Auto-detect the heightfield's grid spacing from the median XY
+        # length of its boundary edges, then subdivide each radial chain so
+        # the skirt's wireframe cells stay roughly square.
+        edge_lengths: list[float] = []
+        for v0, v1 in oriented_edges:
+            c0 = mesh.vertices[v0].co
+            c1 = mesh.vertices[v1].co
+            edge_lengths.append(((c1.x - c0.x) ** 2 + (c1.y - c0.y) ** 2) ** 0.5)
+        edge_lengths.sort()
+        grid_spacing = edge_lengths[len(edge_lengths) // 2] if edge_lengths else extent
+        n_rings = max(1, int(round(extent / max(grid_spacing, 1e-6))))
+
+        # Classify each boundary vert by which bbox sides it sits on.
+        # 1 side  → "side" vert  → one outward chain (axis-aligned).
+        # 2 sides → "corner" vert → two outward chains (one per side) so
+        #          adjacent strip rings stay axis-aligned. The corner's
+        #          interior is filled by an explicit N×N block below.
+        SIDE_OFFSET = {
+            "+X": (extent, 0.0),
+            "-X": (-extent, 0.0),
+            "+Y": (0.0, extent),
+            "-Y": (0.0, -extent),
+        }
+
+        def vert_sides(co) -> list[str]:
+            sides: list[str] = []
+            if co.x >= xmax - tol_x:
+                sides.append("+X")
+            elif co.x <= xmin + tol_x:
+                sides.append("-X")
+            if co.y >= ymax - tol_y:
+                sides.append("+Y")
+            elif co.y <= ymin + tol_y:
+                sides.append("-Y")
+            return sides
+
+        chain_dict: dict[int, dict[str, list[int]]] = {}
+        new_verts: list[tuple[float, float, float]] = []
+        for vi in sorted(boundary_vert_set):
+            v = mesh.vertices[vi].co
+            chain_dict[vi] = {}
+            for side in vert_sides(v):
+                dx_full, dy_full = SIDE_OFFSET[side]
+                chain: list[int] = []
+                for r in range(1, n_rings + 1):
+                    t = r / n_rings
+                    new_verts.append((v.x + t * dx_full, v.y + t * dy_full, v.z))
+                    chain.append(n_verts_orig + len(new_verts) - 1)
+                chain_dict[vi][side] = chain
+
+        # For each corner vert, fill the (N+1)×(N+1) block whose left/bottom
+        # edges are the two outward chains. The grid is parameterized as
+        # block[i][j] where i steps along S2's outward direction and j along
+        # S1's. (i=0,j=0) is the corner itself, (i=0,j>0) is chain[S1],
+        # (i>0,j=0) is chain[S2], (i>0,j>0) are fresh interior verts.
+        corner_block: dict[int, tuple[list[list[int]], str, str]] = {}
+        for vi, sides_dict in chain_dict.items():
+            sides = list(sides_dict.keys())
+            if len(sides) != 2:
+                continue
+            S1, S2 = sides[0], sides[1]
+            v = mesh.vertices[vi].co
+            s1_dx, s1_dy = SIDE_OFFSET[S1]
+            s2_dx, s2_dy = SIDE_OFFSET[S2]
+
+            block: list[list[int]] = [[-1] * (n_rings + 1) for _ in range(n_rings + 1)]
+            block[0][0] = vi
+            for j in range(1, n_rings + 1):
+                block[0][j] = sides_dict[S1][j - 1]
+            for i in range(1, n_rings + 1):
+                block[i][0] = sides_dict[S2][i - 1]
+            for i in range(1, n_rings + 1):
+                for j in range(1, n_rings + 1):
+                    ti = i / n_rings
+                    tj = j / n_rings
+                    new_verts.append(
+                        (
+                            v.x + ti * s2_dx + tj * s1_dx,
+                            v.y + ti * s2_dy + tj * s1_dy,
+                            v.z,
+                        )
+                    )
+                    block[i][j] = n_verts_orig + len(new_verts) - 1
+            corner_block[vi] = (block, S1, S2)
+
+        # Detect surface orientation so we can wind skirt quads consistently.
+        avg_normal_z = sum(p.normal.z for p in mesh.polygons) / max(1, len(mesh.polygons))
+        faces_point_up = avg_normal_z >= 0.0
+
+        # Detect the heightfield's diagonal direction from any interior
+        # diagonal edge: SW-NE diagonals have dx*dy > 0, NW-SE have dx*dy < 0.
+        diagonal_sign = 0
+        for poly in mesh.polygons:
+            if len(poly.vertices) != 3:
+                continue
+            verts = list(poly.vertices)
+            for i in range(3):
+                v0 = verts[i]
+                v1 = verts[(i + 1) % 3]
+                key = frozenset((v0, v1))
+                if edge_count.get(key, 0) == 2:
+                    c0 = mesh.vertices[v0].co
+                    c1 = mesh.vertices[v1].co
+                    dx = c1.x - c0.x
+                    dy = c1.y - c0.y
+                    if abs(dx) > 1e-6 and abs(dy) > 1e-6:
+                        diagonal_sign = 1 if dx * dy > 0 else -1
+                        break
+            if diagonal_sign != 0:
+                break
+
+        all_verts = [tuple(mesh.vertices[i].co) for i in range(n_verts_orig)] + new_verts
+        all_faces = [list(p.vertices) for p in mesh.polygons]
+
+        def emit_quad(outer_a: int, outer_b: int, inner_b: int, inner_a: int):
+            """Triangulate a quad given in CCW-from-+Z corner order, picking
+            the diagonal whose XY direction matches the heightfield's."""
+            pa = all_verts[outer_a]
+            pib = all_verts[inner_b]
+            d1_dx = pib[0] - pa[0]
+            d1_dy = pib[1] - pa[1]
+            d1_prod = d1_dx * d1_dy
+            d1_sign = 1 if d1_prod > 1e-9 else (-1 if d1_prod < -1e-9 else 0)
+            use_diag1 = diagonal_sign == 0 or d1_sign == diagonal_sign
+            if faces_point_up:
+                if use_diag1:
+                    all_faces.append([outer_a, outer_b, inner_b])
+                    all_faces.append([outer_a, inner_b, inner_a])
+                else:
+                    all_faces.append([outer_a, outer_b, inner_a])
+                    all_faces.append([outer_b, inner_b, inner_a])
+            else:
+                if use_diag1:
+                    all_faces.append([inner_a, inner_b, outer_b])
+                    all_faces.append([inner_a, outer_b, outer_a])
+                else:
+                    all_faces.append([inner_a, inner_b, outer_a])
+                    all_faces.append([inner_b, outer_b, outer_a])
+
+        # Side strips: each oriented boundary edge has both endpoints sharing
+        # one side (the "+Y top edge", "-X left edge" etc.); both endpoints'
+        # chains for that shared side run in lockstep, so the strip stays a
+        # uniform grid radially.
+        for v0, v1 in oriented_edges:
+            shared_sides = set(chain_dict[v0].keys()) & set(chain_dict[v1].keys())
+            if not shared_sides:
+                continue
+            edge_side = next(iter(shared_sides))
+            chain_v0 = chain_dict[v0][edge_side]
+            chain_v1 = chain_dict[v1][edge_side]
+            inner_a, inner_b = v0, v1
+            for r in range(n_rings):
+                outer_a = chain_v0[r]
+                outer_b = chain_v1[r]
+                emit_quad(outer_a, outer_b, inner_b, inner_a)
+                inner_a, inner_b = outer_a, outer_b
+
+        # Corner blocks: for each (i,j) cell in the N×N grid, cell corners
+        # are block[i][j], block[i+1][j], block[i+1][j+1], block[i][j+1].
+        # The CCW-from-+Z ordering depends on whether (S2, S1) form a
+        # right-handed or left-handed pair in XY (e.g., +X×+Y is right, but
+        # +X×-Y is left). We pick winding to keep the cell's normal pointing
+        # the same way as the parent surface.
+        for vi, (block, S1, S2) in corner_block.items():
+            s1_dx, s1_dy = SIDE_OFFSET[S1]
+            s2_dx, s2_dy = SIDE_OFFSET[S2]
+            cross_z = s2_dx * s1_dy - s2_dy * s1_dx
+            for i in range(n_rings):
+                for j in range(n_rings):
+                    a = block[i][j]
+                    b = block[i + 1][j]
+                    c = block[i + 1][j + 1]
+                    d = block[i][j + 1]
+                    if cross_z > 0:
+                        emit_quad(a, b, c, d)
+                    else:
+                        emit_quad(a, d, c, b)
+
+        mesh.clear_geometry()
+        mesh.from_pydata(all_verts, [], all_faces)
+        mesh.update()
+
+
 def add_terrain_wireframe(collection: bpy.types.Collection, thickness: float = 0.008):
     """Overlay a thin dark wireframe on each static mesh for visible topology."""
     wire_mat = make_material("terrain_wires", (0.05, 0.05, 0.05), 1.0)
@@ -988,6 +1243,7 @@ def main():
     )
     for empty in live_bodies.values():
         empty.empty_display_size = 0.0
+    extend_terrain_skirt(static_coll, extent=float(args.terrain_skirt))
     add_terrain_wireframe(static_coll)
 
     # Floating labels: "Target Trajectory" above the ghost chassis,
