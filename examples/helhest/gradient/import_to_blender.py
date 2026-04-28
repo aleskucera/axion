@@ -100,6 +100,27 @@ def parse_args() -> argparse.Namespace:
             "Pass 0 to disable."
         ),
     )
+    p.add_argument(
+        "--fstop",
+        type=float,
+        default=4.0,
+        help=(
+            "Camera aperture f-stop for depth-of-field. Lower = stronger "
+            "background blur (heightmap edges defocus into a blob). "
+            "Focus tracks the camera-aim Empty automatically. Pass 0 to "
+            "disable DoF."
+        ),
+    )
+    p.add_argument(
+        "--samples",
+        type=int,
+        default=64,
+        help=(
+            "Eevee TAA samples per rendered frame. Default 64 (Blender's "
+            "stock); bump to 128–512 if DoF blur looks grainy. Render time "
+            "scales roughly linearly with this."
+        ),
+    )
     return p.parse_args(argv)
 
 
@@ -299,6 +320,7 @@ def setup_camera(
     zoom: float = 1.0,
     distance: float | None = None,
     aim: tuple[float, float, float] | None = None,
+    fstop: float = 0.0,
 ):
     """Static elevated 3/4 camera framing the bounding box of ``points`` ([N, 3]).
 
@@ -404,10 +426,16 @@ def setup_camera(
     scene.collection.objects.link(cam_obj)
     scene.camera = cam_obj
 
+    if fstop > 0.0:
+        cam_data.dof.use_dof = True
+        cam_data.dof.focus_object = aim_obj
+        cam_data.dof.aperture_fstop = float(fstop)
+
+    dof_str = f"f/{fstop:.1f}" if fstop > 0.0 else "DoF off"
     print(
         f"Camera: lens={lens:.1f} mm, azimuth={azimuth_deg:.2f}°, "
         f"elevation={elevation_deg:.2f}°, distance={cam_distance:.3f} m, "
-        f"aim=({center[0]:.3f}, {center[1]:.3f}, {center[2]:.3f})"
+        f"aim=({center[0]:.3f}, {center[1]:.3f}, {center[2]:.3f}), {dof_str}"
     )
 
 
@@ -438,7 +466,9 @@ def setup_lighting(scene: bpy.types.Scene):
         bg_node.inputs["Strength"].default_value = 0.3
 
 
-def configure_render_output(scene: bpy.types.Scene, output_filepath: str) -> str | None:
+def configure_render_output(
+    scene: bpy.types.Scene, output_filepath: str, samples: int = 64
+) -> str | None:
     """Bake Eevee + video render settings into the scene.
 
     On Blender 4.x (FFmpeg encoder available) the scene renders straight to an
@@ -454,6 +484,11 @@ def configure_render_output(scene: bpy.types.Scene, output_filepath: str) -> str
         scene.render.engine = "BLENDER_EEVEE_NEXT"
     elif "BLENDER_EEVEE" in available_engines:
         scene.render.engine = "BLENDER_EEVEE"
+
+    # TAA render samples: Blender stores Eevee/Eevee-Next under scene.eevee on
+    # 4.x/5.x. Setting the attribute is a no-op if the engine isn't Eevee.
+    if hasattr(scene, "eevee") and hasattr(scene.eevee, "taa_render_samples"):
+        scene.eevee.taa_render_samples = max(1, int(samples))
 
     # The bl_rna enum still advertises "FFMPEG" on Blender 5.x even though the
     # setter rejects it (the encoder was dropped from core), so probe by
@@ -1198,7 +1233,7 @@ def main():
         video_path = f"//{args.output.stem}.mp4"
     else:
         video_path = "//render.mp4"
-    ffmpeg_cmd = configure_render_output(scene, video_path)
+    ffmpeg_cmd = configure_render_output(scene, video_path, samples=int(args.samples))
 
     setup_lighting(scene)
 
@@ -1221,6 +1256,7 @@ def main():
         zoom=args.zoom,
         distance=args.distance,
         aim=tuple(args.aim) if args.aim is not None else None,
+        fstop=float(args.fstop),
     )
 
     static_coll = bpy.data.collections.new("static")
