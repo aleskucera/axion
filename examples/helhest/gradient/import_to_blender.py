@@ -505,10 +505,12 @@ def setup_atmospheric_fog(
     for vl in scene.view_layers:
         vl.use_pass_mist = True
 
-    # Blender 5.0+ stores the compositor as a separate NodeGroup datablock
-    # assigned to scene.compositing_node_group; older Blender uses an
-    # embedded scene.node_tree gated by scene.use_nodes.
-    if hasattr(scene, "compositing_node_group"):
+    # Blender 5.0+ stores the compositor as a NodeGroup datablock assigned to
+    # scene.compositing_node_group, with NodeGroupOutput as the result socket
+    # (no more CompositorNodeComposite). Older Blender uses an embedded
+    # scene.node_tree gated by scene.use_nodes, with CompositorNodeComposite.
+    is_node_group = hasattr(scene, "compositing_node_group")
+    if is_node_group:
         nt = scene.compositing_node_group
         if nt is None:
             nt = bpy.data.node_groups.new(
@@ -524,19 +526,40 @@ def setup_atmospheric_fog(
     rl.location = (0, 0)
 
     # AlphaOver with Fac=mist and a constant-RGBA upper image: outputs
-    # `lower*(1-fac) + upper*fac`, i.e. the same MIX operation MixRGB gave us.
-    # CompositorNodeMixRGB was removed in Blender 5.x; AlphaOver is a primitive
-    # node that survives the change.
+    # `lower*(1-fac) + upper*fac`, the same MIX operation MixRGB gave us.
+    # The legacy CompositorNodeMixRGB was removed in Blender 5.x; AlphaOver
+    # is a primitive node that survives. Look sockets up by socket type so
+    # we're robust to layout shifts (Blender 5.x added new float sockets
+    # ahead of the upper-image slot, which moves index-based access).
     over = nt.nodes.new("CompositorNodeAlphaOver")
-    over.inputs[2].default_value = (*color, 1.0)
     over.location = (300, 0)
+    image_inputs = [s for s in over.inputs if s.bl_idname in ("NodeSocketColor", "NodeSocketRGBA")]
+    fac_inputs = [s for s in over.inputs if "Fac" in s.name or "Factor" in s.name]
+    if len(image_inputs) < 2 or not fac_inputs:
+        raise RuntimeError(
+            f"AlphaOver node has unexpected socket layout on this Blender "
+            f"version: {[ (s.name, s.bl_idname) for s in over.inputs ]}"
+        )
+    image_inputs[1].default_value = (*color, 1.0)
 
-    composite = nt.nodes.new("CompositorNodeComposite")
-    composite.location = (600, 0)
+    if is_node_group:
+        # Define an Image output on the NodeGroup's interface so the renderer
+        # can read it; then a NodeGroupOutput inside the group writes to it.
+        iface = nt.interface
+        has_image_out = any(
+            getattr(s, "in_out", None) == "OUTPUT" and s.name == "Image"
+            for s in iface.items_tree
+        )
+        if not has_image_out:
+            iface.new_socket(name="Image", in_out="OUTPUT", socket_type="NodeSocketColor")
+        out_node = nt.nodes.new("NodeGroupOutput")
+    else:
+        out_node = nt.nodes.new("CompositorNodeComposite")
+    out_node.location = (600, 0)
 
-    nt.links.new(rl.outputs["Image"], over.inputs[1])
-    nt.links.new(rl.outputs["Mist"], over.inputs[0])
-    nt.links.new(over.outputs["Image"], composite.inputs["Image"])
+    nt.links.new(rl.outputs["Image"], image_inputs[0])
+    nt.links.new(rl.outputs["Mist"], fac_inputs[0])
+    nt.links.new(over.outputs[0], out_node.inputs[0])
 
     # Make sure the compositor actually runs at render time.
     scene.render.use_compositing = True
