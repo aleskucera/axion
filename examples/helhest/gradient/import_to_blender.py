@@ -40,7 +40,7 @@ def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("npz", type=Path, help="trajectory.npz from --export")
     p.add_argument("--output", type=Path, default=None, help="Save to this .blend after import")
-    p.add_argument("--ghost-color", type=float, nargs=3, default=(1.0, 0.2, 0.0))
+    p.add_argument("--ghost-color", type=float, nargs=3, default=(0.95, 0.10, 0.50))
     p.add_argument("--ghost-alpha", type=float, default=0.3)
     p.add_argument(
         "--pause-seconds",
@@ -102,13 +102,14 @@ def parse_args() -> argparse.Namespace:
 
 
 # Vibrant per-body palette for the live robot.
+WHEEL_COLOR = (0.08, 0.08, 0.08)  # matte black rubber — applied to every wheel
 LIVE_PALETTE = {
-    0: (0.05, 0.45, 1.00),  # chassis: vivid blue
-    1: (0.95, 0.15, 0.55),  # body 1 (e.g. left wheel): magenta
-    2: (0.10, 0.85, 0.85),  # body 2 (e.g. right wheel): cyan
-    3: (0.85, 0.95, 0.10),  # body 3 (e.g. rear wheel): lime
+    0: (0.98, 0.78, 0.10),  # chassis: caterpillar yellow
+    1: WHEEL_COLOR,
+    2: WHEEL_COLOR,
+    3: WHEEL_COLOR,
 }
-LIVE_FALLBACK = (0.85, 0.45, 0.10)  # extra bodies: orange
+LIVE_FALLBACK = WHEEL_COLOR  # extra bodies share the wheel color too
 STATIC_COLOR = (0.22, 0.22, 0.24)  # terrain: muted cool gray
 
 
