@@ -66,12 +66,14 @@ def parse_args() -> argparse.Namespace:
         default=1.0,
         help="Multiplier on auto-computed camera distance (ignored when --distance is set).",
     )
-    p.add_argument("--azimuth", type=float, default=49.98, help="Camera azimuth angle, degrees.")
-    p.add_argument("--elevation", type=float, default=16.38, help="Camera elevation angle, degrees.")
+    p.add_argument("--azimuth", type=float, default=49.21, help="Camera azimuth angle, degrees.")
+    p.add_argument(
+        "--elevation", type=float, default=20.21, help="Camera elevation angle, degrees."
+    )
     p.add_argument(
         "--distance",
         type=float,
-        default=15.800,
+        default=16.340,
         help=(
             "Explicit camera distance from the aim point (meters). When set, "
             "bypasses the FOV/bbox auto-fit and --zoom — gives a fully "
@@ -83,7 +85,7 @@ def parse_args() -> argparse.Namespace:
         "--aim",
         type=float,
         nargs=3,
-        default=(3.123, -1.789, 2.364),
+        default=(3.123, -0.929, 1.504),
         metavar=("X", "Y", "Z"),
         help="Explicit look-at point. Defaults to the padded bbox center.",
     )
@@ -324,9 +326,7 @@ def setup_camera(
     pad_max = np.array([0.5, 0.5, 2.0], dtype=np.float32)
     pmin = points.min(axis=0) - pad_min
     pmax = points.max(axis=0) + pad_max
-    center = (
-        np.array(aim, dtype=np.float32) if aim is not None else (pmin + pmax) / 2.0
-    )
+    center = np.array(aim, dtype=np.float32) if aim is not None else (pmin + pmax) / 2.0
 
     aim_obj = bpy.data.objects.new("camera_aim", None)
     aim_obj.empty_display_type = "PLAIN_AXES"
@@ -356,7 +356,11 @@ def setup_camera(
     # half-span on each axis is what the lens has to fit.
     corners = np.array(
         [
-            [pmin[0] if i & 1 else pmax[0], pmin[1] if i & 2 else pmax[1], pmin[2] if i & 4 else pmax[2]]
+            [
+                pmin[0] if i & 1 else pmax[0],
+                pmin[1] if i & 2 else pmax[1],
+                pmin[2] if i & 4 else pmax[2],
+            ]
             for i in range(8)
         ],
         dtype=np.float32,
@@ -1321,8 +1325,7 @@ def main():
 
     if ffmpeg_cmd is None:
         print(
-            f"Render with: blender -b {args.output or '<file>.blend'} -a "
-            f"-> writes {video_path}"
+            f"Render with: blender -b {args.output or '<file>.blend'} -a " f"-> writes {video_path}"
         )
     else:
         print(
