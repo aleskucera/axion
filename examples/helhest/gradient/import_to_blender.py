@@ -523,17 +523,20 @@ def setup_atmospheric_fog(
     rl = nt.nodes.new("CompositorNodeRLayers")
     rl.location = (0, 0)
 
-    mix = nt.nodes.new("CompositorNodeMixRGB")
-    mix.blend_type = "MIX"
-    mix.inputs[2].default_value = (*color, 1.0)
-    mix.location = (300, 0)
+    # AlphaOver with Fac=mist and a constant-RGBA upper image: outputs
+    # `lower*(1-fac) + upper*fac`, i.e. the same MIX operation MixRGB gave us.
+    # CompositorNodeMixRGB was removed in Blender 5.x; AlphaOver is a primitive
+    # node that survives the change.
+    over = nt.nodes.new("CompositorNodeAlphaOver")
+    over.inputs[2].default_value = (*color, 1.0)
+    over.location = (300, 0)
 
     composite = nt.nodes.new("CompositorNodeComposite")
     composite.location = (600, 0)
 
-    nt.links.new(rl.outputs["Image"], mix.inputs[1])
-    nt.links.new(rl.outputs["Mist"], mix.inputs[0])
-    nt.links.new(mix.outputs["Image"], composite.inputs["Image"])
+    nt.links.new(rl.outputs["Image"], over.inputs[1])
+    nt.links.new(rl.outputs["Mist"], over.inputs[0])
+    nt.links.new(over.outputs["Image"], composite.inputs["Image"])
 
     # Make sure the compositor actually runs at render time.
     scene.render.use_compositing = True
