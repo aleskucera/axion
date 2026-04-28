@@ -129,6 +129,29 @@ def parse_args() -> argparse.Namespace:
         metavar=("R", "G", "B"),
         help="Volume-scatter tint (cool pale by default).",
     )
+    p.add_argument(
+        "--fog-start",
+        type=float,
+        default=0.0,
+        help=(
+            "Distance from camera at which fog begins (meters). With "
+            "fog-start=5 the first 5 m of view stay completely clear; "
+            "useful for keeping the robot crisp while still hazing out "
+            "the heightmap edge."
+        ),
+    )
+    p.add_argument(
+        "--fog-falloff",
+        type=str,
+        default="QUADRATIC",
+        choices=("QUADRATIC", "LINEAR", "INVERSE_QUADRATIC"),
+        help=(
+            "Shape of the fog curve. QUADRATIC ramps in slowly (clearer "
+            "up close, denser far away). LINEAR is uniform. "
+            "INVERSE_QUADRATIC bites fast and then levels off — feels "
+            "like a wall of fog."
+        ),
+    )
     return p.parse_args(argv)
 
 
@@ -489,12 +512,14 @@ def setup_atmospheric_fog(
     scene: bpy.types.Scene,
     density: float,
     color: tuple[float, float, float] = (0.7, 0.75, 0.85),
+    start: float = 0.0,
+    falloff: str = "QUADRATIC",
 ):
     """Add depth-based atmospheric haze via the Mist render pass + compositor.
 
     Implemented entirely in post: each pixel is blended toward ``color`` by
-    a quadratic factor of camera-space depth, where the fade reaches full
-    opacity at distance ``1 / density`` meters. Surface lighting is
+    a ``falloff``-shaped factor of camera-space depth that reaches full
+    opacity at distance ``start + 1 / density`` meters. Surface lighting is
     untouched (unlike a world volume scatter, which absorbs the sun before
     it reaches surfaces).
     """
@@ -505,11 +530,11 @@ def setup_atmospheric_fog(
     if world is None:
         return
 
-    fog_end = max(1.0 / density, 1.0)
+    fog_depth = max(1.0 / density, 1.0)
     mist = world.mist_settings
-    mist.start = 0.0
-    mist.depth = fog_end
-    mist.falloff = "QUADRATIC"
+    mist.start = float(start)
+    mist.depth = fog_depth
+    mist.falloff = str(falloff)
     mist.height = 0.0
     mist.intensity = 0.0
 
@@ -1106,6 +1131,8 @@ def main():
         scene,
         density=float(args.fog_density),
         color=tuple(args.fog_color),
+        start=float(args.fog_start),
+        falloff=str(args.fog_falloff),
     )
 
     # Static 3/4 camera auto-framed to the bounding box of all chassis positions
