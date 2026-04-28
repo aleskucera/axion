@@ -447,17 +447,8 @@ def setup_camera(
     )
 
 
-def setup_lighting(
-    scene: bpy.types.Scene,
-    fog_density: float = 0.0,
-    fog_color: tuple[float, float, float] = (0.7, 0.75, 0.85),
-):
-    """Replace the default sun with a tilted warm key + a cool dark ambient world.
-
-    When ``fog_density > 0`` a Volume Scatter is wired into the world's
-    Volume output to produce uniform atmospheric haze (Beer-Lambert
-    transmittance ``exp(-density·distance)`` along every view ray).
-    """
+def setup_lighting(scene: bpy.types.Scene):
+    """Replace the default sun with a tilted warm key + a cool dark ambient world."""
     # Remove startup lights so we control intensity from scratch.
     for obj in list(scene.objects):
         if obj.type == "LIGHT":
@@ -477,26 +468,61 @@ def setup_lighting(
         world = bpy.data.worlds.new("World")
         scene.world = world
     world.use_nodes = True
-    nt = world.node_tree
-    bg_node = nt.nodes.get("Background")
+    bg_node = world.node_tree.nodes.get("Background")
     if bg_node is not None:
         bg_node.inputs["Color"].default_value = (0.04, 0.05, 0.07, 1.0)  # cool dark ambient
         bg_node.inputs["Strength"].default_value = 0.3
 
-    if fog_density > 0.0:
-        output = next(
-            (n for n in nt.nodes if n.bl_idname == "ShaderNodeOutputWorld"), None
-        )
-        if output is not None:
-            scatter = nt.nodes.new("ShaderNodeVolumeScatter")
-            scatter.inputs["Density"].default_value = float(fog_density)
-            scatter.inputs["Color"].default_value = (*fog_color, 1.0)
-            nt.links.new(scatter.outputs["Volume"], output.inputs["Volume"])
-        # Eevee 4.x needs volumetrics-from-lights enabled to see the fog
-        # lit by the sun; Eevee Next has it integrated, so this is a no-op
-        # there. Either way, hasattr-guarded.
-        if hasattr(scene, "eevee") and hasattr(scene.eevee, "use_volumetric_lights"):
-            scene.eevee.use_volumetric_lights = True
+
+def setup_atmospheric_fog(
+    scene: bpy.types.Scene,
+    density: float,
+    color: tuple[float, float, float] = (0.7, 0.75, 0.85),
+):
+    """Add depth-based atmospheric haze via the Mist render pass + compositor.
+
+    Implemented entirely in post: each pixel is blended toward ``color`` by
+    a quadratic factor of camera-space depth, where the fade reaches full
+    opacity at distance ``1 / density`` meters. Surface lighting is
+    untouched (unlike a world volume scatter, which absorbs the sun before
+    it reaches surfaces).
+    """
+    if density <= 0.0:
+        return
+
+    world = scene.world
+    if world is None:
+        return
+
+    fog_end = max(1.0 / density, 1.0)
+    mist = world.mist_settings
+    mist.start = 0.0
+    mist.depth = fog_end
+    mist.falloff = "QUADRATIC"
+    mist.height = 0.0
+    mist.intensity = 0.0
+
+    for vl in scene.view_layers:
+        vl.use_pass_mist = True
+
+    scene.use_nodes = True
+    nt = scene.node_tree
+    nt.nodes.clear()
+
+    rl = nt.nodes.new("CompositorNodeRLayers")
+    rl.location = (0, 0)
+
+    mix = nt.nodes.new("CompositorNodeMixRGB")
+    mix.blend_type = "MIX"
+    mix.inputs[2].default_value = (*color, 1.0)
+    mix.location = (300, 0)
+
+    composite = nt.nodes.new("CompositorNodeComposite")
+    composite.location = (600, 0)
+
+    nt.links.new(rl.outputs["Image"], mix.inputs[1])
+    nt.links.new(rl.outputs["Mist"], mix.inputs[0])
+    nt.links.new(mix.outputs["Image"], composite.inputs["Image"])
 
 
 def configure_render_output(
@@ -1024,10 +1050,11 @@ def main():
         video_path = "//render.mp4"
     ffmpeg_cmd = configure_render_output(scene, video_path, samples=int(args.samples))
 
-    setup_lighting(
+    setup_lighting(scene)
+    setup_atmospheric_fog(
         scene,
-        fog_density=float(args.fog_density),
-        fog_color=tuple(args.fog_color),
+        density=float(args.fog_density),
+        color=tuple(args.fog_color),
     )
 
     # Static 3/4 camera auto-framed to the bounding box of all chassis positions
