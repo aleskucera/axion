@@ -505,8 +505,19 @@ def setup_atmospheric_fog(
     for vl in scene.view_layers:
         vl.use_pass_mist = True
 
-    scene.use_nodes = True
-    nt = scene.node_tree
+    # Blender 5.0+ stores the compositor as a separate NodeGroup datablock
+    # assigned to scene.compositing_node_group; older Blender uses an
+    # embedded scene.node_tree gated by scene.use_nodes.
+    if hasattr(scene, "compositing_node_group"):
+        nt = scene.compositing_node_group
+        if nt is None:
+            nt = bpy.data.node_groups.new(
+                name="HelhestComposite", type="CompositorNodeTree"
+            )
+            scene.compositing_node_group = nt
+    else:
+        scene.use_nodes = True
+        nt = scene.node_tree
     nt.nodes.clear()
 
     rl = nt.nodes.new("CompositorNodeRLayers")
@@ -523,6 +534,9 @@ def setup_atmospheric_fog(
     nt.links.new(rl.outputs["Image"], mix.inputs[1])
     nt.links.new(rl.outputs["Mist"], mix.inputs[0])
     nt.links.new(mix.outputs["Image"], composite.inputs["Image"])
+
+    # Make sure the compositor actually runs at render time.
+    scene.render.use_compositing = True
 
 
 def configure_render_output(
