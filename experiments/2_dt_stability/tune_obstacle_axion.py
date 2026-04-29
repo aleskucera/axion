@@ -29,8 +29,8 @@ os.environ["PYOPENGL_PLATFORM"] = "glx"
 # Calibrated params from parameter_sweep
 K_P = 4000.0
 MU = 0.1
-FRICTION_COMPLIANCE = 1.2e-2
-CONTACT_COMPLIANCE = 1e-1
+FRICTION_COMPLIANCE = 1.2e-5
+CONTACT_COMPLIANCE = 1e1
 
 # Drive straight: all wheels at same speed
 WHEEL_VEL = 2.0

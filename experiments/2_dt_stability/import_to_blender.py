@@ -48,6 +48,7 @@ STATIC_COLOR = (0.22, 0.22, 0.24)  # ground plane: muted gray
 OBSTACLE_COLOR = (0.95, 0.70, 0.15)  # static non-plane shapes: warm yellow-orange
 
 CAMERA_BBOX_MAX_EXTENT = 15.0  # clip diverging chassis positions out of the bbox
+HOLD_FRAMES = 30  # frames of "freeze on last pose" between iterations (1 s @ 30 fps)
 
 
 # ---------------------------------------------------------------------------
@@ -219,7 +220,9 @@ def keyframe_bodies(
     body_empties: dict[int, bpy.types.Object],
     poses: np.ndarray,  # [T, num_bodies, 7]
     frame_offset: int = 0,
+    hold_frames: int = 0,
 ):
+    """Keyframe motion for T frames, then optionally hold the last pose for ``hold_frames``."""
     T = poses.shape[0]
     for body_idx, empty in body_empties.items():
         empty.rotation_mode = "QUATERNION"
@@ -229,6 +232,14 @@ def keyframe_bodies(
             empty.location = loc
             empty.rotation_quaternion = quat
             f = frame_offset + t
+            empty.keyframe_insert("location", frame=f)
+            empty.keyframe_insert("rotation_quaternion", frame=f)
+        if hold_frames > 0:
+            xf = poses[-1, body_idx]
+            loc, quat = warp_xform_to_blender(xf)
+            empty.location = loc
+            empty.rotation_quaternion = quat
+            f = frame_offset + T + hold_frames - 1
             empty.keyframe_insert("location", frame=f)
             empty.keyframe_insert("rotation_quaternion", frame=f)
 
@@ -589,11 +600,13 @@ def main():
     shapes = list(data["shapes"])
 
     n_iters = body_pose_iters.shape[0]
-    T = body_pose_iters.shape[1]
-    T_total = n_iters * T
+    T_motion = body_pose_iters.shape[1]
+    T_iter = T_motion + HOLD_FRAMES  # block per iteration: motion + freeze pause
+    T_total = n_iters * T_iter
     print(
-        f"Loaded {args.npz}: {n_iters} iterations × {T} frames = {T_total} frames @ {fps:.1f} fps; "
-        f"{len(shapes)} shapes; stable mask = {iter_stable.tolist()}"
+        f"Loaded {args.npz}: {n_iters} iterations × ({T_motion} motion + {HOLD_FRAMES} hold) "
+        f"= {T_total} frames @ {fps:.1f} fps; {len(shapes)} shapes; "
+        f"stable mask = {iter_stable.tolist()}"
     )
 
     scene = bpy.context.scene
@@ -660,7 +673,7 @@ def main():
         make_per_iteration_labels(
             follow_body=live_bodies[0],
             iter_labels=iter_labels,
-            T=T,
+            T=T_iter,
             collection=label_coll,
             camera=camera,
             color=LIVE_PALETTE[0],
@@ -670,14 +683,16 @@ def main():
     scene.collection.children.link(trail_coll)
     make_breadcrumb_trails(
         body_pose_iters,
-        T=T,
+        T=T_iter,
         color=LIVE_PALETTE[0],
         collection=trail_coll,
     )
 
     for it in range(n_iters):
-        offset = it * T
-        keyframe_bodies(live_bodies, body_pose_iters[it], frame_offset=offset)
+        offset = it * T_iter
+        keyframe_bodies(
+            live_bodies, body_pose_iters[it], frame_offset=offset, hold_frames=HOLD_FRAMES
+        )
 
     if args.output:
         bpy.ops.wm.save_as_mainfile(filepath=str(args.output.resolve()))

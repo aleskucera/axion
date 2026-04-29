@@ -41,7 +41,7 @@ K_P = 4000.0
 MU = 0.1
 OBSTACLE_MU = 1.0
 FRICTION_COMPLIANCE = 2e-2
-CONTACT_COMPLIANCE = 1e-1
+CONTACT_COMPLIANCE = 1e-8
 
 # Obstacle config (nominal — trials perturb these)
 OBSTACLE_X = 2.0
@@ -246,12 +246,7 @@ class HelhestObstacleSim(InteractiveSimulator):
         x_final = x_values[-1]
         y_max_abs = max(abs(y) for y in y_values)
         # y_max not part of stability predicate — initial_yaw perturbation makes lateral motion expected
-        stable = (
-            not has_nan
-            and z_min > 0.05
-            and z_max < 2.0
-            and x_final > self._obstacle_x + 1.0
-        )
+        stable = not has_nan and z_min > 0.05 and z_max < 2.0 and x_final > self._obstacle_x + 1.0
 
         return {
             "stable": stable,
@@ -317,15 +312,19 @@ def main():
     )
     parser.add_argument("--save", metavar="PATH", help="Save results to JSON")
     parser.add_argument(
-        "--num-trials", type=int, default=1,
+        "--num-trials",
+        type=int,
+        default=1,
         help="Number of perturbed trials to run (default: 1 — nominal config only)",
     )
     parser.add_argument("--seed", type=int, default=0, help="RNG seed for perturbations")
     args = parser.parse_args()
 
     print(f"Axion obstacle dt sweep — {args.num_trials} trial(s)")
-    print(f"  nominal obstacle: x={OBSTACLE_X}, height={OBSTACLE_HEIGHT*2:.2f}m, "
-          f"wheel_vel={WHEEL_VEL} rad/s")
+    print(
+        f"  nominal obstacle: x={OBSTACLE_X}, height={OBSTACLE_HEIGHT*2:.2f}m, "
+        f"wheel_vel={WHEEL_VEL} rad/s"
+    )
     if args.num_trials > 1:
         print(f"  perturbations (seed={args.seed}):")
         print(f"    obstacle_height ~ U{OBSTACLE_HEIGHT_RANGE}")
@@ -336,19 +335,28 @@ def main():
     print()
 
     render_config = RenderingConfig(
-        vis_type="null", target_fps=30, usd_file=None, start_paused=False,
+        vis_type="null",
+        target_fps=30,
+        usd_file=None,
+        start_paused=False,
     )
     exec_config = ExecutionConfig(use_cuda_graph=False, headless_steps_per_segment=1)
     engine_config = AxionEngineConfig(
-        max_newton_iters=16, max_linear_iters=16, backtrack_min_iter=12,
-        newton_atol=1e-5, linear_atol=1e-5, linear_tol=1e-5,
+        max_newton_iters=16,
+        max_linear_iters=16,
+        backtrack_min_iter=12,
+        newton_atol=1e-5,
+        linear_atol=1e-5,
+        linear_tol=1e-5,
         enable_linesearch=False,
         joint_compliance=6e-8,
         contact_compliance=CONTACT_COMPLIANCE,
         friction_compliance=FRICTION_COMPLIANCE,
         regularization=1e-6,
-        contact_fb_alpha=0.5, contact_fb_beta=1.0,
-        friction_fb_alpha=1.0, friction_fb_beta=1.0,
+        contact_fb_alpha=0.5,
+        contact_fb_beta=1.0,
+        friction_fb_alpha=1.0,
+        friction_fb_beta=1.0,
         max_contacts_per_world=16,
     )
     logging_config = LoggingConfig(enable_timing=False, enable_hdf5_logging=False)
@@ -361,14 +369,20 @@ def main():
                 num_worlds=1,
             )
             sim = HelhestObstacleSim(
-                sim_config, render_config, exec_config, engine_config, logging_config,
-                k_p=K_P, mu=MU,
+                sim_config,
+                render_config,
+                exec_config,
+                engine_config,
+                logging_config,
+                k_p=K_P,
+                mu=MU,
                 wheel_vel=trial_params["wheel_vel"],
                 obstacle_x=trial_params["obstacle_x"],
                 obstacle_height=trial_params["obstacle_height"],
                 initial_yaw=trial_params["initial_yaw"],
             )
             return sim.simulate_and_check()
+
         return run_one
 
     rng = np.random.default_rng(args.seed)
@@ -394,24 +408,30 @@ def main():
             print(f"    {k} = {v:.4f}")
         t0 = time.perf_counter()
         dt_max, search_results = find_max_stable_dt(
-            make_run_one(trial_params), DT_PROBES, label=label,
+            make_run_one(trial_params),
+            DT_PROBES,
+            label=label,
         )
         elapsed = time.perf_counter() - t0
         print(f"  -> max_stable_dt = {dt_max:.4f}  ({elapsed:.1f}s)")
-        trials.append({
-            "config": trial_params,
-            "max_stable_dt": dt_max,
-            "total_time_s": round(elapsed, 2),
-            "search": search_results,
-        })
+        trials.append(
+            {
+                "config": trial_params,
+                "max_stable_dt": dt_max,
+                "total_time_s": round(elapsed, 2),
+                "search": search_results,
+            }
+        )
 
     dt_maxes = [t["max_stable_dt"] for t in trials if t["max_stable_dt"] > 0]
     if dt_maxes:
         print("\n=== summary ===")
         print(f"  n={len(dt_maxes)}/{args.num_trials} trials with dt_max > 0")
         print(f"  median = {float(np.median(dt_maxes)):.4f}")
-        print(f"  IQR    = [{float(np.quantile(dt_maxes, 0.25)):.4f}, "
-              f"{float(np.quantile(dt_maxes, 0.75)):.4f}]")
+        print(
+            f"  IQR    = [{float(np.quantile(dt_maxes, 0.25)):.4f}, "
+            f"{float(np.quantile(dt_maxes, 0.75)):.4f}]"
+        )
         print(f"  min    = {min(dt_maxes):.4f}")
         print(f"  max    = {max(dt_maxes):.4f}")
 
@@ -420,7 +440,8 @@ def main():
             "simulator": "Axion",
             "experiment": "obstacle_dt_sweep",
             "nominal": {
-                "obstacle_x": OBSTACLE_X, "obstacle_height": OBSTACLE_HEIGHT,
+                "obstacle_x": OBSTACLE_X,
+                "obstacle_height": OBSTACLE_HEIGHT,
                 "wheel_vel": WHEEL_VEL,
             },
             "perturbation_ranges": {
@@ -432,7 +453,8 @@ def main():
             "num_trials": args.num_trials,
             "seed": args.seed,
             "calibrated_params": {
-                "k_p": K_P, "mu": MU,
+                "k_p": K_P,
+                "mu": MU,
                 "friction_compliance": FRICTION_COMPLIANCE,
                 "contact_compliance": CONTACT_COMPLIANCE,
             },
@@ -441,7 +463,8 @@ def main():
             "max_stable_dt_median": float(np.median(dt_maxes)) if dt_maxes else 0.0,
             "max_stable_dt_iqr": (
                 [float(np.quantile(dt_maxes, 0.25)), float(np.quantile(dt_maxes, 0.75))]
-                if dt_maxes else [0.0, 0.0]
+                if dt_maxes
+                else [0.0, 0.0]
             ),
             "trials": trials,
         }

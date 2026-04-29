@@ -156,6 +156,11 @@ class HelhestTrajectorySplineSurfaceOptimizer(AxionDifferentiableSimulator):
         self.frame = 0
         self.best_loss = float("inf")
 
+        self.export_path: str | None = None
+        self._iter_body_poses: list[np.ndarray] = []
+        self._iter_indices: list[int] = []
+        self._iter_losses: list[float] = []
+
         # Initial guess (Left, Right, Rear)
         self.init_wheel_vel = (4.0, 4.0, 3.0)
 
@@ -200,6 +205,64 @@ class HelhestTrajectorySplineSurfaceOptimizer(AxionDifferentiableSimulator):
             num_worlds=self.simulation_config.num_worlds,
             requires_grad=True,
         )
+
+    @staticmethod
+    def _compose_xform(parent_xf: np.ndarray, local_xf: np.ndarray) -> np.ndarray:
+        """Compose two 7-element transforms [tx, ty, tz, qx, qy, qz, qw]."""
+        p1 = parent_xf[:3]
+        qx1, qy1, qz1, qw1 = parent_xf[3:7]
+        p2 = local_xf[:3]
+        qx2, qy2, qz2, qw2 = local_xf[3:7]
+        qxyz1 = np.array([qx1, qy1, qz1], dtype=np.float32)
+        rot_p2 = p2 + 2.0 * np.cross(qxyz1, np.cross(qxyz1, p2) + qw1 * p2)
+        out_p = p1 + rot_p2
+        out_qw = qw1 * qw2 - qx1 * qx2 - qy1 * qy2 - qz1 * qz2
+        out_qx = qw1 * qx2 + qx1 * qw2 + qy1 * qz2 - qz1 * qy2
+        out_qy = qw1 * qy2 - qx1 * qz2 + qy1 * qw2 + qz1 * qx2
+        out_qz = qw1 * qz2 + qx1 * qy2 - qy1 * qx2 + qz1 * qw2
+        return np.array(
+            [out_p[0], out_p[1], out_p[2], out_qx, out_qy, out_qz, out_qw], dtype=np.float32
+        )
+
+    def _collect_ghost_shapes(self):
+        """Per-shape data needed to mirror the live robot at the target pose."""
+        if hasattr(self, "_ghost_shapes_cache"):
+            return self._ghost_shapes_cache
+        m = self.model
+        shape_body = m.shape_body.numpy()
+        shape_transform = m.shape_transform.numpy()
+        shape_type = m.shape_type.numpy()
+        shape_scale = m.shape_scale.numpy()
+        shape_thickness = m.shape_margin.numpy()
+        shape_is_solid = m.shape_is_solid.numpy()
+        shape_flags = m.shape_flags.numpy()
+        shape_source = m.shape_source
+
+        visible_mask = int(newton.ShapeFlags.VISIBLE)
+        mesh_types = {
+            int(newton.GeoType.MESH),
+            int(newton.GeoType.CONVEX_MESH),
+            int(newton.GeoType.HFIELD),
+        }
+        ghosts = []
+        for s in range(len(shape_body)):
+            if shape_body[s] == -1 or not (shape_flags[s] & visible_mask):
+                continue
+            gt = int(shape_type[s])
+            ghosts.append(
+                {
+                    "shape_idx": s,
+                    "body_idx": int(shape_body[s]),
+                    "local_xform": shape_transform[s].astype(np.float32),
+                    "geo_type": gt,
+                    "geo_scale": tuple(float(v) for v in shape_scale[s]),
+                    "geo_thickness": float(shape_thickness[s]),
+                    "geo_is_solid": bool(shape_is_solid[s]),
+                    "geo_src": shape_source[s] if gt in mesh_types else None,
+                }
+            )
+        self._ghost_shapes_cache = ghosts
+        return ghosts
 
     def _expand(self, params: np.ndarray) -> np.ndarray:
         """Expand [K, 3] control points → [T, 3] per-step wheel velocities."""
@@ -284,36 +347,37 @@ class HelhestTrajectorySplineSurfaceOptimizer(AxionDifferentiableSimulator):
             return
         self.best_loss = loss_val
 
+        self._iter_body_poses.append(
+            self.trajectory.body_pose.numpy()[:, 0].copy().astype(np.float32)
+        )
+        self._iter_indices.append(int(train_iter))
+        self._iter_losses.append(float(loss_val))
+
         target_poses = self.trajectory.target_body_pose.numpy()
         num_steps = target_poses.shape[0]
 
-        waypoint_stride = max(1, num_steps // 20)
-        waypoint_indices = list(range(0, num_steps, waypoint_stride))
-
-        waypoint_xforms = wp.array(
-            [target_poses[i, 0, 0] for i in waypoint_indices],
-            dtype=wp.transform,
-        )
-        waypoint_colors = wp.array(
-            [wp.vec3(1.0, 0.2, 0.0)] * len(waypoint_indices),
-            dtype=wp.vec3,
-        )
-
-        half = (
-            HelhestConfig.CHASSIS_SIZE[0] / 8.0,
-            HelhestConfig.CHASSIS_SIZE[1] / 8.0,
-            HelhestConfig.CHASSIS_SIZE[2] / 8.0,
-        )
+        ghost_shapes = self._collect_ghost_shapes()
+        ghost_color = wp.array([wp.vec3(1.0, 0.2, 0.0)], dtype=wp.vec3)
+        GHOST_OPACITY = 0.3
 
         def draw_extras(viewer, step_idx, state):
             viewer.log_scalar("/loss", loss_val)
-            viewer.log_shapes(
-                "/target_trajectory",
-                newton.GeoType.BOX,
-                half,
-                waypoint_xforms,
-                waypoint_colors,
-            )
+            idx = min(step_idx, num_steps - 1)
+            target_step = target_poses[idx, 0]  # [num_bodies, 7]
+            for g in ghost_shapes:
+                world_xf = self._compose_xform(target_step[g["body_idx"]], g["local_xform"])
+                name = f"/target_ghost/shape_{g['shape_idx']}"
+                viewer.log_shapes(
+                    name,
+                    g["geo_type"],
+                    g["geo_scale"],
+                    wp.array([world_xf], dtype=wp.transform),
+                    ghost_color,
+                    geo_thickness=g["geo_thickness"],
+                    geo_is_solid=g["geo_is_solid"],
+                    geo_src=g["geo_src"],
+                )
+                viewer.set_opacity(name, GHOST_OPACITY)
 
         print(f"Rendering iteration {train_iter} (Loss: {loss_val:.4f})...")
 
@@ -332,6 +396,59 @@ class HelhestTrajectorySplineSurfaceOptimizer(AxionDifferentiableSimulator):
             self._train_impl(iterations)
         finally:
             self.close()
+            if self.export_path:
+                self._export_blender_npz(self.export_path)
+
+    def _export_blender_npz(self, path: str):
+        """Snapshot model + accumulated trajectories to a single npz for Blender."""
+        m = self.model
+        shape_body = m.shape_body.numpy()
+        shape_transform = m.shape_transform.numpy()
+        shape_type = m.shape_type.numpy()
+        shape_scale = m.shape_scale.numpy()
+        shape_thickness = m.shape_margin.numpy()
+        shape_is_solid = m.shape_is_solid.numpy()
+        shape_flags = m.shape_flags.numpy()
+        shape_source = m.shape_source
+
+        visible_mask = int(newton.ShapeFlags.VISIBLE)
+        mesh_types = {int(newton.GeoType.MESH), int(newton.GeoType.CONVEX_MESH)}
+        shapes = []
+        for s in range(len(shape_body)):
+            if not (shape_flags[s] & visible_mask):
+                continue
+            gt = int(shape_type[s])
+            entry = {
+                "body_idx": int(shape_body[s]),
+                "geo_type": gt,
+                "geo_scale": np.array(shape_scale[s], dtype=np.float32),
+                "geo_thickness": float(shape_thickness[s]),
+                "geo_is_solid": bool(shape_is_solid[s]),
+                "local_xform": shape_transform[s].astype(np.float32),
+            }
+            if gt in mesh_types and shape_source[s] is not None:
+                mesh = shape_source[s]
+                entry["mesh_verts"] = np.asarray(mesh.vertices, dtype=np.float32)
+                entry["mesh_faces"] = np.asarray(mesh.indices, dtype=np.int32).reshape(-1, 3)
+            shapes.append(entry)
+
+        target_body_pose = self.trajectory.target_body_pose.numpy()[:, 0]
+        body_pose_iters = (
+            np.stack(self._iter_body_poses, axis=0)
+            if self._iter_body_poses
+            else np.empty((0, target_body_pose.shape[0], target_body_pose.shape[1], 7), dtype=np.float32)
+        )
+        np.savez_compressed(
+            path,
+            dt=np.float32(self.clock.dt),
+            fps=np.float32(1.0 / self.clock.dt),
+            target_body_pose=target_body_pose.astype(np.float32),
+            body_pose_iters=body_pose_iters.astype(np.float32),
+            iter_indices=np.array(self._iter_indices, dtype=np.int32),
+            iter_losses=np.array(self._iter_losses, dtype=np.float32),
+            shapes=np.array(shapes, dtype=object),
+        )
+        print(f"Blender export saved to {path} ({len(self._iter_body_poses)} iterations, {len(shapes)} shapes)")
 
     def _train_impl(self, iterations):
         newton.eval_fk(self.model, self.model.joint_q, self.model.joint_qd, self.states[0])
@@ -351,13 +468,6 @@ class HelhestTrajectorySplineSurfaceOptimizer(AxionDifferentiableSimulator):
             wp.copy(self.target_controls[i].joint_target_vel, target_ctrl_wp)
 
         self.run_target_episode()
-
-        print("Rendering target episode...")
-        self.states, self.target_states = self.target_states, self.states
-        self.render_episode(
-            iteration=-1, loop=True, loops_count=1, playback_speed=1.0, start_paused=True
-        )
-        self.states, self.target_states = self.target_states, self.states
 
         # --- Spline setup ---
         self.W, self.W_col_sums = make_interp_matrix(T, self.K)  # [T, K], [K]
@@ -409,6 +519,13 @@ def main():
         default=None,
         metavar="PATH",
         help="Render to a USD file at PATH instead of opening the GL viewer",
+    )
+    parser.add_argument(
+        "--export",
+        type=str,
+        default=None,
+        metavar="PATH",
+        help="Dump per-iteration trajectory + shape metadata to a .npz for the Blender importer",
     )
     args = parser.parse_args()
 
@@ -467,6 +584,7 @@ def main():
         logging_config,
         num_control_points=10,
     )
+    sim.export_path = args.export
     sim.train(iterations=24)
 
 

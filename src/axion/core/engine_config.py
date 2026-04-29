@@ -92,7 +92,7 @@ class AxionEngineConfig(EngineConfig):
     differentiable_simulation: bool = False
 
     # --- Adjoint Backward Pass Interventions ---
-    adjoint_soft_blending: bool = False
+    adjoint_soft_blending: bool = True
     adjoint_soft_blending_temperature: float = 0.05
     adjoint_regularization: float = 0.0
     adjoint_gradient_normalization: bool = False

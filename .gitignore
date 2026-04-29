@@ -196,3 +196,6 @@ examples/comparison_scalability/*/results/
 # pixi environments
 .pixi/*
 !.pixi/config.toml
+
+*.npz
+*.blend

@@ -130,7 +130,7 @@ def main():
         print("No results found. Run run_experiment.sh first.")
         return
 
-    fig, ax = plt.subplots(1, 1, figsize=(5.5, 3.6))
+    fig, ax = plt.subplots(1, 1, figsize=(7.0, 2.6))
 
     for sim in SIM_ORDER:
         if sim not in sims:

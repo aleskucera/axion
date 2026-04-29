@@ -92,7 +92,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--fstop",
         type=float,
-        default=4.0,
+        default=1.0,
         help=(
             "Camera aperture f-stop for depth-of-field. Lower = stronger "
             "background blur (heightmap edges defocus into a blob). "
@@ -103,7 +103,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--samples",
         type=int,
-        default=64,
+        default=256,
         help=(
             "Eevee TAA samples per rendered frame. Default 64 (Blender's "
             "stock); bump to 128–512 if DoF blur looks grainy. Render time "
@@ -125,14 +125,14 @@ def parse_args() -> argparse.Namespace:
         "--fog-color",
         type=float,
         nargs=3,
-        default=(0.7, 0.75, 0.85),
+        default=(0.95, 0.78, 0.55),
         metavar=("R", "G", "B"),
-        help="Volume-scatter tint (cool pale by default).",
+        help="Volume-scatter tint (warm golden-hour by default).",
     )
     p.add_argument(
         "--fog-start",
         type=float,
-        default=0.0,
+        default=14.0,
         help=(
             "Distance from camera at which fog begins (meters). With "
             "fog-start=5 the first 5 m of view stay completely clear; "

@@ -14,7 +14,6 @@ The residuals are zeroed so the IFT assumption (R=0) holds.
 
 See docs/adjoint_warm_start_issue.md for full background.
 """
-
 import warp as wp
 
 

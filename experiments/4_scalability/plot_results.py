@@ -33,7 +33,7 @@ plt.rcParams.update(
 
 STYLES = {
     "Axion": {"color": "#2196F3", "marker": "o", "lw": 2.0, "zorder": 5},
-    "MJX-grad": {"color": "#FF5722", "marker": "o", "lw": 1.8, "zorder": 3},
+    "MJX-grad": {"color": "#E91E63", "marker": "o", "lw": 1.8, "zorder": 3},
 }
 LABELS = {
     "Axion": r"\textbf{Axion}",
@@ -91,7 +91,14 @@ def main():
         label = LABELS[sim]
 
         times = [data_by_worlds[n]["median_time_ms"] for n in worlds]
-        mems_raw = [data_by_worlds[n].get("peak_gpu_mb") for n in worlds]
+        # Prefer the NVML-measured total GPU memory (includes JAX pool,
+        # activations, fragmentation) when available; fall back to the
+        # JAX-reported single-tensor peak for older runs.
+        mems_raw = [
+            data_by_worlds[n].get("peak_gpu_mb_nvml_absolute")
+            or data_by_worlds[n].get("peak_gpu_mb")
+            for n in worlds
+        ]
 
         sim_data[sim] = {"worlds": worlds, "times": times, "mems": mems_raw}
 
@@ -149,13 +156,13 @@ def main():
             mid_w = mjx_mem_worlds[mid_idx]
             mid_m = mjx_mems[mid_idx]
             ax_mem.text(
-                mid_w * 8.6,
-                mid_m * 12.0,
+                mid_w * 6.0,
+                mid_m * 7.0,
                 rf"$\sim{slope_gb:.1f}$\,GB/world",
                 fontsize=7,
-                color="#FF5722",
+                color="#E91E63",
                 alpha=0.8,
-                rotation=54,
+                rotation=52,
                 rotation_mode="anchor",
             )
             extrap_worlds = np.array([mjx_mem_worlds[-1], 32, 64, 128, 256, 512, 1024])
@@ -166,7 +173,7 @@ def main():
                 ax_mem.plot(
                     extrap_worlds,
                     extrap_mems,
-                    color="#FF5722",
+                    color="#E91E63",
                     linestyle="--",
                     linewidth=1.2,
                     alpha=0.5,

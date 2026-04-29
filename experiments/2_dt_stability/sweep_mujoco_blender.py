@@ -17,10 +17,22 @@ import sys
 
 import mujoco
 import numpy as np
+import openmesh
+
+# Wheel mesh shared with the heightmap experiments — keeps the visualization
+# consistent across simulators.
+WHEEL_OBJ = (
+    pathlib.Path(__file__).resolve().parent.parent.parent
+    / "examples"
+    / "assets"
+    / "helhest"
+    / "wheel2.obj"
+)
+WHEEL_MESH_SCALE = 0.78  # same scale used in examples/helhest/common.py:_load_wheel_mesh
+WHEEL_BODY_NAMES = ("left_wheel", "right_wheel", "rear_wheel")
 
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
 from sweep_mujoco import (
-    DURATION,
     HELHEST_OBSTACLE_XML,
     KV,
     MU,
@@ -31,17 +43,17 @@ from sweep_mujoco import (
     WHEEL_VEL,
 )
 
+# Shorter duration than the headless dt sweep (8 s).
+DURATION = 4.0
+
 # Bodies that get per-step pose capture. Index 0 must be chassis.
 RENDER_BODIES = ["chassis", "left_wheel", "right_wheel", "rear_wheel"]
 
-# dt values rendered as "iterations" (chosen to span the stability story).
-# Nominal-config max stable dt is ~1.5 ms; we pick a spread that shows:
-#   0.001 — stable, robot smoothly traverses the obstacle
-#   0.005 — stalls at the obstacle (~x=1, can't climb)
-#   0.05  — chassis bounces / jumps high (z reaches ~2 m)
-#   0.1   — chassis flies away (large unbounded x)
-#   0.2   — catastrophic explosion
-DT_LIST = [0.001, 0.005, 0.05, 0.1, 0.2]
+# Shared with sweep_axion_blender.py and sweep_semi_implicit_blender.py so
+# the three runs line up frame-by-frame in compare_to_blender.py.
+# MuJoCo's nominal max stable dt is ~1.5 ms — only the 0.5 ms entry should
+# stay stable here; the rest fail (stall, bounce, or fly).
+DT_LIST = [5e-4, 1e-3, 2e-2, 1e-1]
 
 DEFAULT_FPS = 30
 PLANE_HALF_EXTENT = 5.0  # cap the ground plane render size; mujoco default is huge
@@ -92,8 +104,22 @@ def _body_relative_to_ancestor(model, body_id: int, ancestor_id: int):
     return pos, quat
 
 
+def _load_wheel_mesh_data() -> tuple[np.ndarray, np.ndarray]:
+    """Load and pre-scale the helhest wheel OBJ shared with the heightmap examples."""
+    m = openmesh.read_trimesh(str(WHEEL_OBJ))
+    verts = (np.asarray(m.points(), dtype=np.float32) * WHEEL_MESH_SCALE).astype(np.float32)
+    faces = np.asarray(m.face_vertex_indices(), dtype=np.int32)
+    return verts, faces
+
+
 def extract_shapes(model) -> list[dict]:
-    """Per-geom shape descriptors compatible with the Blender importer."""
+    """Per-geom shape descriptors compatible with the Blender importer.
+
+    The helhest wheels in the MuJoCo XML are bare cylinders; for consistency
+    with the rest of the visualizations we replace each wheel cylinder with a
+    GEO_MESH descriptor that references the same wheel OBJ used in
+    examples/helhest/common.py.
+    """
     chassis_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "chassis")
     body_to_render_idx: dict[int, int] = {}
     for i, name in enumerate(RENDER_BODIES):
@@ -101,10 +127,15 @@ def extract_shapes(model) -> list[dict]:
         if bid == -1:
             raise RuntimeError(f"body '{name}' not found in model")
         body_to_render_idx[bid] = i
+    wheel_body_ids = {
+        mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, n) for n in WHEEL_BODY_NAMES
+    }
 
     shapes: list[dict] = []
     for g in range(model.ngeom):
         body_id = int(model.geom_bodyid[g])
+        if body_id in wheel_body_ids:
+            continue  # bare cylinder replaced by a GEO_MESH below
         gtype = int(model.geom_type[g])
         geom_pos = np.array(model.geom_pos[g], dtype=np.float32)
         geom_quat = _quat_wxyz_to_xyzw(np.array(model.geom_quat[g], dtype=np.float32))
@@ -143,6 +174,26 @@ def extract_shapes(model) -> list[dict]:
                 "geo_thickness": 0.0,
                 "geo_is_solid": True,
                 "local_xform": local_xform.astype(np.float32),
+            }
+        )
+
+    # Emit one wheel mesh per wheel body. Vertices are pre-scaled, so geo_scale
+    # is identity. local_xform is identity — the OBJ's natural frame already
+    # has the wheel disc in XZ with rotation axis along Y, matching MuJoCo's
+    # wheel body frame.
+    wheel_verts, wheel_faces = _load_wheel_mesh_data()
+    for name in WHEEL_BODY_NAMES:
+        bid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, name)
+        shapes.append(
+            {
+                "body_idx": int(body_to_render_idx[bid]),
+                "geo_type": int(mujoco.mjtGeom.mjGEOM_MESH),
+                "geo_scale": np.array([1.0, 1.0, 1.0], dtype=np.float32),
+                "geo_thickness": 0.0,
+                "geo_is_solid": True,
+                "local_xform": np.array([0, 0, 0, 0, 0, 0, 1], dtype=np.float32),
+                "mesh_verts": wheel_verts,
+                "mesh_faces": wheel_faces,
             }
         )
     return shapes
