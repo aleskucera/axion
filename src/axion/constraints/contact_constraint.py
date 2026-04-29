@@ -103,7 +103,10 @@ def compute_contact_core(
     d_res_d0 = -J_hat_0 * f_n * dt
     d_res_d1 = -J_hat_1 * f_n * dt
     res_n_val = phi_n / dt
-    c_val = dphi_dlambda_n / wp.pow(dt, 2.0) + compliance
+    # compliance is dt-adaptive: scaling by 1/dt^2 makes the regularization
+    # silent at large dt and active at small dt, where the FB Newton step
+    # otherwise overshoots like pen/h^2. See docs/dt_dependence_problem.md.
+    c_val = dphi_dlambda_n / wp.pow(dt, 2.0) + compliance / wp.pow(dt, 2.0)
 
     return d_res_d0, d_res_d1, res_n_val, J_hat_0, J_hat_1, c_val
 
