@@ -29,9 +29,10 @@ from axion.neural_solver.train.trained_models.selected_trained_models import (
     MTL_JUMP_MODELS,
     MTL_CONTACT_MODELS_LAMBDA_REGR_ONLY,
     MTL_CONTACT_MODELS_LAMBDA_REGR_ONLY_Y_CLS_1,
+    MSE_STATE_JOINT_LAMBDA_MODELS
 )
 
-NN_BASE_PATH = Path.cwd() /"src"/"axion"/"neural_solver"/"train"/"trained_models"/NO_CONTACT_MODELS[0]
+NN_BASE_PATH = Path.cwd() /"src"/"axion"/"neural_solver"/"train"/"trained_models"/MSE_STATE_JOINT_LAMBDA_MODELS[2]
 NN_PENDULUM_PT_PATH = NN_BASE_PATH/"nn"/"best_valid_valid_model.pt"
 NN_PENDULUM_CFG_PATH = NN_BASE_PATH/"cfg.yaml"
 

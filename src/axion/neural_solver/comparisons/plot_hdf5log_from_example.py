@@ -33,6 +33,12 @@ CONTACT_MTL_MODELS_CONDITIONED_LAMBDA_REGR_ONLY_HDF5_LOG_FILE_NAMES = [
     "AxioneEngineWithNeuralLambdas_example_2026-04-23_23-54-49.h5",
 ]
 
+MSE_STATE_JOINT_LAMBDA_MODELS_HDF5_LOG_FILE_NAMES = [
+    "AxioneEngineWithNeuralLambdas_example_2026-04-26_16-19-48.h5",
+    "AxioneEngineWithNeuralLambdas_example_2026-04-26_16-20-57.h5",
+    "AxioneEngineWithNeuralLambdas_example_2026-04-26_16-21-58.h5",
+]
+
 NO_CONTACT_MODELS_INFO = [
     "pure mse, w_state = 500",
     "mse with lambda in log space, w_state = 2",
@@ -61,10 +67,16 @@ CONTACT_MTL_MODELS_CONDITIONED_LAMBDA_REGR_ONLY_MODEL_INFOS = [
     "contact_mtl, asinh + output normal, mse, 1M dataset"
 ]
 
-ID = 0
-MODEL_INFO = NO_CONTACT_MODELS_INFO[ID]
-COMPARISON_CSV_PATH =  None #Path(__file__).resolve().parent / "contact_mtl_conditioned_lambda_regr.csv" # None
-DEFAULT_HDF5_PATH = Path(__file__).resolve().parents[4] / "data/logs" / NO_CONTACT_MODELS_HDF5_LOG_FILE_NAMES[ID]
+MSE_STATE_JOINT_LAMBDA_MODELS_MODEL_INFOS = [
+    "mse, w_state = 500, 40k dataset",
+    "mse, w_state = 500, 2M datadet, ||q||^2 term included in angle loss",
+    "mse, w_state = 5e4, 2M datadet, ||q||^2 term NOT included in angle loss",
+]
+
+ID = 2
+MODEL_INFO = MSE_STATE_JOINT_LAMBDA_MODELS_MODEL_INFOS[ID]
+COMPARISON_CSV_PATH =  Path(__file__).resolve().parent / "mse_state_and_joint_lambdas.csv" # None
+DEFAULT_HDF5_PATH = Path(__file__).resolve().parents[4] / "data/logs" / MSE_STATE_JOINT_LAMBDA_MODELS_HDF5_LOG_FILE_NAMES[ID]
 DEFAULT_LAMBDA_SLICE = slice(0, 9)
 ANALYZE_INCOMPLETE_MTL = False
 ANALYZE_CONTACT_MTL_LAMBDA_REGR_ONLY = False
