@@ -34,9 +34,9 @@ import numpy as np
 
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[4]
-DEFAULT_H5_PATH = REPO_ROOT / "data" / "engine_comparison_20260424_164345.hdf5"
-LAMBDA_SLICE = (0, 10)
-STATE_SLICE = (0, 2)
+DEFAULT_H5_PATH = REPO_ROOT / "data" / "engine_comparison_20260427_110026.hdf5"
+LAMBDA_SLICE = (0, 0)
+STATE_SLICE = (0, 0)
 
 
 def _sorted_run_keys(h5_group: h5py.Group) -> list[str]:
@@ -326,28 +326,40 @@ def main() -> None:
                 repeated_state.shape[1],
                 hybrid_pred_state.shape[1],
             )
+            line_styles = {
+                "axion": {"alpha": 0.9, "linewidth": 2.6, "linestyle": "-"},
+                "repeated": {"alpha": 0.85, "linewidth": 2.2, "linestyle": "--"},
+                "hybrid": {"alpha": 0.9, "linewidth": 2.0, "linestyle": "-."},
+                "hybrid_pred": {"alpha": 0.75, "linewidth": 1.8, "linestyle": ":"},
+            }
 
             steps_lambda = np.arange(int(lambda_steps))
             for idx in range(LAMBDA_SLICE[0], int(lambda_hi)):
                 plt.figure(figsize=(12, 4.5))
                 plt.plot(
-                    steps_lambda, axion_lambda[: int(lambda_steps), idx], label="Axion converged"
+                    steps_lambda,
+                    axion_lambda[: int(lambda_steps), idx],
+                    label="Axion converged",
+                    **line_styles["axion"],
                 )
                 plt.plot(
                     steps_lambda,
                     repeated_lambda[: int(lambda_steps), idx],
                     label="RepeatedAxion converged",
+                    **line_styles["repeated"],
                 )
                 plt.plot(
                     steps_lambda,
                     hybrid_lambda[: int(lambda_steps), idx],
                     label="Hybrid converged",
+                    **line_styles["hybrid"],
                 )
                 if hybrid_pred_lambda is not None:
                     plt.plot(
                         steps_lambda,
                         hybrid_pred_lambda[: int(lambda_steps), idx],
                         label="Hybrid neural prediction",
+                        **line_styles["hybrid_pred"],
                     )
                 plt.xlabel("Simulation step")
                 plt.ylabel(f"lambda[{idx}]")
@@ -364,22 +376,28 @@ def main() -> None:
             for idx in range(STATE_SLICE[0], int(state_hi)):
                 plt.figure(figsize=(12, 4.5))
                 plt.plot(
-                    steps_state, axion_state[: int(state_steps), idx], label="Axion converged"
+                    steps_state,
+                    axion_state[: int(state_steps), idx],
+                    label="Axion converged",
+                    **line_styles["axion"],
                 )
                 plt.plot(
                     steps_state,
                     repeated_state[: int(state_steps), idx],
                     label="RepeatedAxion converged",
+                    **line_styles["repeated"],
                 )
                 plt.plot(
                     steps_state,
                     hybrid_state[: int(state_steps), idx],
                     label="Hybrid converged",
+                    **line_styles["hybrid"],
                 )
                 plt.plot(
                     steps_state,
                     hybrid_pred_state[: int(state_steps), idx],
                     label="Hybrid neural prediction",
+                    **line_styles["hybrid_pred"],
                 )
                 plt.xlabel("Simulation step")
                 plt.ylabel(f"state_vel_component[{idx}]")
