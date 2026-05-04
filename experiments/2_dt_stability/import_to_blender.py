@@ -47,7 +47,7 @@ LIVE_PALETTE = {
 }
 LIVE_FALLBACK = WHEEL_COLOR
 STATIC_COLOR = (0.22, 0.22, 0.24)  # ground plane: muted gray
-OBSTACLE_COLOR = (0.95, 0.70, 0.15)  # static non-plane shapes: warm yellow-orange
+OBSTACLE_COLOR = (0.55, 0.20, 0.18)  # static non-plane shapes: rust red
 
 CAMERA_BBOX_MAX_EXTENT = 15.0  # clip diverging chassis positions out of the bbox
 HOLD_FRAMES = 30  # frames of "freeze on last pose" between iterations (1 s @ 30 fps)
