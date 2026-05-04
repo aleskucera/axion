@@ -79,13 +79,15 @@ def parse_args() -> argparse.Namespace:
     )
     p.add_argument("--lens", type=float, default=50.0)
     p.add_argument("--zoom", type=float, default=1.0)
-    p.add_argument("--azimuth", type=float, default=49.21)
-    p.add_argument("--elevation", type=float, default=20.21)
+    p.add_argument("--azimuth", type=float, default=63.00)
+    p.add_argument("--elevation", type=float, default=20.01)
     p.add_argument(
-        "--distance", type=float, default=-1.0,
+        "--distance", type=float, default=9.025,
         help="Explicit camera distance in meters; negative re-enables FOV auto-fit",
     )
-    p.add_argument("--aim", type=float, nargs=3, default=None, metavar=("X", "Y", "Z"))
+    p.add_argument(
+        "--aim", type=float, nargs=3, default=(2.409, -0.077, 0.561), metavar=("X", "Y", "Z")
+    )
     p.add_argument("--fstop", type=float, default=0.0, help="DoF f-stop; 0 disables")
     p.add_argument("--samples", type=int, default=128, help="Eevee TAA samples per frame")
     p.add_argument("--fog-density", type=float, default=0.04)
