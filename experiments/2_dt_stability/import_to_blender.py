@@ -36,14 +36,16 @@ GEO_MESH = 7
 GEO_CONE = 9
 GEO_CONVEX_MESH = 10
 
-# Vibrant per-body palette for the live robot.
+# Per-body palette: caterpillar-yellow chassis + matte black wheels (matches
+# examples/helhest/gradient/import_to_blender.py).
+WHEEL_COLOR = (0.08, 0.08, 0.08)
 LIVE_PALETTE = {
-    0: (0.05, 0.45, 1.00),  # chassis
-    1: (0.95, 0.15, 0.55),  # body 1 (e.g. left wheel): magenta
-    2: (0.10, 0.85, 0.85),  # body 2 (e.g. right wheel): cyan
-    3: (0.85, 0.95, 0.10),  # body 3 (e.g. rear wheel): lime
+    0: (0.98, 0.78, 0.10),  # chassis
+    1: WHEEL_COLOR,
+    2: WHEEL_COLOR,
+    3: WHEEL_COLOR,
 }
-LIVE_FALLBACK = (0.85, 0.45, 0.10)
+LIVE_FALLBACK = WHEEL_COLOR
 STATIC_COLOR = (0.22, 0.22, 0.24)  # ground plane: muted gray
 OBSTACLE_COLOR = (0.95, 0.70, 0.15)  # static non-plane shapes: warm yellow-orange
 
@@ -64,6 +66,35 @@ def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("npz", type=Path, help="trajectory.npz from sweep_mujoco_blender.py")
     p.add_argument("--output", type=Path, default=None, help="Save to this .blend after import")
+    p.add_argument(
+        "--video",
+        type=str,
+        default=None,
+        help=(
+            "Render output path baked into the .blend so `blender -b out.blend -a` "
+            "produces an MP4 (or PNG sequence on Blender 5.x). Defaults to "
+            "<output stem>.mp4 next to --output, or //render.mp4 when --output "
+            "is not set."
+        ),
+    )
+    p.add_argument("--lens", type=float, default=50.0)
+    p.add_argument("--zoom", type=float, default=1.0)
+    p.add_argument("--azimuth", type=float, default=49.21)
+    p.add_argument("--elevation", type=float, default=20.21)
+    p.add_argument(
+        "--distance", type=float, default=-1.0,
+        help="Explicit camera distance in meters; negative re-enables FOV auto-fit",
+    )
+    p.add_argument("--aim", type=float, nargs=3, default=None, metavar=("X", "Y", "Z"))
+    p.add_argument("--fstop", type=float, default=0.0, help="DoF f-stop; 0 disables")
+    p.add_argument("--samples", type=int, default=128, help="Eevee TAA samples per frame")
+    p.add_argument("--fog-density", type=float, default=0.04)
+    p.add_argument("--fog-color", type=float, nargs=3, default=(0.95, 0.78, 0.55))
+    p.add_argument("--fog-start", type=float, default=14.0)
+    p.add_argument(
+        "--fog-falloff", type=str, default="QUADRATIC",
+        choices=("QUADRATIC", "LINEAR", "INVERSE_QUADRATIC"),
+    )
     return p.parse_args(argv)
 
 
@@ -280,38 +311,80 @@ def setup_lighting(scene: bpy.types.Scene):
         bg_node.inputs["Strength"].default_value = 0.3
 
 
-def setup_camera(scene: bpy.types.Scene, points: np.ndarray):
-    """Static elevated 3/4 camera framing the bounding box of ``points`` ([N, 3])."""
+def setup_camera(
+    scene: bpy.types.Scene,
+    points: np.ndarray,
+    lens: float = 50.0,
+    azimuth_deg: float = 35.0,
+    elevation_deg: float = 40.0,
+    zoom: float = 1.0,
+    distance: float | None = None,
+    aim: tuple[float, float, float] | None = None,
+    fstop: float = 0.0,
+):
+    """Static elevated 3/4 camera, FOV-aware framing of ``points`` ([N, 3])."""
     for obj in list(scene.objects):
         if obj.type == "CAMERA":
             bpy.data.objects.remove(obj, do_unlink=True)
 
-    pmin = points.min(axis=0)
-    pmax = points.max(axis=0)
-    center = (pmin + pmax) / 2.0
-    extent = float(np.linalg.norm(pmax - pmin))
-
-    aim = bpy.data.objects.new("camera_aim", None)
-    aim.empty_display_type = "PLAIN_AXES"
-    aim.empty_display_size = 0.1
-    aim.location = (float(center[0]), float(center[1]), float(center[2]))
-    scene.collection.objects.link(aim)
-
     cam_data = bpy.data.cameras.new("camera")
-    cam_data.lens = 50.0
+    cam_data.lens = float(lens)
     cam_obj = bpy.data.objects.new("camera", cam_data)
 
-    azimuth = np.radians(35.0)
-    elevation = np.radians(40.0)
-    distance = max(extent * 0.95, 6.0)
-    offset = np.array(
-        [
-            distance * np.cos(elevation) * np.sin(azimuth),
-            -distance * np.cos(elevation) * np.cos(azimuth),
-            distance * np.sin(elevation),
-        ],
-        dtype=np.float32,
+    pad_min = np.array([0.5, 0.5, 0.3], dtype=np.float32)
+    pad_max = np.array([0.5, 0.5, 2.0], dtype=np.float32)
+    pmin = points.min(axis=0) - pad_min
+    pmax = points.max(axis=0) + pad_max
+    center = np.array(aim, dtype=np.float32) if aim is not None else (pmin + pmax) / 2.0
+
+    aim_obj = bpy.data.objects.new("camera_aim", None)
+    aim_obj.empty_display_type = "PLAIN_AXES"
+    aim_obj.empty_display_size = 0.1
+    aim_obj.location = (float(center[0]), float(center[1]), float(center[2]))
+    scene.collection.objects.link(aim_obj)
+
+    az = np.radians(azimuth_deg)
+    el = np.radians(elevation_deg)
+    offset_dir = np.array(
+        [np.cos(el) * np.sin(az), -np.cos(el) * np.cos(az), np.sin(el)], dtype=np.float32
     )
+    view_dir = -offset_dir
+    world_up = np.array([0.0, 0.0, 1.0], dtype=np.float32)
+    right = np.cross(view_dir, world_up); right /= np.linalg.norm(right)
+    up = np.cross(right, view_dir); up /= np.linalg.norm(up)
+
+    corners = np.array(
+        [
+            [pmin[0] if i & 1 else pmax[0],
+             pmin[1] if i & 2 else pmax[1],
+             pmin[2] if i & 4 else pmax[2]]
+            for i in range(8)
+        ], dtype=np.float32,
+    )
+    rel = corners - center
+    half_h = float(np.max(np.abs(rel @ right)))
+    half_v = float(np.max(np.abs(rel @ up)))
+
+    sensor_w = float(cam_data.sensor_width)
+    res_x = max(1, scene.render.resolution_x)
+    res_y = max(1, scene.render.resolution_y)
+    if res_x >= res_y:
+        sensor_w_eff = sensor_w
+        sensor_h_eff = sensor_w * res_y / res_x
+    else:
+        sensor_h_eff = sensor_w
+        sensor_w_eff = sensor_w * res_x / res_y
+    half_fov_h = float(np.arctan(0.5 * sensor_w_eff / cam_data.lens))
+    half_fov_v = float(np.arctan(0.5 * sensor_h_eff / cam_data.lens))
+
+    if distance is not None and distance >= 0:
+        cam_distance = float(distance)
+    else:
+        d_h = half_h / np.tan(half_fov_h) if half_h > 0 else 0.0
+        d_v = half_v / np.tan(half_fov_v) if half_v > 0 else 0.0
+        cam_distance = max(max(d_h, d_v) * 1.05 * float(zoom), 4.0)
+
+    offset = offset_dir * cam_distance
     cam_obj.location = (
         float(center[0] + offset[0]),
         float(center[1] + offset[1]),
@@ -319,12 +392,153 @@ def setup_camera(scene: bpy.types.Scene, points: np.ndarray):
     )
 
     track = cam_obj.constraints.new("TRACK_TO")
-    track.target = aim
+    track.target = aim_obj
     track.track_axis = "TRACK_NEGATIVE_Z"
     track.up_axis = "UP_Y"
 
     scene.collection.objects.link(cam_obj)
     scene.camera = cam_obj
+
+    if fstop > 0.0:
+        cam_data.dof.use_dof = True
+        cam_data.dof.focus_object = aim_obj
+        cam_data.dof.aperture_fstop = float(fstop)
+        if hasattr(scene, "eevee"):
+            for attr in ("use_bokeh_high_quality_slight_defocus", "use_high_quality_slight_defocus"):
+                if hasattr(scene.eevee, attr):
+                    setattr(scene.eevee, attr, True)
+
+    print(
+        f"Camera: lens={lens:.1f}mm, az={azimuth_deg:.2f}°, el={elevation_deg:.2f}°, "
+        f"dist={cam_distance:.3f}m, aim=({center[0]:.3f}, {center[1]:.3f}, {center[2]:.3f})"
+    )
+
+
+def setup_atmospheric_fog(
+    scene: bpy.types.Scene,
+    density: float,
+    color: tuple[float, float, float] = (0.7, 0.75, 0.85),
+    start: float = 0.0,
+    falloff: str = "QUADRATIC",
+):
+    """Depth-based atmospheric haze via the Mist render pass + compositor AlphaOver."""
+    if density <= 0.0:
+        return
+    world = scene.world
+    if world is None:
+        return
+
+    fog_depth = max(1.0 / density, 1.0)
+    mist = world.mist_settings
+    mist.start = float(start)
+    mist.depth = fog_depth
+    mist.falloff = str(falloff)
+    mist.height = 0.0
+    mist.intensity = 0.0
+
+    for vl in scene.view_layers:
+        vl.use_pass_mist = True
+
+    is_node_group = hasattr(scene, "compositing_node_group")
+    if is_node_group:
+        nt = scene.compositing_node_group
+        if nt is None:
+            nt = bpy.data.node_groups.new(name="DtStabilityComposite", type="CompositorNodeTree")
+            scene.compositing_node_group = nt
+    else:
+        scene.use_nodes = True
+        nt = scene.node_tree
+    nt.nodes.clear()
+
+    rl = nt.nodes.new("CompositorNodeRLayers")
+    rl.location = (0, 0)
+
+    over = nt.nodes.new("CompositorNodeAlphaOver")
+    over.location = (300, 0)
+    image_inputs = [s for s in over.inputs if s.bl_idname in ("NodeSocketColor", "NodeSocketRGBA")]
+    fac_inputs = [s for s in over.inputs if "Fac" in s.name or "Factor" in s.name]
+    if len(image_inputs) < 2 or not fac_inputs:
+        raise RuntimeError(
+            f"AlphaOver socket layout unexpected: {[(s.name, s.bl_idname) for s in over.inputs]}"
+        )
+    image_inputs[1].default_value = (*color, 1.0)
+
+    if is_node_group:
+        iface = nt.interface
+        has_image_out = any(
+            getattr(s, "in_out", None) == "OUTPUT" and s.name == "Image"
+            for s in iface.items_tree
+        )
+        if not has_image_out:
+            iface.new_socket(name="Image", in_out="OUTPUT", socket_type="NodeSocketColor")
+        out_node = nt.nodes.new("NodeGroupOutput")
+    else:
+        out_node = nt.nodes.new("CompositorNodeComposite")
+    out_node.location = (600, 0)
+
+    nt.links.new(rl.outputs["Image"], image_inputs[0])
+    nt.links.new(rl.outputs["Mist"], fac_inputs[0])
+    nt.links.new(over.outputs[0], out_node.inputs[0])
+    scene.render.use_compositing = True
+
+
+def configure_render_output(
+    scene: bpy.types.Scene, output_filepath: str, samples: int = 128
+) -> str | None:
+    """Set Eevee + video render settings; return ffmpeg cmd if PNG-sequence fallback used."""
+    engine_items = bpy.types.RenderSettings.bl_rna.properties["engine"].enum_items
+    available_engines = {e.identifier for e in engine_items}
+    if "BLENDER_EEVEE_NEXT" in available_engines:
+        scene.render.engine = "BLENDER_EEVEE_NEXT"
+    elif "BLENDER_EEVEE" in available_engines:
+        scene.render.engine = "BLENDER_EEVEE"
+
+    if hasattr(scene, "eevee") and hasattr(scene.eevee, "taa_render_samples"):
+        scene.eevee.taa_render_samples = max(1, int(samples))
+
+    image_settings = scene.render.image_settings
+    try:
+        image_settings.file_format = "FFMPEG"
+        has_ffmpeg = hasattr(scene.render, "ffmpeg")
+    except TypeError:
+        has_ffmpeg = False
+
+    if has_ffmpeg:
+        scene.render.ffmpeg.format = "MPEG4"
+        scene.render.ffmpeg.codec = "H264"
+        scene.render.ffmpeg.constant_rate_factor = "HIGH"
+        scene.render.ffmpeg.audio_codec = "NONE"
+        scene.render.filepath = output_filepath
+        return None
+
+    scene.render.image_settings.file_format = "PNG"
+    scene.render.image_settings.color_mode = "RGB"
+    if output_filepath.lower().endswith((".mp4", ".mov", ".mkv", ".webm")):
+        stem, _ = output_filepath.rsplit(".", 1)
+    else:
+        stem = output_filepath.rstrip("/")
+    frames_prefix = f"{stem}_frames/"
+    scene.render.filepath = frames_prefix
+    fps = max(1, int(scene.render.fps))
+    pattern = frames_prefix.lstrip("/") if frames_prefix.startswith("//") else frames_prefix
+    return (
+        f"ffmpeg -framerate {fps} -i '{pattern}%04d.png' "
+        f"-c:v libx264 -crf 18 -pix_fmt yuv420p '{output_filepath}'"
+    )
+
+
+def add_terrain_wireframe(collection: bpy.types.Collection, thickness: float = 0.008):
+    wire_mat = make_material("terrain_wires", (0.05, 0.05, 0.05), 1.0)
+    for obj in collection.objects:
+        if obj.type != "MESH":
+            continue
+        if wire_mat.name not in [m.name for m in obj.data.materials]:
+            obj.data.materials.append(wire_mat)
+        mod = obj.modifiers.new(name="Wireframe", type="WIREFRAME")
+        mod.thickness = thickness
+        mod.use_replace = False
+        mod.use_relative_offset = False
+        mod.material_offset = len(obj.data.materials) - 1
 
 
 # ---------------------------------------------------------------------------
@@ -344,6 +558,37 @@ class _ConstantInterpolation:
         bpy.context.preferences.edit.keyframe_new_interpolation_type = self._prev
 
 
+def _attach_label_backing(
+    text_obj: bpy.types.Object,
+    text: str,
+    size: float,
+    collection: bpy.types.Collection,
+    color: tuple[float, float, float] = (0.04, 0.04, 0.06),
+    alpha: float = 0.6,
+    pad_x: float = 0.35,
+    pad_y: float = 0.25,
+):
+    width = max(2, len(text)) * size * 0.55 + pad_x * size
+    height = size * 1.1 + pad_y * size
+    verts = [
+        (-width / 2.0, -pad_y * size * 0.5, 0.0),
+        (width / 2.0, -pad_y * size * 0.5, 0.0),
+        (width / 2.0, height - pad_y * size * 0.5, 0.0),
+        (-width / 2.0, height - pad_y * size * 0.5, 0.0),
+    ]
+    faces = [(0, 1, 2, 3)]
+    mesh = bpy.data.meshes.new(name=f"{text_obj.name}_backing_mesh")
+    mesh.from_pydata(verts, [], faces)
+    mesh.update()
+    plate = bpy.data.objects.new(name=f"{text_obj.name}_backing", object_data=mesh)
+    plate.parent = text_obj
+    plate.location = (0.0, 0.0, -0.01)
+    mat = make_material(f"{plate.name}_mat", color, alpha)
+    plate.data.materials.append(mat)
+    collection.objects.link(plate)
+    return plate
+
+
 def make_floating_label(
     name: str,
     follow_body: bpy.types.Object,
@@ -353,6 +598,7 @@ def make_floating_label(
     collection: bpy.types.Collection,
     color: tuple[float, float, float] = (1.0, 1.0, 1.0),
     camera: bpy.types.Object | None = None,
+    backing: bool = False,
 ) -> bpy.types.Object:
     """Text that follows ``follow_body``'s position; faces the camera if one exists."""
     curve = bpy.data.curves.new(name=f"{name}_curve", type="FONT")
@@ -362,7 +608,7 @@ def make_floating_label(
     curve.align_y = "BOTTOM"
     obj = bpy.data.objects.new(name=name, object_data=curve)
 
-    mat = make_material(f"{name}_mat", color, 1.0)
+    mat = make_material(f"{name}_mat", color, 1.0, roughness=1.0)
     obj.data.materials.append(mat)
 
     obj.location = (0.0, 0.0, z_offset)
@@ -377,6 +623,8 @@ def make_floating_label(
         track.up_axis = "UP_Y"
 
     collection.objects.link(obj)
+    if backing:
+        _attach_label_backing(obj, text, size, collection)
     return obj
 
 
@@ -403,6 +651,7 @@ def make_per_iteration_labels(
                 collection=collection,
                 color=color,
                 camera=camera,
+                backing=True,
             )
             start = it_idx * T
             end = (it_idx + 1) * T
@@ -614,7 +863,22 @@ def main():
     scene.frame_end = max(0, T_total - 1)
     scene.render.fps = max(1, int(round(fps)))
 
+    if args.video is not None:
+        video_path = args.video
+    elif args.output is not None:
+        video_path = f"//{args.output.stem}.mp4"
+    else:
+        video_path = "//render.mp4"
+    ffmpeg_cmd = configure_render_output(scene, video_path, samples=int(args.samples))
+
     setup_lighting(scene)
+    setup_atmospheric_fog(
+        scene,
+        density=float(args.fog_density),
+        color=tuple(args.fog_color),
+        start=float(args.fog_start),
+        falloff=str(args.fog_falloff),
+    )
 
     # Camera framing: chassis positions across stable iterations only, clipped to
     # CAMERA_BBOX_MAX_EXTENT so divergent runs don't blow out the framing.
@@ -628,7 +892,17 @@ def main():
         chassis_points = np.array(
             [[0.0, 0.0, 0.0], [4.0, 0.0, 0.5]], dtype=np.float32
         )
-    setup_camera(scene, chassis_points.astype(np.float32))
+    setup_camera(
+        scene,
+        chassis_points.astype(np.float32),
+        lens=float(args.lens),
+        azimuth_deg=float(args.azimuth),
+        elevation_deg=float(args.elevation),
+        zoom=float(args.zoom),
+        distance=float(args.distance) if args.distance >= 0 else None,
+        aim=tuple(args.aim) if args.aim is not None else None,
+        fstop=float(args.fstop),
+    )
 
     static_coll = bpy.data.collections.new("static")
     live_coll = bpy.data.collections.new("live")
@@ -665,6 +939,7 @@ def main():
     live_bodies = build_robot(shapes, "live", material_for_live, static_coll, live_coll)
     for empty in live_bodies.values():
         empty.empty_display_size = 0.0
+    add_terrain_wireframe(static_coll)
 
     label_coll = bpy.data.collections.new("floating_labels")
     scene.collection.children.link(label_coll)
@@ -697,6 +972,18 @@ def main():
     if args.output:
         bpy.ops.wm.save_as_mainfile(filepath=str(args.output.resolve()))
         print(f"Saved {args.output}")
+
+    if ffmpeg_cmd is None:
+        print(
+            f"Render with: blender -b {args.output or '<file>.blend'} -a -> writes {video_path}"
+        )
+    else:
+        print(
+            "Blender 5.x has no built-in FFmpeg encoder; the scene is configured "
+            "to render a PNG sequence instead."
+        )
+        print(f"  1) blender -b {args.output or '<file>.blend'} -a")
+        print(f"  2) {ffmpeg_cmd}")
 
 
 if __name__ == "__main__":
