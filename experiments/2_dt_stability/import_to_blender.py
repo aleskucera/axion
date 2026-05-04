@@ -651,7 +651,6 @@ def make_per_iteration_labels(
                 collection=collection,
                 color=color,
                 camera=camera,
-                backing=True,
             )
             start = it_idx * T
             end = (it_idx + 1) * T
