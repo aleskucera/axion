@@ -10,7 +10,6 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import math
 import os
 import pathlib
 import sys
@@ -77,26 +76,26 @@ class HelhestObstacleBlenderSim(HelhestObstacleSim):
         total_steps = self.clock.total_sim_steps
         dt = self.clock.dt
 
+        # Bound applies to *every* body, not just chassis — otherwise a wheel
+        # can fly past ~20 km before the chassis-only check fires, leaving
+        # extreme keyframes in the npz that bloat Blender's BVH/shadow bounds
+        # and tank EEVEE render time across the whole timeline.
+        DIVERGE_BOUND = 50.0
+
         for step in range(total_steps):
             self._single_physics_step(0)
             wp.synchronize()
             body_q = self.current_state.body_q.numpy()
             if body_q.ndim == 3:
                 body_q = body_q[0]
-            x = float(body_q[0, 0])
-            y = float(body_q[0, 1])
-            z = float(body_q[0, 2])
-            if (
-                math.isnan(x)
-                or math.isnan(y)
-                or math.isnan(z)
-                or abs(z) > 100.0
-                or abs(x) > 100.0
+            if (not np.all(np.isfinite(body_q))) or np.any(
+                np.abs(body_q[:, :3]) > DIVERGE_BOUND
             ):
                 has_nan = True
                 break
             raw_poses.append(body_q.astype(np.float32).copy())
             raw_times.append((step + 1) * dt)
+            z = float(body_q[0, 2])
             z_min = min(z_min, z)
             z_max = max(z_max, z)
 

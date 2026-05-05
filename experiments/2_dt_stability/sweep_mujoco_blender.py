@@ -273,7 +273,10 @@ def simulate_dt(dt: float, target_times: np.ndarray) -> tuple[np.ndarray, bool]:
         data.ctrl[:] = [wv, wv, wv]
         mujoco.mj_step(model, data)
         snap = _snapshot_poses(data, body_ids)
-        if not np.all(np.isfinite(snap)) or np.any(np.abs(snap[:, :3]) > 100.0):
+        # 50 m bound applies to *every* body, not just chassis — keeps
+        # diverged trajectories from baking ±25 km keyframes into the npz,
+        # which would bloat Blender's BVH/shadow bounds and tank EEVEE perf.
+        if not np.all(np.isfinite(snap)) or np.any(np.abs(snap[:, :3]) > 50.0):
             has_nan = True
             break
         raw_poses.append(snap)
