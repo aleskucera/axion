@@ -140,7 +140,15 @@ def _build_configs(dt: float):
         use_cuda_graph=True,
         headless_steps_per_segment=1,
     )
-    engine_config = SemiImplicitEngineConfig(angular_damping=0.05, friction_smoothing=0.1)
+    # Stiffer joint attachments (10× the defaults) — same values
+    # tune_semi_implicit.py settled on. Helps the wheel revolutes hold
+    # against the obstacle reaction without exploding at moderate dt.
+    engine_config = SemiImplicitEngineConfig(
+        angular_damping=0.05,
+        friction_smoothing=0.1,
+        joint_attach_ke=1.0e5,
+        joint_attach_kd=1.0e3,
+    )
     logging_config = LoggingConfig(
         enable_timing=False,
         enable_hdf5_logging=False,
