@@ -125,3 +125,37 @@ cpu continuous monitoring
 ```
 top
 ```
+
+### Produce tree structure for thesis
+This results in disconnected tree calls:
+```
+tree examples/conf -I "control"
+tree examples/double_pendulum -P "*.py|*.yaml" --prune
+tree src/axion/core -P "engine_config.py|gpt_engine.py|hybrid_gpt_engine.py|repeated_engine.py" --prune
+tree src/axion/neural_solver \
+  -P "*.py|*.yaml" \
+  -I "trained_models" \
+  --prune
+```
+
+This makes a connected tree:
+```
+(
+  echo examples
+  find examples/conf -not -path "*/control/*"
+  find examples/double_pendulum \( -name "*.py" -o -name "*.yaml" \)
+
+  echo src
+  echo src/axion
+  find src/axion/core \( \
+    -name "engine_config.py" -o \
+    -name "gpt_engine.py" -o \
+    -name "hybrid_gpt_engine.py" -o \
+    -name "repeated_engine.py" \
+  \)
+
+  find src/axion/neural_solver \
+    -not -path "*/trained_models/*" \
+    \( -name "*.py" -o -name "*.yaml" \)
+) | tree --fromfile --prune --noreport > src/axion/neural_solver/docs/tree_in_text.txt
+```

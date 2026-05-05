@@ -198,5 +198,6 @@ examples/comparison_scalability/*/results/
 # nn training statistics
 src/axion/neural_solver/train/trained_models/
 wandb/
+src/axion/neural_solver/docs/document/
 # edited by LLM, probably bullshit
 .tmp_cache/  
