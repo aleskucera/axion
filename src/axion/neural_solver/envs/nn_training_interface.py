@@ -131,10 +131,6 @@ class NnTrainingInterface:
         return self.simulator_wrapper.bodies_per_world
 
     @property
-    def joint_act_dim(self):
-        return self.simulator_wrapper.joint_act_dim
-
-    @property
     def action_dim(self):
         return self.simulator_wrapper.control_dim
 
@@ -159,10 +155,6 @@ class NnTrainingInterface:
         return self.simulator_wrapper.robot_name
 
     @property
-    def abstract_contacts(self):
-        return self.simulator_wrapper.abstract_contacts
-
-    @property
     def sim_states(self):
         return self.simulator_wrapper.state
 
@@ -176,7 +168,7 @@ class NnTrainingInterface:
 
     @property
     def num_contacts_per_env(self):
-        return self.simulator_wrapper.abstract_contacts.num_contacts_per_env
+        return self.simulator_wrapper.num_contacts_per_env
 
     @property
     def frame_dt(self):
@@ -369,7 +361,7 @@ class NnTrainingInterface:
             env_mode = self.env_mode
         self.set_env_mode(env_mode)
 
-        if self.joint_act_dim > 0:
+        if self.dof_q_per_env > 0:
             joint_target_pos = joint_target_pos.to(self.torch_device)
             self.simulator_wrapper.control.joint_target_pos.assign(
                 wp.from_torch(joint_target_pos.reshape(-1))

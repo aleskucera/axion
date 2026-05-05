@@ -471,7 +471,7 @@ class TrajectorySamplerPendulum(TrajectorySampler):
             desc="Sampling state transitions"
         )
         
-        num_contacts_per_env = self.env.abstract_contacts.num_contacts_per_env
+        num_contacts_per_env = self.env.num_contacts_per_env
         buffers = self._allocate_round_buffers(
             trajectory_length=trajectory_length,
             num_contacts_per_env=num_contacts_per_env,

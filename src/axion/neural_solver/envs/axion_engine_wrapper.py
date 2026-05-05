@@ -19,7 +19,6 @@ from axion.core.engine import AxionEngine
 from axion.core.engine_config import AxionEngineConfig
 from axion.core.types import JointMode
 from axion.neural_solver.utils.warp_utils import device_to_torch
-from axion.neural_solver.envs.abstract_contact import AbstractContact
 
 NUM_CONTACTS_PER_WORLD = 4 # hardcoded for double pendulum
 FRAME_DT = 0.01
@@ -93,29 +92,15 @@ class AxionEngineWrapper:
             self._torch_device
         )[:self.num_joints_per_world]
 
-        # control info
-        self.joint_act_dim = self.dof_q_per_world# 2 for planar double pendulum
-        self.control_dim = self.joint_act_dim
+        # control info (logical action width for limits / samplers; position targets use dof_q_per_world)
+        self.control_dim = self.dof_q_per_world  # 2 for planar double pendulum
         self.control_limits = torch.tensor(
             [[-1.0, 1.0]],
             dtype=torch.float32, device=self._torch_device
         ).expand(self.control_dim, 2).clone()
-        # Temporary joint_act buffer exposed to the adapter.
-        self.joint_act = wp.zeros(
-            self.model.joint_dof_count,
-            dtype=float,
-            device=self.device,
-        )
-        #Mirror inside control for adapter compatibility - Newton's Control does not have joint_act
-        self.control.joint_act = self.joint_act     # implicitly creates joint_act!! not  ideal
-        
-        #contact info
-        self.abstract_contacts = AbstractContact(
-            num_contacts_per_env= NUM_CONTACTS_PER_WORLD,
-            num_envs = self.num_envs,
-            model = self.model, 
-            device = device_to_torch(self.model.device)
-        )
+
+        # Batched contact layout (matches utils_provider AxionContacts max per world).
+        self.num_contacts_per_env: int = NUM_CONTACTS_PER_WORLD
         self.eval_collisions: bool = True   # ?
 
         if self.with_contacts:
@@ -187,10 +172,8 @@ class AxionEngineWrapper:
         control: newton.Control,
         state: newton.State,
     ) -> None:
-        # The purpose of this function was to write the "actions_wp" from input arguments
-        # into control.joint_act (the self.control.joint_act was passed to that).
-        # Anyway, this is a do-nothing function for now, because Newton's model does not
-        # have joint_act and we expose this only for compatibility purposes
+        # Legacy hook: pendulum rollouts use joint_target_pos, not joint_act torques.
+        # Kept for API compatibility with older envs that mapped actions into joint_act.
         return
 
     def reset(self) -> None:

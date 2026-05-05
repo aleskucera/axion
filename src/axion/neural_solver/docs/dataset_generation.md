@@ -103,8 +103,7 @@ CLI (simple_generate_dataset_pendulum.py)
 | `self.control` | `newton.Control` | Control inputs (unused in passive mode) |
 | `self.contacts` | `newton.Contacts` | Collision contacts from `model.collide()` |
 | `self.engine` | `AxionEngine` | The Axion maximal-coordinate integrator |
-| `self.joint_act` | `wp.array(float)` | Flat Warp array of joint actuator torques |
-| `self.abstract_contacts` | `AbstractContact` | Torch-side contact buffers (for dataset) |
+| `self.num_contacts_per_env` | `int` | Max contacts per env for batched NN contact tensors (pendulum: 4) |
 
 **Simulation constants:**
 
@@ -235,7 +234,7 @@ WarpSimDataGenerator          (holds env ref, joint limits, sampler)
 - Concatenates all batches along the `num_envs` dimension (dim=1).
 - Returns the merged `rollouts` dict.
 
-**Important note on contacts:** Unlike the base class `TrajectorySampler.sample_trajectories_joint_act_mode()` which reads contact data from `env.abstract_contacts` after each step, `sample_trajectories_states_only()` allocates contact buffers but **never writes to them**. The HDF5 file will contain contact datasets with uninitialized/garbage values. This is expected for the current states-only workflow.
+**Note on contacts (pendulum trajectory mode):** Contact tensors are filled from Newton collision data via `env.convert_newton_contacts_to_contacts_for_nn_model()` each step; raw Axion batched contacts are snapshotted from `env.utils_provider.axion_contacts`. The removed `AbstractContact` helper is not part of this path.
 
 ---
 
@@ -299,13 +298,9 @@ data.uniform_()
 data[...] = data * (high - low) + low
 ```
 
-### `AbstractContact` (`abstract_contact.py`)
-
-Torch-side representation of rigid contact data. Allocates `(num_contacts_per_env × num_envs)` flat tensors for `contact_point0`, `contact_point1`, `contact_normal`, `contact_depth`, `contact_thickness`, etc. Also creates Warp array views mapped to the Newton model's rigid contact fields. **In the simple sampler, these are never read from the simulation** — the buffers stay at their initialized (zero) values in the `AbstractContact` object, while the sampler's own local `contact_*` tensors are `torch.empty` (uninitialized).
-
 ---
 
 ## Future Work
 
-- **Contacts:** The base class `TrajectorySampler.sample_trajectories_joint_act_mode()` already has the logic to read `abstract_contacts` fields after each step and record them. When contacts are needed, either switch to that method or add equivalent reads to `sample_trajectories_states_only()`.
+- **Contacts:** Align older doc sections (simple torque sampler / HDF5 tables) with `TrajectorySamplerPendulum` if you still maintain those scripts.
 - **Controls:** Currently `joint_acts` are randomly sampled torques (or zero in passive mode). Structured control policies can be plugged in by replacing the `UniformSampler` call for `joint_acts`.

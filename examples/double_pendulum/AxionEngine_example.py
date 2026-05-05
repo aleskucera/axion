@@ -26,7 +26,6 @@ ENABLE_CONTROL = True  # True=controller active, False=controller off
 TARGET_POS_Q0 = np.pi/2
 TARGET_POS_Q1 = -np.pi
 
-
 @wp.kernel
 def _gravity_comp_kernel(
     joint_q: wp.array(dtype=wp.float32),
@@ -163,8 +162,7 @@ class Simulator(InteractiveSimulator):
         # 2) Update self.control.joint_target_pos / joint_target_vel every step.
         wp.copy(self.control.joint_target_pos, self.q_target)
 
-        # Gravity compensation feedforward — computed entirely on GPU so this
-        # is safe inside CUDA graph capture (no D2H copies).
+        # Gravity compensation feedforward
         wp.launch(
             kernel=_gravity_comp_kernel,
             dim=1,
@@ -172,6 +170,8 @@ class Simulator(InteractiveSimulator):
             outputs=[self.gravity_comp_torque],
             device=self.model.device,
         )
+
+        # Write the FF gravity to control torques: self.control.joint_f
         wp.copy(self.control.joint_f, self.gravity_comp_torque)
 
     @override

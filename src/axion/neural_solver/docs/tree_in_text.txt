@@ -38,7 +38,6 @@
             ├── docs
             │   └── convert_to_dirtree.py
             ├── envs
-            │   ├── abstract_contact.py
             │   ├── axion_engine_wrapper.py
             │   └── nn_training_interface.py
             ├── generate
