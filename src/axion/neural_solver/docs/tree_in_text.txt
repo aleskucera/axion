@@ -1,0 +1,101 @@
+.
+├── examples
+│   └── double_pendulum
+│       ├── AxioneEngineWithNeuralLambdas_example.py
+│       ├── AxionEngine_example.py
+│       ├── GPTEngine_example.py
+│       ├── HybridGPTEngine_example.py
+│       ├── pendulum_articulation_definition.py
+│       ├── pendulum_hdf5Visualizer.py
+│       ├── pendulum_utils.py
+│       ├── RepeatedEngine_example.py
+│       └── test_engines.py
+└── src
+    └── axion
+        ├── core
+        │   ├── engine_config.py
+        │   ├── gpt_engine.py
+        │   ├── hybrid_gpt_engine.py
+        │   └── repeated_engine.py
+        └── neural_solver
+            ├── algorithms
+            │   ├── contact_mtl_trainer.py
+            │   ├── lambda_classification_trainer.py
+            │   ├── mse_trainer.py
+            │   ├── mtl_trainer.py
+            │   ├── residual_trainer.py
+            │   └── sequence_model_trainer.py
+            ├── compare.py
+            ├── comparisons
+            │   ├── analyze_engine_test.py
+            │   ├── axion_timing_plot.py
+            │   ├── compare_iter_counts.py
+            │   ├── error_in_lambda_prediciton_between_models.py
+            │   ├── per_element_diff.py
+            │   └── plot_hdf5log_from_example.py
+            ├── datasets
+            │   └── split_dataset.py
+            ├── docs
+            │   └── convert_to_dirtree.py
+            ├── envs
+            │   ├── abstract_contact.py
+            │   ├── axion_engine_wrapper.py
+            │   └── nn_training_interface.py
+            ├── generate
+            │   ├── generate_dataset_pendulum.py
+            │   ├── simple_generate_dataset_pendulum.py
+            │   ├── simple_trajectory_sampler_pendulum.py
+            │   ├── simulation_sampler.py
+            │   ├── trajectory_sampler_pendulum.py
+            │   └── trajectory_sampler.py
+            ├── models
+            │   ├── base_models.py
+            │   ├── contact_mtl_model.py
+            │   ├── lambda_models.py
+            │   ├── models.py
+            │   ├── model_transformer.py
+            │   ├── model_utils.py
+            │   ├── mse_model.py
+            │   ├── mtl_model.py
+            │   └── residual_model.py
+            ├── neural_model_utils_providers
+            │   └── transformer_neural_utils_provider_new.py
+            ├── standalone
+            │   ├── neural_predictor_helpers.py
+            │   ├── neural_predictor.py
+            │   └── test_trained_model_cli.py
+            ├── train
+            │   ├── cfg
+            │   │   └── Pendulum
+            │   │       ├── contactMtlNetwork.yaml
+            │   │       ├── lambdaNetwork.yaml
+            │   │       ├── mseNetwork.yaml
+            │   │       ├── mtlNetwork.yaml
+            │   │       ├── residualNetwork.yaml
+            │   │       └── transformer.yaml
+            │   ├── config_builder.py
+            │   ├── mse_sweep_train.py
+            │   ├── sweep_configurations.py
+            │   ├── sweep_train.py
+            │   ├── test.py
+            │   ├── train_contact_mtl.py
+            │   ├── train_lambda_network.py
+            │   ├── train_mse.py
+            │   ├── train_mtl.py
+            │   ├── train.py
+            │   └── train_residual_network.py
+            └── utils
+                ├── add_lambda_activity_labels.py
+                ├── add_lambda_labels_size.py
+                ├── commons.py
+                ├── datasets.py
+                ├── differentiable.py
+                ├── evaluator.py
+                ├── logger.py
+                ├── loss_utils.py
+                ├── neural_lambda_hdf5_logger.py
+                ├── python_utils.py
+                ├── running_mean_std.py
+                ├── time_report.py
+                ├── torch_utils.py
+                └── warp_utils.py
