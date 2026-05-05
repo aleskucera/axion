@@ -208,6 +208,14 @@ def collect_dataset(
         "lines 131-145; q taken from states at step start (same time index as joint_target_pos broadcast)."
     )
     data_grp.attrs['next_state_dim'] = rollouts['next_states'].shape[-1]
+    data_grp.attrs['lambda_dim'] = int(rollouts['lambdas'].shape[-1])
+    data_grp.attrs['lambda_layout'] = 'joint:10|control:2|contact:12'
+    lambda_blocks = ['joint']
+    if not passive:
+        lambda_blocks.append('control')
+    if with_contacts:
+        lambda_blocks.append('contact')
+    data_grp.attrs['lambda_active_blocks'] = ','.join(lambda_blocks)
 
     
     data_writer.flush()
@@ -250,7 +258,12 @@ if __name__ == '__main__':
     parser.add_argument(
         '--without-contacts',
         action='store_true',
-        help="Disable the tilted contact plane in the simulator. By default, dataset generation uses contacts.",
+        help=(
+            "Disable the tilted contact plane in the simulator. By default, dataset generation uses contacts. "
+            "Lambdas and next_lambdas are always stored in canonical width 24 "
+            "(joint:10|control:2|contact:12); missing blocks are zero-filled. "
+            "See HDF5 attrs lambda_layout and lambda_active_blocks."
+        ),
     )
     parser.add_argument('--seed',
                         type=int,

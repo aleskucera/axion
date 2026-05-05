@@ -33,6 +33,13 @@ from examples.double_pendulum.pendulum_articulation_definition import PENDULUM_H
 
 MAX_ANGLE_WITH_Z_AXIS_RAD = 0.64
 MAX_D_COEFFICIENT_OFFSET_M = 2.5
+
+# Fixed layout for Pendulum + tilted contact plane (joint_dof_mode NONE vs TARGET_POSITION
+# only changes control block width). See EngineDimensions: joint | control | contact.
+PENDULUM_FULL_LAMBDA_DIM = 24
+PENDULUM_LAMBDA_N_J = 10
+PENDULUM_LAMBDA_N_CTRL = 2
+
 """
 Trajectory-mode dataset generator for Pendulum env.
 In Pendulum, we use abstract mode for contact sampling, where we directly sample 
@@ -88,6 +95,57 @@ class TrajectorySamplerPendulum(TrajectorySampler):
 
         self.joint_target_min = torch.tensor(tmin, dtype=torch.float32, device=self.torch_device)
         self.joint_target_max = torch.tensor(tmax, dtype=torch.float32, device=self.torch_device)
+
+    @property
+    def lambda_storage_dim(self) -> int:
+        """Last dim for stored λ tensors.
+
+        Always the canonical Pendulum layout width ``PENDULUM_FULL_LAMBDA_DIM`` (24):
+        joint (10) | control (2) | contact (12). Missing blocks are zero-filled
+        depending on ``with_contacts`` and passive rollouts.
+        """
+        return PENDULUM_FULL_LAMBDA_DIM
+
+    def _write_full_lambdas(
+        self, dest: torch.Tensor, src: torch.Tensor, passive: bool
+    ) -> None:
+        """Copy engine λ into rollout buffers using canonical 24-wide layout.
+
+        We map based on the engine width itself (not only flags), since some
+        simulator configurations can still expose a 22-wide (joint|contact)
+        layout even when generation is run with ``--without-contacts``.
+        """
+        dest.zero_()
+        ld = int(src.shape[-1])
+        nj, nc = PENDULUM_LAMBDA_N_J, PENDULUM_LAMBDA_N_CTRL
+        full = PENDULUM_FULL_LAMBDA_DIM
+        passive_with_contact = full - nc
+        active_without_contact = nj + nc
+
+        if ld == full:
+            dest.copy_(src)
+            return
+        if ld == passive_with_contact:
+            # joint | contact (control missing)
+            dest[..., :nj].copy_(src[..., :nj])
+            dest[..., nj + nc :].copy_(src[..., nj:])
+            return
+        if ld == active_without_contact:
+            # joint | control (contact missing)
+            dest[..., :nj].copy_(src[..., :nj])
+            dest[..., nj : nj + nc].copy_(src[..., nj:active_without_contact])
+            return
+        if ld == nj:
+            # joint only (control + contact missing)
+            dest[..., :nj].copy_(src[..., :nj])
+            return
+
+        raise ValueError(
+            f"Unexpected engine lambda width {ld} for Pendulum "
+            f"(with_contacts={self.with_contacts}, passive={passive}); "
+            f"supported widths are {full}, {passive_with_contact}, "
+            f"{active_without_contact}, or {nj}."
+        )
 
     def compute_pendulum_points(self, initial_states):
         q0 = torch.pi / 2 - initial_states[..., 0] 
@@ -253,14 +311,14 @@ class TrajectorySamplerPendulum(TrajectorySampler):
         lambdas = torch.zeros(
             trajectory_length,
             self.num_envs,
-            self.env.lambda_dim,
+            self.lambda_storage_dim,
             dtype=torch.float32,
             device=self.torch_device,
         )
         next_lambdas = torch.zeros(
             trajectory_length,
             self.num_envs,
-            self.env.lambda_dim,
+            self.lambda_storage_dim,
             dtype=torch.float32,
             device=self.torch_device,
         )
@@ -608,7 +666,9 @@ class TrajectorySamplerPendulum(TrajectorySampler):
                             is_angular=True,
                         )
                     )
-                lambdas[step, :, :].copy_(self.env.get_lambdas())
+                self._write_full_lambdas(
+                    lambdas[step, :, :], self.env.get_lambdas(), passive
+                )
                 if passive:
                     next_states[step, :, :].copy_(
                         self.env.step(
@@ -622,7 +682,9 @@ class TrajectorySamplerPendulum(TrajectorySampler):
                             env_mode='ground-truth',
                         )
                     )
-                next_lambdas[step, :, :].copy_(self.env.get_lambdas())
+                self._write_full_lambdas(
+                    next_lambdas[step, :, :], self.env.get_lambdas(), passive
+                )
                 converted_gravity = self.env.get_gravity_dir()
                 gravity_dir[step,:,:].copy_(converted_gravity)
                 self._snapshot_axion_contacts(

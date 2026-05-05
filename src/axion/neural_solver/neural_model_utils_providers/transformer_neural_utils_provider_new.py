@@ -25,7 +25,9 @@ from axion.neural_solver.standalone.neural_predictor_helpers import (
 )
 
 PENDULUM_MAX_NUM_CONTACTS_PER_ROBOT_MODEL = 4
-PENDULUM_NUM_OF_ALL_LAMBDAS = 22
+# Fallback only when ``lambda_dim`` is not passed; training uses engine ``num_constraints``
+# (e.g. 24 for Pendulum with joint limits + 2 control constraint rows).
+PENDULUM_NUM_OF_ALL_LAMBDAS = 24
 
 def _ensure_bt(x: torch.Tensor) -> torch.Tensor:
     """Ensure tensor is (B, T, D). Accepts (B, D) or (B, T, D)."""
