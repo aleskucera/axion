@@ -54,7 +54,7 @@ DURATION = 4.0
 # the three runs line up frame-by-frame in compare_to_blender.py. The list
 # spans semi-implicit's boundary (~0.65 ms) and MuJoCo's (~1.5 ms); axion
 # stays stable across the whole range.
-DT_LIST = [5e-4, 1e-3, 2e-2, 1e-1]
+DT_LIST = [5e-4, 1e-3, 2e-2, 1.3e-1]
 DEFAULT_FPS = 30
 
 

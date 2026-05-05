@@ -43,7 +43,7 @@ from sweep_mujoco_blender import (  # noqa: E402
 )
 
 DURATION = 4.0
-DT_LIST = [5e-4, 1e-3, 2e-2, 1e-1]
+DT_LIST = [5e-4, 1e-3, 2e-2, 1.3e-1]
 DEFAULT_FPS = 30
 
 WHEEL_JOINT_NAMES = ("left_wheel_j", "right_wheel_j", "rear_wheel_j")
@@ -54,6 +54,9 @@ gs.init(backend=gs.gpu, logging_level="warning")
 
 
 def _build_xml(dt: float) -> str:
+    # Pass the MJCF default — Genesis's constraint solver auto-bumps timeconst
+    # to >= 2*dt internally (warns "timeconst is changed from 0.005 to ..."),
+    # so we don't need to pre-bump here.
     return HELHEST_OBSTACLE_XML.format(
         dt=dt,
         kv=KV,
@@ -61,6 +64,7 @@ def _build_xml(dt: float) -> str:
         obstacle_mu=OBSTACLE_MU,
         obstacle_x=OBSTACLE_X,
         obstacle_height=OBSTACLE_HEIGHT,
+        solref_timeconst=0.005,
         chassis_qw=1.0,
         chassis_qz=0.0,
     )

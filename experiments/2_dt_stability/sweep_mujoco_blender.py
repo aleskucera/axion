@@ -53,7 +53,7 @@ RENDER_BODIES = ["chassis", "left_wheel", "right_wheel", "rear_wheel"]
 # the three runs line up frame-by-frame in compare_to_blender.py.
 # MuJoCo's nominal max stable dt is ~1.5 ms — only the 0.5 ms entry should
 # stay stable here; the rest fail (stall, bounce, or fly).
-DT_LIST = [5e-4, 1e-3, 2e-2, 1e-1]
+DT_LIST = [5e-4, 1e-3, 2e-2, 1.3e-1]
 
 DEFAULT_FPS = 30
 PLANE_HALF_EXTENT = 5.0  # cap the ground plane render size; mujoco default is huge
