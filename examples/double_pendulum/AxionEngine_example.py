@@ -23,8 +23,8 @@ from pendulum_utils import set_tilted_plane_from_coefficients
 
 CONFIG_PATH = pathlib.Path(__file__).parent.parent.joinpath("conf")
 ENABLE_CONTROL = True  # True=controller active, False=controller off
-TARGET_POS_Q0 = np.pi/2
-TARGET_POS_Q1 = -np.pi
+TARGET_POS_Q0 = 0
+TARGET_POS_Q1 = 0
 
 @wp.kernel
 def _gravity_comp_kernel(
@@ -171,7 +171,7 @@ class Simulator(InteractiveSimulator):
             device=self.model.device,
         )
 
-        # Write the FF gravity to control torques: self.control.joint_f
+        # Write the FF gravity to control torques:
         wp.copy(self.control.joint_f, self.gravity_comp_torque)
 
     @override
@@ -276,7 +276,7 @@ def basic_pendulum_example(cfg: DictConfig):
     # Custom initial conditions: (q0, q1, qd0, qd1)
     # Set to None to start from the default rest position.
     INITIAL_STATE = None #(-0.5704, 2.8907, -3.6530, -7.6918)  # e.g. 
-    #INITIAL_STATE = (0.5, -0.3, 1.0, -2.0)
+    INITIAL_STATE = (0, -0, 0, 0)
 
     simulator = Simulator(
         sim_config=sim_config,

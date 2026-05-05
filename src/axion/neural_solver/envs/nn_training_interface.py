@@ -83,6 +83,9 @@ class NnTrainingInterface:
             requires_grad= False, # Check if true
             warp_env_cfg=warp_env_cfg,
         )
+        engine_lambda_dim = int(self.simulator_wrapper.next_lambdas.shape[-1])
+        utils_provider_cfg = dict(utils_provider_cfg)
+        utils_provider_cfg.setdefault("lambda_dim", engine_lambda_dim)
 
         self.utils_provider = TransformerNeuralModelUtilsProvider(
             robot_model=self.simulator_wrapper.model,
@@ -125,6 +128,10 @@ class NnTrainingInterface:
     @property
     def state_dim(self):
         return self.simulator_wrapper.dof_q_per_world + self.simulator_wrapper.dof_qd_per_world
+
+    @property
+    def lambda_dim(self):
+        return int(self.simulator_wrapper.next_lambdas.shape[-1])
 
     @property
     def bodies_per_env(self):
@@ -345,10 +352,12 @@ class NnTrainingInterface:
         if env_mode == "neural":
             return self._step_neural()
         else:
+            self.simulator_wrapper.clear_ff_joint_forces()
             self.simulator_wrapper.update()
             self._sync_states()
             self.lambdas.copy_(self.get_lambdas())
-            self.utils_provider.lambdas.copy_(self.lambdas)
+            if self.utils_provider.lambdas.shape[-1] == self.lambdas.shape[-1]:
+                self.utils_provider.lambdas.copy_(self.lambdas)
             return self.states
 
     def step_with_joint_target_pos(
@@ -370,10 +379,12 @@ class NnTrainingInterface:
         if env_mode == "neural":
             return self._step_neural()
         else:
+            self.simulator_wrapper.apply_pendulum_ff_gravity(self.simulator_wrapper.state)
             self.simulator_wrapper.update()
             self._sync_states()
             self.lambdas.copy_(self.get_lambdas())
-            self.utils_provider.lambdas.copy_(self.lambdas)
+            if self.utils_provider.lambdas.shape[-1] == self.lambdas.shape[-1]:
+                self.utils_provider.lambdas.copy_(self.lambdas)
             return self.states
 
     def get_lambdas(self):
