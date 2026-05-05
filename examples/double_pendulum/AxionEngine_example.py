@@ -23,8 +23,8 @@ from pendulum_utils import set_tilted_plane_from_coefficients
 
 CONFIG_PATH = pathlib.Path(__file__).parent.parent.joinpath("conf")
 ENABLE_CONTROL = True  # True=controller active, False=controller off
-TARGET_POS_Q0 = -np.pi/2
-TARGET_POS_Q1 = 0.0
+TARGET_POS_Q0 = np.pi/2
+TARGET_POS_Q1 = -np.pi
 
 
 @wp.kernel

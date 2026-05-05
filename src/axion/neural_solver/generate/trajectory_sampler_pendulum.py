@@ -17,13 +17,12 @@ import sys, os
 base_dir = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '../'))
 sys.path.append(base_dir)
 
-from typing import List, Dict, Union
+from typing import List, Dict, Union, Optional
 import numpy as np
 from tqdm import trange
 
 import warp as wp
 import torch
-
 from axion.neural_solver.envs.nn_training_interface import NnTrainingInterface
 from axion.neural_solver.generate.simulation_sampler import UniformSampler
 from axion.neural_solver.generate.trajectory_sampler import TrajectorySampler
@@ -51,20 +50,44 @@ class TrajectorySamplerPendulum(TrajectorySampler):
         joint_q_max: Union[float, np.ndarray],
         joint_qd_min: Union[float, np.ndarray],
         joint_qd_max: Union[float, np.ndarray],
-        joint_act_scale: float,
+        joint_act_scale: float = 0.0,
         contact_prob: float = 0.,
         with_contacts: bool = True,
-        sampler=UniformSampler()
+        sampler=UniformSampler(),
+        joint_target_min: Optional[Union[float, np.ndarray]] = None,
+        joint_target_max: Optional[Union[float, np.ndarray]] = None,
     ):
+        # Torque-scale (`joint_act_scale`) is unused for position-target rollouts; base class
+        # still receives 0.0 so internal torque buffers stay inactive.
         super().__init__(
-            env, 
-            joint_q_min, joint_q_max, 
+            env,
+            joint_q_min, joint_q_max,
             joint_qd_min, joint_qd_max,
-            joint_act_scale,
+            0.0,
             contact_prob,
             sampler
         )
         self.with_contacts = with_contacts
+
+        nq = env.dof_q_per_env
+        if joint_target_min is None:
+            tmin = np.full(nq, -np.pi, dtype=np.float64)
+        elif isinstance(joint_target_min, np.ndarray):
+            assert len(joint_target_min) == nq
+            tmin = joint_target_min.astype(np.float64, copy=False)
+        else:
+            tmin = np.full(nq, float(joint_target_min), dtype=np.float64)
+
+        if joint_target_max is None:
+            tmax = np.full(nq, np.pi, dtype=np.float64)
+        elif isinstance(joint_target_max, np.ndarray):
+            assert len(joint_target_max) == nq
+            tmax = joint_target_max.astype(np.float64, copy=False)
+        else:
+            tmax = np.full(nq, float(joint_target_max), dtype=np.float64)
+
+        self.joint_target_min = torch.tensor(tmin, dtype=torch.float32, device=self.torch_device)
+        self.joint_target_max = torch.tensor(tmax, dtype=torch.float32, device=self.torch_device)
 
     def compute_pendulum_points(self, initial_states):
         q0 = torch.pi / 2 - initial_states[..., 0] 
@@ -241,10 +264,10 @@ class TrajectorySamplerPendulum(TrajectorySampler):
             dtype=torch.float32,
             device=self.torch_device,
         )
-        joint_acts = torch.empty(
-            trajectory_length,
+        # One position target per trajectory (constant across steps); shape matches generalized q DOFs.
+        joint_target_pos = torch.empty(
             self.num_envs,
-            self.joint_act_dim,
+            self.env.dof_q_per_env,
             dtype=torch.float32,
             device=self.torch_device,
         )
@@ -381,7 +404,7 @@ class TrajectorySamplerPendulum(TrajectorySampler):
             "next_states": next_states,
             "lambdas": lambdas,
             "next_lambdas": next_lambdas,
-            "joint_acts": joint_acts,
+            "joint_target_pos": joint_target_pos,
             "root_body_q": root_body_q,
             "gravity_dir": gravity_dir,
             "contact_normals": contact_normals,
@@ -436,7 +459,7 @@ class TrajectorySamplerPendulum(TrajectorySampler):
                 'contact_thicknesses': []
             },
             'lambdas': [],
-            'joint_acts': [],
+            'joint_target_pos': [],
             'next_states': [],
             'next_lambdas': [],
             'plane_coefficients': [],
@@ -458,7 +481,7 @@ class TrajectorySamplerPendulum(TrajectorySampler):
         next_states = buffers["next_states"]
         lambdas = buffers["lambdas"]
         next_lambdas = buffers["next_lambdas"]
-        joint_acts = buffers["joint_acts"]
+        joint_target_pos = buffers["joint_target_pos"]
         root_body_q = buffers["root_body_q"]
         gravity_dir = buffers["gravity_dir"]
         contact_normals = buffers["contact_normals"]
@@ -486,6 +509,7 @@ class TrajectorySamplerPendulum(TrajectorySampler):
             self.env.start_video_export(export_video_path)
 
         rounds = 0
+
         for _ in progress:
             rounds += 1
 
@@ -497,14 +521,18 @@ class TrajectorySamplerPendulum(TrajectorySampler):
                 data = initial_states)
 
             pendulum_points_world = self.compute_pendulum_points(initial_states)
-        
-           # generate random joint_acts
-            self.sampler.sample(
-                batch_size = self.num_envs * trajectory_length, 
-                low = -self.joint_act_scale,
-                high = self.joint_act_scale,
-                data = joint_acts.view(-1, self.joint_act_dim)
-            )
+            
+            # Sample random joint position targets once per trajectory (uniform per joint).
+            # Passive mode uses free dynamics; targets stay zero and are not fed to the sim.
+            if passive:
+                joint_target_pos.zero_()
+            else:
+                self.sampler.sample(
+                    batch_size=self.num_envs,
+                    low=self.joint_target_min,
+                    high=self.joint_target_max,
+                    data=joint_target_pos,
+                )
             # ground plane normals (batched per env), at most 0.64 rad from world z
             if self.with_contacts:
                 self.sampler.sample_plane_normals(
@@ -550,9 +578,6 @@ class TrajectorySamplerPendulum(TrajectorySampler):
                     device=self.torch_device,
                 )
 
-            if passive:
-                joint_acts *= 0.
-
             # set initial states and scene (plane n·x + d = 0)
             if self.with_contacts:
                 self.env.reset(
@@ -568,12 +593,19 @@ class TrajectorySamplerPendulum(TrajectorySampler):
                 root_body_q[step, :, :].copy_(self.env.root_body_q)
                 states[step, :, :].copy_(self.env.states)
                 lambdas[step, :, :].copy_(self.env.get_lambdas())
-                next_states[step, :, :].copy_(
-                    self.env.step_with_joint_act(
-                        joint_acts[step, :, :],
-                        env_mode = 'ground-truth'
+                if passive:
+                    next_states[step, :, :].copy_(
+                        self.env.step(
+                            env_mode='ground-truth',
+                        )
                     )
-                )
+                else:
+                    next_states[step, :, :].copy_(
+                        self.env.step_with_joint_target_pos(
+                            joint_target_pos,
+                            env_mode='ground-truth',
+                        )
+                    )
                 next_lambdas[step, :, :].copy_(self.env.get_lambdas())
                 converted_gravity = self.env.get_gravity_dir()
                 gravity_dir[step,:,:].copy_(converted_gravity)
@@ -606,13 +638,13 @@ class TrajectorySamplerPendulum(TrajectorySampler):
             rollout_batches['axion_contacts']['contact_shape0'].append(axion_contact_shape0.clone())
             rollout_batches['axion_contacts']['contact_shape1'].append(axion_contact_shape1.clone())
             rollout_batches['axion_contacts']['contact_thickness0'].append(axion_contact_thickness0.clone())
-            rollout_batches['axion_contacts']['contact_thickness1'].append(axion_contact_thickness1.clone()            )
+            rollout_batches['axion_contacts']['contact_thickness1'].append(axion_contact_thickness1.clone())
             rollout_batches['contacts']['contact_normals'].append(contact_normals.clone())
             rollout_batches['contacts']['contact_depths'].append(contact_depths.clone())
             rollout_batches['contacts']['contact_points_0'].append(contact_points_0.clone())
             rollout_batches['contacts']['contact_points_1'].append(contact_points_1.clone())
             rollout_batches['contacts']['contact_thicknesses'].append(contact_thicknesses.clone())
-            rollout_batches['joint_acts'].append(joint_acts.clone())
+            rollout_batches['joint_target_pos'].append(joint_target_pos.unsqueeze(0).expand(trajectory_length, -1, -1).clone())
             rollout_batches['next_states'].append(next_states.clone())
             rollout_batches['plane_coefficients'].append(plane_coefficients.clone())
             rollout_batches['lambdas'].append(lambdas.clone())

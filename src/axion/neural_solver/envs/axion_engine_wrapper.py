@@ -17,6 +17,7 @@ if _repo_root not in sys.path:
 from examples.double_pendulum.pendulum_articulation_definition import build_pendulum_model
 from axion.core.engine import AxionEngine
 from axion.core.engine_config import AxionEngineConfig
+from axion.core.types import JointMode
 from axion.neural_solver.utils.warp_utils import device_to_torch
 from axion.neural_solver.envs.abstract_contact import AbstractContact
 
@@ -49,7 +50,8 @@ class AxionEngineWrapper:
 
         warp_env_cfg = warp_env_cfg or {}
         self.with_contacts: bool = bool(warp_env_cfg.get("with_contacts", True))
-        
+        joint_dof_mode = warp_env_cfg.get("joint_dof_mode", JointMode.NONE)
+
         # model (robot model built by AxionModelBuilder):
         if self.env_name in ("PendulumWithContact", "Pendulum", "pendulum"):
             self.model = build_pendulum_model(
@@ -57,6 +59,7 @@ class AxionEngineWrapper:
                 self.device,
                 self.requires_grad,
                 with_contacts=self.with_contacts,
+                joint_dof_mode=joint_dof_mode,
             )
         else:
             raise NotImplementedError
