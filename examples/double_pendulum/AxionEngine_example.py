@@ -10,15 +10,43 @@ import warp as wp
 from axion import EngineConfig
 from axion import ExecutionConfig
 from axion import InteractiveSimulator
+from axion import JointMode
 from axion import LoggingConfig
 from axion import RenderingConfig
 from axion import SimulationConfig
 from omegaconf import DictConfig
-from pendulum_articulation_definition import build_pendulum_model, PENDULUM_HEIGHT
+from pendulum_articulation_definition import (
+    LINK_LENGTH,
+    PENDULUM_HEIGHT,
+    build_pendulum_model,
+)
 from pendulum_utils import set_tilted_plane_from_coefficients
 # from axion.articulations.pendulum_articulation_definition import build_pendulum_model, PENDULUM_HEIGHT
 
 CONFIG_PATH = pathlib.Path(__file__).parent.parent.joinpath("conf")
+ENABLE_CONTROL = True  # True=controller active, False=controller off
+TARGET_POS_Q0 = 0.0
+TARGET_POS_Q1 = 0.0
+
+
+@wp.kernel
+def _gravity_comp_kernel(
+    joint_q: wp.array(dtype=wp.float32),
+    m0: float,
+    m1: float,
+    l: float,
+    g: float,
+    torques: wp.array(dtype=wp.float32),
+):
+    """Compute gravity-compensation torques on GPU (CUDA-graph-safe).
+
+    G0 = (3/2 * m0 * l * g) * cos(q0) + (1/2 * m1 * l * g) * cos(q0 + q1)
+    G1 = (1/2 * m1 * l * g) * cos(q0 + q1)
+    """
+    q0 = joint_q[0]
+    q01 = joint_q[0] + joint_q[1]
+    torques[0] = 1.5 * m0 * l * g * wp.cos(q0) + 0.5 * m1 * l * g * wp.cos(q01)
+    torques[1] = 0.5 * m1 * l * g * wp.cos(q01)
 
 # ---------------------------------------------------------------------------
 # Helper: generalized → maximal coordinate conversion
@@ -111,9 +139,42 @@ class Simulator(InteractiveSimulator):
                 q0=q0, q1=q1, qd0=qd0, qd1=qd1,
             )
 
+        # Preallocate the target buffer once so it stays alive across CUDA graph replays.
+        # Allocating wp.array inside control_policy would be GC'd after capture,
+        # causing the replayed graph to copy from freed memory.
+        self.q_target = wp.array(
+            [TARGET_POS_Q0, TARGET_POS_Q1],
+            dtype=wp.float32,
+            device=self.model.device,
+        )
+        # Persistent feedforward torque buffer (CUDA-graph-safe).
+        self.gravity_comp_torque = wp.zeros(2, dtype=wp.float32, device=self.model.device)
+        self._g = 9.81
+        body_mass = self.model.body_mass.numpy().reshape(self.model.world_count, -1)
+        # Single-world pendulum: two dynamic links with local indices 0 and 1.
+        self._m0 = float(body_mass[0, 0])
+        self._m1 = float(body_mass[0, 1])
+
     @override
     def control_policy(self, state: newton.State):
-        wp.copy(self.control.joint_f, wp.array([0.0, 800.0], dtype=wp.float32))
+        if not ENABLE_CONTROL:
+            return
+
+        # User-facing control path in Axion:
+        # 1) Enable mode with model.joint_dof_mode (set in build_model()).
+        # 2) Update self.control.joint_target_pos / joint_target_vel every step.
+        wp.copy(self.control.joint_target_pos, self.q_target)
+
+        # Gravity compensation feedforward — computed entirely on GPU so this
+        # is safe inside CUDA graph capture (no D2H copies).
+        wp.launch(
+            kernel=_gravity_comp_kernel,
+            dim=1,
+            inputs=[state.joint_q, self._m0, self._m1, LINK_LENGTH, self._g],
+            outputs=[self.gravity_comp_torque],
+            device=self.model.device,
+        )
+        wp.copy(self.control.joint_f, self.gravity_comp_torque)
 
     @override
     def _render(self, segment_num: int):
@@ -192,6 +253,11 @@ class Simulator(InteractiveSimulator):
         Use the same pendulum articulation as AxionEngineWrapper.py
         """
         model = build_pendulum_model(num_worlds=1, device="cuda:0")  # is it necessary to pass device?
+        # Explicitly enable implicit target tracking for both revolute joints.
+        # This is what activates Axion's control-constraint path.
+        mode = JointMode.TARGET_POSITION if ENABLE_CONTROL else JointMode.NONE
+        model.joint_dof_mode.assign(wp.array([mode, mode], dtype=wp.int32, device=model.device))
+
         a, b, c, d = self.plane_coefficients
         set_tilted_plane_from_coefficients(model, a, b, c, d, world_idx=0)
         return model
@@ -207,11 +273,11 @@ def basic_pendulum_example(cfg: DictConfig):
 
     # Plane equation: nx*x + ny*y + nz*z + d = 0 (default: horizontal z=0)
     plane_coefficients = [0.0, 0.0, 1.0, 0.0]
-    #plane_coefficients = [-0.2354, -0.0000, 0.9719, -2.3318]
+    plane_coefficients = [-0.2354, -0.0000, 0.9719, -2.3318]
 
     # Custom initial conditions: (q0, q1, qd0, qd1)
     # Set to None to start from the default rest position.
-    INITIAL_STATE = (-0.5704, 2.8907, -3.6530, -7.6918)  # e.g. 
+    INITIAL_STATE = None #(-0.5704, 2.8907, -3.6530, -7.6918)  # e.g. 
     #INITIAL_STATE = (0.5, -0.3, 1.0, -2.0)
 
     simulator = Simulator(
