@@ -47,7 +47,7 @@ HELHEST_OBSTACLE_XML = """<mujoco model="helhest_obstacle">
   <worldbody>
     <geom name="ground" type="plane" pos="0 0 0" size="100 100 0.1"
           friction="{mu} 0.1 0.01"
-          solref="0.005 1.0" solimp="0.9 0.95 0.001 0.5 2"
+          solref="{solref_timeconst} 1.0" solimp="0.9 0.95 0.001 0.5 2"
           condim="6"/>
 
     <!-- Obstacle box -->
@@ -55,7 +55,7 @@ HELHEST_OBSTACLE_XML = """<mujoco model="helhest_obstacle">
           pos="{obstacle_x} 0 {obstacle_height}"
           size="0.5 1.0 {obstacle_height}"
           friction="{obstacle_mu} 0.1 0.01"
-          solref="0.005 1.0" solimp="0.9 0.95 0.001 0.5 2"
+          solref="{solref_timeconst} 1.0" solimp="0.9 0.95 0.001 0.5 2"
           condim="6"/>
 
     <body name="chassis" pos="0 0 0.37" quat="{chassis_qw} 0 0 {chassis_qz}">
@@ -95,7 +95,7 @@ HELHEST_OBSTACLE_XML = """<mujoco model="helhest_obstacle">
         <inertial mass="5.5" pos="0 0 0" diaginertia="0.20045 0.20045 0.3888"/>
         <geom type="cylinder" fromto="0 -0.055 0 0 0.055 0" size="0.36"
               friction="{mu} 0.1 0.01"
-              solref="0.005 1.0" solimp="0.9 0.95 0.001 0.5 2"
+              solref="{solref_timeconst} 1.0" solimp="0.9 0.95 0.001 0.5 2"
               condim="6"/>
       </body>
       <body name="right_wheel" pos="0 -0.36 0">
@@ -103,7 +103,7 @@ HELHEST_OBSTACLE_XML = """<mujoco model="helhest_obstacle">
         <inertial mass="5.5" pos="0 0 0" diaginertia="0.20045 0.20045 0.3888"/>
         <geom type="cylinder" fromto="0 -0.055 0 0 0.055 0" size="0.36"
               friction="{mu} 0.1 0.01"
-              solref="0.005 1.0" solimp="0.9 0.95 0.001 0.5 2"
+              solref="{solref_timeconst} 1.0" solimp="0.9 0.95 0.001 0.5 2"
               condim="6"/>
       </body>
       <body name="rear_wheel" pos="-0.697 0 0">
@@ -111,7 +111,7 @@ HELHEST_OBSTACLE_XML = """<mujoco model="helhest_obstacle">
         <inertial mass="5.5" pos="0 0 0" diaginertia="0.20045 0.20045 0.3888"/>
         <geom type="cylinder" fromto="0 -0.055 0 0 0.055 0" size="0.36"
               friction="{mu} 0.1 0.01"
-              solref="0.005 1.0" solimp="0.9 0.95 0.001 0.5 2"
+              solref="{solref_timeconst} 1.0" solimp="0.9 0.95 0.001 0.5 2"
               condim="6"/>
       </body>
     </body>
@@ -140,6 +140,7 @@ def simulate_and_check(
         obstacle_height=obstacle_height,
         chassis_qw=qw,
         chassis_qz=qz,
+        solref_timeconst=0.005,
     )
     model = mujoco.MjModel.from_xml_string(xml)
     data = mujoco.MjData(model)

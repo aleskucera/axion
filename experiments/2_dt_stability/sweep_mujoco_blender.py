@@ -58,6 +58,16 @@ DT_LIST = [5e-4, 1e-3, 2e-2, 1e-1]
 DEFAULT_FPS = 30
 PLANE_HALF_EXTENT = 5.0  # cap the ground plane render size; mujoco default is huge
 
+# Default contact timeconst from the MJCF. MuJoCo's Newton solver requires
+# timeconst >= 2*dt for stability; below that, the constraint becomes stiff
+# and unstable. Mirror Genesis's auto-bump rule (timeconst = max(default, 2*dt))
+# from Python, since MuJoCo doesn't auto-adjust.
+DEFAULT_SOLREF_TIMECONST = 0.005
+
+
+def _auto_solref_timeconst(dt: float) -> float:
+    return max(DEFAULT_SOLREF_TIMECONST, 2.0 * dt)
+
 
 def _quat_wxyz_to_xyzw(q_wxyz: np.ndarray) -> np.ndarray:
     return np.array([q_wxyz[1], q_wxyz[2], q_wxyz[3], q_wxyz[0]], dtype=np.float32)
@@ -242,6 +252,13 @@ def simulate_dt(dt: float, target_times: np.ndarray) -> tuple[np.ndarray, bool]:
     sweep_mujoco predicate: no NaN, chassis z stays in [0.05, 2.0], and the
     robot actually drives past the obstacle (chassis x_final > obstacle_x + 1).
     """
+    tc = _auto_solref_timeconst(dt)
+    if tc > DEFAULT_SOLREF_TIMECONST:
+        print(
+            f"(auto-softening contact timeconst {DEFAULT_SOLREF_TIMECONST} → {tc:.3f}s "
+            f"for dt={dt}s stability)",
+            flush=True,
+        )
     xml = HELHEST_OBSTACLE_XML.format(
         dt=dt,
         kv=KV,
@@ -251,6 +268,7 @@ def simulate_dt(dt: float, target_times: np.ndarray) -> tuple[np.ndarray, bool]:
         obstacle_height=OBSTACLE_HEIGHT,
         chassis_qw=1.0,
         chassis_qz=0.0,
+        solref_timeconst=tc,
     )
     model = mujoco.MjModel.from_xml_string(xml)
     data = mujoco.MjData(model)
@@ -318,6 +336,7 @@ def main():
         obstacle_height=OBSTACLE_HEIGHT,
         chassis_qw=1.0,
         chassis_qz=0.0,
+        solref_timeconst=DEFAULT_SOLREF_TIMECONST,
     )
     model = mujoco.MjModel.from_xml_string(setup_xml)
     shapes = extract_shapes(model)
