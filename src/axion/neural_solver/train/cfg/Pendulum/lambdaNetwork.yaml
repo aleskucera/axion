@@ -48,8 +48,7 @@ algorithm:
 
   dataset:
     train_dataset_path: [src/axion/neural_solver/datasets/Pendulum/pendulumLambdasValid500klen400envs250seed1WithActivityLabels_lth01_hth1000_train.hdf5]
-    valid_datasets:
-      valid: src/axion/neural_solver/datasets/Pendulum/pendulumLambdasValid500klen400envs250seed1WithActivityLabels_lth01_hth1000_val.hdf5
+    valid_dataset_path: [src/axion/neural_solver/datasets/Pendulum/pendulumLambdasValid500klen400envs250seed1WithActivityLabels_lth01_hth1000_val.hdf5]
     max_capacity: 100000000
     num_data_workers: 4
 
@@ -57,7 +56,6 @@ algorithm:
     mode: dataset
     rollout_horizon: 10
     num_rollouts: 20000
-    dataset_path: src/axion/neural_solver/datasets/Pendulum/pendulumLambdasValid500klen400envs250seed1WithActivityLabels_lth01_hth1000_val.hdf5
     passive: true
 
 inputs:

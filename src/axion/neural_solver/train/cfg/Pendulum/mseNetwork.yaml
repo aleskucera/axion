@@ -37,8 +37,7 @@ algorithm:
 
   dataset:
     train_dataset_path: [src/axion/neural_solver/datasets/Pendulum/pendulumControlTest.hdf5]
-    valid_datasets:
-      valid: src/axion/neural_solver/datasets/Pendulum/pendulumControlTest.hdf5
+    valid_dataset_path: [src/axion/neural_solver/datasets/Pendulum/pendulumControlTest.hdf5]
     max_capacity: 100000000
     num_data_workers: 4
 
@@ -46,7 +45,6 @@ algorithm:
     mode: dataset # inactive when eval_interval=0
     rollout_horizon: 10 # inactive when eval_interval=0
     num_rollouts: 20000 # inactive when eval_interval=0
-    dataset_path: src/axion/neural_solver/datasets/Pendulum/pendulumControlTest.hdf5 # inactive when eval_interval=0
     passive: true # inactive when eval_interval=0
 
 inputs:

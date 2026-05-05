@@ -20,7 +20,7 @@ sys.path.append(base_dir)
 import time
 import numpy as np
 import torch
-from torch.utils.data import default_collate
+from torch.utils.data import ConcatDataset, default_collate
 import tqdm
 import warp as wp
 import newton
@@ -62,14 +62,28 @@ class NeuralSimEvaluator:
             self.trajectory_dataset = None
 
     def load_trajectory_dataset(self, hdf5_dataset_path, eval_horizon):
-        return TrajectoryDataset(hdf5_dataset_path, 
-                                 sample_sequence_length = eval_horizon)
+        if isinstance(hdf5_dataset_path, (list, tuple)):
+            if not hdf5_dataset_path:
+                raise ValueError("hdf5_dataset_path list must not be empty.")
+            return ConcatDataset(
+                [
+                    TrajectoryDataset(p, sample_sequence_length=eval_horizon)
+                    for p in hdf5_dataset_path
+                ]
+            )
+        return TrajectoryDataset(
+            hdf5_dataset_path, sample_sequence_length=eval_horizon
+        )
 
     def update_eval_horizon(self, eval_horizon):
         if eval_horizon != self.eval_horizon:
             self.eval_horizon = eval_horizon
             if self.trajectory_dataset is not None:
-                self.trajectory_dataset.update_sample_sequence_length(eval_horizon)
+                if isinstance(self.trajectory_dataset, ConcatDataset):
+                    for ds in self.trajectory_dataset.datasets:
+                        ds.update_sample_sequence_length(eval_horizon)
+                else:
+                    self.trajectory_dataset.update_sample_sequence_length(eval_horizon)
 
     def _get_plane_for_batch(self, trajectories, start_id, end_id):
         """Return (plane_normals, plane_d_coefficients) for envs [start_id:end_id], or (None, None)."""
