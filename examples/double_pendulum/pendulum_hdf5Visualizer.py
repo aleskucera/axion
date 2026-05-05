@@ -16,11 +16,11 @@ from pendulum_utils import set_tilted_plane_from_coefficients
 HDF5_PATH = (
     pathlib.Path(__file__).resolve().parents[2]
     / "src" / "axion" / "neural_solver" / "datasets" / "Pendulum"
-    / "pendulumControlTest.hdf5"
+    / "pendulumControlTest2.hdf5"
 )
 
 DT = 0.01
-TRAJECTORY_INDEX = 8
+TRAJECTORY_INDEX = 2
 PLAYBACK_SPEED = 1.0
 
 def _safe_attr(attrs, key: str):

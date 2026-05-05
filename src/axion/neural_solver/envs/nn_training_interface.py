@@ -352,7 +352,6 @@ class NnTrainingInterface:
         if env_mode == "neural":
             return self._step_neural()
         else:
-            self.simulator_wrapper.clear_ff_joint_forces()
             self.simulator_wrapper.update()
             self._sync_states()
             self.lambdas.copy_(self.get_lambdas())
@@ -379,7 +378,6 @@ class NnTrainingInterface:
         if env_mode == "neural":
             return self._step_neural()
         else:
-            self.simulator_wrapper.apply_pendulum_ff_gravity(self.simulator_wrapper.state)
             self.simulator_wrapper.update()
             self._sync_states()
             self.lambdas.copy_(self.get_lambdas())

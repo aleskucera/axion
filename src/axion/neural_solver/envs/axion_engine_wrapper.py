@@ -14,10 +14,7 @@ _repo_root = os.path.abspath(os.path.join(_env_dir, "..", "..", "..", ".."))
 if _repo_root not in sys.path:
     sys.path.insert(0, _repo_root)
 
-from examples.double_pendulum.pendulum_articulation_definition import (
-    LINK_LENGTH,
-    build_pendulum_model,
-)
+from examples.double_pendulum.pendulum_articulation_definition import build_pendulum_model
 from axion.core.engine import AxionEngine
 from axion.core.engine_config import AxionEngineConfig
 from axion.core.types import JointMode
@@ -28,23 +25,6 @@ FRAME_DT = 0.01
 ENGINE_SUBSTEPS = 10
 ENGINE_DT = FRAME_DT/ENGINE_SUBSTEPS
 ENGINE_CONFIG_PATH = os.path.join(_repo_root, "examples", "conf", "engine", "axion.yaml")
-
-@wp.kernel
-def _pendulum_ff_gravity_kernel(
-    joint_q: wp.array(dtype=wp.float32),
-    m0: float,
-    m1: float,
-    link_length: float,
-    gravity: float,
-    torques: wp.array(dtype=wp.float32),
-):
-    world_idx = wp.tid()
-    q0_idx = world_idx * 2
-    q1_idx = q0_idx + 1
-    q0 = joint_q[q0_idx]
-    q01 = q0 + joint_q[q1_idx]
-    torques[q0_idx] = 1.5 * m0 * link_length * gravity * wp.cos(q0) + 0.5 * m1 * link_length * gravity * wp.cos(q01)
-    torques[q1_idx] = 0.5 * m1 * link_length * gravity * wp.cos(q01)
 
 class AxionEngineWrapper:
     """
@@ -151,47 +131,9 @@ class AxionEngineWrapper:
         # misc
         self.frame_dt = FRAME_DT
         self.uses_generalized_coordinates = False  # AxionEngine is a maximal-coordinate solver
-        self._ff_gravity_supported = (self.env_name in ("PendulumWithContact", "Pendulum", "pendulum") and self.dof_q_per_world == 2)
-        self._ff_gravity_torque = wp.zeros(
-            self.num_worlds * self.dof_q_per_world,
-            dtype=wp.float32,
-            device=self.device,
-        )
-        self._gravity_m0 = 0.0
-        self._gravity_m1 = 0.0
-        self._gravity_acc = 9.81
-        if self._ff_gravity_supported:
-            body_mass = self.model.body_mass.numpy().reshape(self.model.world_count, -1)
-            # The replicated pendulum uses identical link masses per world.
-            self._gravity_m0 = float(body_mass[0, 0])
-            self._gravity_m1 = float(body_mass[0, 1])
-
 
     def set_eval_collisions(self, eval_collisions: bool) -> None:
         self.eval_collisions = eval_collisions
-
-    def apply_pendulum_ff_gravity(self, state: Optional[newton.State] = None) -> None:
-        if not self._ff_gravity_supported:
-            return
-
-        active_state = self.state if state is None else state
-        wp.launch(
-            kernel=_pendulum_ff_gravity_kernel,
-            dim=self.num_worlds,
-            inputs=[
-                active_state.joint_q,
-                self._gravity_m0,
-                self._gravity_m1,
-                float(LINK_LENGTH),
-                self._gravity_acc,
-            ],
-            outputs=[self._ff_gravity_torque],
-            device=self.device,
-        )
-        wp.copy(dest=self.control.joint_f, src=self._ff_gravity_torque)
-
-    def clear_ff_joint_forces(self) -> None:
-        self.control.joint_f.zero_()
 
     def update(self) -> None:
         """

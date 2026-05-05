@@ -32,6 +32,7 @@ _DEFAULT_DATASET_DIR = os.path.join(_project_root, "src/axion/neural_solver/data
 
 import os
 import argparse
+import numpy as np
 import h5py
 from axion.core.types import JointMode
 from axion.neural_solver.generate.trajectory_sampler_pendulum import TrajectorySamplerPendulum
@@ -91,6 +92,8 @@ def collect_dataset(
             joint_qd_max = JOINT_QD_MAX[robot_name],
             contact_prob = contact_prob,
             with_contacts = with_contacts,
+            joint_target_min=np.array([0.0, 0.0 - np.pi / 3.0], dtype=np.float64),
+            joint_target_max=np.array([np.pi, np.pi / 3.0], dtype=np.float64),
         )
     
     rollouts = \
