@@ -200,4 +200,6 @@ src/axion/neural_solver/train/trained_models/
 wandb/
 src/axion/neural_solver/docs/document/
 # edited by LLM, probably bullshit
-.tmp_cache/  
+.tmp_cache/ 
+
+data/PD_gains_search/*.txt
