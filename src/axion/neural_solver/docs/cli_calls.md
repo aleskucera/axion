@@ -1,17 +1,18 @@
 ## Create a Dataset 
 
-### States only
+### States + contacts (default non-passive, target-position control + additive FF gravity)
 ```
-python src/axion/neural_solver/generate/simple_generate_dataset_pendulum.py --env-name Pendulum --num-transitions 10000 --dataset-name pendulumDatasetName.hdf5 --trajectory-length 100 --num-envs 2 --seed 0 --passive --device cuda:1
+python src/axion/neural_solver/generate/generate_dataset_pendulum.py --env-name Pendulum --num-transitions 10000 --dataset-name pendulumDatasetName.hdf5 --trajectory-length 100 --num-envs 2 --seed 0 --device cuda:0
 ```
-### States + contacts
+### States + contacts fields, but **no tilted contact plane** (plane_coefficients are zeros; FF still active)
 ```
-python src/axion/neural_solver/generate/generate_dataset_pendulum.py --env-name Pendulum --num-transitions 10000 --dataset-name pendulumDatasetName.hdf5 --trajectory-length 100 --num-envs 2 --seed 0 --passive --device cuda:1
+python src/axion/neural_solver/generate/generate_dataset_pendulum.py --env-name Pendulum --num-transitions 10000 --dataset-name pendulumDatasetName.hdf5 --trajectory-length 100 --num-envs 2 --seed 0 --device cuda:0 --without-contacts
 ```
-### States + contacts fields, but **no tilted contact plane** (plane_coefficients are zeros)
-```
-python src/axion/neural_solver/generate/generate_dataset_pendulum.py --env-name Pendulum --num-transitions 10000 --dataset-name pendulumDatasetName.hdf5 --trajectory-length 100 --num-envs 2 --seed 0 --passive --device cuda:1 --without-contacts
-```
+Use `--passive` to run free/passive dynamics:
+- sets `joint_dof_mode=JointMode.NONE` (no implicit target-position tracking),
+- keeps sampled `joint_target_pos` at zero and does not apply it to stepping,
+- disables the additive FF gravity term.
+
 Generated HDF5 includes:
 - converted NN contact fields (`contact_normals`, `contact_points_0/1`, `contact_depths`, `contact_thicknesses`)
 - pre-conversion batched Axion contact arrays under `data/axion_contacts/*` for reconstruction/debug.
@@ -22,7 +23,7 @@ Generated HDF5 includes:
 ```
 python src/axion/neural_solver/train/train.py --cfg src/axion/neural_solver/train/cfg/Pendulum/transformer.yaml --logdir src/axion/neural_solver/train/trained_models/
 ```
-optionally: `--device cuda:1`, `--checkpoint /path/to/checkpoint.pt`, `--no-time-stamp`
+optionally: `--device cuda:0`, `--checkpoint /path/to/checkpoint.pt`, `--no-time-stamp`
 
 ### Begin lambda classifier training (example)
 ```

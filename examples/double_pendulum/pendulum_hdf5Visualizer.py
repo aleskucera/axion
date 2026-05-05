@@ -1,5 +1,6 @@
 import pathlib
 import time
+from typing import Optional
 
 import h5py
 import numpy as np
@@ -15,36 +16,115 @@ from pendulum_utils import set_tilted_plane_from_coefficients
 HDF5_PATH = (
     pathlib.Path(__file__).resolve().parents[2]
     / "src" / "axion" / "neural_solver" / "datasets" / "Pendulum"
-    / "pendulumLambdasValid500klen400envs250seed1.hdf5"
+    / "pendulumControlTest.hdf5"
 )
 
 DT = 0.01
-TRAJECTORY_INDEX = 2
+TRAJECTORY_INDEX = 8
 PLAYBACK_SPEED = 1.0
 
-def load_trajectory(hdf5_path: pathlib.Path, traj_idx: int):
-    """Load a single trajectory and its plane coefficients from the HDF5 dataset.
+def _safe_attr(attrs, key: str):
+    return attrs[key] if key in attrs else None
 
-    Returns:
-        states: Array of shape (num_timesteps, 4) with columns [q0, q1, q0_dot, q1_dot].
-        plane_coeffs: Array of shape (4,) with (a, b, c, d) or None if not present.
-    """
-    with h5py.File(hdf5_path, "r") as f:
-        states = np.array(f["data"]["states"][:, traj_idx, :])
-        if "plane_coefficients" in f["data"]:
-            # shape (num_timesteps, num_trajectories, 4) -> use first step for this trajectory
-            plane_coeffs = np.array(f["data"]["plane_coefficients"][0, traj_idx, :])
-        else:
-            plane_coeffs = None
-    print(f"Loaded trajectory {traj_idx}: {states.shape[0]} timesteps, "
-          f"q0 range [{states[:, 0].min():.3f}, {states[:, 0].max():.3f}], "
-          f"q1 range [{states[:, 1].min():.3f}, {states[:, 1].max():.3f}]")
+def _print_dataset_summary(
+    states: np.ndarray,
+    plane_coeffs: Optional[np.ndarray],
+    next_states: Optional[np.ndarray],
+    joint_target_pos: Optional[np.ndarray],
+    state_dim_attr,
+    joint_target_dim_attr,
+    traj_idx: int,
+):
+    print(f"Loaded trajectory {traj_idx}: {states.shape[0]} timesteps")
+    print(
+        f"  states shape={states.shape}, q0 range [{states[:, 0].min():.3f}, {states[:, 0].max():.3f}], "
+        f"q1 range [{states[:, 1].min():.3f}, {states[:, 1].max():.3f}]"
+    )
+
+    if state_dim_attr is not None:
+        print(f"  metadata state_dim={int(state_dim_attr)}")
+
     if plane_coeffs is not None:
-        print(f"  Plane coefficients (a,b,c,d): [{plane_coeffs[0]:.4f}, {plane_coeffs[1]:.4f}, "
-              f"{plane_coeffs[2]:.4f}, {plane_coeffs[3]:.4f}]")
+        print(
+            f"  Plane coefficients (a,b,c,d): "
+            f"[{plane_coeffs[0]:.4f}, {plane_coeffs[1]:.4f}, {plane_coeffs[2]:.4f}, {plane_coeffs[3]:.4f}]"
+        )
+    else:
+        print("  Plane coefficients not found; using model default plane.")
+
+    if next_states is not None:
+        print(f"  next_states shape={next_states.shape}")
+    else:
+        print("  next_states not found.")
+
+    if joint_target_pos is not None:
+        mins = joint_target_pos.min(axis=0)
+        maxs = joint_target_pos.max(axis=0)
+        print(f"  joint_target_pos shape={joint_target_pos.shape}")
+        for i, (mn, mx) in enumerate(zip(mins, maxs, strict=False)):
+            print(f"    target q{i} range [{mn:.4f}, {mx:.4f}]")
+        print(f"    first-step target = {joint_target_pos[0].tolist()}")
+    else:
+        print("  joint_target_pos not found.")
+
+    if joint_target_dim_attr is not None:
+        print(f"  metadata joint_target_dim={int(joint_target_dim_attr)}")
+
     q0, q1, qd0, qd1 = states[0, 0], states[0, 1], states[0, 2], states[0, 3]
     print(f"  Initial state (q0, q1, q0_dot, q1_dot): [{q0:.4f}, {q1:.4f}, {qd0:.4f}, {qd1:.4f}]")
-    return states, plane_coeffs
+
+def load_trajectory(hdf5_path: pathlib.Path, traj_idx: int):
+    """Load one trajectory from HDF5 with backward-compatible optional fields.
+
+    Returns:
+        states: (num_steps, 4) with [q0, q1, q0_dot, q1_dot]
+        plane_coeffs: (4,) or None
+        next_states: (num_steps, 4) or None
+        joint_target_pos: (num_steps, 2) or None
+    """
+    with h5py.File(hdf5_path, "r") as f:
+        if "data" not in f:
+            raise KeyError(f"Expected HDF5 group 'data' in {hdf5_path}")
+        data_grp = f["data"]
+
+        if "states" not in data_grp:
+            raise KeyError(f"Expected dataset 'data/states' in {hdf5_path}")
+        num_trajectories = data_grp["states"].shape[1]
+        if not (0 <= traj_idx < num_trajectories):
+            raise IndexError(
+                f"Trajectory index {traj_idx} out of range [0, {num_trajectories - 1}]"
+            )
+        states = np.array(data_grp["states"][:, traj_idx, :])
+
+        state_dim_attr = _safe_attr(data_grp.attrs, "state_dim")
+        joint_target_dim_attr = _safe_attr(data_grp.attrs, "joint_target_dim")
+
+        if "plane_coefficients" in data_grp:
+            # (num_steps, num_trajectories, 4) -> first step defines plane for trajectory
+            plane_coeffs = np.array(data_grp["plane_coefficients"][0, traj_idx, :])
+        else:
+            plane_coeffs = None
+
+        if "next_states" in data_grp:
+            next_states = np.array(data_grp["next_states"][:, traj_idx, :])
+        else:
+            next_states = None
+
+        if "joint_target_pos" in data_grp:
+            joint_target_pos = np.array(data_grp["joint_target_pos"][:, traj_idx, :])
+        else:
+            joint_target_pos = None
+
+    _print_dataset_summary(
+        states=states,
+        plane_coeffs=plane_coeffs,
+        next_states=next_states,
+        joint_target_pos=joint_target_pos,
+        state_dim_attr=state_dim_attr,
+        joint_target_dim_attr=joint_target_dim_attr,
+        traj_idx=traj_idx,
+    )
+    return states, plane_coeffs, next_states, joint_target_pos
 
 
 def set_state_from_generalized(
@@ -97,7 +177,7 @@ def draw_axes(viewer, device):
 def main():
     wp.init()
 
-    trajectory, plane_coeffs = load_trajectory(HDF5_PATH, TRAJECTORY_INDEX)
+    trajectory, plane_coeffs, _next_states, _joint_target_pos = load_trajectory(HDF5_PATH, TRAJECTORY_INDEX)
     num_steps = trajectory.shape[0]
     total_sim_time = num_steps * DT
 
@@ -127,6 +207,7 @@ def main():
         qd1=float(trajectory[0, 3]),
     )
 
+    print("Playback mode: recorded states only (no online control/reconstruction).")
     print(f"Replaying {num_steps} steps ({total_sim_time:.2f}s) at {PLAYBACK_SPEED}x speed.")
     print("Press SPACE to unpause / pause playback.")
 

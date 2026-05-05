@@ -30,9 +30,6 @@ from examples.double_pendulum.pendulum_articulation_definition import PENDULUM_H
 
 MAX_ANGLE_WITH_Z_AXIS_RAD = 0.64
 MAX_D_COEFFICIENT_OFFSET_M = 2.5
-PENDULUM_NUM_OF_ALL_LAMBDAS = 22
-
-
 """
 Trajectory-mode dataset generator for Pendulum env.
 In Pendulum, we use abstract mode for contact sampling, where we directly sample 
@@ -253,14 +250,14 @@ class TrajectorySamplerPendulum(TrajectorySampler):
         lambdas = torch.zeros(
             trajectory_length,
             self.num_envs,
-            PENDULUM_NUM_OF_ALL_LAMBDAS,
+            self.env.lambda_dim,
             dtype=torch.float32,
             device=self.torch_device,
         )
         next_lambdas = torch.zeros(
             trajectory_length,
             self.num_envs,
-            PENDULUM_NUM_OF_ALL_LAMBDAS,
+            self.env.lambda_dim,
             dtype=torch.float32,
             device=self.torch_device,
         )

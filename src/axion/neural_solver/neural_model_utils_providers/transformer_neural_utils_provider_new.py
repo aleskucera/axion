@@ -157,7 +157,7 @@ class TransformerNeuralModelUtilsProvider:
         self.dof_q_per_env = joint_coord_count // self.num_worlds
         self.dof_qd_per_env = joint_dof_count // self.num_worlds
         self.state_dim = self.dof_q_per_env + self.dof_qd_per_env
-        self.lambda_dim = PENDULUM_NUM_OF_ALL_LAMBDAS
+        self.lambda_dim = int(lambda_dim) if lambda_dim is not None else PENDULUM_NUM_OF_ALL_LAMBDAS
 
         if prediction_quantity_type == "full_state":
             self.state_prediction_dim = self.state_dim
