@@ -94,6 +94,8 @@ class SequenceModelTrainer:
                 print_warning("gravity_dir not included in low_dim inputs, "
                               "added it automatically.")
 
+        self.utils_provider.set_expected_low_dim_keys(tuple(cfg["inputs"]["low_dim"]))
+
         # create neural sim model
         if model_checkpoint_path is None:
             input_sample = self.utils_provider.get_neural_model_inputs()
@@ -163,6 +165,7 @@ class SequenceModelTrainer:
                     input_cfg=cfg['inputs'],
                     network_cfg=cfg['network'],
                     device=self.device,
+                    states_only=not self.has_lambda_head,
                 )
             else:
                 self.neural_model = ModelMixedInput(

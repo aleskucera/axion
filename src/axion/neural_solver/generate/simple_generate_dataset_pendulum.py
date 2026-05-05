@@ -32,10 +32,8 @@ _DEFAULT_DATASET_DIR = os.path.join(_project_root, "src/axion/neural_solver/data
 
 import os
 import argparse
-import numpy as np
 import h5py
-from axion.core.types import JointMode
-from axion.neural_solver.generate.trajectory_sampler_pendulum import TrajectorySamplerPendulum
+from axion.neural_solver.generate.simple_trajectory_sampler_pendulum import SimpleTrajectorySamplerPendulum
 from axion.neural_solver.utils.python_utils import set_random_seed
 from axion.neural_solver.envs.nn_training_interface import NnTrainingInterface
 from axion.neural_solver.utils.commons import (
@@ -43,6 +41,7 @@ from axion.neural_solver.utils.commons import (
     JOINT_Q_MAX,
     JOINT_QD_MIN,
     JOINT_QD_MAX,
+    JOINT_ACT_SCALE,
 )
 
 def collect_dataset(
@@ -51,20 +50,19 @@ def collect_dataset(
     num_transitions, 
     trajectory_length, 
     contact_prob, 
-    with_contacts: bool,
     dataset_path, 
     device: str = "cuda:0",
     passive = False,
     seed = 0, 
-    render = False
+    render = False,
+    export_video = False,
+    export_video_path = None
 ):
     data_writer = h5py.File(dataset_path, 'w')
     data_grp = data_writer.create_group('data')
     data_grp.attrs['env'] = env_name
     data_grp.attrs['mode'] = "trajectory"
     
-    joint_dof_mode = JointMode.NONE if passive else JointMode.TARGET_POSITION
-
     env = NnTrainingInterface(
         env_name = env_name,
         num_envs = num_envs,
@@ -74,32 +72,30 @@ def collect_dataset(
         device = device,
         warp_env_cfg = {
             "seed": seed,
-            "with_contacts": with_contacts,
-            "joint_dof_mode": joint_dof_mode,
         },
         render = render
     )
     
     robot_name = env.robot_name
     simulation_sampler = \
-        TrajectorySamplerPendulum(
+        SimpleTrajectorySamplerPendulum(
             env,
             joint_q_min = JOINT_Q_MIN[robot_name],
             joint_q_max = JOINT_Q_MAX[robot_name],
             joint_qd_min = JOINT_QD_MIN[robot_name],
             joint_qd_max = JOINT_QD_MAX[robot_name],
-            contact_prob = contact_prob,
-            with_contacts = with_contacts,
-            joint_target_min=np.array([0.0, 0.0 - np.pi / 3.0], dtype=np.float64),
-            joint_target_max=np.array([np.pi, np.pi / 3.0], dtype=np.float64),
+            joint_act_scale = JOINT_ACT_SCALE.get(robot_name, 0.0),
+            contact_prob = contact_prob
         )
     
     rollouts = \
-        simulation_sampler.sample_trajectories(
+        simulation_sampler.sample_trajectories_states_only(
             num_transitions, 
             trajectory_length, 
             passive,
             render=render,
+            export_video=export_video,
+            export_video_path=export_video_path
         )
 
     data_grp.attrs['total_trajectories'] = rollouts['states'].shape[1]
@@ -110,10 +106,6 @@ def collect_dataset(
         data = rollouts['gravity_dir'].detach().cpu().numpy()
     )
     data_grp.create_dataset(
-        name = 'plane_coefficients',
-        data = rollouts['plane_coefficients'].detach().cpu().numpy()
-    )
-    data_grp.create_dataset(
         name = 'root_body_q',
         data = rollouts['root_body_q'].detach().cpu().numpy()
     )
@@ -121,94 +113,39 @@ def collect_dataset(
         name = 'states', 
         data = rollouts['states'].detach().cpu().numpy()
     )
-    data_grp.create_dataset(
-        name = 'contact_normals',
-        data = rollouts['contacts']['contact_normals'].detach().cpu().numpy()
-    )
-    data_grp.create_dataset(
-        name = 'contact_depths',
-        data = rollouts['contacts']['contact_depths'].detach().cpu().numpy()
-    )
-    data_grp.create_dataset(
-        name = 'contact_points_0',
-        data = rollouts['contacts']['contact_points_0'].detach().cpu().numpy()
-    )
-    data_grp.create_dataset(
-        name = 'contact_points_1',
-        data = rollouts['contacts']['contact_points_1'].detach().cpu().numpy()
-    )
-    data_grp.create_dataset(
-        name = 'contact_thicknesses',
-        data = rollouts['contacts']['contact_thicknesses'].detach().cpu().numpy()
-    )
-    axion_contacts_grp = data_grp.create_group('axion_contacts')
-    axion_contacts_grp.create_dataset(
-        name='contact_count',
-        data=rollouts['axion_contacts']['contact_count'].detach().cpu().numpy()
-    )
-    axion_contacts_grp.create_dataset(
-        name='contact_point0',
-        data=rollouts['axion_contacts']['contact_point0'].detach().cpu().numpy()
-    )
-    axion_contacts_grp.create_dataset(
-        name='contact_point1',
-        data=rollouts['axion_contacts']['contact_point1'].detach().cpu().numpy()
-    )
-    axion_contacts_grp.create_dataset(
-        name='contact_normal',
-        data=rollouts['axion_contacts']['contact_normal'].detach().cpu().numpy()
-    )
-    axion_contacts_grp.create_dataset(
-        name='contact_shape0',
-        data=rollouts['axion_contacts']['contact_shape0'].detach().cpu().numpy()
-    )
-    axion_contacts_grp.create_dataset(
-        name='contact_shape1',
-        data=rollouts['axion_contacts']['contact_shape1'].detach().cpu().numpy()
-    )
-    axion_contacts_grp.create_dataset(
-        name='contact_thickness0',
-        data=rollouts['axion_contacts']['contact_thickness0'].detach().cpu().numpy()
-    )
-    axion_contacts_grp.create_dataset(
-        name='contact_thickness1',
-        data=rollouts['axion_contacts']['contact_thickness1'].detach().cpu().numpy()
-    )
-    data_grp.create_dataset(
-        name="joint_target_pos",
-        data=rollouts["joint_target_pos"].detach().cpu().numpy(),
-    )
-    data_grp.create_dataset(
-        name="joint_position_control_error",
-        data=rollouts["joint_position_control_error"].detach().cpu().numpy(),
-    )
+    # data_grp.create_dataset(
+    #     name = 'contact_normals',
+    #     data = rollouts['contacts']['contact_normals'].detach().cpu().numpy()
+    # )
+    # data_grp.create_dataset(
+    #     name = 'contact_depths',
+    #     data = rollouts['contacts']['contact_depths'].detach().cpu().numpy()
+    # )
+    # data_grp.create_dataset(
+    #     name = 'contact_points_0',
+    #     data = rollouts['contacts']['contact_points_0'].detach().cpu().numpy()
+    # )
+    # data_grp.create_dataset(
+    #     name = 'contact_points_1',
+    #     data = rollouts['contacts']['contact_points_1'].detach().cpu().numpy()
+    # )
+    # data_grp.create_dataset(
+    #     name = 'contact_thicknesses',
+    #     data = rollouts['contacts']['contact_thicknesses'].detach().cpu().numpy()
+    # )
+    # data_grp.create_dataset(
+    #     name = 'joint_acts', 
+    #     data = rollouts['joint_acts'].detach().cpu().numpy()
+    # )
     data_grp.create_dataset(
         name = 'next_states', 
         data = rollouts['next_states'].detach().cpu().numpy()
     )
-    data_grp.create_dataset(
-        name = 'lambdas', 
-        data = rollouts['lambdas'].detach().cpu().numpy()
-    )
-    data_grp.create_dataset(
-        name = 'next_lambdas', 
-        data = rollouts['next_lambdas'].detach().cpu().numpy()
-    )
     data_grp.attrs['state_dim'] = rollouts['states'].shape[-1]
     # data_grp.attrs['contact_prob'] = contact_prob
     data_grp.attrs['num_contacts_per_env'] = rollouts['contacts']['contact_depths'].shape[-1]
-    data_grp.attrs['axion_contacts_format'] = (
-        "batched AxionContacts arrays captured before convert_newton_contacts_to_contacts_for_nn_model"
-    )
-    data_grp.attrs["joint_target_dim"] = rollouts["joint_target_pos"].shape[-1]
-    data_grp.attrs["joint_position_control_error_dim"] = rollouts["joint_position_control_error"].shape[-1]
-    data_grp.attrs["joint_position_control_error_definition"] = (
-        "Per-DOF TARGET_POSITION error before /dt: q - target with revolute shortest-path "
-        "wrap [-pi, pi], matching axion.constraints.control_constraint.compute_control_properties "
-        "lines 131-145; q taken from states at step start (same time index as joint_target_pos broadcast)."
-    )
+    # data_grp.attrs['joint_act_dim'] = rollouts['joint_acts'].shape[-1]
     data_grp.attrs['next_state_dim'] = rollouts['next_states'].shape[-1]
-
     
     data_writer.flush()
     data_writer.close()
@@ -247,11 +184,6 @@ if __name__ == '__main__':
                         type=float,
                         default=0.5,
                         help='The probablity to sample a valid contact.')
-    parser.add_argument(
-        '--without-contacts',
-        action='store_true',
-        help="Disable the tilted contact plane in the simulator. By default, dataset generation uses contacts.",
-    )
     parser.add_argument('--seed',
                         type=int,
                         default=0,
@@ -265,6 +197,11 @@ if __name__ == '__main__':
     parser.add_argument('--render',
                         action='store_true',
                         help='Whether to render the simulation.')
+    parser.add_argument('--export-video',
+                        action = 'store_true')
+    parser.add_argument('--export-video-path',
+                        type = str,
+                        default = 'video.gif')
     
     args = parser.parse_args()
 
@@ -284,11 +221,12 @@ if __name__ == '__main__':
         num_transitions=args.num_transitions, 
         trajectory_length=args.trajectory_length,
         contact_prob=args.contact_prob,
-        with_contacts=not args.without_contacts,
         dataset_path=dataset_path,
         device=args.device,
         passive=args.passive,
         seed=args.seed,
-        render=args.render
+        render=args.render,
+        export_video=args.export_video,
+        export_video_path=args.export_video_path
     )
 

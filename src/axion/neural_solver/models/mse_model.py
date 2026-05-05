@@ -57,6 +57,7 @@ class MSEModel(nn.Module):
         input_cfg,
         network_cfg,
         device="cuda:0",
+        states_only=False,
     ):
         super().__init__()
 
@@ -90,7 +91,8 @@ class MSEModel(nn.Module):
             raise NotImplementedError("MSEModel requires a transformer backbone.")
 
         self.state_output_dim = int(state_output_dim)
-        self.lambda_output_dim = int(lambda_output_dim)
+        self.states_only = bool(states_only)
+        self.lambda_output_dim = 0 if self.states_only else int(lambda_output_dim)
         self.regression_output_dim = self.state_output_dim + self.lambda_output_dim
 
         head_mlp_cfg = (

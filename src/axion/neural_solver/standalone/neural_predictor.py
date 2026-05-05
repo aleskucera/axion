@@ -152,9 +152,13 @@ class NeuralPredictor:
             self.lambda_dim = int(nn_model.lambda_output_dim)
             self.lambdas = torch.zeros((self.num_worlds, self.lambda_dim), device=self.device)
         elif self._use_mse_model:
-            self.has_lambda_prediction_module = True
             self.lambda_dim = int(nn_model.lambda_output_dim)
-            self.lambdas = torch.zeros((self.num_worlds, self.lambda_dim), device=self.device)
+            self.has_lambda_prediction_module = self.lambda_dim > 0
+            self.lambdas = (
+                torch.zeros((self.num_worlds, self.lambda_dim), device=self.device)
+                if self.lambda_dim > 0
+                else None
+            )
         elif self.has_lambda_prediction_module:
             # ResidualModel keeps `lambda_model` as an alias to the shared
             # joint state+lambda head. In that case `output_net.out_features`
@@ -415,12 +419,16 @@ class NeuralPredictor:
         """
         with torch.no_grad():
             if self._use_mse_model:
-                # MSEModel returns a plain tensor (B, 1, state_dim+lambda_dim), not a dict.
+                # MSEModel returns a plain tensor (B, 1, state_dim[+lambda_dim]), not a dict.
                 regression = self.nn_model.evaluate(self.nn_model_inputs)
                 sod = int(self.nn_model.state_output_dim)
                 regression = regression[:, -1, :] if regression.shape[1] > 1 else regression.squeeze(1)
                 state_prediction = regression[:, :sod]
-                next_lambdas = regression[:, sod:]  # absolute prediction
+                lod = int(self.nn_model.lambda_output_dim)
+                if lod > 0:
+                    next_lambdas = regression[:, sod:]  # absolute prediction
+                else:
+                    next_lambdas = None
             else:
                 prediction = self.nn_model.evaluate(self.nn_model_inputs)  # (num_envs, 1, pred_dim)
                 state_prediction = prediction['state']

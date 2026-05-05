@@ -24,6 +24,9 @@ from tqdm import trange
 import warp as wp
 import torch
 from axion.neural_solver.envs.nn_training_interface import NnTrainingInterface
+from axion.neural_solver.generate.joint_target_position_error import (
+    joint_position_target_errors_torch,
+)
 from axion.neural_solver.generate.simulation_sampler import UniformSampler
 from axion.neural_solver.generate.trajectory_sampler import TrajectorySampler
 from examples.double_pendulum.pendulum_articulation_definition import PENDULUM_HEIGHT, LINK_LENGTH
@@ -262,9 +265,17 @@ class TrajectorySamplerPendulum(TrajectorySampler):
             device=self.torch_device,
         )
         # One position target per trajectory (constant across steps); shape matches generalized q DOFs.
+        nq = self.env.dof_q_per_env
         joint_target_pos = torch.empty(
             self.num_envs,
-            self.env.dof_q_per_env,
+            nq,
+            dtype=torch.float32,
+            device=self.torch_device,
+        )
+        joint_position_control_error = torch.empty(
+            trajectory_length,
+            self.num_envs,
+            nq,
             dtype=torch.float32,
             device=self.torch_device,
         )
@@ -402,6 +413,7 @@ class TrajectorySamplerPendulum(TrajectorySampler):
             "lambdas": lambdas,
             "next_lambdas": next_lambdas,
             "joint_target_pos": joint_target_pos,
+            "joint_position_control_error": joint_position_control_error,
             "root_body_q": root_body_q,
             "gravity_dir": gravity_dir,
             "contact_normals": contact_normals,
@@ -427,8 +439,6 @@ class TrajectorySamplerPendulum(TrajectorySampler):
         trajectory_length: int, 
         passive: bool = False,
         render: bool = False,
-        export_video: bool = False,
-        export_video_path: str = None
     ) -> List[Dict]:
         """
         States + Contact data
@@ -457,6 +467,7 @@ class TrajectorySamplerPendulum(TrajectorySampler):
             },
             'lambdas': [],
             'joint_target_pos': [],
+            'joint_position_control_error': [],
             'next_states': [],
             'next_lambdas': [],
             'plane_coefficients': [],
@@ -479,6 +490,7 @@ class TrajectorySamplerPendulum(TrajectorySampler):
         lambdas = buffers["lambdas"]
         next_lambdas = buffers["next_lambdas"]
         joint_target_pos = buffers["joint_target_pos"]
+        joint_position_control_error = buffers["joint_position_control_error"]
         root_body_q = buffers["root_body_q"]
         gravity_dir = buffers["gravity_dir"]
         contact_normals = buffers["contact_normals"]
@@ -497,13 +509,10 @@ class TrajectorySamplerPendulum(TrajectorySampler):
         plane_normals = buffers["plane_normals"]
         plane_d_offsets = buffers["plane_d_offsets"]
 
+        nq = self.env.dof_q_per_env
         self.env.set_env_mode('ground-truth')
-        
         _eval_collisions = self.env.eval_collisions
         self.env.set_eval_collisions(True)
-
-        if export_video:
-            self.env.start_video_export(export_video_path)
 
         rounds = 0
 
@@ -589,6 +598,16 @@ class TrajectorySamplerPendulum(TrajectorySampler):
                 
                 root_body_q[step, :, :].copy_(self.env.root_body_q)
                 states[step, :, :].copy_(self.env.states)
+                if passive:
+                    joint_position_control_error[step].zero_()
+                else:
+                    joint_position_control_error[step].copy_(
+                        joint_position_target_errors_torch(
+                            states[step, :, :nq],
+                            joint_target_pos,
+                            is_angular=True,
+                        )
+                    )
                 lambdas[step, :, :].copy_(self.env.get_lambdas())
                 if passive:
                     next_states[step, :, :].copy_(
@@ -642,6 +661,7 @@ class TrajectorySamplerPendulum(TrajectorySampler):
             rollout_batches['contacts']['contact_points_1'].append(contact_points_1.clone())
             rollout_batches['contacts']['contact_thicknesses'].append(contact_thicknesses.clone())
             rollout_batches['joint_target_pos'].append(joint_target_pos.unsqueeze(0).expand(trajectory_length, -1, -1).clone())
+            rollout_batches['joint_position_control_error'].append(joint_position_control_error.clone())
             rollout_batches['next_states'].append(next_states.clone())
             rollout_batches['plane_coefficients'].append(plane_coefficients.clone())
             rollout_batches['lambdas'].append(lambdas.clone())
@@ -662,8 +682,5 @@ class TrajectorySamplerPendulum(TrajectorySampler):
         print('[DEBUG] sum(next_states) = ', rollouts['next_states'].sum())
         
         self.env.set_eval_collisions(_eval_collisions)
-        
-        if export_video:
-            self.env.end_video_export()
 
         return rollouts
