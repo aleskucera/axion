@@ -235,12 +235,18 @@ class SequenceModelTrainer:
         self.num_data_workers = algo_cfg['dataset'].get('num_data_workers', 4)
         self.sample_sequence_length = algo_cfg.get('sample_sequence_length', 1)
         train_dataset_path = algo_cfg['dataset'].get('train_dataset_path', None)
-        valid_datasets_cfg = algo_cfg['dataset'].get('valid_datasets', None)
+        valid_dataset_path = algo_cfg['dataset'].get('valid_dataset_path', None)
+        legacy_valid_datasets_cfg = algo_cfg['dataset'].get('valid_datasets', None)
 
         self.train_dataset = None
         self.valid_datasets = {}
         self.collate_fn = None
-        self.get_datasets(train_dataset_path, valid_datasets_cfg, require_train_dataset=bool(cli_cfg.get('train', True)))
+        self.get_datasets(
+            train_dataset_path,
+            valid_dataset_path,
+            legacy_valid_datasets_cfg,
+            require_train_dataset=bool(cli_cfg.get('train', True)),
+        )
 
         """ Parameters only used for training """
         if cli_cfg['train']:
@@ -354,12 +360,22 @@ class SequenceModelTrainer:
         self.eval_horizon = algo_cfg['eval'].get("rollout_horizon", 5)
         self.num_eval_rollouts = algo_cfg['eval'].get("num_rollouts", self.neural_env.num_envs)
         self.eval_dataset_path = algo_cfg['eval'].get('dataset_path', None)
+        if self.eval_dataset_path is None:
+            _legacy = legacy_valid_datasets_cfg or {}
+            if valid_dataset_path is not None:
+                self.eval_dataset_path = valid_dataset_path
+            elif 'valid' in _legacy:
+                self.eval_dataset_path = _legacy['valid']
+            elif _legacy:
+                self.eval_dataset_path = next(iter(_legacy.values()))
         self.eval_passive = algo_cfg['eval'].get('passive', True)
         self.eval_render = cli_cfg['render']
 
         if self.eval_mode == 'dataset':
-            assert self.eval_dataset_path is not None, \
-                "If eval_mode is 'dataset', 'eval_dataset_path' must be provided"
+            assert self.eval_dataset_path is not None, (
+                "If eval_mode is 'dataset', provide algorithm.eval.dataset_path, "
+                "algorithm.dataset.valid_dataset_path, or algorithm.dataset.valid_datasets."
+            )
             
         self.evaluator = NeuralSimEvaluator(
                             self.neural_env,
@@ -420,7 +436,13 @@ class SequenceModelTrainer:
             return state_head_module
         return None
     
-    def get_datasets(self, train_dataset_path, valid_datasets_cfg, require_train_dataset: bool = True):
+    def get_datasets(
+        self,
+        train_dataset_path,
+        valid_dataset_path,
+        legacy_valid_datasets_cfg,
+        require_train_dataset: bool = True,
+    ):
         # Training dataset is optional for `--test` runs.
         if train_dataset_path is None:
             if require_train_dataset:
@@ -447,12 +469,33 @@ class SequenceModelTrainer:
                     hdf5_dataset_path=train_dataset_path,
                     max_capacity=self.dataset_max_capacity,
                 )
-        valid_cfg = valid_datasets_cfg or {}
-        for valid_dataset_name in valid_cfg.keys():
-            self.valid_datasets[valid_dataset_name] = TrajectoryDataset(
+
+        def _build_validation_dataset(path_spec):
+            """Scalar path or list/tuple of paths (concat), mirroring train_dataset_path."""
+            if isinstance(path_spec, (list, tuple)):
+                if not path_spec:
+                    raise ValueError("Validation dataset path list must not be empty.")
+                parts = [
+                    TrajectoryDataset(
+                        sample_sequence_length=self.sample_sequence_length,
+                        hdf5_dataset_path=path,
+                    )
+                    for path in path_spec
+                ]
+                return ConcatDataset(parts)
+            return TrajectoryDataset(
                 sample_sequence_length=self.sample_sequence_length,
-                hdf5_dataset_path=valid_cfg[valid_dataset_name],
+                hdf5_dataset_path=path_spec,
             )
+
+        if valid_dataset_path is not None:
+            self.valid_datasets["valid"] = _build_validation_dataset(valid_dataset_path)
+        elif legacy_valid_datasets_cfg:
+            valid_cfg = legacy_valid_datasets_cfg or {}
+            for valid_dataset_name in valid_cfg.keys():
+                self.valid_datasets[valid_dataset_name] = _build_validation_dataset(
+                    valid_cfg[valid_dataset_name]
+                )
         self.collate_fn = None
 
     def compute_dataset_statistics(self, dataset):

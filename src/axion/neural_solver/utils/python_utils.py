@@ -207,10 +207,21 @@ def append_states_only_test_results_csv(csv_path: Path, row: dict):
         ])
 
 def get_validation_dataset_name(cfg: dict) -> str:
-    valid_cfg = cfg.get("algorithm", {}).get("dataset", {}).get("valid_datasets", {})
+    ds_section = cfg.get("algorithm", {}).get("dataset", {}) or {}
+    valid_path = ds_section.get("valid_dataset_path")
+    if valid_path is not None:
+        if isinstance(valid_path, (list, tuple)):
+            return ";".join(Path(p).name for p in valid_path)
+        return Path(valid_path).name
+
+    valid_cfg = ds_section.get("valid_datasets") or {}
     dataset_paths = []
-    for _, dataset_path in valid_cfg.items():
-        dataset_paths.append(Path(dataset_path).name)
+    for _, path_spec in valid_cfg.items():
+        if isinstance(path_spec, (list, tuple)):
+            for p in path_spec:
+                dataset_paths.append(Path(p).name)
+        else:
+            dataset_paths.append(Path(path_spec).name)
     if len(dataset_paths) == 0:
         return ""
     return ";".join(dataset_paths)
