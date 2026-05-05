@@ -13,6 +13,7 @@ def build_pendulum_model(
     requires_grad: bool = False,
     plane_coefficients: tuple[float, float, float, float] = (0.0, 0.0, 1.0, 0.0),
     with_contacts: bool = True,
+    joint_dof_mode: JointMode = JointMode.NONE,
 ) -> newton.Model:
     """Build the same 2-link revolute pendulum as examples/pendulum_AxionEngine.py,
     replicated for num_worlds."""
@@ -61,7 +62,7 @@ def build_pendulum_model(
         target_kd=50.0,
         custom_attributes={
             #"joint_target_ki": [0.5],
-            "joint_dof_mode": [JointMode.NONE],
+            "joint_dof_mode": [joint_dof_mode],
         },
     )
     j1 = builder.add_joint_revolute(
@@ -74,7 +75,7 @@ def build_pendulum_model(
         target_kd=50.0,
         custom_attributes={
             #"joint_target_ki": [0.5],
-            "joint_dof_mode": [JointMode.NONE],
+            "joint_dof_mode": [joint_dof_mode],
         },
         armature=0.1,
     )

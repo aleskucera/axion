@@ -26,7 +26,6 @@ from pathlib import Path
 from typing import Optional
 
 import torch
-import shutil
 import warp as wp
 
 base_dir = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "../"))
@@ -99,10 +98,6 @@ class NnTrainingInterface:
         # State buffers 
         self.states = torch.zeros(
             (self.num_envs, self.state_dim),
-            device=self.torch_device,
-        )
-        self.joint_acts = torch.zeros(
-            (self.num_envs, self.joint_act_dim),
             device=self.torch_device,
         )
         self.lambdas = torch.zeros(
@@ -254,7 +249,6 @@ class NnTrainingInterface:
         gravity_dir_body = self.get_gravity_dir()
 
         self.utils_provider.append_current_state_to_history(
-            joint_acts=self.joint_acts,
             contacts=contacts,
             lambdas=self.lambdas,
             gravity_dir_body=gravity_dir_body,
@@ -350,26 +344,11 @@ class NnTrainingInterface:
 
     def step(
         self,
-        actions: torch.Tensor,
         env_mode: Optional[str] = None,
     ) -> torch.Tensor:
         if env_mode is None:
             env_mode = self.env_mode
         self.set_env_mode(env_mode)
-
-        if self.action_dim > 0:
-            actions = actions.to(self.torch_device)
-            self.simulator_wrapper.assign_control(
-                wp.from_torch(actions),
-                self.simulator_wrapper.control,
-                self.simulator_wrapper.state,
-            )
-            self.joint_acts.copy_(
-                wp.to_torch(self.simulator_wrapper.control.joint_act).view(
-                    self.num_envs,
-                    self.joint_act_dim,
-                )
-            )
 
         if env_mode == "neural":
             return self._step_neural()
@@ -380,23 +359,20 @@ class NnTrainingInterface:
             self.utils_provider.lambdas.copy_(self.lambdas)
             return self.states
 
-    def step_with_joint_act(
+    def step_with_joint_target_pos(
         self,
-        joint_acts: torch.Tensor,
+        joint_target_pos: torch.Tensor,
         env_mode: Optional[str] = None,
     ) -> torch.Tensor:
+        """Step with implicit PD position targets (``control.joint_target_pos``)."""
         if env_mode is None:
             env_mode = self.env_mode
         self.set_env_mode(env_mode)
 
         if self.joint_act_dim > 0:
-            joint_acts = joint_acts.to(self.torch_device)
-            self.simulator_wrapper.joint_act.assign(wp.from_torch(joint_acts.reshape(-1)))
-            self.joint_acts.copy_(
-                wp.to_torch(self.simulator_wrapper.control.joint_act).view(
-                    self.num_envs,
-                    self.joint_act_dim,
-                )
+            joint_target_pos = joint_target_pos.to(self.torch_device)
+            self.simulator_wrapper.control.joint_target_pos.assign(
+                wp.from_torch(joint_target_pos.reshape(-1))
             )
 
         if env_mode == "neural":

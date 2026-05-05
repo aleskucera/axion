@@ -33,6 +33,7 @@ _DEFAULT_DATASET_DIR = os.path.join(_project_root, "src/axion/neural_solver/data
 import os
 import argparse
 import h5py
+from axion.core.types import JointMode
 from axion.neural_solver.generate.trajectory_sampler_pendulum import TrajectorySamplerPendulum
 from axion.neural_solver.utils.python_utils import set_random_seed
 from axion.neural_solver.envs.nn_training_interface import NnTrainingInterface
@@ -41,7 +42,6 @@ from axion.neural_solver.utils.commons import (
     JOINT_Q_MAX,
     JOINT_QD_MIN,
     JOINT_QD_MAX,
-    JOINT_ACT_SCALE,
 )
 
 def collect_dataset(
@@ -64,6 +64,8 @@ def collect_dataset(
     data_grp.attrs['env'] = env_name
     data_grp.attrs['mode'] = "trajectory"
     
+    joint_dof_mode = JointMode.NONE if passive else JointMode.TARGET_POSITION
+
     env = NnTrainingInterface(
         env_name = env_name,
         num_envs = num_envs,
@@ -74,6 +76,7 @@ def collect_dataset(
         warp_env_cfg = {
             "seed": seed,
             "with_contacts": with_contacts,
+            "joint_dof_mode": joint_dof_mode,
         },
         render = render
     )
@@ -86,7 +89,6 @@ def collect_dataset(
             joint_q_max = JOINT_Q_MAX[robot_name],
             joint_qd_min = JOINT_QD_MIN[robot_name],
             joint_qd_max = JOINT_QD_MAX[robot_name],
-            joint_act_scale = JOINT_ACT_SCALE.get(robot_name, 0.0),
             contact_prob = contact_prob,
             with_contacts = with_contacts,
         )
@@ -173,10 +175,10 @@ def collect_dataset(
         name='contact_thickness1',
         data=rollouts['axion_contacts']['contact_thickness1'].detach().cpu().numpy()
     )
-    # data_grp.create_dataset(
-    #     name = 'joint_acts', 
-    #     data = rollouts['joint_acts'].detach().cpu().numpy()
-    # )
+    data_grp.create_dataset(
+        name="joint_target_pos",
+        data=rollouts["joint_target_pos"].detach().cpu().numpy(),
+    )
     data_grp.create_dataset(
         name = 'next_states', 
         data = rollouts['next_states'].detach().cpu().numpy()
@@ -195,7 +197,7 @@ def collect_dataset(
     data_grp.attrs['axion_contacts_format'] = (
         "batched AxionContacts arrays captured before convert_newton_contacts_to_contacts_for_nn_model"
     )
-    # data_grp.attrs['joint_act_dim'] = rollouts['joint_acts'].shape[-1]
+    data_grp.attrs["joint_target_dim"] = rollouts["joint_target_pos"].shape[-1]
     data_grp.attrs['next_state_dim'] = rollouts['next_states'].shape[-1]
 
     
