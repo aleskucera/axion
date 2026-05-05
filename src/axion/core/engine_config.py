@@ -48,7 +48,7 @@ class AxionEngineConfig(EngineConfig):
     """
 
     # --- Physics Parameters ---
-    max_newton_iters: int = 8
+    max_newton_iters: int = 16
     max_linear_iters: int = 16
 
     backtrack_min_iter: int = 5
@@ -56,13 +56,20 @@ class AxionEngineConfig(EngineConfig):
     newton_mode: str = "convergence"  # "convergence" / "fixed"
     linear_mode: str = "convergence"  # "convergence" / "fixed"
 
-    newton_atol: float = 5e-2
+    # Tightened from 5e-2 so Newton runs to actual convergence with the
+    # dt-adaptive contact_compliance regularization. With looser atol Newton
+    # can exit early at a state still distorted by the regularization.
+    newton_atol: float = 1e-3
 
     linear_tol: float = 1e-5
     linear_atol: float = 1e-5
 
     joint_compliance: float = 1e-5
-    contact_compliance: float = 1e-6
+    # contact_compliance is scaled by 1/dt^2 inside the contact constraint
+    # (see contact_constraint.py). The effective regularization is therefore
+    # contact_compliance / dt^2, which is ~negligible at large dt and ~100
+    # at dt=1ms with the default below. See docs/dt_dependence_problem.md.
+    contact_compliance: float = 1e-4
     friction_compliance: float = 1e-6
 
     regularization: float = 1e-6
@@ -90,6 +97,12 @@ class AxionEngineConfig(EngineConfig):
 
     # --- Differentiable Simulation ---
     differentiable_simulation: bool = False
+
+    # --- Adjoint Backward Pass Interventions ---
+    adjoint_soft_blending: bool = True
+    adjoint_soft_blending_temperature: float = 0.05
+    adjoint_regularization: float = 0.0
+    adjoint_gradient_normalization: bool = False
 
     # --- Logging & Profiling (MOVED HERE from Base Class) ---
     enable_timing: bool = False

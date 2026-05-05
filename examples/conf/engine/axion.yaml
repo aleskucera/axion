@@ -1,6 +1,6 @@
 # @package engine
 _target_: axion.AxionEngineConfig
-max_newton_iters: 16
+max_newton_iters: 24
 max_linear_iters: 16
 backtrack_min_iter: 12
 newton_atol: 1e-3
@@ -12,8 +12,8 @@ linesearch_conservative_upper_bound: 5e-2
 linesearch_min_step: 1e-6
 linesearch_optimistic_step_count: 48
 linesearch_optimistic_window: 0.4
-joint_compliance: 6e-8
-contact_compliance: 0.1
+joint_compliance: 6e-10
+contact_compliance: 1e-8
 friction_compliance: 1e-6
 regularization: 1e-6
 contact_fb_alpha: 0.5

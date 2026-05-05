@@ -8,5 +8,6 @@ defaults:
 
 project_name: ${hydra:job.name}
 
-engine.joint_compliance: 5e-6
-engine.max_contacts_per_world: 256
+engine:
+  joint_compliance: 5e-6
+  max_contacts_per_world: 256
