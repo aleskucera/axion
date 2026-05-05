@@ -250,7 +250,7 @@ class WarpSimDataGenerator:
             actions_max[i] = env.action_limits[i][1]
 
         if isinstance(joint_act_scale, np.ndarray):
-            assert len(joint_act_scale) == self.env.joint_act_dim
+            assert len(joint_act_scale) == self.env.action_dim
             self.joint_act_scale = torch.tensor(
                 joint_act_scale, 
                 dtype=torch.float32, 
@@ -258,7 +258,7 @@ class WarpSimDataGenerator:
             )
         else:
             self.joint_act_scale = torch.full(
-                (self.env.joint_act_dim,),
+                (self.env.action_dim,),
                 joint_act_scale, 
                 dtype=torch.float32, 
                 device=self.torch_device
@@ -304,10 +304,6 @@ class WarpSimDataGenerator:
     def state_dim(self):
         return self.env.state_dim
 
-    @property
-    def joint_act_dim(self):
-        return self.env.joint_act_dim
-    
     @property
     def action_dim(self):
         return self.env.action_dim

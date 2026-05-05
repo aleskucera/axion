@@ -145,9 +145,6 @@ class NeuralSimEvaluator:
             assert self.trajectory_dataset is not None, \
                 "'trajectory_dataset' is None but 'trajectory_source' is 'dataset'"
 
-            assert self.neural_env.action_dim == self.neural_env.joint_act_dim or passive, \
-                "In dataset mode, 'passive' has to be True if 'action_dim' != 'joint_act_dim'"
-
             if num_traj > 0:
                 indices = np.random.randint(
                     len(self.trajectory_dataset), 
@@ -179,20 +176,7 @@ class NeuralSimEvaluator:
                     trajectories['actions'].transpose(0, 1).to(_device)
                 )
             else:
-                # if self.neural_env.action_dim == self.neural_env.joint_act_dim:
-                #     trajectories['actions'] = (
-                #         trajectories['joint_acts'] / (
-                #             torch.tensor(
-                #                 self.neural_env.control_gains, 
-                #                 dtype=torch.float32
-                #             ).view(
-                #                 1, 1, self.neural_env.action_dim
-                #             )
-                #         )[:, :, self.neural_env.controllable_dofs]
-                #     ).transpose(0, 1).to(self.device)
-                # else:
-
-                # Assume zero actions
+                # Assume zero actions when the dataset has no action channel.
                 trajectories['actions'] = torch.zeros(
                     (self.eval_horizon, num_traj, self.neural_env.action_dim),
                     device = _device)
