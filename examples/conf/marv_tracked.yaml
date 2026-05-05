@@ -11,5 +11,5 @@ defaults:
 project_name: ${hydra:job.name}
 
 engine:
-  contact_compliance: 1e-3
+  contact_compliance: 1e-9
   max_contacts_per_world: 1024

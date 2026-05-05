@@ -41,7 +41,7 @@ K_P = 4000.0
 MU = 0.1
 OBSTACLE_MU = 1.0
 FRICTION_COMPLIANCE = 2e-2
-CONTACT_COMPLIANCE = 1e-8
+CONTACT_COMPLIANCE = 1e-10
 
 # Obstacle config (nominal — trials perturb these)
 OBSTACLE_X = 2.0

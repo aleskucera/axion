@@ -181,7 +181,7 @@ def main():
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    parser.add_argument("--dt", type=float, default=0.002, help="Timestep (default: 0.002)")
+    parser.add_argument("--dt", type=float, default=0.0005, help="Timestep (default: 0.002)")
     parser.add_argument(
         "--duration", type=float, default=DURATION, help=f"Duration (default: {DURATION}s)"
     )

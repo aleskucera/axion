@@ -30,7 +30,7 @@ os.environ["PYOPENGL_PLATFORM"] = "glx"
 K_P = 4000.0
 MU = 0.1
 FRICTION_COMPLIANCE = 1.2e-5
-CONTACT_COMPLIANCE = 1e1
+CONTACT_COMPLIANCE = 1e-10
 
 # Drive straight: all wheels at same speed
 WHEEL_VEL = 2.0
@@ -198,7 +198,7 @@ def main():
         linear_atol=1e-5,
         linear_tol=1e-5,
         enable_linesearch=False,
-        joint_compliance=6e-8,
+        joint_compliance=6e-10,
         contact_compliance=CONTACT_COMPLIANCE,
         friction_compliance=FRICTION_COMPLIANCE,
         regularization=1e-6,
