@@ -42,9 +42,7 @@ def batch_joint_qd_start_kernel(
     slot = joint_idx % joint_count_per_world
 
     if joint_dof_count_per_world > 1:
-        batched_joint_qd_start[world_idx, slot] = joint_qd_start[joint_idx] % (
-            joint_dof_count_per_world - 1
-        )
+        batched_joint_qd_start[world_idx, slot] = joint_qd_start[joint_idx] % joint_dof_count_per_world
     else:
         batched_joint_qd_start[world_idx, slot] = 0
 
