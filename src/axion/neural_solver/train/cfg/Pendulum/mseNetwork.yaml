@@ -13,7 +13,7 @@ env:
 algorithm:
   name: MSETrainer # informational only; trainer class comes from train_mse.py
   use_energy_loss: false
-  num_epochs: 100
+  num_epochs: 10
   num_iters_per_epoch: -1
   sample_sequence_length: 10
   batch_size: 512
@@ -22,7 +22,7 @@ algorithm:
   grad_norm: 1.0
   eval_interval: 0 # disables rollout eval during training
   loss:
-    state_loss_weight: 1000.0    # weight on the state (q + qd) loss term
+    state_loss_weight: 1.0    # weight on the state (q + qd) loss term
     lambda_loss_weight: 1.0   # weight on the lambda loss term
     angular_prediction_l2_weight: 0.5
     lambda_log_space_loss: false   # compute lambda MSE in signed log space: z = sign(y)*ln(|y|+eps)
@@ -36,9 +36,9 @@ algorithm:
     weight_decay: 8e-4
 
   dataset:
-    train_dataset_path: [src/axion/neural_solver/datasets/Pendulum/pendulumTrainMtlNoContacts2000len500envs2seed0LabelsTh05.hdf5]
+    train_dataset_path: [src/axion/neural_solver/datasets/Pendulum/pendulumControlTest.hdf5]
     valid_datasets:
-      valid: src/axion/neural_solver/datasets/Pendulum/pendulumValidMtlNoContacts2000len500envs2seed1.hdf5
+      valid: src/axion/neural_solver/datasets/Pendulum/pendulumControlTest.hdf5
     max_capacity: 100000000
     num_data_workers: 4
 
@@ -46,7 +46,7 @@ algorithm:
     mode: dataset # inactive when eval_interval=0
     rollout_horizon: 10 # inactive when eval_interval=0
     num_rollouts: 20000 # inactive when eval_interval=0
-    dataset_path: src/axion/neural_solver/datasets/Pendulum/pendulumValidMtlNoContacts2000len500envs2seed1.hdf5 # inactive when eval_interval=0
+    dataset_path: src/axion/neural_solver/datasets/Pendulum/pendulumControlTest.hdf5 # inactive when eval_interval=0
     passive: true # inactive when eval_interval=0
 
 inputs:
@@ -55,7 +55,9 @@ inputs:
     contact_normals,
     contact_points_1,
     contact_depths,
-    gravity_dir
+    gravity_dir,
+    joint_target_pos,
+    joint_position_control_error,
   ]
 
 network:
@@ -63,7 +65,7 @@ network:
   normalize_input: true
   normalize_output: false
   enable_state_head: true
-  enable_lambda_head: true
+  enable_lambda_head: false
   model:
     mlp:
       layer_sizes: []

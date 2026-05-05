@@ -200,6 +200,13 @@ class TransformerNeuralModelUtilsProvider:
         self.num_states_history = int(num_states_history)
         self.reset_states_history()
 
+        # Keys listed in YAML inputs.low_dim; used for dummy shapes in get_neural_model_inputs.
+        self.expected_low_dim_keys: tuple[str, ...] = ()
+
+    def set_expected_low_dim_keys(self, names: Sequence[str]) -> None:
+        """Declare inputs.low_dim tensor names so empty-history input bundles match training."""
+        self.expected_low_dim_keys = tuple(names)
+
     def set_neural_model(self, neural_model: Optional[torch.nn.Module]):
         self.neural_model = neural_model
         if self.neural_model is not None:
@@ -457,6 +464,10 @@ class TransformerNeuralModelUtilsProvider:
             if contact_key in model_inputs and model_inputs[contact_key] is not None:
                 model_inputs[contact_key] = _ensure_bt(model_inputs[contact_key])
 
+        for ctrl_key in ("joint_target_pos", "joint_position_control_error"):
+            if ctrl_key in model_inputs and model_inputs[ctrl_key] is not None:
+                model_inputs[ctrl_key] = _ensure_bt(model_inputs[ctrl_key])
+
         self.wrap2PI(model_inputs["states"])
         if model_inputs.get("next_states", None) is not None:
             self.wrap2PI(model_inputs["next_states"])
@@ -490,6 +501,13 @@ class TransformerNeuralModelUtilsProvider:
                 processed_model_inputs["states_embedding"] = processed_model_inputs[
                     "states"
                 ].clone()
+            for name in self.expected_low_dim_keys:
+                if name in ("joint_target_pos", "joint_position_control_error"):
+                    processed_model_inputs[name] = torch.zeros(
+                        (self.num_worlds, 1, self.dof_q_per_env),
+                        dtype=torch.float32,
+                        device=self.torch_device,
+                    )
             return self.process_neural_model_inputs(processed_model_inputs)
 
         model_inputs: Dict[str, torch.Tensor] = torch.utils.data.default_collate(

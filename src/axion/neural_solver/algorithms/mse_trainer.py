@@ -6,11 +6,13 @@ from axion.neural_solver.utils.loss_utils import angular_prediction_loss
 
 
 class MSETrainer(SequenceModelTrainer):
-    """Supervised MSE trainer for joint regression of [q, qd, lambda].
+    """Supervised MSE trainer for joint regression of [q, qd] and optionally lambda.
 
     Uses 1 − cos loss for angular q coordinates and MSE for qd and lambda.
     State and lambda prediction types (relative/absolute) are configured
-    independently via env.utils_provider_cfg in the YAML.
+    independently via env.utils_provider_cfg in the YAML. For MSE, when
+    ``network.enable_lambda_head`` is false, the model uses state-only regression
+    (``MSEModel.states_only``); only the state loss is trained.
     """
 
     def __init__(self, neural_env, cfg, model_checkpoint_path=None, device="cuda:0"):
@@ -36,13 +38,15 @@ class MSETrainer(SequenceModelTrainer):
 
         self._dof_q_per_env = int(self.neural_env.dof_q_per_env)
 
+        if getattr(self.neural_model, "states_only", False):
+            self.lambda_loss_weight = 0.0
+
     def _convert_regression_to_absolute(
         self, data: dict, regression_prediction: torch.Tensor
     ) -> torch.Tensor:
         """Convert state and lambda slices to absolute values independently."""
         state_dim = self.utils_provider.state_prediction_dim
         state_pred = regression_prediction[..., :state_dim]
-        lambda_pred = regression_prediction[..., state_dim:]
 
         if self._state_prediction_type == "relative":
             next_states = self.utils_provider.convert_prediction_to_next_states(
@@ -51,6 +55,10 @@ class MSETrainer(SequenceModelTrainer):
         else:
             next_states = state_pred
 
+        if getattr(self.neural_model, "states_only", False):
+            return next_states
+
+        lambda_pred = regression_prediction[..., state_dim:]
         if self._lambda_prediction_type == "relative":
             next_lambdas = self.utils_provider.convert_prediction_to_next_lambdas(
                 data["lambdas"], lambda_pred
@@ -61,7 +69,10 @@ class MSETrainer(SequenceModelTrainer):
         return torch.cat([next_states, next_lambdas], dim=-1)
 
     def _build_regression_target(self, data: dict, prediction: torch.Tensor) -> torch.Tensor:
-        regression_target = torch.cat([data["next_states"], data["next_lambdas"]], dim=-1)
+        if getattr(self.neural_model, "states_only", False):
+            regression_target = data["next_states"]
+        else:
+            regression_target = torch.cat([data["next_states"], data["next_lambdas"]], dim=-1)
         if regression_target.shape != prediction.shape:
             raise RuntimeError(
                 "Regression target/prediction shape mismatch: "
@@ -109,7 +120,10 @@ class MSETrainer(SequenceModelTrainer):
         regression_target = self._build_regression_target(data, regression_prediction)
 
         state_loss = self._compute_state_loss(regression_prediction, regression_target)
-        lambda_loss = self._compute_lambda_loss(regression_prediction, regression_target)
+        if getattr(self.neural_model, "states_only", False):
+            lambda_loss = torch.zeros((), device=state_loss.device, dtype=state_loss.dtype)
+        else:
+            lambda_loss = self._compute_lambda_loss(regression_prediction, regression_target)
         total_loss = self.state_loss_weight * state_loss + self.lambda_loss_weight * lambda_loss
 
         with torch.no_grad():
