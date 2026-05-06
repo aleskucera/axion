@@ -55,7 +55,10 @@ def batch_contact_data_kernel(
 
     batched_contact_point0[world_idx, slot] = contact_point0[contact_idx]
     batched_contact_point1[world_idx, slot] = contact_point1[contact_idx]
-    batched_contact_normal[world_idx, slot] = contact_normal[contact_idx]
+    # Newton (since PR #2069) emits rigid_contact_normal pointing from shape0
+    # toward shape1 (A-to-B). Axion's contact/friction kernels were written for
+    # the older B-to-A convention, so we flip here at the boundary.
+    batched_contact_normal[world_idx, slot] = -contact_normal[contact_idx]
     batched_contact_thickness0[world_idx, slot] = contact_thickness0[contact_idx]
     batched_contact_thickness1[world_idx, slot] = contact_thickness1[contact_idx]
 
@@ -240,7 +243,7 @@ class AxionContacts:
 
         wp.launch(
             kernel=batch_contact_data_kernel,
-            dim=self.model.rigid_contact_max,
+            dim=contacts.rigid_contact_max,
             inputs=[
                 self.model.shape_world,
                 self.num_shapes_per_world,
