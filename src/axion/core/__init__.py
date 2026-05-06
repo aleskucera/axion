@@ -7,6 +7,7 @@ from .engine_config import FeatherstoneEngineConfig
 from .engine_config import MuJoCoEngineConfig
 from .engine_config import SemiImplicitEngineConfig
 from .engine_config import XPBDEngineConfig
+from .engine_profiler import EngineProfiler
 from .logging_config import LoggingConfig
 from .types import JointMode
 
@@ -15,6 +16,7 @@ __all__ = [
     "AxionEngine",
     "EngineConfig",
     "AxionEngineConfig",
+    "EngineProfiler",
     "FeatherstoneEngineConfig",
     "MuJoCoEngineConfig",
     "SemiImplicitEngineConfig",

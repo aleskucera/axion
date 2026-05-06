@@ -2,6 +2,8 @@ from dataclasses import dataclass
 from typing import Any
 from typing import Optional
 
+from .engine_profiler import VALID_MODES as _VALID_PROFILING_MODES
+
 
 @dataclass(frozen=True)
 class EngineConfig:
@@ -113,6 +115,13 @@ class AxionEngineConfig(EngineConfig):
     log_linear_system_data: bool = True
     log_constraint_data: bool = True
 
+    # --- Profiling ---
+    # "off" | "end_to_end" | "per_component". See engine_profiler.py for the
+    # phase breakdown each mode emits. ``per_component`` replaces the
+    # capture_while NR loop with a fixed unroll of length max_newton_iters,
+    # so it forces the worst-case iteration cost every step.
+    profiling_mode: str = "off"
+
     @property
     def num_linesearch_steps(self):
         num_steps = self.linesearch_conservative_step_count
@@ -208,6 +217,12 @@ class AxionEngineConfig(EngineConfig):
                 )
 
         _validate_positive_int(self.max_contacts_per_world, "max_contacts_per_world")
+
+        if self.profiling_mode not in _VALID_PROFILING_MODES:
+            raise ValueError(
+                f"profiling_mode must be one of {_VALID_PROFILING_MODES}, "
+                f"got {self.profiling_mode!r}"
+            )
 
 
 @dataclass(frozen=True)

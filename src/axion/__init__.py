@@ -1,6 +1,7 @@
 from .core import AxionEngine
 from .core import AxionEngineConfig
 from .core import EngineConfig
+from .core import EngineProfiler
 from .core import FeatherstoneEngineConfig
 from .core import JointMode
 from .core import LoggingConfig
@@ -20,6 +21,7 @@ __all__ = [
     "AxionEngine",
     "EngineConfig",
     "AxionEngineConfig",
+    "EngineProfiler",
     "FeatherstoneEngineConfig",
     "MuJoCoEngineConfig",
     "SemiImplicitEngineConfig",
