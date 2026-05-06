@@ -1,0 +1,21 @@
+defaults:
+  - simulation: helhest
+  - rendering: headless
+  - execution: cuda_graph
+  - logging: disabled
+  - engine: axion_profile_per_iter
+  - control: helhest/velocity
+  - _self_
+
+project_name: ${hydra:job.name}
+
+friction_coeff: 0.5
+
+drive_velocity: 5.0
+
+# Benchmark override: profiler events are recorded once per captured graph
+# replay, so we need exactly one engine.step per segment to get per-step
+# stats across the full simulation duration (otherwise only the LAST step
+# in each segment is timed).
+execution:
+  headless_steps_per_segment: 1
