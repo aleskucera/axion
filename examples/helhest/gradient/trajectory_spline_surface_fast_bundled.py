@@ -1,3 +1,13 @@
+"""Bundled-gradient trajectory optimization for the Helhest robot on a mesh terrain.
+
+Sibling of trajectory_spline_surface_fast.py. Same problem, same loss, same Adam.
+The only change is the gradient: instead of one exact gradient at the nominal
+spline control points, we draw N noise samples around them, run N parallel rollouts,
+and average the N exact gradients before stepping Adam.
+
+Reference: Suh, Pang, Tedrake, "Bundled Gradients through Contact via Randomized
+Smoothing" (2021).
+"""
 import argparse
 import os
 import pathlib
@@ -27,12 +37,7 @@ NUM_WHEEL_DOFS = 3
 
 
 def make_interp_matrix(T: int, K: int) -> tuple[np.ndarray, np.ndarray]:
-    """Build [T, K] linear interpolation weight matrix and per-column normalization.
-
-    W[t, k] is the weight of control point k at timestep t.
-    Expanding:   v = W @ params                          ([T,3] = [T,K] @ [K,3])
-    Contracting: grad_params = (W.T @ grad_v) / col_sums  (average, not sum)
-    """
+    """Build [T, K] linear interpolation weight matrix and per-column normalization."""
     W = np.zeros((T, K), dtype=np.float32)
     for t in range(T):
         k_float = t * (K - 1) / max(T - 1, 1)
@@ -41,7 +46,7 @@ def make_interp_matrix(T: int, K: int) -> tuple[np.ndarray, np.ndarray]:
         alpha = k_float - k_low
         W[t, k_low] += 1.0 - alpha
         W[t, k_high] += alpha
-    col_sums = W.sum(axis=0)  # [K] — total weight each control point receives
+    col_sums = W.sum(axis=0)
     return W, col_sums
 
 
@@ -81,6 +86,11 @@ class SplineAdam:
         return params - lr * m_hat / (np.sqrt(v_hat) + self.eps)
 
 
+# Loss kernels iterate over (timestep, world). The target trajectory is shared across
+# all worlds (read from world 0); each perturbed world contributes its own gradient
+# to the summed loss.
+
+
 @wp.kernel
 def loss_kernel(
     body_pose: wp.array(dtype=wp.transform, ndim=3),
@@ -88,9 +98,8 @@ def loss_kernel(
     weight: float,
     loss: wp.array(dtype=wp.float32),
 ):
-    """L2 distance between chassis position summed over all timesteps."""
-    t = wp.tid()
-    pos = wp.transform_get_translation(body_pose[t, 0, 0])
+    t, w = wp.tid()
+    pos = wp.transform_get_translation(body_pose[t, w, 0])
     target_pos = wp.transform_get_translation(target_body_pose[t, 0, 0])
     delta = pos - target_pos
     wp.atomic_add(loss, 0, weight * wp.dot(delta, delta))
@@ -103,9 +112,8 @@ def yaw_loss_kernel(
     weight: float,
     loss: wp.array(dtype=wp.float32),
 ):
-    """Yaw heading error via forward vector dot product, summed over all timesteps."""
-    t = wp.tid()
-    q = wp.transform_get_rotation(body_pose[t, 0, 0])
+    t, w = wp.tid()
+    q = wp.transform_get_rotation(body_pose[t, w, 0])
     q_target = wp.transform_get_rotation(target_body_pose[t, 0, 0])
     fwd = wp.quat_rotate(q, wp.vec3(1.0, 0.0, 0.0))
     fwd_target = wp.quat_rotate(q_target, wp.vec3(1.0, 0.0, 0.0))
@@ -120,15 +128,20 @@ def regularization_kernel(
     weight: float,
     loss: wp.array(dtype=wp.float32),
 ):
-    """L2 magnitude regularization:  weight * Σ_t ||v_t||² over wheel DOFs."""
-    sim_step, wheel_idx = wp.tid()
-
+    sim_step, w, wheel_idx = wp.tid()
     dof_idx = wheel_dof_offset + wheel_idx
-    v = target_vel[sim_step, 0, dof_idx]
+    v = target_vel[sim_step, w, dof_idx]
     wp.atomic_add(loss, 0, weight * v * v)
 
 
-class HelhestTrajectorySplineSurfaceOptimizer(AxionDifferentiableSimulator):
+class HelhestTrajectorySplineSurfaceBundledOptimizer(AxionDifferentiableSimulator):
+    """Bundled-gradient version of HelhestTrajectorySplineSurfaceOptimizer.
+
+    Each iteration draws N noise samples on spline_params (in [K, 3] space), runs N
+    parallel rollouts (one per world), computes N exact gradients via the batched
+    adjoint, and averages them into a single bundled gradient before stepping Adam.
+    """
+
     def __init__(
         self,
         sim_config: SimulationConfig,
@@ -137,6 +150,9 @@ class HelhestTrajectorySplineSurfaceOptimizer(AxionDifferentiableSimulator):
         engine_config: AxionEngineConfig,
         logging_config: LoggingConfig,
         num_control_points: int = 10,
+        sigma: float = 0.3,
+        sigma_min_ratio: float = 0.1,
+        antithetic: bool = True,
     ):
         super().__init__(
             sim_config,
@@ -147,6 +163,13 @@ class HelhestTrajectorySplineSurfaceOptimizer(AxionDifferentiableSimulator):
         )
 
         self.K = num_control_points
+        self.N = sim_config.num_worlds  # bundled samples = parallel worlds
+        self.sigma_init = sigma
+        self.sigma_min = sigma * sigma_min_ratio
+        self.antithetic = antithetic
+
+        if self.antithetic and self.N % 2 != 0:
+            raise ValueError(f"antithetic=True requires even num_worlds, got {self.N}")
 
         self.loss = wp.zeros(1, dtype=float, requires_grad=True)
         self.trajectory_weight = 10.0
@@ -164,11 +187,13 @@ class HelhestTrajectorySplineSurfaceOptimizer(AxionDifferentiableSimulator):
         # Initial guess (Left, Right, Rear)
         self.init_wheel_vel = (4.0, 4.0, 3.0)
 
+        # Per-iter noise on the spline control points: [N, K, 3]
+        self.noise = np.zeros((self.N, self.K, NUM_WHEEL_DOFS), dtype=np.float64)
+
         self.track_body(body_idx=0, name="chassis", color=(0.0, 0.5, 1.0))
 
     def build_model(self) -> Model:
         self.builder.rigid_gap = 0.2
-        # Joint Control
         TARGET_KE = 250.0
         TARGET_KD = 0.0
 
@@ -225,7 +250,6 @@ class HelhestTrajectorySplineSurfaceOptimizer(AxionDifferentiableSimulator):
         )
 
     def _collect_ghost_shapes(self):
-        """Per-shape data needed to mirror the live robot at the target pose."""
         if hasattr(self, "_ghost_shapes_cache"):
             return self._ghost_shapes_cache
         m = self.model
@@ -264,23 +288,39 @@ class HelhestTrajectorySplineSurfaceOptimizer(AxionDifferentiableSimulator):
         self._ghost_shapes_cache = ghosts
         return ghosts
 
-    def _expand(self, params: np.ndarray) -> np.ndarray:
-        """Expand [K, 3] control points → [T, 3] per-step wheel velocities."""
-        return self.W @ params  # [T, K] @ [K, 3] = [T, 3]
+    def _sample_noise(self, sigma: float) -> np.ndarray:
+        """Draw [N, K, 3] noise. With antithetic, second half mirrors the first."""
+        if self.antithetic:
+            half = self.N // 2
+            base = np.random.randn(half, self.K, NUM_WHEEL_DOFS).astype(np.float64) * sigma
+            return np.concatenate([base, -base], axis=0)
+        return np.random.randn(self.N, self.K, NUM_WHEEL_DOFS).astype(np.float64) * sigma
 
-    def _contract(self, grad_v: np.ndarray) -> np.ndarray:
-        """Contract [T, 3] velocity gradients → [K, 3] control point gradients (normalized average)."""
-        safe_sums = np.where(self.W_col_sums > 0, self.W_col_sums, 1.0)
-        return (self.W.T @ grad_v) / safe_sums[:, None]
+    def _current_sigma(self) -> float:
+        progress = min(self.spline_adam.t / self.spline_adam.total_steps, 1.0)
+        return self.sigma_min + 0.5 * (self.sigma_init - self.sigma_min) * (
+            1.0 + np.cos(np.pi * progress)
+        )
+
+    def _expand_per_world(self, params: np.ndarray) -> np.ndarray:
+        """Expand [K, 3] + [N, K, 3] noise -> [T, N, 3] per-step per-world wheel velocities."""
+        # perturbed[i] = params + noise[i]; then expand each via W: [T, K] @ [K, 3] = [T, 3]
+        perturbed = params[None, :, :] + self.noise  # [N, K, 3]
+        # einsum: tk, nkd -> tnd
+        return np.einsum("tk,nkd->tnd", self.W, perturbed)
 
     def _apply_params(self, params: np.ndarray):
-        """Write expanded spline params into joint_target_vel and per-step controls."""
+        """Resample noise, expand per-world, write into joint_target_vel and per-step controls."""
         T = self.clock.total_sim_steps
         num_dofs = self.trajectory.joint_target_vel.shape[-1]
-        expanded = self._expand(params)  # [T, 3]
 
-        vel_np = np.zeros((T, 1, num_dofs), dtype=np.float32)
-        vel_np[:, 0, WHEEL_DOF_OFFSET : WHEEL_DOF_OFFSET + NUM_WHEEL_DOFS] = expanded
+        self.noise = self._sample_noise(self._current_sigma())
+        expanded = self._expand_per_world(params)  # [T, N, 3]
+
+        vel_np = np.zeros((T, self.N, num_dofs), dtype=np.float32)
+        vel_np[:, :, WHEEL_DOF_OFFSET : WHEEL_DOF_OFFSET + NUM_WHEEL_DOFS] = expanded.astype(
+            np.float32
+        )
 
         wp.copy(self.trajectory.joint_target_vel, wp.array(vel_np, dtype=wp.float32))
         for i in range(T):
@@ -291,7 +331,7 @@ class HelhestTrajectorySplineSurfaceOptimizer(AxionDifferentiableSimulator):
 
         wp.launch(
             kernel=loss_kernel,
-            dim=num_steps,
+            dim=(num_steps, self.N),
             inputs=[
                 self.trajectory.body_pose,
                 self.trajectory.target_body_pose,
@@ -302,7 +342,7 @@ class HelhestTrajectorySplineSurfaceOptimizer(AxionDifferentiableSimulator):
         )
         wp.launch(
             kernel=yaw_loss_kernel,
-            dim=num_steps,
+            dim=(num_steps, self.N),
             inputs=[
                 self.trajectory.body_pose,
                 self.trajectory.target_body_pose,
@@ -313,7 +353,7 @@ class HelhestTrajectorySplineSurfaceOptimizer(AxionDifferentiableSimulator):
         )
         wp.launch(
             kernel=regularization_kernel,
-            dim=(self.clock.total_sim_steps, NUM_WHEEL_DOFS),
+            dim=(self.clock.total_sim_steps, self.N, NUM_WHEEL_DOFS),
             inputs=[
                 self.trajectory.joint_target_vel,
                 WHEEL_DOF_OFFSET,
@@ -324,29 +364,33 @@ class HelhestTrajectorySplineSurfaceOptimizer(AxionDifferentiableSimulator):
         )
 
     def update(self):
-        # Contract: [T, 3] gradients → [K, 3] control point gradients
+        # grad shape: [T, N, num_dofs] — independent gradient per perturbed world
         grad_v = self.trajectory.joint_target_vel.grad.numpy()[
-            :, 0, WHEEL_DOF_OFFSET : WHEEL_DOF_OFFSET + NUM_WHEEL_DOFS
-        ]  # [T, 3]
-        grad_params = self._contract(grad_v)  # [K, 3]
+            :, :, WHEEL_DOF_OFFSET : WHEEL_DOF_OFFSET + NUM_WHEEL_DOFS
+        ]  # [T, N, 3]
+
+        # Per-world spline contraction: [T, N, 3] -> [K, N, 3]
+        safe_sums = np.where(self.W_col_sums > 0, self.W_col_sums, 1.0)
+        grad_per_world = np.einsum("tk,tnd->knd", self.W, grad_v) / safe_sums[:, None, None]
+
+        # Bundled gradient: average across the N noisy samples
+        grad_params = grad_per_world.mean(axis=1)  # [K, 3]
 
         self.trajectory.joint_target_vel.grad.zero_()
-
-        # Adam step on control points
         self.spline_params = self.spline_adam.step(self.spline_params, grad_params)
-
-        # Expand and sync back
-        self._apply_params(self.spline_params)
+        self._apply_params(self.spline_params)  # also resamples noise for next iter
 
     def render(self, train_iter):
         if train_iter % 2 != 0:
             return
 
-        loss_val = self.loss.numpy()[0]
+        # self.loss has been summed across N worlds; divide for per-world comparison
+        loss_val = self.loss.numpy()[0] / self.N
         if loss_val >= self.best_loss:
             return
         self.best_loss = loss_val
 
+        # World 0's trajectory (with its share of noise[0]). Approximate but cheap.
         self._iter_body_poses.append(
             self.trajectory.body_pose.numpy()[:, 0].copy().astype(np.float32)
         )
@@ -363,8 +407,11 @@ class HelhestTrajectorySplineSurfaceOptimizer(AxionDifferentiableSimulator):
         def draw_extras(viewer, step_idx, state):
             viewer.log_scalar("/loss", loss_val)
             idx = min(step_idx, num_steps - 1)
-            target_step = target_poses[idx, 0]  # [num_bodies, 7]
+            target_step = target_poses[idx, 0]
+            bodies_per_world = target_step.shape[0]
             for g in ghost_shapes:
+                if g["body_idx"] >= bodies_per_world:
+                    continue  # shape belongs to a replicated world (N > 1) — skip
                 world_xf = self._compose_xform(target_step[g["body_idx"]], g["local_xform"])
                 name = f"/target_ghost/shape_{g['shape_idx']}"
                 viewer.log_shapes(
@@ -400,7 +447,6 @@ class HelhestTrajectorySplineSurfaceOptimizer(AxionDifferentiableSimulator):
                 self._export_blender_npz(self.export_path)
 
     def _export_blender_npz(self, path: str):
-        """Snapshot model + accumulated trajectories to a single npz for Blender."""
         m = self.model
         shape_body = m.shape_body.numpy()
         shape_transform = m.shape_transform.numpy()
@@ -458,15 +504,15 @@ class HelhestTrajectorySplineSurfaceOptimizer(AxionDifferentiableSimulator):
         newton.eval_fk(self.model, self.model.joint_q, self.model.joint_qd, self.states[0])
         newton.eval_fk(self.model, self.model.joint_q, self.model.joint_qd, self.target_states[0])
 
-        # --- Target episode ---
+        # --- Target episode (replicated across all N worlds, identical controls) ---
         num_dofs = self.trajectory.joint_target_vel.shape[-1]
         T = self.clock.total_sim_steps
 
         for i in range(T):
-            target_ctrl = np.zeros(num_dofs, dtype=np.float32)
-            target_ctrl[WHEEL_DOF_OFFSET + 0] = 5.0
-            target_ctrl[WHEEL_DOF_OFFSET + 1] = 3.0
-            target_ctrl[WHEEL_DOF_OFFSET + 2] = 4.0
+            target_ctrl = np.zeros((self.N, num_dofs), dtype=np.float32)
+            target_ctrl[:, WHEEL_DOF_OFFSET + 0] = 5.0
+            target_ctrl[:, WHEEL_DOF_OFFSET + 1] = 3.0
+            target_ctrl[:, WHEEL_DOF_OFFSET + 2] = 4.0
 
             target_ctrl_wp = wp.array(target_ctrl, dtype=wp.float32, device=self.model.device)
             wp.copy(self.target_controls[i].joint_target_vel, target_ctrl_wp)
@@ -474,19 +520,18 @@ class HelhestTrajectorySplineSurfaceOptimizer(AxionDifferentiableSimulator):
         self.run_target_episode()
 
         # --- Spline setup ---
-        self.W, self.W_col_sums = make_interp_matrix(T, self.K)  # [T, K], [K]
+        self.W, self.W_col_sums = make_interp_matrix(T, self.K)
 
-        # Initialize all control points to the constant initial guess
         self.spline_params = np.array(
             [[self.init_wheel_vel[0], self.init_wheel_vel[1], self.init_wheel_vel[2]]] * self.K,
             dtype=np.float64,
-        )  # [K, 3]
+        )
 
         self.spline_adam = SplineAdam(
             K=self.K, num_dofs=NUM_WHEEL_DOFS, lr=0.11, lr_min_ratio=0.2, total_steps=50
         )
 
-        self._apply_params(self.spline_params)
+        self._apply_params(self.spline_params)  # also samples first noise batch
 
         # --- Optimization ---
         for i in range(iterations):
@@ -495,10 +540,12 @@ class HelhestTrajectorySplineSurfaceOptimizer(AxionDifferentiableSimulator):
             wp.synchronize()
             t_episode = time.perf_counter() - t0
 
-            curr_loss = self.loss.numpy()[0]
+            curr_loss = self.loss.numpy()[0] / self.N  # per-world average
+            sigma_now = self._current_sigma()
             p0 = self.spline_params[0]
             print(
-                f"Iter {i}: Loss={curr_loss:.4f} | cp[0] L={p0[0]:.3f} R={p0[1]:.3f} | K={self.K} | episode={t_episode:.3f}s"
+                f"Iter {i}: Loss={curr_loss:.4f} | cp[0] L={p0[0]:.3f} R={p0[1]:.3f} | "
+                f"K={self.K} N={self.N} sigma={sigma_now:.3f} | episode={t_episode:.3f}s"
             )
 
             self.render(i)
@@ -531,7 +578,38 @@ def main():
         metavar="PATH",
         help="Dump per-iteration trajectory + shape metadata to a .npz for the Blender importer",
     )
+    parser.add_argument(
+        "--num-worlds",
+        type=int,
+        default=32,
+        help="Number of bundled samples (parallel worlds). Even number required if --antithetic.",
+    )
+    parser.add_argument(
+        "--sigma",
+        type=float,
+        default=0.3,
+        help="Initial perturbation scale on spline control points (rad/s).",
+    )
+    parser.add_argument(
+        "--sigma-min-ratio",
+        type=float,
+        default=0.1,
+        help="Final sigma as a fraction of initial (cosine annealed).",
+    )
+    parser.add_argument(
+        "--no-antithetic",
+        action="store_true",
+        help="Disable antithetic sampling (default: enabled, halves variance).",
+    )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=0,
+        help="RNG seed for noise sampling.",
+    )
     args = parser.parse_args()
+
+    np.random.seed(args.seed)
 
     if args.usd:
         vis_type = "usd"
@@ -543,7 +621,7 @@ def main():
     sim_config = SimulationConfig(
         duration_seconds=5.0,
         target_timestep_seconds=5e-2,
-        num_worlds=1,
+        num_worlds=args.num_worlds,
     )
     render_config = RenderingConfig(
         vis_type=vis_type,
@@ -580,13 +658,16 @@ def main():
         enable_hdf5_logging=False,
     )
 
-    sim = HelhestTrajectorySplineSurfaceOptimizer(
+    sim = HelhestTrajectorySplineSurfaceBundledOptimizer(
         sim_config,
         render_config,
         exec_config,
         engine_config,
         logging_config,
         num_control_points=10,
+        sigma=args.sigma,
+        sigma_min_ratio=args.sigma_min_ratio,
+        antithetic=not args.no_antithetic,
     )
     sim.export_path = args.export
     sim.train(iterations=24)
