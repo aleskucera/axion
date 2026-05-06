@@ -8,6 +8,7 @@ from typing import Optional
 
 import newton
 import warp as wp
+from axion.core.engine import AxionEngine
 from axion.core.engine_config import EngineConfig
 from axion.core.logging_config import LoggingConfig
 from axion.core.model_builder import AxionModelBuilder
@@ -110,7 +111,13 @@ class BaseSimulator(ABC):
         """Performs one fundamental integration step of the simulation."""
         self.current_state.clear_forces()
 
-        # Detect collisions
+        # End_to_end profiling: mark the start of the "collide" phase. The
+        # engine closes the phase by recording boundary 1 at engine.step
+        # entry, so the elapsed window covers collide + the trivial Python
+        # gap (control_policy, viewer.apply_forces) before engine.step.
+        prof = self.solver.profiler if isinstance(self.solver, AxionEngine) else None
+        if prof is not None and prof.enabled and prof.mode == "end_to_end":
+            prof.record_boundary(0)
         self.contacts = self.model.collide(self.current_state)
 
         self.control_policy(self.current_state)

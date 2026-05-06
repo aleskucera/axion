@@ -1,0 +1,7 @@
+# @package execution
+# Execution preset for forward-step profiling. Forces the captured graph
+# to contain exactly one engine.step (steps_per_segment=1) so that CUDA
+# events recorded inside the graph fire once per replay.
+_target_: axion.ExecutionConfig
+use_cuda_graph: True
+headless_steps_per_segment: 1

@@ -75,6 +75,16 @@ class InteractiveSimulator(BaseSimulator, ABC):
             if isinstance(self.solver, AxionEngine):
                 # self.solver.events.print_timings()
                 self.solver.save_logs()
+                if self.solver.profiler.enabled:
+                    if self.steps_per_segment != 1:
+                        print(
+                            f"WARNING: profiler enabled but steps_per_segment="
+                            f"{self.steps_per_segment}; only the LAST step in each "
+                            "segment is timed. For accurate stats, set "
+                            "execution.headless_steps_per_segment=1 (headless) or "
+                            "match render fps to dt."
+                        )
+                    self.solver.profiler.print_summary()
 
             if self.rendering_config.vis_type == "usd":
                 self.viewer.close()
@@ -132,6 +142,13 @@ class InteractiveSimulator(BaseSimulator, ABC):
             print(f"segment: {(t1 - t0) * 1000:.2f} ms total, ~{ms_per_step:.2f} ms/step")
         else:
             wp.capture_launch(self.cuda_graph)
+
+        # Profiler hook: read back per-replay event timings. Only valid
+        # when the captured graph contains exactly one engine.step (i.e.
+        # steps_per_segment == 1); otherwise events get overwritten by
+        # the unrolled copies and only the last copy's times survive.
+        if isinstance(self.solver, AxionEngine) and self.solver.profiler.enabled:
+            self.solver.profiler.collect()
 
     def _capture_cuda_graphs(self):
         n_steps = self.steps_per_segment

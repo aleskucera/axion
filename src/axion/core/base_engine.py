@@ -22,6 +22,7 @@ from .dataset_logger import DatasetHDF5Logger
 from .engine_config import AxionEngineConfig
 from .engine_data import EngineData
 from .engine_dims import EngineDimensions
+from .engine_profiler import EngineProfiler
 from .linear_utils import compute_dbody_qd_from_dbody_lambda
 from .linear_utils import compute_linear_system
 from .linesearch_utils import perform_linesearch
@@ -169,6 +170,12 @@ class AxionEngineBase(SolverBase):
             )
 
         self.timestep = wp.zeros(1, dtype=wp.int32, device=self.device)
+
+        self.profiler = EngineProfiler(
+            mode=config.profiling_mode,
+            max_newton_iters=config.max_newton_iters,
+            device=self.device,
+        )
 
     def _save_iter_to_history(self):
         if not self.logging_config.enable_hdf5_logging:
@@ -322,13 +329,28 @@ class AxionEngineBase(SolverBase):
         # =========================================================================
         # Solve non-linear system with Newton-Raphson (NR) method
         # =========================================================================
-        def nr_loop():
+        prof = self.profiler
+        per_component = prof.enabled and prof.mode == "per_component"
+        end_to_end = prof.enabled and prof.mode == "end_to_end"
+
+        def nr_loop_step(slot_idx: int = 0):
+            """One NR iteration, optionally bracketed by per-phase events.
+
+            ``slot_idx`` is the unrolled iteration index used to address
+            the profiler event ring; pass 0 for the captured-while path.
+            """
             self.data.keep_running.zero_()
-            # Linearize
+
+            if per_component:
+                prof.record_boundary(0, slot_idx)
             compute_linear_system(
                 self.axion_model, self.axion_contacts, self.data, self.config, self.dims
             )
+            if per_component:
+                prof.record_boundary(1, slot_idx)
             self.preconditioner.update()
+            if per_component:
+                prof.record_boundary(2, slot_idx)
 
             # Linear Solve
             self.data._dconstr_force.zero_()
@@ -345,6 +367,8 @@ class AxionEngineBase(SolverBase):
             compute_dbody_qd_from_dbody_lambda(self.axion_model, self.data, self.config, self.dims)
 
             wp.copy(dest=self.data._constr_force_prev_iter, src=self.data._constr_force)
+            if per_component:
+                prof.record_boundary(3, slot_idx)
 
             if self.config.enable_linesearch:
                 perform_linesearch(
@@ -356,23 +380,37 @@ class AxionEngineBase(SolverBase):
                     self.axion_model, self.axion_contacts, self.data, self.config, self.dims
                 )
                 self.data.tiled_sq_norm.compute(self.data.res.full, self.data.res_norm_sq)
+            if per_component:
+                prof.record_boundary(4, slot_idx)
 
             self.data.save_state_to_candidates()
             self._save_iter_to_history()
             self._check_convergence()
+            if per_component:
+                prof.record_boundary(5, slot_idx)
 
         # Run the NR loop
         self.data.keep_running.fill_(1)
         self.data.iter_count.zero_()
-        if self.device.is_capturing:
-            wp.capture_while(self.data.keep_running, nr_loop)
+        if per_component:
+            # Fixed unroll for per-iteration profiling. No early exit:
+            # the loop always pays max_newton_iters iters regardless of
+            # convergence. Convergence-check still runs and updates
+            # keep_running for downstream code that inspects it.
+            for k in range(self.config.max_newton_iters):
+                nr_loop_step(slot_idx=k)
+        elif self.device.is_capturing:
+            wp.capture_while(self.data.keep_running, lambda: nr_loop_step(0))
         else:
             # Fallback for eager execution (no graph)
             while True:
-                nr_loop()
+                nr_loop_step(0)
                 if self.data.keep_running.numpy()[0] == 0:
                     break
 
+        if end_to_end:
+            # boundary 4: end of NR loop, start of backtracking
+            prof.record_boundary(4)
         perform_backtracking(self.axion_model, self.data, self.config, self.dims)
         if self.logger:
             self.logger.capture_step(self.timestep, self.data)
