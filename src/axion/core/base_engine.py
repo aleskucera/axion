@@ -341,6 +341,17 @@ class AxionEngineBase(SolverBase):
             """
             self.data.keep_running.zero_()
 
+            # Sync the friction-lag snapshot at the START of the iter so the
+            # linear system and the residual evaluation within this iter both
+            # see the same `prev_iter`. Previously this copy lived between the
+            # solve and the step, which caused a one-iter mismatch: the linear
+            # system was built using prev_iter from end of iter k-2 (friction
+            # often inactive), while the residual used prev_iter from end of
+            # iter k-1 (friction active). Linesearch could not reduce the
+            # friction residual because the search direction had zero in
+            # friction slots when the linear system thought friction was off.
+            wp.copy(dest=self.data._constr_force_prev_iter, src=self.data._constr_force)
+
             if per_component:
                 prof.record_boundary(0, slot_idx)
             compute_linear_system(
@@ -366,7 +377,6 @@ class AxionEngineBase(SolverBase):
             )
             compute_dbody_qd_from_dbody_lambda(self.axion_model, self.data, self.config, self.dims)
 
-            wp.copy(dest=self.data._constr_force_prev_iter, src=self.data._constr_force)
             if per_component:
                 prof.record_boundary(3, slot_idx)
 
