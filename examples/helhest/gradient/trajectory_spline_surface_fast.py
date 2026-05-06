@@ -207,7 +207,6 @@ class HelhestTrajectorySplineSurfaceOptimizer(AxionDifferentiableSimulator):
 
         return self.builder.finalize_replicated(
             num_worlds=self.simulation_config.num_worlds,
-            requires_grad=True,
             global_builder=globals_builder,
         )
 
