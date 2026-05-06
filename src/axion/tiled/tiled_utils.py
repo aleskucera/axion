@@ -2,7 +2,6 @@ import math
 from typing import Optional
 
 import warp as wp
-import warp.context as wpc
 
 
 def create_tiled_sum_kernel(tile_size: int, dtype: type):
@@ -84,7 +83,7 @@ class TiledSum:
         dtype: type = wp.float32,
         tile_size: int = 256,
         block_threads: int = 128,
-        device: wpc.Device | str = "cuda",
+        device: wp.Device | str = "cuda",
     ):
         """
         Tiled sum computation for arbitrary N-dimensional arrays.
@@ -172,7 +171,7 @@ class TiledDot:
         dtype: type = wp.float32,
         tile_size: int = 256,
         block_threads: int = 128,
-        device: wpc.Device | str = "cuda",
+        device: wp.Device | str = "cuda",
     ):
         """
         Tiled dot product computation for arbitrary N-dimensional arrays.
@@ -262,7 +261,7 @@ class TiledArgMin:
         dtype: type = wp.float32,
         tile_size: int = 256,
         block_threads: int = 128,
-        device: wpc.Device | str = "cuda",
+        device: wp.Device | str = "cuda",
     ):
         """
         Tiled argmin computation.

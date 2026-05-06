@@ -188,7 +188,11 @@ class HelhestTrajectorySplineSurfaceOptimizer(AxionDifferentiableSimulator):
         mesh_points = np.array(surface_m.points()) * scale + np.array([0.0, 0.0, 0.05])
         surface_mesh = newton.Mesh(mesh_points, mesh_indices)
 
-        self.builder.add_shape_mesh(
+        # Add the surface mesh to a separate builder so it gets shape_world=-1
+        # (Newton's "global" sentinel). The mesh is then stored once and the
+        # broadphase tests it against shapes from every world without duplication.
+        globals_builder = newton.ModelBuilder()
+        globals_builder.add_shape_mesh(
             body=-1,
             mesh=surface_mesh,
             cfg=newton.ModelBuilder.ShapeConfig(
@@ -203,7 +207,7 @@ class HelhestTrajectorySplineSurfaceOptimizer(AxionDifferentiableSimulator):
 
         return self.builder.finalize_replicated(
             num_worlds=self.simulation_config.num_worlds,
-            requires_grad=True,
+            global_builder=globals_builder,
         )
 
     @staticmethod

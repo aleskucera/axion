@@ -174,14 +174,24 @@ class AxionModelBuilder(newton.ModelBuilder):
         num_worlds: int,
         gravity: float = -9.81,
         requires_grad: bool = False,
+        global_builder: "newton.ModelBuilder | None" = None,
         **kwargs,
     ) -> newton.Model:
         """
         Creates a new newton.ModelBuilder, replicates the content of this builder into it
         for the specified number of worlds, and finalizes it to return the Model.
+
+        If ``global_builder`` is provided, its contents are added once with
+        ``shape_world = -1`` (Newton's "global" sentinel) before replication, so the
+        resulting Model contains a single instance of those shapes that collides
+        against shapes from every world via Newton's broadphase.
         """
         final_builder = newton.ModelBuilder(gravity=gravity)
         for k, v in kwargs.items():
             setattr(final_builder, k, v)
+        if global_builder is not None:
+            # current_world is -1 by default; add_builder copies entities with that
+            # tag so they get shape_world=-1 in the final model.
+            final_builder.add_builder(global_builder)
         final_builder.replicate(self, world_count=num_worlds)
         return final_builder.finalize(requires_grad=requires_grad)

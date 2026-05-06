@@ -128,7 +128,7 @@ class SystemOperator(LinearOperator):
     def __init__(
         self,
         data: SystemLinearData,
-        device: wp.context.Device,
+        device: wp.Device,
         regularization: float = 1e-6,
     ):
         super().__init__(

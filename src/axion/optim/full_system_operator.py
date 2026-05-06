@@ -147,7 +147,7 @@ class FullSystemOperator:
     this operates on the combined (N_u + N_c) vector.
     """
 
-    def __init__(self, data: FullSystemLinearData, device: wp.context.Device):
+    def __init__(self, data: FullSystemLinearData, device: wp.Device):
         self.data = data
         self.device = device
 
