@@ -164,6 +164,11 @@ class AxionEngineBase(SolverBase):
             data=self.data,
             dims=self.dims,
             device=self.device,
+            cold_start_gravity=self.config.warm_start_cold_gravity,
+            cold_start_impact=self.config.warm_start_cold_impact,
+            cold_start_friction_v_threshold=(
+                self.config.warm_start_cold_friction_v_threshold
+            ),
         )
 
         self.logger = None

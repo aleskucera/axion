@@ -55,7 +55,7 @@ class AxionEngineConfig(EngineConfig):
     max_newton_iters: int = 16
     max_linear_iters: int = 16
 
-    backtrack_min_iter: int = 5
+    backtrack_min_iter: int = 2
 
     newton_mode: str = "convergence"  # "convergence" / "fixed"
     linear_mode: str = "convergence"  # "convergence" / "fixed"
@@ -108,7 +108,19 @@ class AxionEngineConfig(EngineConfig):
     # axion/collision/warm_start.py for the predicted-position matching
     # algorithm. Default False until the matching kernel ships
     # (currently scaffolding only).
-    enable_contact_warm_start: bool = False
+    enable_contact_warm_start: bool = True
+
+    # Cold-start heuristics for unmatched contacts (phase 2.5 of warm
+    # start). Each term in `_cold_start_kernel` is independently
+    # gated so we can ablate (A: all off, B: gravity, C: gravity+impact,
+    # D: all three) by flipping flags from the YAML.
+    #   gravity:  per-body residual-gravity split, α
+    #   impact:   m_eff·(-v_n)/dt for approaching contacts, β
+    #   friction: μ·λ_n_cold·(-v̂_t) projected to (t1,t2), γ
+    # The friction term auto-disables itself when v_threshold ≤ 0.
+    warm_start_cold_gravity: bool = True
+    warm_start_cold_impact: bool = True
+    warm_start_cold_friction_v_threshold: float = 0.1
 
     joint_constraint_level: str = "pos"  # pos / vel
     contact_constraint_level: str = "pos"  # pos / vel

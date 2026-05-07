@@ -95,6 +95,7 @@ def _match_kernel(
     shape_body: wp.array(dtype=wp.int32, ndim=2),
     body_pose: wp.array(dtype=wp.transform, ndim=2),
     body_vel: wp.array(dtype=wp.spatial_vector, ndim=2),
+    g_accel: wp.array(dtype=wp.vec3, ndim=1),
     # Previous step state.
     prev_count: wp.array(dtype=wp.int32, ndim=1),
     prev_b0: wp.array(dtype=wp.int32, ndim=2),
@@ -107,10 +108,15 @@ def _match_kernel(
     dt: wp.float32,
     alpha: wp.float32,
     min_threshold: wp.float32,
+    n_dot_up_min: wp.float32,
     offset_n: wp.int32,
     offset_f: wp.int32,
     # Output: warm-started friction-lag values.
     constr_force_prev_iter: wp.array(dtype=wp.float32, ndim=2),
+    # Phase 2.5: per-contact match flag and per-body support reductions.
+    is_matched: wp.array(dtype=wp.int32, ndim=2),
+    body_matched_support: wp.array(dtype=wp.float32, ndim=2),
+    body_unmatched_count: wp.array(dtype=wp.int32, ndim=2),
     # Diagnostics.
     diag_attempts: wp.array(dtype=wp.int32, ndim=1),
     diag_matched: wp.array(dtype=wp.int32, ndim=1),
@@ -188,8 +194,28 @@ def _match_kernel(
             best_d_sq = d_sq
             best_j = j
 
+    # Anti-gravity direction (used by both branches to credit a body's
+    # vertical-support budget). g_accel is a length-1 array of vec3.
+    g = g_accel[0]
+    g_mag = wp.length(g)
+    up = wp.vec3(0.0, 0.0, 1.0)
+    if g_mag > 1.0e-6:
+        up = -g / g_mag
+    n_dot_up = wp.dot(n_curr, up)
+    # contact_force on b0 = -n * λ_n  →  up-component coefficient = -n_dot_up
+    # contact_force on b1 = +n * λ_n  →  up-component coefficient = +n_dot_up
+    supports_b0 = (-n_dot_up) > n_dot_up_min
+    supports_b1 = ( n_dot_up) > n_dot_up_min
+
     if best_j < 0:
-        # Cold start — caller has already zeroed constr_force_prev_iter.
+        # Cold start — leave constr_force_prev_iter at the caller's zero,
+        # but credit the unmatched-count buffer so the cold-start kernel
+        # can distribute residual gravity load.
+        is_matched[world_idx, c_idx] = 0
+        if b0 >= 0 and supports_b0:
+            wp.atomic_add(body_unmatched_count, world_idx, b0, 1)
+        if b1 >= 0 and supports_b1:
+            wp.atomic_add(body_unmatched_count, world_idx, b1, 1)
         return
 
     # Project λ_t from prev's tangent basis to current's via world frame.
@@ -201,14 +227,194 @@ def _match_kernel(
     new_lt_x = wp.dot(lt_world, curr_t1)
     new_lt_y = wp.dot(lt_world, curr_t2)
 
-    constr_force_prev_iter[world_idx, offset_n + c_idx] = (
-        prev_lambda_n[world_idx, best_j]
-    )
+    matched_lambda_n = prev_lambda_n[world_idx, best_j]
+    constr_force_prev_iter[world_idx, offset_n + c_idx] = matched_lambda_n
     constr_force_prev_iter[world_idx, offset_f + 2 * c_idx] = new_lt_x
     constr_force_prev_iter[world_idx, offset_f + 2 * c_idx + 1] = new_lt_y
 
+    is_matched[world_idx, c_idx] = 1
+
+    # Credit each supported body with this contact's vertical-force
+    # contribution so the cold-start kernel knows how much gravity load
+    # is already accounted for by warm-started contacts.
+    if b0 >= 0 and supports_b0:
+        wp.atomic_add(
+            body_matched_support, world_idx, b0,
+            (-n_dot_up) * matched_lambda_n,
+        )
+    if b1 >= 0 and supports_b1:
+        wp.atomic_add(
+            body_matched_support, world_idx, b1,
+            n_dot_up * matched_lambda_n,
+        )
+
     wp.atomic_add(diag_matched, world_idx, 1)
     wp.atomic_max(diag_max_dist, world_idx, wp.sqrt(best_d_sq))
+
+
+@wp.kernel
+def _cold_start_kernel(
+    # Current step inputs.
+    contact_count: wp.array(dtype=wp.int32, ndim=1),
+    contact_point0: wp.array(dtype=wp.vec3, ndim=2),
+    contact_point1: wp.array(dtype=wp.vec3, ndim=2),
+    contact_normal: wp.array(dtype=wp.vec3, ndim=2),
+    contact_shape0: wp.array(dtype=wp.int32, ndim=2),
+    contact_shape1: wp.array(dtype=wp.int32, ndim=2),
+    contact_thickness0: wp.array(dtype=wp.float32, ndim=2),
+    contact_thickness1: wp.array(dtype=wp.float32, ndim=2),
+    shape_body: wp.array(dtype=wp.int32, ndim=2),
+    shape_material_mu: wp.array(dtype=wp.float32, ndim=2),
+    body_pose: wp.array(dtype=wp.transform, ndim=2),
+    body_vel: wp.array(dtype=wp.spatial_vector, ndim=2),
+    body_mass: wp.array(dtype=wp.float32, ndim=2),
+    body_inv_mass: wp.array(dtype=wp.float32, ndim=2),
+    g_accel: wp.array(dtype=wp.vec3, ndim=1),
+    # Phase 2.5 reductions from match kernel.
+    is_matched: wp.array(dtype=wp.int32, ndim=2),
+    body_matched_support: wp.array(dtype=wp.float32, ndim=2),
+    body_unmatched_count: wp.array(dtype=wp.int32, ndim=2),
+    # Parameters.
+    dt: wp.float32,
+    n_dot_up_min: wp.float32,
+    v_t_threshold_sq: wp.float32,
+    enable_gravity: wp.int32,
+    enable_impact: wp.int32,
+    enable_friction: wp.int32,
+    offset_n: wp.int32,
+    offset_f: wp.int32,
+    # Output.
+    constr_force_prev_iter: wp.array(dtype=wp.float32, ndim=2),
+    # Diagnostics.
+    diag_cold_normal: wp.array(dtype=wp.int32, ndim=1),
+    diag_cold_friction: wp.array(dtype=wp.int32, ndim=1),
+):
+    """Fill `constr_force_prev_iter` for contact slots that the match
+    kernel left at zero. Per-thread (world × contact slot).
+
+    Three terms, all gated by config flags:
+      * α (gravity): residual gravity load on each body, evenly split
+        across its unmatched contacts that point sufficiently upward.
+      * β (impact): impulse needed to kill the inbound normal velocity
+        at the contact point, scaled to a force via /dt.
+      * γ (sliding friction): if tangential speed exceeds the static
+        threshold, seed kinetic friction along -v̂_t with magnitude
+        μ·λ_n_cold projected into the contact's tangent basis.
+
+    α and β are combined via max() — at impact, β includes inertia and
+    α would double-count.
+    """
+    world_idx, c_idx = wp.tid()
+    n_count = contact_count[world_idx]
+    if c_idx >= n_count:
+        return
+    if is_matched[world_idx, c_idx] == 1:
+        return
+
+    s0 = contact_shape0[world_idx, c_idx]
+    s1 = contact_shape1[world_idx, c_idx]
+    if s0 == s1:
+        return
+
+    b0 = _resolve_body(world_idx, s0, shape_body)
+    b1 = _resolve_body(world_idx, s1, shape_body)
+
+    n = contact_normal[world_idx, c_idx]
+    p = _world_midpoint(
+        world_idx, c_idx,
+        contact_point0, contact_point1, contact_normal,
+        contact_thickness0, contact_thickness1,
+        b0, b1, body_pose,
+    )
+
+    # Up direction (anti-gravity).
+    g = g_accel[0]
+    g_mag = wp.length(g)
+    up = wp.vec3(0.0, 0.0, 1.0)
+    if g_mag > 1.0e-6:
+        up = -g / g_mag
+
+    # Velocity at contact point (linear + angular cross arm).
+    v0_at_p = wp.vec3(0.0, 0.0, 0.0)
+    v1_at_p = wp.vec3(0.0, 0.0, 0.0)
+    if b0 >= 0:
+        twist0 = body_vel[world_idx, b0]
+        com0 = wp.transform_get_translation(body_pose[world_idx, b0])
+        v0_at_p = wp.spatial_top(twist0) + wp.cross(
+            wp.spatial_bottom(twist0), p - com0
+        )
+    if b1 >= 0:
+        twist1 = body_vel[world_idx, b1]
+        com1 = wp.transform_get_translation(body_pose[world_idx, b1])
+        v1_at_p = wp.spatial_top(twist1) + wp.cross(
+            wp.spatial_bottom(twist1), p - com1
+        )
+
+    v_rel = v1_at_p - v0_at_p
+    v_n = wp.dot(v_rel, n)
+    v_t = v_rel - v_n * n
+
+    # ---- β: impact ----
+    lambda_n_impact = wp.float32(0.0)
+    if enable_impact == 1 and v_n < 0.0:
+        inv_m_sum = wp.float32(0.0)
+        if b0 >= 0:
+            inv_m_sum += body_inv_mass[world_idx, b0]
+        if b1 >= 0:
+            inv_m_sum += body_inv_mass[world_idx, b1]
+        if inv_m_sum > 1.0e-9:
+            m_eff = 1.0 / inv_m_sum
+            lambda_n_impact = m_eff * (-v_n) / dt
+
+    # ---- α: gravity ----
+    n_dot_up = wp.dot(n, up)
+    lambda_n_gravity = wp.float32(0.0)
+    if enable_gravity == 1:
+        # Force on b0 along up = (-n_dot_up) * λ_n. Only credit b0 when
+        # this contact pushes it upward (-n_dot_up > floor).
+        if b0 >= 0 and (-n_dot_up) > n_dot_up_min:
+            cnt = body_unmatched_count[world_idx, b0]
+            if cnt > 0:
+                m_b = body_mass[world_idx, b0]
+                supplied = body_matched_support[world_idx, b0]
+                residual = m_b * g_mag - supplied
+                if residual > 0.0:
+                    candidate = residual / (float(cnt) * (-n_dot_up))
+                    lambda_n_gravity = wp.max(lambda_n_gravity, candidate)
+        if b1 >= 0 and n_dot_up > n_dot_up_min:
+            cnt = body_unmatched_count[world_idx, b1]
+            if cnt > 0:
+                m_b = body_mass[world_idx, b1]
+                supplied = body_matched_support[world_idx, b1]
+                residual = m_b * g_mag - supplied
+                if residual > 0.0:
+                    candidate = residual / (float(cnt) * n_dot_up)
+                    lambda_n_gravity = wp.max(lambda_n_gravity, candidate)
+
+    lambda_n_cold = wp.max(lambda_n_impact, lambda_n_gravity)
+
+    if lambda_n_cold > 0.0:
+        constr_force_prev_iter[world_idx, offset_n + c_idx] = lambda_n_cold
+        wp.atomic_add(diag_cold_normal, world_idx, 1)
+
+    # ---- γ: sliding friction ----
+    if enable_friction == 1 and lambda_n_cold > 0.0:
+        v_t_sq = wp.length_sq(v_t)
+        if v_t_sq > v_t_threshold_sq:
+            v_t_mag = wp.sqrt(v_t_sq)
+            t_hat = -v_t / v_t_mag
+            mu_a = shape_material_mu[world_idx, s0]
+            mu_b = shape_material_mu[world_idx, s1]
+            mu = 0.5 * (mu_a + mu_b)
+            f_t_world = mu * lambda_n_cold * t_hat
+            t1, t2 = orthogonal_basis(n)
+            constr_force_prev_iter[world_idx, offset_f + 2 * c_idx] = (
+                wp.dot(f_t_world, t1)
+            )
+            constr_force_prev_iter[world_idx, offset_f + 2 * c_idx + 1] = (
+                wp.dot(f_t_world, t2)
+            )
+            wp.atomic_add(diag_cold_friction, world_idx, 1)
 
 
 @wp.kernel
@@ -273,6 +479,16 @@ def _snapshot_kernel(
 DEFAULT_ALPHA = 0.1     # fraction of v·dt allowed as prediction error
 DEFAULT_MIN_THRESHOLD = 5.0e-3   # 5 mm absolute floor (contact-discovery noise)
 
+# Cold-start gates (phase 2.5).
+# n_dot_up_min: only credit a body's gravity-support budget when the
+# contact normal projects onto the up axis with at least this magnitude.
+# Below 0.3 the contact is mostly horizontal and divides poorly.
+DEFAULT_N_DOT_UP_MIN = 0.3
+# v_t_threshold: friction heuristic only fires above this tangential
+# speed. Below it, the direction is undetermined (stiction band) and a
+# wrong-sign seed would cost more iters than starting from zero.
+DEFAULT_V_T_THRESHOLD = 0.1   # m/s
+
 
 class ContactWarmStarter:
     """Cross-step warm-start of contact normal/friction forces.
@@ -303,14 +519,27 @@ class ContactWarmStarter:
         device: wp.Device,
         alpha: float = DEFAULT_ALPHA,
         min_threshold: float = DEFAULT_MIN_THRESHOLD,
+        cold_start_gravity: bool = True,
+        cold_start_impact: bool = True,
+        cold_start_friction_v_threshold: float = DEFAULT_V_T_THRESHOLD,
+        n_dot_up_min: float = DEFAULT_N_DOT_UP_MIN,
     ):
         self._enabled = bool(enabled)
         self._device = device
         self._alpha = float(alpha)
         self._min_threshold = float(min_threshold)
+        self._cold_gravity = bool(cold_start_gravity)
+        self._cold_impact = bool(cold_start_impact)
+        self._cold_friction = float(cold_start_friction_v_threshold) > 0.0
+        self._v_t_threshold_sq = float(cold_start_friction_v_threshold) ** 2
+        self._n_dot_up_min = float(n_dot_up_min)
 
         # References needed by apply/snapshot.
         self._shape_body = axion_model.shape_body
+        self._shape_material_mu = axion_model.shape_material_mu
+        self._body_mass = axion_model.body_mass
+        self._body_inv_mass = axion_model.body_inv_mass
+        self._g_accel = axion_model.g_accel
         # body_pose_prev is the right reference for BOTH lifecycle hooks:
         #   - At apply time (in step N+1's load_data, after body_pose_prev
         #     was just set to state_in.body_q): equals start-of-step N+1
@@ -334,6 +563,7 @@ class ContactWarmStarter:
 
         N_w = dims.num_worlds
         N_c = dims.contact_count
+        N_b = dims.body_count
 
         # Persistent state: previous step's converged contact set + forces.
         # Indexed by (world, contact_slot) — same shape as AxionContacts
@@ -348,10 +578,17 @@ class ContactWarmStarter:
             self._prev_lambda_n = wp.zeros((N_w, N_c), dtype=wp.float32)
             self._prev_lambda_t = wp.zeros((N_w, N_c), dtype=wp.vec2)
 
+            # Phase 2.5 scratch buffers (reset each apply()).
+            self._is_matched = wp.zeros((N_w, N_c), dtype=wp.int32)
+            self._body_matched_support = wp.zeros((N_w, N_b), dtype=wp.float32)
+            self._body_unmatched_count = wp.zeros((N_w, N_b), dtype=wp.int32)
+
             # Per-step diagnostics (reset at start of each apply()).
             self._diag_attempts = wp.zeros((N_w,), dtype=wp.int32)
             self._diag_matched = wp.zeros((N_w,), dtype=wp.int32)
             self._diag_max_dist = wp.zeros((N_w,), dtype=wp.float32)
+            self._diag_cold_normal = wp.zeros((N_w,), dtype=wp.int32)
+            self._diag_cold_friction = wp.zeros((N_w,), dtype=wp.int32)
 
     @property
     def enabled(self) -> bool:
@@ -368,10 +605,15 @@ class ContactWarmStarter:
         if not self._enabled:
             return
 
-        # Reset per-step diagnostic counters.
+        # Reset per-step diagnostic counters and phase-2.5 scratch buffers.
         self._diag_attempts.zero_()
         self._diag_matched.zero_()
         self._diag_max_dist.zero_()
+        self._diag_cold_normal.zero_()
+        self._diag_cold_friction.zero_()
+        self._is_matched.zero_()
+        self._body_matched_support.zero_()
+        self._body_unmatched_count.zero_()
 
         wp.launch(
             kernel=_match_kernel,
@@ -388,6 +630,7 @@ class ContactWarmStarter:
                 self._shape_body,
                 self._body_pose,
                 self._body_vel,
+                self._g_accel,
                 self._prev_count,
                 self._prev_b0,
                 self._prev_b1,
@@ -398,14 +641,60 @@ class ContactWarmStarter:
                 float(dt),
                 self._alpha,
                 self._min_threshold,
+                self._n_dot_up_min,
                 self._offset_n,
                 self._offset_f,
             ],
             outputs=[
                 data._constr_force_prev_iter,
+                self._is_matched,
+                self._body_matched_support,
+                self._body_unmatched_count,
                 self._diag_attempts,
                 self._diag_matched,
                 self._diag_max_dist,
+            ],
+            device=self._device,
+        )
+
+        # Cold-start kernel only does work when at least one term is on.
+        if not (self._cold_gravity or self._cold_impact):
+            return
+        wp.launch(
+            kernel=_cold_start_kernel,
+            dim=(contacts.num_worlds, contacts.max_contacts),
+            inputs=[
+                contacts.contact_count,
+                contacts.contact_point0,
+                contacts.contact_point1,
+                contacts.contact_normal,
+                contacts.contact_shape0,
+                contacts.contact_shape1,
+                contacts.contact_thickness0,
+                contacts.contact_thickness1,
+                self._shape_body,
+                self._shape_material_mu,
+                self._body_pose,
+                self._body_vel,
+                self._body_mass,
+                self._body_inv_mass,
+                self._g_accel,
+                self._is_matched,
+                self._body_matched_support,
+                self._body_unmatched_count,
+                float(dt),
+                self._n_dot_up_min,
+                self._v_t_threshold_sq,
+                wp.int32(1 if self._cold_gravity else 0),
+                wp.int32(1 if self._cold_impact else 0),
+                wp.int32(1 if self._cold_friction else 0),
+                self._offset_n,
+                self._offset_f,
+            ],
+            outputs=[
+                data._constr_force_prev_iter,
+                self._diag_cold_normal,
+                self._diag_cold_friction,
             ],
             device=self._device,
         )
