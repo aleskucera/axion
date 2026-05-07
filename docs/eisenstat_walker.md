@@ -237,6 +237,82 @@ something is wrong (probably the FB corner ate it; safer α might
 help) or the technique just doesn't fit our problem (try option 3
 from `pcr_warm_start_options.md` instead — preconditioner reuse).
 
+## Postscript: implemented, measured, reverted
+
+Phase 1 (scaffolding) was implemented in `54cc1e7` and phase 2
+(integration) was prototyped uncommitted, both reverted in
+`1ee9ffa`. The eval matrix that motivated the revert:
+
+  obstacle_benchmark, 200 steps:
+
+    config                   sumNR  hit16  pcr_total   pick_max   bad
+    EW off (baseline)         1917     49     33948    6.7e-4      0
+    EW on, eta_max=0.5         3128    192     11633    9.3e-1     31
+    EW on, eta_max=0.05        2791    128     17176    9.1e-3      3
+    EW on, eta_max=0.01        2389     87     22776    3.5e-2      1
+    EW on, eta_max=0.005       2173     66     26325    1.2e-3      2
+
+  surface_drive (rolling), 200 steps:
+
+    config                   sumNR  hit16  pcr_total   pick_max   bad
+    EW off                    1723     28     47911    4.8e-6      0
+    EW on, eta_max=0.5         2875    105     22269    6.6e-1     21
+    EW on, eta_max=0.05        1974     31     42674    4.0e-4      0
+
+Three observations:
+
+1. **The "conservative" defaults I picked (α=1.5, η_max=0.5) are
+   catastrophic on BOTH scenes.** Including the supposed win
+   scene (rolling). Bad steps in the 20–30 range, picked-max
+   around 0.6–0.9 — solver is essentially broken. The doc's
+   framing of "α=1.5 is conservative because the textbook
+   α=2 is too aggressive" was wrong; even α=1.5 / η_max=0.5
+   is far too loose.
+
+2. **No setting on the η_max sweep is a clear win.** The trade
+   is monotone: tighter η_max → fewer bad steps, less PCR
+   savings. On obstacle, the safest tested setting (η_max=0.005)
+   gives 22% PCR reduction at the cost of +13% NR iters and a
+   slight regression in picked-max (1.2e-3 vs 6.7e-4). On
+   surface_drive (η_max=0.05), 11% PCR reduction with picked-max
+   degraded from 4.8e-6 to 4.0e-4 (still acceptable absolutely,
+   but a measurable regression).
+
+3. **The FB-NR risk in the "Risks" section above IS what
+   happened.** Loose linear solves near the corner amplify
+   FB-degeneracy. The doc warned about this but predicted that
+   tighter η_max bounds would mitigate; in practice, by the
+   time η_max is tight enough to stop breaking convergence,
+   it's also tight enough that the PCR savings are modest.
+
+The literature's 1.5–3× wins assume smooth-Newton convergence
+proofs that don't hold for FB-NR. Our problem isn't a fit. PCR
+already runs with a fairly loose default `linear_tol = 1e-5`
+relative tolerance; there isn't much "wasted precision" left
+to harvest by loosening further.
+
+**Lessons for future contributors:**
+
+* Don't enable E-W on FB-style complementarity problems without
+  measuring carefully. The smoothness assumptions of E-W's
+  classical proofs don't apply.
+* If the goal is faster PCR, look at preconditioner reuse
+  (option 3 in `pcr_warm_start_options.md`) before E-W. The
+  preconditioner-reuse approach doesn't loosen tolerance, so
+  it doesn't trigger the FB-corner failure mode.
+* The "ratio of outer NR residual norms" used by E-W's choice 2
+  is itself unit-mixed (see `convergence_criterion_options.md`),
+  so the ratio doesn't reliably reflect Newton progress. Even
+  if E-W did fit FB-NR mechanically, our residual-norm
+  measurement is noisy at exactly the regime where E-W needs
+  signal. A unit-cleaned residual (per options 4 or 5 of the
+  convergence-criterion doc) might rehabilitate E-W, but that's
+  speculative and a much larger project.
+
+The doc and the implementation plan above are kept for the
+record. Don't re-prototype without addressing the residual-
+norm cleanliness issue first.
+
 ## See also
 
 * `axion/optim/pcr_solver.py` — current PCR with fixed-tol behavior
