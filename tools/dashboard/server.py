@@ -80,9 +80,28 @@ def meta(filename: str):
         return out
 
 
+def _best_indices(f: h5py.File, nr_iters: np.ndarray, world: int) -> np.ndarray:
+    """Per-step picked NR iter (the one backtracking selected — the
+    iterate whose residual is actually carried into the next step).
+
+    Falls back to ``iter_count - 1`` (the literal last iter) if the
+    file predates the backtracking-history field, and clamps to
+    ``[0, iter_count − 1]`` regardless.
+    """
+    S = nr_iters.shape[0]
+    if "candidates_best_idx" in f:
+        best = f["candidates_best_idx"][:, world].astype(int)
+    else:
+        best = np.maximum(nr_iters - 1, 0)
+    upper = np.maximum(nr_iters - 1, 0)
+    return np.clip(best, 0, upper)
+
+
 @app.get("/api/run/{filename}/convergence")
 def convergence(filename: str, world: int = 0):
-    """Per-step summary: NR iters used and final NR ‖r‖²."""
+    """Per-step summary: NR iters used and the final ‖r‖² at the
+    iterate that backtracking actually picked (NOT the residual at
+    the last NR iter — those can differ substantially)."""
     p = _safe_path(filename)
     with h5py.File(p, "r") as f:
         if "iter_count" not in f or "candidates_res_norm_sq" not in f:
@@ -93,14 +112,23 @@ def convergence(filename: str, world: int = 0):
         if world < 0 or world >= W:
             raise HTTPException(400, f"world out of range (0..{W-1})")
         nr_res = cand[:, :, world]
+        best_idx = _best_indices(f, nr_iters, world)
         last_idx = np.maximum(nr_iters - 1, 0)
-        final = nr_res[np.arange(S), last_idx]
-        max_K = K
+        final_picked = nr_res[np.arange(S), best_idx]
+        final_last = nr_res[np.arange(S), last_idx]
         return {
             "step": list(range(S)),
             "nr_iters": nr_iters.tolist(),
-            "final_residual_sq": [float(x) for x in final],
-            "max_newton_iters": max_K,
+            # final_residual_sq is the residual AT the iterate that's
+            # actually carried forward (post-backtrack). Frontend treats
+            # this as the canonical "final" for bad-step classification.
+            "final_residual_sq": [float(x) for x in final_picked],
+            # final_residual_sq_last is the residual at the literal last
+            # NR iter, kept for diagnostics — useful for spotting cases
+            # where the last iter was much worse than the picked one.
+            "final_residual_sq_last": [float(x) for x in final_last],
+            "best_idx": best_idx.tolist(),
+            "max_newton_iters": K,
         }
 
 
@@ -176,7 +204,8 @@ def _block_sq_norms(arr_2d: np.ndarray, blocks):
 
 @app.get("/api/run/{filename}/decomposition")
 def decomposition(filename: str, world: int = 0):
-    """Per-step residual decomposition at the FINAL NR iter of each step.
+    """Per-step residual decomposition at the iterate backtracking
+    picked (not the literal last NR iter).
 
     Returns step + per-block ‖r‖² so the frontend can stack them.
     """
@@ -187,13 +216,13 @@ def decomposition(filename: str, world: int = 0):
         cand_res = f["_candidates_res"]                  # (S, K, W, N)
         nr_iters = f["iter_count"][:, 0].astype(int)
         S, K, W, N = cand_res.shape
-        last_idx = np.maximum(nr_iters - 1, 0)
-        # Read just the per-step final-iter slice. h5py allows indexing
+        best_idx = _best_indices(f, nr_iters, world)
+        # Read just the per-step picked-iter slice. h5py allows indexing
         # along axis 0 with arrays via fancy access, but it's simpler to
         # do a loop here since S = 200 typical.
         final_per_step = np.empty((S, N), dtype=np.float64)
         for s in range(S):
-            final_per_step[s] = cand_res[s, last_idx[s], world]
+            final_per_step[s] = cand_res[s, best_idx[s], world]
         blocks = _residual_offsets(f)
         norms = _block_sq_norms(final_per_step, blocks)
         out = {"step": list(range(S))}
@@ -215,11 +244,18 @@ def step_detail(filename: str, step: int, world: int = 0):
         max_K = int(f["candidates_res_norm_sq"].shape[1])
         nr_iters_used = int(f["iter_count"][step, 0])
 
+        if "candidates_best_idx" in f:
+            best_idx = int(f["candidates_best_idx"][step, world])
+            best_idx = max(0, min(best_idx, max(nr_iters_used - 1, 0)))
+        else:
+            best_idx = max(nr_iters_used - 1, 0)
+
         out = {
             "step": step,
             "world": world,
             "nr_iters_used": nr_iters_used,
             "max_newton_iters": max_K,
+            "best_idx": best_idx,
             "nr_residual_sq": f["candidates_res_norm_sq"][step, :, world]
             .astype(float)
             .tolist(),

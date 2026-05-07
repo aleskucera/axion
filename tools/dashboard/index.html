@@ -385,7 +385,15 @@ async function selectStep(step) {
 function collectBadSteps() {
   if (!cachedConvergence) return [];
   const rows = [];
-  const { step, nr_iters, final_residual_sq, max_newton_iters } = cachedConvergence;
+  const {
+    step,
+    nr_iters,
+    final_residual_sq,
+    final_residual_sq_last,
+    best_idx,
+    max_newton_iters,
+  } = cachedConvergence;
+  const lastResid = final_residual_sq_last || final_residual_sq;
   for (let i = 0; i < step.length; i++) {
     const r = final_residual_sq[i];
     if (r > ATOL_SQ || nr_iters[i] >= max_newton_iters) {
@@ -393,6 +401,8 @@ function collectBadSteps() {
         step: step[i],
         nr: nr_iters[i],
         res: r,
+        res_last: lastResid[i],
+        best_idx: best_idx ? best_idx[i] : nr_iters[i] - 1,
         hit_max: nr_iters[i] >= max_newton_iters,
       });
     }
@@ -409,22 +419,38 @@ function renderBadSteps() {
     return;
   }
   const total = cachedConvergence.step.length;
-  const head = `<thead><tr><th>step</th><th>NR iters</th><th>final ‖r‖²</th><th></th></tr></thead>`;
+  const head = `<thead><tr>
+    <th>step</th>
+    <th>NR iters</th>
+    <th>‖r‖² (picked)</th>
+    <th>‖r‖² (last)</th>
+    <th>picked iter</th>
+    <th></th>
+  </tr></thead>`;
   const body = rows
     .map((r) => {
       const sel = r.step === currentStep ? " selected" : "";
       const warnNr = r.hit_max ? " warn" : "";
       const warnRes = r.res > ATOL_SQ ? " warn" : "";
+      const lastDiffers = Math.abs(Math.log10(r.res_last) - Math.log10(r.res)) > 0.5;
       return `<tr class="bad-row${sel}" data-step="${r.step}">
         <td>${r.step}</td>
         <td class="${warnNr}">${r.nr}${r.hit_max ? " *" : ""}</td>
         <td class="${warnRes}">${r.res.toExponential(2)}</td>
+        <td class="${lastDiffers ? "muted" : ""}">${r.res_last.toExponential(2)}</td>
+        <td class="muted">${r.best_idx} / ${r.nr - 1}</td>
         <td class="muted">${r.hit_max ? "hit max" : ""}</td>
       </tr>`;
     })
     .join("");
   host.innerHTML = `
-    <div class="note">${rows.length} of ${total} step${total === 1 ? "" : "s"} flagged. * = NR ran to max iters.</div>
+    <div class="note">
+      ${rows.length} of ${total} step${total === 1 ? "" : "s"} flagged
+      (‖r‖² &gt; ${ATOL_SQ.toExponential(0)} or NR hit max).
+      "picked" is the iterate backtracking selected and carried into
+      the next step; "last" is the residual at the final NR iter and
+      is for diagnostics only.
+    </div>
     <table class="bad">${head}<tbody>${body}</tbody></table>
   `;
   host.querySelectorAll("tr.bad-row").forEach((tr) => {
@@ -563,12 +589,23 @@ function renderOverview() {
   if (!cachedConvergence) return;
   const data = cachedConvergence;
 
-  const rows = data.step.map((s, i) => ({
-    step: s,
-    res: Math.max(data.final_residual_sq[i], 1e-30),
-    nr: data.nr_iters[i],
-    hit_max: data.nr_iters[i] >= data.max_newton_iters,
-  }));
+  // final_residual_sq is the post-backtrack picked-iter residual; this
+  // is the canonical "did this step actually converge?" number. The
+  // last-iter residual (final_residual_sq_last) is shown as a tooltip
+  // hint when the two differ noticeably.
+  const finalLast = data.final_residual_sq_last || data.final_residual_sq;
+  const rows = data.step.map((s, i) => {
+    const picked = Math.max(data.final_residual_sq[i], 1e-30);
+    const last = Math.max(finalLast[i], 1e-30);
+    return {
+      step: s,
+      res: picked,
+      res_last: last,
+      best_idx: (data.best_idx ? data.best_idx[i] : data.nr_iters[i] - 1),
+      nr: data.nr_iters[i],
+      hit_max: data.nr_iters[i] >= data.max_newton_iters,
+    };
+  });
 
   const marks = [
     Plot.ruleY([ATOL_SQ], { stroke: MUTED, strokeDasharray: "4,3" }),
@@ -577,15 +614,26 @@ function renderOverview() {
       y: "res",
       fill: "hit_max",
       r: 3,
-      title: (d) => `step ${d.step}\n‖r‖²=${d.res.toExponential(2)}\nNR iters=${d.nr}`,
+      title: (d) =>
+        `step ${d.step}\n` +
+        `picked iter ${d.best_idx} / ${d.nr - 1}\n` +
+        `‖r‖² (picked) = ${d.res.toExponential(2)}\n` +
+        `‖r‖² (last)   = ${d.res_last.toExponential(2)}\n` +
+        `NR iters = ${d.nr}`,
     }),
     Plot.tip(
       rows,
       Plot.pointer({
         x: "step",
         y: "res",
-        channels: { nr: "nr" },
-        format: { x: ".0f", y: ".2e", nr: ".0f" },
+        channels: { nr: "nr", best_idx: "best_idx", res_last: "res_last" },
+        format: {
+          x: ".0f",
+          y: ".2e",
+          nr: ".0f",
+          best_idx: ".0f",
+          res_last: ".2e",
+        },
       }),
     ),
   ];
@@ -617,14 +665,21 @@ async function renderStepDetail(step) {
   const data = await fetchJson(`/api/run/${currentRun}/step/${step}?world=${world}`);
 
   const used = data.nr_iters_used;
-  const conv = data.nr_residual_sq[Math.max(used - 1, 0)];
-  $("step-info").textContent = `· step ${data.step} · world ${data.world} · NR ${used}/${data.max_newton_iters} iters · final ‖r‖²=${conv.toExponential(2)}`;
+  const lastIdx = Math.max(used - 1, 0);
+  const bestIdx = (data.best_idx != null) ? data.best_idx : lastIdx;
+  const lastRes = data.nr_residual_sq[lastIdx];
+  const pickedRes = data.nr_residual_sq[bestIdx];
+  $("step-info").textContent =
+    `· step ${data.step} · world ${data.world} · NR ${used}/${data.max_newton_iters} iters · ` +
+    `picked iter ${bestIdx} (‖r‖²=${pickedRes.toExponential(2)}; last iter = ${lastRes.toExponential(2)})`;
 
-  // NR residual decay
+  // NR residual decay — mark the picked iter with a separate ring.
   const nrRows = data.nr_residual_sq.slice(0, used).map((r, k) => ({
     iter: k,
     res: Math.max(r, 1e-30),
+    picked: k === bestIdx,
   }));
+  const pickedRow = nrRows[bestIdx];
   const nrChart = Plot.plot({
     width: chartWidth("nr-chart"),
     height: 240,
@@ -636,15 +691,27 @@ async function renderStepDetail(step) {
       Plot.ruleY([1e-6], { stroke: MUTED, strokeDasharray: "4,3" }),
       Plot.line(nrRows, { x: "iter", y: "res", stroke: ACCENT, strokeWidth: 1.5 }),
       Plot.dot(nrRows, { x: "iter", y: "res", fill: ACCENT, r: 3 }),
+      // Picked iter highlight: bigger hollow ring in green.
+      pickedRow
+        ? Plot.dot([pickedRow], {
+            x: "iter",
+            y: "res",
+            stroke: OK,
+            strokeWidth: 2,
+            r: 7,
+            fill: "none",
+          })
+        : null,
       Plot.tip(
         nrRows,
         Plot.pointer({
           x: "iter",
           y: "res",
-          format: { x: ".0f", y: ".2e" },
+          channels: { picked: "picked" },
+          format: { x: ".0f", y: ".2e", picked: ".0f" },
         }),
       ),
-    ],
+    ].filter(Boolean),
   });
   $("nr-chart").replaceChildren(nrChart);
 
