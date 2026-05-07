@@ -243,6 +243,129 @@ The lesson, for future would-be improvers of this convergence check:
   (~85% of step time), not the NR-check side. Look at
   `pcr_warm_start_options.md` for that lever.
 
+## Postscript 2: option 2 (mass-weighted dynamics block) was tried and reverted
+
+Implemented uncommitted, then reverted. Three modes added to
+`AxionEngineConfig`:
+
+  * `dynamics_residual_weighting = "none"`     — today's behavior
+  * `dynamics_residual_weighting = "mass"`     — dyn rows ÷ m_i
+  * `dynamics_residual_weighting = "inertial"` — linear ÷ m_i, angular ÷ I_i
+
+A weight kernel populated `data.res_weights` once at engine init
+(masses don't change between sim steps). An `_apply_res_weights_kernel`
+multiplied `_res` by the weights into `_res_weighted`, then the
+existing `tiled_sq_norm.compute` was called on the weighted vector.
+Constraint blocks kept `weight = 1` so the change targeted only the
+dynamics block.
+
+### What we measured
+
+**Initial single-run on obstacle_benchmark looked like a clean win**:
+mass mode at default `atol=1e-3` showed `picked_unweighted_max =
+1.0e-4` vs baseline's `1.7e-1` — a 1700× tighter worst-case at
+neutral wall-clock. Promising enough that I sweept `newton_atol` to
+see if tightening would cash in further.
+
+The atol sweep showed an artifact, not a win. Tightening atol simply
+forces NR to hit `max_newton_iters`. The "approximate cost" model I
+used (NR + PCR) suggested ~16% step-cost reduction, but real
+GPU-event profiling told a different story:
+
+  obstacle_benchmark, end-to-end mode, single-run:
+
+    config                        nr_solve  total step  vs baseline
+    baseline (none, atol=1e-3)    5.040 ms   5.957 ms   –
+    none, atol=1e-10 (fixed-iter) 6.840 ms   7.777 ms   +30.6%
+    mass, atol=1e-3                4.915 ms   5.843 ms    −1.9%
+    mass, atol=1e-4                5.980 ms   6.892 ms   +15.7%
+    mass, atol=1e-5                6.817 ms   7.738 ms   +29.9%
+
+Tightening atol consistently makes wall-clock *worse*. The cost
+model assumed per-NR-iter overhead ≈ per-PCR-iter cost; the data
+showed the per-NR-iter overhead (linear-system build, residual
+eval, candidate save, history save) is roughly 5× a single PCR iter.
+So adding 1000 NR iters costs more than the saved PCR iters
+recover.
+
+Then the 1700× worst-case improvement turned out to be a single-run
+fluke. Three runs each on obstacle:
+
+    mode  run  sumNR    uw_max
+    none   1   1826   1.87e-3
+    none   2   1821   4.78e-1   ← unlucky baseline run
+    none   3   1851   1.67e-1
+    mass   1   1778   3.59e-1   ← unlucky mass run
+    mass   2   1736   3.09e-3
+    mass   3   1735   2.85e-2
+
+Both modes have wide variance on `uw_max` (1.9e-3 to 4.8e-1 for
+`none`; 3.1e-3 to 3.6e-1 for `mass`). The "1700×" came from
+comparing baseline-run-2 to mass-run-2, which happened to be each
+mode's *opposite* tail. Across-run means: none = 2.16e-1, mass =
+1.30e-1 — a 40% improvement, comparable to the variance. The
+worst-case is dominated by a few impact moments where any solver
+struggles, and the random ordering of which step gets the bad
+moment varies between runs.
+
+The robust 95th-percentile `uw_p95` actually *favors* baseline:
+
+    mode    uw_p95 mean
+    none    5.75e-6
+    mass    1.67e-5    ← ~3× worse on the typical-bad step
+
+Surface_drive (rolling) was completely neutral across modes. uw_max
+within 5% across all three modes; nothing for backtracking to
+rescue when every step converges easily.
+
+### Why mass-weighting didn't work
+
+Three reasons we weren't aware of going in:
+
+1. **The weighting redistributes work, doesn't reduce it.** Mass-
+   weighting of the convergence norm effectively *loosens* the
+   absolute force-imbalance threshold (heavy bodies tolerate larger
+   raw imbalance because their per-body acceleration error is
+   smaller). NR exits this step earlier, but at a less-converged
+   state. That state carries to next step's `state_in`, making next
+   step's first PCR call harder. Net: traded NR iters this step for
+   PCR iters next step, roughly balanced.
+
+2. **The unweighted residual norm at the picked iter is dominated
+   by impact-step variance.** Backtracking picks the iter with min
+   weighted norm, which is *probably* a different iter than the
+   unweighted-min one — but for the worst-case step, neither
+   metric's optimum is well-defined (both are near max_iter).
+   Single-run comparisons get drowned by which step happens to
+   land at peak impact.
+
+3. **The cost model was wrong.** Per-NR-iter overhead is ~5× per
+   PCR iter, not 1×. The "approximate cost" formula I used to
+   project the atol sweep underweighted overhead by 5×. Always
+   verify with end-to-end profiling before drawing conclusions.
+
+### Lessons for future would-be option-2 implementers
+
+* **Run 3+ replicates before claiming a worst-case improvement.**
+  The dominant `uw_max` variance source is which simulation step
+  lands the worst impact, which shifts under any code change.
+  Single-run comparisons of `uw_max` are uninformative for stochastic
+  worst-case. Means or 95th percentiles are more honest.
+* **Wall-clock requires actual profiling, not iter-count proxies.**
+  Per-iter overhead matters and isn't captured by NR + PCR sums.
+* **The convergence-criterion shape is downstream of the corner.**
+  Like options 1 and 5 (postscripts above and the EW doc), this
+  experiment ran into the FB-NR corner indirectly. Re-weighting
+  the norm doesn't help iterates near `(λ>0, g=0)` converge any
+  better — it just changes which sub-optimal candidate gets
+  picked.
+* **If you want a *speed* lever, look at the linear solver, not the
+  NR-norm metric.** Five experiments (cross-step warm-start,
+  iterate seeding, ||Δλ|| check, Eisenstat-Walker, weighted norm)
+  have all run aground on the corner. Preconditioner reuse
+  (`pcr_warm_start_options.md` option 3) is the one remaining
+  low-risk linear-solver lever we haven't tried.
+
 ## See also
 
 * `axion/core/residual_utils.py` — current residual assembly
