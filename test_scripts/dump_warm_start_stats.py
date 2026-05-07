@@ -48,28 +48,63 @@ def main(cfg: DictConfig):
         if not self.enabled:
             return
         wp.synchronize()
+        cd_count = int(self._diag_closest_d_count.numpy()[0])
+        cd_sum = float(self._diag_closest_d_sum.numpy()[0])
+        cd_raw_sum = float(self._diag_closest_d_raw_sum.numpy()[0])
+        cd_mean = (cd_sum / cd_count) if cd_count else 0.0
+        cd_raw_mean = (cd_raw_sum / cd_count) if cd_count else 0.0
         records.append((
             int(self._diag_attempts.numpy()[0]),
             int(self._diag_matched.numpy()[0]),
             int(self._diag_cold_normal.numpy()[0]),
             int(self._diag_cold_friction.numpy()[0]),
+            int(self._diag_no_pair.numpy()[0]),
+            int(self._diag_over_thresh.numpy()[0]),
+            cd_mean,
+            cd_raw_mean,
         ))
     ContactWarmStarter.apply = patched
 
     sim.run()
 
-    R = np.array(records)  # (steps, 4)
+    R = np.array(records, dtype=object)
     if len(R) == 0:
         print("No records collected — warm start disabled?")
         return
-    attempts, matched, cold_n, cold_f = R.T
+    attempts = np.array([r[0] for r in R], dtype=int)
+    matched = np.array([r[1] for r in R], dtype=int)
+    cold_n = np.array([r[2] for r in R], dtype=int)
+    cold_f = np.array([r[3] for r in R], dtype=int)
+    no_pair = np.array([r[4] for r in R], dtype=int)
+    over_thresh = np.array([r[5] for r in R], dtype=int)
+    cd_mean = np.array([r[6] for r in R], dtype=float)
+    cd_raw_mean = np.array([r[7] for r in R], dtype=float)
     unmatched = attempts - matched
+    # Sanity: unmatched should equal no_pair + over_thresh.
+    # Steps where attempts==0 (e.g., before contact) are fine — both counts 0.
     print(f"\n=== Warm-start per-step stats over {len(R)} steps ===")
     print(f"attempts       p50={int(np.percentile(attempts,50))} p95={int(np.percentile(attempts,95))} max={int(attempts.max())}")
     print(f"matched        p50={int(np.percentile(matched,50))} p95={int(np.percentile(matched,95))} max={int(matched.max())}")
     print(f"unmatched      p50={int(np.percentile(unmatched,50))} p95={int(np.percentile(unmatched,95))} max={int(unmatched.max())}")
     print(f"cold_normal    p50={int(np.percentile(cold_n,50))} p95={int(np.percentile(cold_n,95))} max={int(cold_n.max())} sum={int(cold_n.sum())}")
     print(f"cold_friction  p50={int(np.percentile(cold_f,50))} p95={int(np.percentile(cold_f,95))} max={int(cold_f.max())} sum={int(cold_f.sum())}")
+    print(f"\nFailure-mode breakdown (sum across all steps):")
+    total_attempts = int(attempts.sum())
+    total_matched = int(matched.sum())
+    total_no_pair = int(no_pair.sum())
+    total_over = int(over_thresh.sum())
+    print(f"  total attempts:   {total_attempts}")
+    print(f"  total matched:    {total_matched} ({100*total_matched/max(1,total_attempts):.1f}%)")
+    print(f"  total no_pair:    {total_no_pair} ({100*total_no_pair/max(1,total_attempts):.1f}%)")
+    print(f"  total over_thresh: {total_over} ({100*total_over/max(1,total_attempts):.1f}%)")
+    nz = cd_mean[cd_mean > 0]
+    if len(nz):
+        print(f"\nMean closest-in-pair distance (m), across steps with pair_seen:")
+        print(f"  p25={np.percentile(nz,25)*1000:.2f} mm  "
+              f"p50={np.percentile(nz,50)*1000:.2f} mm  "
+              f"p75={np.percentile(nz,75)*1000:.2f} mm  "
+              f"p95={np.percentile(nz,95)*1000:.2f} mm  "
+              f"max={nz.max()*1000:.2f} mm")
     print(f"\nsteps with cold_normal>0:   {int((cold_n>0).sum())}/{len(R)}")
     print(f"steps with cold_friction>0: {int((cold_f>0).sum())}/{len(R)}")
     if (cold_n > 0).any():
@@ -77,16 +112,19 @@ def main(cfg: DictConfig):
         print(f"\nFirst step with cold-start: step {idx_first}, "
               f"unmatched={unmatched[idx_first]}, cold_normal={cold_n[idx_first]}")
 
-    print("\n--- per-step head (steps 0..15) ---")
-    print(f"{'step':>4} {'attempts':>8} {'matched':>7} {'unmatched':>9} {'cold_n':>6} {'cold_f':>6}")
-    for i in range(min(20, len(R))):
-        print(f"{i:>4d} {attempts[i]:>8d} {matched[i]:>7d} {unmatched[i]:>9d} {cold_n[i]:>6d} {cold_f[i]:>6d}")
-    print("\n--- mid-run (steps 60..70) ---")
-    for i in range(60, min(70, len(R))):
-        print(f"{i:>4d} {attempts[i]:>8d} {matched[i]:>7d} {unmatched[i]:>9d} {cold_n[i]:>6d} {cold_f[i]:>6d}")
-    print("\n--- late-run (steps 150..160) ---")
-    for i in range(150, min(160, len(R))):
-        print(f"{i:>4d} {attempts[i]:>8d} {matched[i]:>7d} {unmatched[i]:>9d} {cold_n[i]:>6d} {cold_f[i]:>6d}")
+    def show(start, end, title):
+        end = min(end, len(R))
+        if end <= start: return
+        print(f"\n--- {title} (steps {start}..{end-1}) ---")
+        print(f"{'step':>4} {'att':>4} {'match':>5} {'no_pair':>7} {'over':>5} "
+              f"{'cd_mm':>6} {'cd_raw':>6} {'cold_n':>6} {'cold_f':>6}")
+        for i in range(start, end):
+            print(f"{i:>4d} {attempts[i]:>4d} {matched[i]:>5d} {no_pair[i]:>7d} "
+                  f"{over_thresh[i]:>5d} {cd_mean[i]*1000:>6.2f} {cd_raw_mean[i]*1000:>6.2f} "
+                  f"{cold_n[i]:>6d} {cold_f[i]:>6d}")
+    show(0, 20, "head")
+    show(60, 70, "mid")
+    show(150, 160, "late")
 
 
 if __name__ == "__main__":

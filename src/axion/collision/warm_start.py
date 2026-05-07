@@ -121,6 +121,20 @@ def _match_kernel(
     diag_attempts: wp.array(dtype=wp.int32, ndim=1),
     diag_matched: wp.array(dtype=wp.int32, ndim=1),
     diag_max_dist: wp.array(dtype=wp.float32, ndim=1),
+    # Failure-mode breakdown for the matcher:
+    #   no_pair     = current contact's (b0,b1) appears nowhere in prev
+    #   over_thresh = pair existed but closest distance exceeded threshold
+    # closest_d_sum / closest_d_count compute the mean of "closest prev
+    # contact in matching pair" distance (in meters) across all
+    # attempted contacts, so we can see how far off the predictor is.
+    # closest_d_raw_sum is the same metric WITHOUT the v_translate*dt
+    # prediction step, so we can compare raw vs predicted distances and
+    # tell whether the predictor is helping.
+    diag_no_pair: wp.array(dtype=wp.int32, ndim=1),
+    diag_over_thresh: wp.array(dtype=wp.int32, ndim=1),
+    diag_closest_d_sum: wp.array(dtype=wp.float32, ndim=1),
+    diag_closest_d_raw_sum: wp.array(dtype=wp.float32, ndim=1),
+    diag_closest_d_count: wp.array(dtype=wp.int32, ndim=1),
 ):
     """One thread per (world, current contact slot).
 
@@ -169,11 +183,19 @@ def _match_kernel(
     # Translation between snapshot frame (start of last step) and
     # current frame (start of this step). For ground contacts (b1<0)
     # only b0 contributes; symmetric for body-body contacts.
-    v_translate = wp.vec3(0.0, 0.0, 0.0)
+    v_translate_full = wp.vec3(0.0, 0.0, 0.0)
     if b0 >= 0:
-        v_translate += wp.spatial_top(body_vel[world_idx, b0])
+        v_translate_full += wp.spatial_top(body_vel[world_idx, b0])
     if b1 >= 0:
-        v_translate -= wp.spatial_top(body_vel[world_idx, b1])
+        v_translate_full -= wp.spatial_top(body_vel[world_idx, b1])
+    # Project onto the contact plane: a contact midpoint can only slide
+    # along the surface, not penetrate it. The normal-velocity component
+    # represents penetration/separation, which the constraint absorbs —
+    # in equilibrium the contact patch in world stays at the surface
+    # regardless of v_n. Including v_n in the prediction was off by up
+    # to v_n·dt per step (the entire error budget for vertical motion
+    # against a static ground).
+    v_translate = v_translate_full - wp.dot(v_translate_full, n_curr) * n_curr
     v_mag = wp.length(v_translate)
     threshold = wp.max(min_threshold, alpha * v_mag * dt)
     threshold_sq = threshold * threshold
@@ -184,15 +206,38 @@ def _match_kernel(
     n_prev = prev_count[world_idx]
     best_j = wp.int32(-1)
     best_d_sq = threshold_sq
+    # Closest-in-pair distance (with prediction) and raw (no prediction),
+    # both regardless of threshold, for diagnostics.
+    closest_in_pair_sq = wp.float32(1.0e30)
+    closest_raw_sq = wp.float32(1.0e30)
+    pair_seen = wp.bool(False)
     for j in range(n_prev):
         if prev_b0[world_idx, j] != b0 or prev_b1[world_idx, j] != b1:
             continue
-        # Predict where prev contact would be at current pose.
-        p_pred = prev_p_world[world_idx, j] + v_translate * dt
+        pair_seen = wp.bool(True)
+        prev_p = prev_p_world[world_idx, j]
+        # Predicted: prev contact translated forward by body lin·dt.
+        p_pred = prev_p + v_translate * dt
         d_sq = wp.length_sq(p_curr - p_pred)
+        # Raw: no prediction, just compare current to prev location.
+        d_raw_sq = wp.length_sq(p_curr - prev_p)
+        if d_sq < closest_in_pair_sq:
+            closest_in_pair_sq = d_sq
+        if d_raw_sq < closest_raw_sq:
+            closest_raw_sq = d_raw_sq
         if d_sq < best_d_sq:
             best_d_sq = d_sq
             best_j = j
+
+    # Failure-mode accounting: only run after we've scanned all prev j's.
+    if pair_seen:
+        wp.atomic_add(diag_closest_d_sum, world_idx, wp.sqrt(closest_in_pair_sq))
+        wp.atomic_add(diag_closest_d_raw_sum, world_idx, wp.sqrt(closest_raw_sq))
+        wp.atomic_add(diag_closest_d_count, world_idx, 1)
+        if best_j < 0:
+            wp.atomic_add(diag_over_thresh, world_idx, 1)
+    else:
+        wp.atomic_add(diag_no_pair, world_idx, 1)
 
     # Anti-gravity direction (used by both branches to credit a body's
     # vertical-support budget). g_accel is a length-1 array of vec3.
@@ -589,6 +634,12 @@ class ContactWarmStarter:
             self._diag_max_dist = wp.zeros((N_w,), dtype=wp.float32)
             self._diag_cold_normal = wp.zeros((N_w,), dtype=wp.int32)
             self._diag_cold_friction = wp.zeros((N_w,), dtype=wp.int32)
+            # Match failure-mode counters.
+            self._diag_no_pair = wp.zeros((N_w,), dtype=wp.int32)
+            self._diag_over_thresh = wp.zeros((N_w,), dtype=wp.int32)
+            self._diag_closest_d_sum = wp.zeros((N_w,), dtype=wp.float32)
+            self._diag_closest_d_raw_sum = wp.zeros((N_w,), dtype=wp.float32)
+            self._diag_closest_d_count = wp.zeros((N_w,), dtype=wp.int32)
 
     @property
     def enabled(self) -> bool:
@@ -611,6 +662,11 @@ class ContactWarmStarter:
         self._diag_max_dist.zero_()
         self._diag_cold_normal.zero_()
         self._diag_cold_friction.zero_()
+        self._diag_no_pair.zero_()
+        self._diag_over_thresh.zero_()
+        self._diag_closest_d_sum.zero_()
+        self._diag_closest_d_raw_sum.zero_()
+        self._diag_closest_d_count.zero_()
         self._is_matched.zero_()
         self._body_matched_support.zero_()
         self._body_unmatched_count.zero_()
@@ -653,6 +709,11 @@ class ContactWarmStarter:
                 self._diag_attempts,
                 self._diag_matched,
                 self._diag_max_dist,
+                self._diag_no_pair,
+                self._diag_over_thresh,
+                self._diag_closest_d_sum,
+                self._diag_closest_d_raw_sum,
+                self._diag_closest_d_count,
             ],
             device=self._device,
         )
