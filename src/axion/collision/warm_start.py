@@ -658,8 +658,11 @@ class ContactWarmStarter:
         )
 
         # Cold-start kernel only does work when at least one term is on.
-        if not (self._cold_gravity or self._cold_impact):
-            return
+        if self._cold_gravity or self._cold_impact:
+            self._launch_cold_start(contacts, data, dt)
+        return
+
+    def _launch_cold_start(self, contacts, data, dt) -> None:
         wp.launch(
             kernel=_cold_start_kernel,
             dim=(contacts.num_worlds, contacts.max_contacts),

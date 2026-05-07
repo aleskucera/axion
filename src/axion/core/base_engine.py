@@ -299,13 +299,10 @@ class AxionEngineBase(SolverBase):
 
         # Cold reset of the friction-lag buffer must happen here, BEFORE
         # warm_starter.apply, so the warm starter's writes survive.
-        # Engine.step previously did this zero after load_data returned;
-        # we move it to here so that:
-        #   - warm_starter.apply (next line) can selectively overwrite
-        #     matched contact slots and leave unmatched ones at 0;
-        #   - if warm-start is disabled, the buffer is still zeroed
-        #     before any solver code runs (engine.step no longer needs
-        #     to do it).
+        # _constr_force itself is zeroed in engine.step() (the NR
+        # initial iterate must remain λ=0 — empirically, FB-comp Newton
+        # diverges from any non-zero starting λ near the touching-cone
+        # boundary; tried and reverted in d4889f3 follow-up).
         self.data._constr_force_prev_iter.zero_()
 
         # Cross-step warm-start of contact normal/friction forces.
