@@ -68,6 +68,29 @@ class AxionEngineConfig(EngineConfig):
     linear_tol: float = 1e-5
     linear_atol: float = 1e-5
 
+    # Eisenstat-Walker forcing term (inexact Newton). When enabled,
+    # PCR's relative tolerance is scaled per NR iter by the outer
+    # residual reduction ratio: η_k = γ · (||r_k|| / ||r_{k-1}||)^α,
+    # clipped to [eta_min, eta_max]. Early NR iters get loose linear
+    # solves (their linearization is built around a far-from-converged
+    # iterate, so tight precision is wasted); late iters get tight
+    # solves to maintain Newton convergence.
+    #
+    # warmup_iters: keep the constant linear_tol for the first N iters,
+    # then start adapting. Protects the friction-warmup window
+    # (FB-friction needs a few iters with tight solves to stabilize).
+    #
+    # Conservative defaults (alpha=1.5, eta_max=0.5): see
+    # docs/eisenstat_walker.md for the FB-NR-specific risks that
+    # motivate values tighter than the textbook (gamma=0.9, alpha=2,
+    # eta_max=0.99).
+    eisenstat_walker_enabled: bool = False
+    eisenstat_walker_gamma: float = 0.9
+    eisenstat_walker_alpha: float = 1.5
+    eisenstat_walker_eta_min: float = 1e-6
+    eisenstat_walker_eta_max: float = 0.5
+    eisenstat_walker_warmup_iters: int = 2
+
     joint_compliance: float = 1e-5
     # contact_compliance is scaled by 1/dt^2 inside the contact constraint
     # (see contact_constraint.py). The effective regularization is therefore
@@ -218,6 +241,36 @@ class AxionEngineConfig(EngineConfig):
         _validate_non_negative_float(self.newton_atol, "newton_atol")
         _validate_non_negative_float(self.linear_tol, "linear_tol")
         _validate_non_negative_float(self.linear_atol, "linear_atol")
+
+        if self.eisenstat_walker_enabled:
+            if not (0.0 < self.eisenstat_walker_gamma <= 1.0):
+                raise ValueError(
+                    f"eisenstat_walker_gamma must be in (0, 1], got {self.eisenstat_walker_gamma}"
+                )
+            if not (1.0 < self.eisenstat_walker_alpha <= 2.0):
+                raise ValueError(
+                    f"eisenstat_walker_alpha must be in (1, 2], got {self.eisenstat_walker_alpha}"
+                )
+            if self.eisenstat_walker_eta_min <= 0.0:
+                raise ValueError(
+                    f"eisenstat_walker_eta_min must be > 0, got {self.eisenstat_walker_eta_min}"
+                )
+            if not (
+                self.eisenstat_walker_eta_min < self.eisenstat_walker_eta_max <= 1.0
+            ):
+                raise ValueError(
+                    f"eisenstat_walker_eta_max must be in (eta_min, 1], got "
+                    f"eta_min={self.eisenstat_walker_eta_min}, eta_max={self.eisenstat_walker_eta_max}"
+                )
+            _validate_positive_int(
+                self.eisenstat_walker_warmup_iters, "eisenstat_walker_warmup_iters",
+                min_value=0,
+            )
+            if self.eisenstat_walker_warmup_iters >= self.max_newton_iters:
+                raise ValueError(
+                    f"eisenstat_walker_warmup_iters must be < max_newton_iters, got "
+                    f"{self.eisenstat_walker_warmup_iters} and {self.max_newton_iters}"
+                )
 
         # Validate physics params
         _validate_non_negative_float(self.joint_compliance, "joint_compliance")
