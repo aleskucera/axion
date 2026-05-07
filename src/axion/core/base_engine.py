@@ -52,13 +52,27 @@ def _check_newton_residuals_kernel(
 def _update_newton_iter_kernel(
     iter_count: wp.array(dtype=int),
     max_iters: int,
+    min_iter: int,
     keep_running: wp.array(dtype=int),
 ):
     # This kernel is explicitly launched with dim=1
     current_iter = iter_count[0] + 1
     iter_count[0] = current_iter
 
+    # Force NR to keep running until we have cleared the backtracking
+    # warmup window. The friction kernel early-exits at iter 0 because
+    # ``constr_force_prev_iter`` is zeroed at engine.step start, which
+    # makes the iter-0 residual "friction-blind" — it can pass the atol
+    # convergence check without representing a physically-valid state
+    # (zero friction force going into the next step). Holding the loop
+    # until iter_count >= backtrack_min_iter ensures any iterate
+    # backtracking can pick has the friction model fully engaged.
+    # Overrides the residual check above when triggered.
+    if current_iter < min_iter:
+        keep_running[0] = 1
+
     # Force stop if we hit max iterations, overriding any residual checks
+    # AND the min-iter override above.
     if current_iter >= max_iters:
         keep_running[0] = 0
 
@@ -200,13 +214,17 @@ class AxionEngineBase(SolverBase):
             device=self.device,
         )
 
-        # 2. Safely manage iter count with exactly 1 thread (Sets keep_running = 0 if max iters reached)
+        # 2. Safely manage iter count with exactly 1 thread.
+        #    Forces keep_running=1 while iter_count < backtrack_min_iter
+        #    (the friction model's warmup window) and keep_running=0
+        #    once iter_count >= max_newton_iters.
         wp.launch(
             kernel=_update_newton_iter_kernel,
             dim=(1,),
             inputs=[
                 self.data.iter_count,
                 self.config.max_newton_iters,
+                self.config.backtrack_min_iter,
                 self.data.keep_running,
             ],
             device=self.device,
