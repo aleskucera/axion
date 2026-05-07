@@ -180,27 +180,68 @@ Trade-offs:
 
 ## Recommendation
 
-Start with **option 1** as a low-cost addition. Implement
-`||Δλ|| < ε_step` as a *secondary* convergence check — exit NR if
-either the residual check or the step check fires. Cost is one
-reduction kernel; gain is a robust early-exit when residual is
-oscillating near the FB corner but Newton has effectively stopped
-progressing. The threshold (e.g., `1e-3 N`) has direct engineering
-meaning.
+The original recommendation was to start with option 1 (`||Δλ|| < ε`).
+That was wrong. We tried it; it didn't deliver. See the postscript
+below for what we measured. If you're still after a *speed* lever for
+the solver, the right place to look is the *linear* solver, not the
+NR convergence check — see
+[`pcr_warm_start_options.md`](pcr_warm_start_options.md), which lays
+out the Eisenstat-Walker forcing-term technique among other options.
 
-If after that you want the per-block-threshold ergonomics, layer
-**option 2** on top. The two compose: option 1 is "one knob with
-clear meaning", option 2 is "five knobs each with clear meaning";
-they're not mutually exclusive.
+**Don't tune `newton_atol` further as a speed lever.** It's a
+unit-mixed scalar threshold; tweaking it is exactly the local-optimum
+trap this doc was meant to call out. If you need different
+quality/speed trade-offs, options 2-5 above are the principled paths,
+all of them larger commitments than they're probably worth right now.
 
-Options 3, 4, and 5 are real but bigger commitments. They're worth
-revisiting if 1+2 don't give you what you need, but the marginal
-benefit over a well-tuned 1+2 setup is incremental rather than
-order-of-magnitude.
+## Postscript: option 1 was tried and reverted
 
-**Don't tune `newton_atol` further until at least option 1 lands.**
-Tweaking a unit-mixed scalar threshold is the local optimum trap that
-got us here.
+Implemented in `676cea4` (May 2026), reverted in `85cc8c3`. The data
+that motivated the revert:
+
+  obstacle_benchmark, 200 steps, by step_atol value:
+
+  step_atol  sumI   hit16  picked_max  bad
+  off        1962    56    7.8e-4       0
+  1e-3       1977    56    1.5e-4       0   ← chosen "safe" default
+  1e-2       1895    49    8.1e-2       5   ← danger zone
+  1e-1       1853    46    1.0e-3       1
+
+Two findings:
+
+1. **The "safe" default (1e-3 N) never fires** on these scenes.
+   Newton step magnitudes don't actually drop below 1e-3 N until the
+   residual has already converged. Adding the check imposed a small
+   overhead (one reduction kernel) for zero behavior change. Net:
+   tiny *regression* at default settings.
+
+2. **There's a narrow danger zone around 1e-2 N.** The step check
+   fires *just early enough* on impact steps to short-circuit
+   FB-friction's warmup window — the same warmup window
+   `backtrack_min_iter` exists to protect. NR exits before friction
+   stabilizes, picked-max residual jumps to 8e-2 (effectively
+   broken). Looser still (1e-1) saves iters but eats one bad step.
+
+The check is *not bad as insurance* — the underlying motivation
+(residual oscillates near the FB cone corner with tiny Δλ) is real,
+just rare enough on the test scenes that we can't measure it. If
+that regime ever shows up empirically (e.g., a scene where NR
+provably stagnates per the candidates_res log), the check is a
+valid response. Without that evidence, it's overengineering — paying
+for an unobserved failure mode.
+
+The lesson, for future would-be improvers of this convergence check:
+
+* Don't ship a check whose default doesn't fire. If 1e-3 is too tight
+  to ever trigger, the code path is dead — and dead code never
+  delivers the safety it's supposed to provide either, because it
+  hasn't been validated against real failures.
+* `backtrack_min_iter` is a *load-bearing wall* for friction lag.
+  Anything that lets NR exit before iter `min_iter` is at risk of
+  the same broken-friction regime. Touch with care.
+* Speed wins for this solver come from the linear-solve side
+  (~85% of step time), not the NR-check side. Look at
+  `pcr_warm_start_options.md` for that lever.
 
 ## See also
 
