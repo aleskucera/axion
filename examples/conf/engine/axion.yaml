@@ -24,5 +24,5 @@ max_contacts_per_world: 256
 enable_contact_warm_start: true
 contact_reduction:
   policy: cluster
-  max_per_pair: 4
+  max_per_pair: 6
 differentiable_simulation: false
