@@ -3,6 +3,7 @@ from typing import Optional
 import numpy as np
 import warp as wp
 from axion.collision import build_reducer
+from axion.collision.warm_start import ContactWarmStarter
 from axion.optim import JacobiPreconditioner
 from axion.optim import PCRSolver
 from axion.optim import SystemLinearData
@@ -157,6 +158,14 @@ class AxionEngineBase(SolverBase):
             self.device,
         )
 
+        self.warm_starter = ContactWarmStarter(
+            enabled=self.config.enable_contact_warm_start,
+            axion_model=self.axion_model,
+            data=self.data,
+            dims=self.dims,
+            device=self.device,
+        )
+
         self.logger = None
         if self.logging_config.enable_hdf5_logging:
             self.logger = SimulationHDF5Logger(
@@ -282,6 +291,13 @@ class AxionEngineBase(SolverBase):
         # so this adds zero kernel overhead when policy="none" (the
         # default), preserving CUDA-graph capture behavior bit-for-bit.
         self.contact_reducer.apply(self.axion_contacts)
+
+        # Cross-step warm-start of contact normal/friction forces.
+        # When disabled, this is a Python-side return (no kernel
+        # launches). When enabled (later phases), populates
+        # _constr_force_prev_iter from the previous step's converged
+        # state via predicted-position matching against _prev_* buffers.
+        self.warm_starter.apply(self.axion_contacts, self.data, dt)
 
     def compute_warm_start_forces(self):
         """Compute initial contact forces from the predicted body state.
@@ -454,6 +470,12 @@ class AxionEngineBase(SolverBase):
             # boundary 4: end of NR loop, start of backtracking
             prof.record_boundary(4)
         perform_backtracking(self.axion_model, self.data, self.config, self.dims)
+
+        # Snapshot the post-backtrack converged state so the next step
+        # can warm-start its contacts. No-op when warm start is
+        # disabled.
+        self.warm_starter.snapshot(self.axion_contacts, self.data)
+
         if self.logger:
             self.logger.capture_step(self.timestep, self.data)
         if self.dataset_logger:

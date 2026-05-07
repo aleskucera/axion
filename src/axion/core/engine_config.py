@@ -100,6 +100,16 @@ class AxionEngineConfig(EngineConfig):
         default_factory=ContactReductionConfig
     )
 
+    # Cross-step warm-start of contact normal/friction forces.
+    # When True, the post-backtrack converged forces from step N are
+    # carried into _constr_force_prev_iter at step N+1, so the friction
+    # kernel sees non-zero f_n_prev at NR iter 0 instead of starting
+    # from a degenerate (no-friction) residual. See
+    # axion/collision/warm_start.py for the predicted-position matching
+    # algorithm. Default False until the matching kernel ships
+    # (currently scaffolding only).
+    enable_contact_warm_start: bool = False
+
     joint_constraint_level: str = "pos"  # pos / vel
     contact_constraint_level: str = "pos"  # pos / vel
 
