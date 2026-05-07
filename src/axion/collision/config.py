@@ -5,7 +5,7 @@ output and the construction of the constraint linear system. It groups
 active contacts by the (body0, body1) pair they touch and prunes the set
 to at most ``max_per_pair`` representatives per pair.
 """
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from typing import Literal
 
 
@@ -57,3 +57,20 @@ class ContactReductionConfig:
             raise ValueError(
                 f"cluster_pos_thresh must be >= 0, got {self.cluster_pos_thresh}"
             )
+
+    @classmethod
+    def coerce(cls, obj) -> "ContactReductionConfig":
+        """Best-effort conversion from a dict-like object (e.g. a Hydra
+        ``DictConfig`` left in place by partial overrides) into a real
+        ``ContactReductionConfig`` with proper defaults filled in.
+
+        Already-instantiated configs are returned unchanged.
+        """
+        if isinstance(obj, cls):
+            return obj
+        try:
+            items = dict(obj)
+        except Exception:
+            return cls()
+        valid = {f.name for f in fields(cls)}
+        return cls(**{k: v for k, v in items.items() if k in valid})

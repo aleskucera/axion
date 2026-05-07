@@ -154,6 +154,13 @@ class AxionEngineConfig(EngineConfig):
     def __post_init__(self):
         """Validate all configuration parameters."""
 
+        # Hydra passes nested overrides as a DictConfig, not as a real
+        # ContactReductionConfig instance. Coerce so downstream code can
+        # always assume a frozen dataclass.
+        coerced = ContactReductionConfig.coerce(self.contact_reduction)
+        if coerced is not self.contact_reduction:
+            object.__setattr__(self, "contact_reduction", coerced)
+
         def _validate_positive_int(value: int, name: str, min_value: int = 1) -> None:
             if value < min_value:
                 raise ValueError(f"{name} must be >= {min_value}, got {value}")

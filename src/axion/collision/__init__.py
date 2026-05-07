@@ -49,9 +49,13 @@ def build_reducer(
         from .fps import FPSReducer
 
         return FPSReducer(cfg, axion_model, data, dims, device)
+    if policy == "cluster":
+        from .cluster import ClusterReducer
+
+        return ClusterReducer(cfg, axion_model, data, dims, device)
     raise NotImplementedError(
         f"Contact reduction policy {policy!r} is not implemented yet. "
-        "Subsequent phases add 'cluster' and 'hull'."
+        "Subsequent phases add 'hull'."
     )
 
 
