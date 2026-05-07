@@ -1,6 +1,8 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 from typing import Optional
+
+from axion.collision import ContactReductionConfig
 
 from .engine_profiler import VALID_MODES as _VALID_PROFILING_MODES
 
@@ -93,6 +95,10 @@ class AxionEngineConfig(EngineConfig):
     linesearch_optimistic_window: float = 0.2
 
     max_contacts_per_world: int = 128
+
+    contact_reduction: ContactReductionConfig = field(
+        default_factory=ContactReductionConfig
+    )
 
     joint_constraint_level: str = "pos"  # pos / vel
     contact_constraint_level: str = "pos"  # pos / vel

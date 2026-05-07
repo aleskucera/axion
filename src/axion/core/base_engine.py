@@ -2,6 +2,7 @@ from typing import Optional
 
 import numpy as np
 import warp as wp
+from axion.collision import build_reducer
 from axion.optim import JacobiPreconditioner
 from axion.optim import PCRSolver
 from axion.optim import SystemLinearData
@@ -148,6 +149,10 @@ class AxionEngineBase(SolverBase):
             device=self.device,
         )
 
+        self.contact_reducer = build_reducer(
+            self.config.contact_reduction, self.dims, self.device
+        )
+
         self.logger = None
         if self.logging_config.enable_hdf5_logging:
             self.logger = SimulationHDF5Logger(
@@ -268,6 +273,11 @@ class AxionEngineBase(SolverBase):
             self.data,
             self.dims,
         )
+
+        # Per-pair contact reduction. NoOpReducer is a Python-side return,
+        # so this adds zero kernel overhead when policy="none" (the
+        # default), preserving CUDA-graph capture behavior bit-for-bit.
+        self.contact_reducer.apply(self.axion_contacts)
 
     def compute_warm_start_forces(self):
         """Compute initial contact forces from the predicted body state.
