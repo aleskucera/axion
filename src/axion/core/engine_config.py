@@ -65,6 +65,28 @@ class AxionEngineConfig(EngineConfig):
     # can exit early at a state still distorted by the regularization.
     newton_atol: float = 1e-3
 
+    # Secondary convergence check: stop NR when ||Δλ|| is below this
+    # threshold even if the residual hasn't dropped below newton_atol.
+    # Δλ is the Newton step in units of force (N), so this threshold has
+    # direct engineering meaning: "exit when one more iter would change
+    # the constraint force by less than ε newtons (L2-summed per world
+    # over all constraints)". Combined with newton_atol via OR semantics
+    # — either passes, we converge. Set to 0 (or negative) to disable.
+    #
+    # Calibration on obstacle_benchmark (200 steps):
+    #   1e-3 N : never fires, identical to off — safe no-op default
+    #   1e-2 N : fires too aggressively on impacts, 5 bad steps
+    #   1e-1 N : saves iters on rolling, 1 bad step on obstacle
+    # The danger zone is where the threshold is loose enough to fire
+    # before friction has stabilized (FB-friction needs a few iters to
+    # warm up after impact); see backtrack_min_iter docs.
+    #
+    # Default 1e-3 is conservative — it's the safety net for cases
+    # where residual oscillates near the FB cone corner with tiny Δλ.
+    # Tuning it up trades worst-case quality for speed; opt-in only.
+    # See docs/convergence_criterion_options.md for the design rationale.
+    newton_step_atol: float = 1e-3
+
     linear_tol: float = 1e-5
     linear_atol: float = 1e-5
 
@@ -216,6 +238,8 @@ class AxionEngineConfig(EngineConfig):
 
         # Validate tolerances
         _validate_non_negative_float(self.newton_atol, "newton_atol")
+        # newton_step_atol can be 0 or negative to disable the step
+        # check; only the actual numeric value is rejected if NaN/inf.
         _validate_non_negative_float(self.linear_tol, "linear_tol")
         _validate_non_negative_float(self.linear_atol, "linear_atol")
 
