@@ -280,20 +280,121 @@ measurement (1 and 2 by analysis, 3 and 4 by direct profiling, 5
 by implementation+measurement). The remaining linear-solver-side
 ideas are at the *kernel* level rather than the *algorithm* level:
 
-  * Replace CR with CG (one-line swap; CG is theoretically optimal
-    for SPD A while CR is better for indefinite — A is mostly SPD
-    here, so CG might give 10–20% iter reduction at zero risk).
-  * Block-Jacobi preconditioner (smarter preconditioner; fewer PCR
-    iters per call). 1–2 weeks; published wins for similar problems
-    are 10–30%.
-  * Sub-kernel optimization (kernel fusion in the CR inner loop;
-    reduce kernel-launch overhead; lower precision in inner products).
-    Tedious but tractable, 5–15% plausible.
+  * **Block-Jacobi preconditioner**: per-body, NOT per-contact.
+    See "Block-Jacobi: which block?" below.
+  * **CG instead of CR**: ruled out by the source paper's
+    Figure 18 (Macklin et al. 2019, §10.4). They tested Jacobi /
+    Gauss-Seidel / PCG / PCR on three test cases and found PCR
+    "an order of magnitude lower residual for the same iteration
+    count compared to other methods." Specifically: PCR's
+    monotonicity in residual norm is the right property for our
+    inexact-Newton outer loop. PCG can have non-monotone residual
+    behavior that breaks early-termination. **Don't swap to CG.**
+  * **Sub-kernel optimization** (kernel fusion in the CR inner
+    loop; reduce kernel-launch overhead; lower precision in inner
+    products). Tedious but tractable, 5–15% plausible.
 
 Or, for a structural rethink that **bypasses the FB corner entirely**
 (which has been the dominant source of dead-ends across this entire
 investigation), see APGD discussion in solver-side notes — that's a
 4–6 week reformulation, not a linear-solver swap.
+
+### Block-Jacobi: which block?
+
+A first attempt used **3×3 per-contact blocks**, grouping each
+contact's `(λ_n, λ_t1, λ_t2)` into a 3×3 sub-matrix of A. It failed.
+The structural reason becomes clear from the geometry:
+
+For a single contact, `J_n` is along the contact normal; `J_t1` and
+`J_t2` are tangent to it — **geometrically orthogonal by
+construction**. So `J_n · J_t1ᵀ = 0`, and `J_n · M⁻¹ · J_t1ᵀ ≈ 0`
+too (M⁻¹ is mass-diagonal). The 3×3 block of A within a single
+contact is **already approximately diagonal**. Inverting it gives
+nearly the same M⁻¹ as plain Jacobi. The within-contact coupling
+is genuinely small.
+
+The real off-diagonal coupling lives **between different contacts
+that share a body**. For a wheel with 4 ground contacts, the
+wheel's mass M_wheel⁻¹ couples those 4 contacts through
+`J_i · M⁻¹ · J_jᵀ`. For Helhest at 16 bodies × ~3 contacts each:
+each body's "constraint group" is ~10–13 dim (3–4 contacts × 3
+components + 1 joint).
+
+**Per-body block-Jacobi** is the natural fix. Group all constraints
+touching each body, extract A_BB ∈ ℝ^{k×k}, invert it, apply the
+inverse as the preconditioner per body.
+
+Cost ratio vs plain Jacobi: ~1000× per preconditioner-apply
+(matrix-vector with a 10×10 inverse vs scalar division by a
+diagonal). Wins if PCR iter count drops by more than ~1.5× —
+plausible if the previously-uncaptured off-diagonals were doing
+real work. Needs measurement to confirm.
+
+**Implementation effort**: 1–2 weeks. Pieces:
+
+1. **Group-assignment** at start of each step. Each constraint
+   touches 1–2 bodies; pick a canonical "owner" body per
+   constraint (e.g., the lighter body, or the lower body-id).
+   Build (body_idx → list of constraint_idx) mapping.
+2. **Block extraction**: build A_BB by gathering rows of A from
+   the constraint Jacobians J_i for i in body B's group.
+3. **Per-block dense factorization** (Cholesky or LU, ~10×10
+   dense). Warp tile primitives may help.
+4. **Apply** as preconditioner: for each body, solve A_BB·y_B =
+   x_B with the precomputed factor, scatter back.
+
+**Open questions** that should be answered by measurement before
+investing the implementation cost:
+
+* How much do the off-diagonals within a per-body block actually
+  contribute to A's spectrum? If A_BB is mostly diagonal even
+  per-body, this won't help either. **Measure ‖off-diag(A_BB)‖_F
+  / ‖diag(A_BB)‖_2 across bodies and steps before implementing.**
+* For body-body contacts (touching two bodies): which body owns
+  the constraint? Naive choice (lighter body) might leave large
+  coupling uncaptured.
+* Conditioning of A_BB itself: small blocks could be near-singular
+  near impacts when contacts are still "settling". Need a
+  regularization strategy.
+
+**Other block-Jacobi variants** considered but lower priority:
+
+* **Symmetric Gauss-Seidel (SGS)**: forward+backward sweeps
+  capture all off-diagonals, not just per-body ones. Stronger
+  than block-Jacobi but harder to parallelize (needs multi-coloring
+  for GPU). 1–2 weeks for the coloring infrastructure.
+* **Polynomial preconditioner**: M⁻¹ ≈ p(A) for low-degree p.
+  No sub-matrix extraction needed. Each apply costs k matvecs for
+  degree-k polynomial. Wins if PCR iter count drops by k×+. 1
+  week. Risk: needs eigenvalue estimation, same instability worry
+  as Chebyshev.
+* **AMG-as-preconditioner**: same setup-cost concerns as
+  AMG-as-solver. Paper's future-work direction; defer until our
+  problem scale grows.
+
+### r-factor heuristics for the complementarity preconditioner
+
+The paper's complementarity preconditioner is **already implemented**
+in this codebase (see `contact_constraint.py:94`):
+`r = h²·effective_mass` for contact-normal, `r = h·effective_mass`
+for friction. This is the paper's recommended r-factor.
+
+But: paper's §11 explicitly flags this as a research direction —
+"the design space for choosing the r factor in the complementarity
+preconditioner is large, and we think that heuristics based on
+global information could provide significant performance
+improvements."
+
+What "global information" might help:
+* Full block-diagonal of A (not just diagonal entry) for r
+* System-wide velocity scale or characteristic timescale
+* Adaptive r based on outer NR progress (like Eisenstat-Walker
+  but for the NCP scaling rather than the linear tol)
+* Per-body or per-constraint-island tuning
+
+**Status**: speculative; the paper doesn't propose specifics. Lower
+priority than per-body block-Jacobi until we know whether the
+linear-solver-side preconditioner improvements pay off.
 
 ## See also
 
