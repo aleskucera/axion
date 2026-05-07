@@ -132,23 +132,9 @@ class EngineData:
             self.keep_running = wp.zeros(shape=(1,), dtype=wp.int32)
             self.iter_count = wp.zeros(shape=(1,), dtype=wp.int32)
             self.res_norm_sq = wp.zeros(shape=(dims.num_worlds,), dtype=wp.float32)
-            # Per-world ||Δλ||² of the most recent Newton step. Used as a
-            # secondary convergence check alongside res_norm_sq: NR exits
-            # when EITHER the residual or the step is below its threshold,
-            # so the step check rescues us when residual oscillates near
-            # the FB cone corner (small Δλ, residual stuck) while still
-            # respecting the residual check for fast convergence.
-            self.step_norm_sq = wp.zeros(shape=(dims.num_worlds,), dtype=wp.float32)
 
         self.tiled_sq_norm = TiledSqNorm(
             shape=self._res.shape,
-            dtype=wp.float32,
-            device=device,
-        )
-        # Separate reducer for Δλ — same dtype/shape but indexed over
-        # _dconstr_force (length = num_constraints, not num_residuals).
-        self.tiled_sq_norm_dlambda = TiledSqNorm(
-            shape=self._dconstr_force.shape,
             dtype=wp.float32,
             device=device,
         )

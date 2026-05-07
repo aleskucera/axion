@@ -40,30 +40,13 @@ from .warm_start_utils import project_contact_forces_kernel
 @wp.kernel
 def _check_newton_residuals_kernel(
     h_norm_sq: wp.array(dtype=float),
-    step_norm_sq: wp.array(dtype=float),
-    res_atol_sq: float,
-    step_atol_sq: float,
+    atol_sq: float,
     keep_running: wp.array(dtype=int),
 ):
-    """Convergence check across all worlds.
-
-    A world is considered converged at this iter if EITHER:
-      * its residual norm² is below res_atol_sq, OR
-      * its Newton-step norm² (||Δλ||²) is below step_atol_sq.
-
-    Keep NR running as long as ANY world has both checks fail. The
-    step check rescues us when the residual oscillates near the FB
-    cone corner (small Δλ, residual stuck) — see
-    docs/convergence_criterion_options.md for the rationale.
-
-    A negative step_atol_sq disables the step check (residual-only
-    behavior, the pre-2026 default).
-    """
     tid = wp.tid()
+    # Check if the residual for this specific world exceeds the tolerance
     if tid < h_norm_sq.shape[0]:
-        residual_ok = h_norm_sq[tid] <= res_atol_sq
-        step_ok = (step_atol_sq >= 0.0) and (step_norm_sq[tid] <= step_atol_sq)
-        if not (residual_ok or step_ok):
+        if h_norm_sq[tid] > atol_sq:
             keep_running[0] = 1
 
 
@@ -242,29 +225,13 @@ class AxionEngineBase(SolverBase):
         self.data.save_iter_to_history()
 
     def _check_convergence(self):
-        # 0. Per-world ||Δλ||² for the secondary step-based check. Cheap
-        #    reduction that mirrors what we already do for the residual.
-        self.data.tiled_sq_norm_dlambda.compute(
-            self.data._dconstr_force, self.data.step_norm_sq
-        )
-
-        # 1. Check residuals AND Newton step across all worlds. Sets
-        #    keep_running = 1 if any world has BOTH checks failing
-        #    (i.e. residual still high AND Newton step still large).
-        #    A world converges as soon as either check passes.
-        step_atol_sq = (
-            self.config.newton_step_atol**2
-            if self.config.newton_step_atol > 0.0
-            else -1.0
-        )
+        # 1. Check residuals across all worlds (Sets keep_running = 1 if not converged)
         wp.launch(
             kernel=_check_newton_residuals_kernel,
             dim=(self.dims.num_worlds,),
             inputs=[
                 self.data.res_norm_sq,
-                self.data.step_norm_sq,
                 self.config.newton_atol**2,
-                step_atol_sq,
                 self.data.keep_running,
             ],
             device=self.device,
