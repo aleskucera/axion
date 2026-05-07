@@ -176,12 +176,135 @@ Order to chase if optimizing PCR:
    iterate-seeding wall (Option 2, see
    [`warm_start_iterate_seeding_issue.md`](warm_start_iterate_seeding_issue.md)).
 
+## Postscript: options 3, 4, 5 measured and ruled out
+
+After implementing options 1 and 2 (and reverting them — they're
+dead-ends as documented above), we measured the upper bound for
+options 3, 4, and 5 directly. None deliver enough to be worth
+pursuing on this codebase at this scale.
+
+### Option 3 (preconditioner reuse): 2% ceiling
+
+Per-component profile of obstacle_benchmark (200 steps, 3200 NR
+iters total):
+
+```
+phase                count     mean ms     share
+linear_system        3200       0.049       9.5%
+preconditioner       3200       0.010       2.0%   ← option 3 ceiling
+cr_solve             3200       0.386      74.4%
+step_or_linesearch   3200       0.047       9.1%
+convergence_check    3200       0.026       5.0%
+```
+
+`preconditioner.update()` is **2% of NR-iter time**. Skipping every
+non-first update saves at most ~1.5% of step time. Run-to-run
+variance on wall-clock is 3–5%. The maximum possible win is below
+noise, even before counting any PCR-iter increase from a stale
+preconditioner.
+
+The PCR-doc pitch claimed "5–15%" payoff; that was wrong. Always
+profile before committing.
+
+### Option 4 (Krylov recycling): A is too volatile to recycle
+
+Recycling pays off when A's slow-eigenvector subspace persists
+across solves. Measured how much A actually moves between PCR calls
+in our setup, using two probes:
+
+  1. `||Δdiag(A)|| / ||diag(A)||` — cheap, captures only diagonal.
+  2. `||A·v − A_prev·v|| / ||A·v||` for fixed random `v` — captures
+     full A change (diagonal + off-diagonal entries).
+
+Within-step (NR iter k vs k-1, same simulation step):
+
+```
+  ||Δdiag(A)|| / ||diag(A)|| :  p50 = 7e-2,  p95 = 8e-1,  max = 8
+  ||Δ(A·v)|| / ||A·v||       :  p50 = 0.85,  p95 = 4.5,   max = 3e4
+```
+
+A changes by **85% per NR iter on average within a single step**.
+The diagonal changes "only" 7%, meaning off-diagonal entries shift
+much more than diagonals — plausible because each NR iter's
+`apply_newton_step` integrates body pose (a wheel at 1.5 m/s with
+a Newton-step-driven velocity update can move several cm per iter),
+which alters the geometric alignment between J rows of constraints
+sharing a body. The diagonal `||J_i row||² / m_eff + C_ii` depends
+on a single row's magnitude (less sensitive); the off-diagonal
+`J_i · M⁻¹ · J_j^T` depends on inner products of geometrically
+shifting rows (more sensitive).
+
+For comparison: published Krylov-recycling work (Parks & de Sturler;
+PETSc) targets relative A-change in the 10–20% range. **Our 85%
+makes recycling within a step infeasible.**
+
+Across-step (last iter of step n-1 vs first iter of step n):
+
+```
+  ||Δdiag|| / ||diag|| :  p50 = 3e-7  (essentially identical)
+  ||Δ(A·v)|| / ||A·v|| :  p50 = 2.7e5  (broken — see caveat)
+```
+
+The `A·v` measurement here is contaminated by changing constraint
+sets between steps: when contacts come/go, the same slot in the
+residual vector now indexes a different physical constraint, so a
+fixed probe `v` measures slot-relabeling rather than actual matrix
+shift. The diagonal measurement (which masks inactive slots) shows
+the *active* part of A is essentially unchanged across steps —
+because step n's first iter starts with body_pose copied from
+step n-1's picked iter (warm-start trajectory continuity).
+
+To get a clean cross-step A-change number, the probe would need to
+track active-constraint identity across steps. Doable but moot:
+within-step recycling is by far the dominant regime (3200 calls vs
+200 step boundaries), and within-step recycling is dead at 85%
+relative change.
+
+**Verdict on option 4: not viable for this solver.** Within-step A
+changes too much for any subspace recycling scheme. Reproducer:
+`test_scripts/measure_A_stability.py`.
+
+### Option 5 (Eisenstat-Walker): tried and reverted
+
+See [`eisenstat_walker.md`](eisenstat_walker.md) for the full
+postscript. Summary: implemented, measured, reverted. The "smoothness
+assumptions of E-W's classical proofs" don't hold for FB-NR; loose
+early-iter linear solves amplify FB-corner degeneracy, breaking
+convergence on impact scenes. Even with the tightest η_max bounds
+that didn't break convergence, PCR-iter savings were negligible.
+
+### What's left
+
+Of the five options in this doc, four are now ruled out by
+measurement (1 and 2 by analysis, 3 and 4 by direct profiling, 5
+by implementation+measurement). The remaining linear-solver-side
+ideas are at the *kernel* level rather than the *algorithm* level:
+
+  * Replace CR with CG (one-line swap; CG is theoretically optimal
+    for SPD A while CR is better for indefinite — A is mostly SPD
+    here, so CG might give 10–20% iter reduction at zero risk).
+  * Block-Jacobi preconditioner (smarter preconditioner; fewer PCR
+    iters per call). 1–2 weeks; published wins for similar problems
+    are 10–30%.
+  * Sub-kernel optimization (kernel fusion in the CR inner loop;
+    reduce kernel-launch overhead; lower precision in inner products).
+    Tedious but tractable, 5–15% plausible.
+
+Or, for a structural rethink that **bypasses the FB corner entirely**
+(which has been the dominant source of dead-ends across this entire
+investigation), see APGD discussion in solver-side notes — that's a
+4–6 week reformulation, not a linear-solver swap.
+
 ## See also
 
 * `axion/optim/pcr_solver.py` — current PCR implementation
+* `test_scripts/measure_A_stability.py` — the A-volatility probe
+  used for option 4's verdict
 * [`warm_start_iterate_seeding_issue.md`](warm_start_iterate_seeding_issue.md)
   — why warm-starting the NR iterate (which Option 2 reduces to)
   doesn't work with FB complementarity
+* [`eisenstat_walker.md`](eisenstat_walker.md) — option 5
+  postscript with implementation data
 * `engine_profiler` per-component output — shows PCR's share of step
-  time (~85% in current configurations) so any of these options
+  time (~74% in current configurations) so any of these options
   has a meaningful step-time ceiling
