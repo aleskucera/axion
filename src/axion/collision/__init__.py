@@ -45,9 +45,13 @@ def build_reducer(
         from .top_k import TopKReducer
 
         return TopKReducer(cfg, axion_model, data, dims, device)
+    if policy == "fps":
+        from .fps import FPSReducer
+
+        return FPSReducer(cfg, axion_model, data, dims, device)
     raise NotImplementedError(
         f"Contact reduction policy {policy!r} is not implemented yet. "
-        "Subsequent phases add 'fps', 'cluster', and 'hull'."
+        "Subsequent phases add 'cluster' and 'hull'."
     )
 
 
