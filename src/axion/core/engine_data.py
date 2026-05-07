@@ -133,27 +133,6 @@ class EngineData:
             self.iter_count = wp.zeros(shape=(1,), dtype=wp.int32)
             self.res_norm_sq = wp.zeros(shape=(dims.num_worlds,), dtype=wp.float32)
 
-            # Eisenstat-Walker forcing-term state.
-            #   prev_res_norm_sq: outer NR residual at iter k-1, so the
-            #     kernel can compute the residual reduction ratio.
-            #   eta_k:            per-world forcing term (relative
-            #     tolerance to pass to PCR) computed this iter.
-            #   prev_eta_k:       eta_k from iter k-1, needed for the
-            #     PETSc-style safeguard `eta = max(eta, gamma·prev_eta^α)`.
-            # Kept as a SEPARATE buffer from eta_k so the kernel doesn't
-            # alias its input and output to the same Warp array (defensive
-            # against compiler assumptions). Phase 2 wp.copies eta_k into
-            # prev_eta_k just before each launch.
-            #
-            # All four buffers reset at the start of each NR loop. Total
-            # cost: 3 * num_worlds floats — negligible vs the rest of
-            # EngineData.
-            self.prev_res_norm_sq = wp.zeros(
-                shape=(dims.num_worlds,), dtype=wp.float32
-            )
-            self.eta_k = wp.zeros(shape=(dims.num_worlds,), dtype=wp.float32)
-            self.prev_eta_k = wp.zeros(shape=(dims.num_worlds,), dtype=wp.float32)
-
         self.tiled_sq_norm = TiledSqNorm(
             shape=self._res.shape,
             dtype=wp.float32,
