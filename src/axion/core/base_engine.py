@@ -150,7 +150,11 @@ class AxionEngineBase(SolverBase):
         )
 
         self.contact_reducer = build_reducer(
-            self.config.contact_reduction, self.dims, self.device
+            self.config.contact_reduction,
+            self.axion_model,
+            self.data,
+            self.dims,
+            self.device,
         )
 
         self.logger = None

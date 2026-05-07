@@ -13,12 +13,16 @@ from .base import ContactReducer, NoOpReducer
 from .config import ContactReductionConfig, ContactReductionPolicy
 
 if TYPE_CHECKING:
+    from axion.core.engine_data import EngineData
     from axion.core.engine_dims import EngineDimensions
+    from axion.core.model import AxionModel
     import warp as wp
 
 
 def build_reducer(
     cfg: ContactReductionConfig,
+    axion_model: "AxionModel",
+    data: "EngineData",
     dims: "EngineDimensions",
     device: "wp.Device",
 ) -> ContactReducer:
@@ -27,17 +31,23 @@ def build_reducer(
     Args:
         cfg: User-provided reduction settings. ``cfg.policy="none"``
             yields a no-op reducer.
-        dims: Engine dimensions (for kernels that allocate per-world
-            scratch buffers).
-        device: Warp device that the reducer's kernels will launch on.
+        axion_model: Source of ``shape_body`` (per-world shape→body table).
+        data: Source of ``body_pose_prev`` (current step's body pose,
+            updated by ``load_data`` before reduction runs).
+        dims: Engine dimensions; reducers allocate persistent
+            ``(num_worlds, contact_count)`` scratch buffers from these.
+        device: Warp device for kernel launches and scratch allocation.
     """
     policy = cfg.policy
     if policy == "none":
         return NoOpReducer()
+    if policy == "top_k":
+        from .top_k import TopKReducer
+
+        return TopKReducer(cfg, axion_model, data, dims, device)
     raise NotImplementedError(
         f"Contact reduction policy {policy!r} is not implemented yet. "
-        "Phase 0 ships only the no-op path; subsequent phases add "
-        "'top_k', 'fps', 'cluster', and 'hull'."
+        "Subsequent phases add 'fps', 'cluster', and 'hull'."
     )
 
 
