@@ -50,7 +50,8 @@ class AxionEngine(AxionEngineBase):
         wp.copy(dest=self.data.body_vel, src=state_in.body_qd)
 
         self.data._constr_force.zero_()
-        self.data._constr_force_prev_iter.zero_()
+        # _constr_force_prev_iter is zeroed inside load_data, before
+        # warm_starter.apply, so warm-started values aren't clobbered.
         if end_to_end:
             prof.record_boundary(3)
 

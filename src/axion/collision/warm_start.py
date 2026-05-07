@@ -27,6 +27,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import warp as wp
+from axion.math import orthogonal_basis
 
 if TYPE_CHECKING:
     from axion.core.contacts import AxionContacts
@@ -78,6 +79,136 @@ def _world_midpoint(
     p_a_world = wp.transform_point(pose_a, p_a_local) - t_a * n
     p_b_world = wp.transform_point(pose_b, p_b_local) + t_b * n
     return 0.5 * (p_a_world + p_b_world)
+
+
+@wp.kernel
+def _match_kernel(
+    # Current step inputs (post-reduction).
+    contact_count: wp.array(dtype=wp.int32, ndim=1),
+    contact_point0: wp.array(dtype=wp.vec3, ndim=2),
+    contact_point1: wp.array(dtype=wp.vec3, ndim=2),
+    contact_normal: wp.array(dtype=wp.vec3, ndim=2),
+    contact_shape0: wp.array(dtype=wp.int32, ndim=2),
+    contact_shape1: wp.array(dtype=wp.int32, ndim=2),
+    contact_thickness0: wp.array(dtype=wp.float32, ndim=2),
+    contact_thickness1: wp.array(dtype=wp.float32, ndim=2),
+    shape_body: wp.array(dtype=wp.int32, ndim=2),
+    body_pose: wp.array(dtype=wp.transform, ndim=2),
+    body_vel: wp.array(dtype=wp.spatial_vector, ndim=2),
+    # Previous step state.
+    prev_count: wp.array(dtype=wp.int32, ndim=1),
+    prev_b0: wp.array(dtype=wp.int32, ndim=2),
+    prev_b1: wp.array(dtype=wp.int32, ndim=2),
+    prev_p_world: wp.array(dtype=wp.vec3, ndim=2),
+    prev_normal: wp.array(dtype=wp.vec3, ndim=2),
+    prev_lambda_n: wp.array(dtype=wp.float32, ndim=2),
+    prev_lambda_t: wp.array(dtype=wp.vec2, ndim=2),
+    # Parameters.
+    dt: wp.float32,
+    alpha: wp.float32,
+    min_threshold: wp.float32,
+    offset_n: wp.int32,
+    offset_f: wp.int32,
+    # Output: warm-started friction-lag values.
+    constr_force_prev_iter: wp.array(dtype=wp.float32, ndim=2),
+    # Diagnostics.
+    diag_attempts: wp.array(dtype=wp.int32, ndim=1),
+    diag_matched: wp.array(dtype=wp.int32, ndim=1),
+    diag_max_dist: wp.array(dtype=wp.float32, ndim=1),
+):
+    """One thread per (world, current contact slot).
+
+    For each active contact, scan previous-step contacts in the same
+    (b0, b1) pair, predict each prev contact's expected position via
+    ``v_translate * dt``, and pick the closest one within the adaptive
+    threshold ``max(min_threshold, alpha * |v_translate| * dt)``.
+
+    On match: project the prev λ_t from prev's (t1, t2) basis through
+    world frame into the current (t1, t2) basis, then write λ_n and
+    the projected λ_t into ``constr_force_prev_iter`` so the friction
+    kernel sees real values at NR iter 0.
+
+    On no match: leave ``constr_force_prev_iter`` zero (the caller has
+    already cleared it before launching us). NR cold-starts that
+    contact, which is the correct behavior for new-contact-on-impact.
+
+    Greedy matching only — two current contacts may pick the same prev
+    contact, in which case its λ is effectively duplicated. With
+    cluster reduction enabled the contact set is already spatially
+    diverse, so this is rare in practice. A per-pair leader pattern
+    that enforces 1:1 assignment is left as a follow-up.
+    """
+    world_idx, c_idx = wp.tid()
+    n_count = contact_count[world_idx]
+    if c_idx >= n_count:
+        return
+
+    s0 = contact_shape0[world_idx, c_idx]
+    s1 = contact_shape1[world_idx, c_idx]
+    if s0 == s1:
+        return
+
+    b0 = _resolve_body(world_idx, s0, shape_body)
+    b1 = _resolve_body(world_idx, s1, shape_body)
+
+    # Current-frame midpoint and normal.
+    p_curr = _world_midpoint(
+        world_idx, c_idx,
+        contact_point0, contact_point1, contact_normal,
+        contact_thickness0, contact_thickness1,
+        b0, b1, body_pose,
+    )
+    n_curr = contact_normal[world_idx, c_idx]
+
+    # Translation between snapshot frame (start of last step) and
+    # current frame (start of this step). For ground contacts (b1<0)
+    # only b0 contributes; symmetric for body-body contacts.
+    v_translate = wp.vec3(0.0, 0.0, 0.0)
+    if b0 >= 0:
+        v_translate += wp.spatial_top(body_vel[world_idx, b0])
+    if b1 >= 0:
+        v_translate -= wp.spatial_top(body_vel[world_idx, b1])
+    v_mag = wp.length(v_translate)
+    threshold = wp.max(min_threshold, alpha * v_mag * dt)
+    threshold_sq = threshold * threshold
+
+    wp.atomic_add(diag_attempts, world_idx, 1)
+
+    # Scan previous-step contacts in the same body pair.
+    n_prev = prev_count[world_idx]
+    best_j = wp.int32(-1)
+    best_d_sq = threshold_sq
+    for j in range(n_prev):
+        if prev_b0[world_idx, j] != b0 or prev_b1[world_idx, j] != b1:
+            continue
+        # Predict where prev contact would be at current pose.
+        p_pred = prev_p_world[world_idx, j] + v_translate * dt
+        d_sq = wp.length_sq(p_curr - p_pred)
+        if d_sq < best_d_sq:
+            best_d_sq = d_sq
+            best_j = j
+
+    if best_j < 0:
+        # Cold start — caller has already zeroed constr_force_prev_iter.
+        return
+
+    # Project λ_t from prev's tangent basis to current's via world frame.
+    prev_n = prev_normal[world_idx, best_j]
+    prev_t1, prev_t2 = orthogonal_basis(prev_n)
+    curr_t1, curr_t2 = orthogonal_basis(n_curr)
+    prev_lt = prev_lambda_t[world_idx, best_j]
+    lt_world = prev_lt[0] * prev_t1 + prev_lt[1] * prev_t2
+    new_lt_x = wp.dot(lt_world, curr_t1)
+    new_lt_y = wp.dot(lt_world, curr_t2)
+
+    constr_force_prev_iter[world_idx, offset_n + c_idx] = (
+        prev_lambda_n[world_idx, best_j]
+    )
+    constr_force_prev_iter[world_idx, offset_f + 2 * c_idx] = new_lt_x
+    constr_force_prev_iter[world_idx, offset_f + 2 * c_idx + 1] = new_lt_y
+
+    wp.atomic_add(diag_matched, world_idx, 1)
+    wp.atomic_max(diag_max_dist, world_idx, wp.sqrt(best_d_sq))
 
 
 @wp.kernel
@@ -227,15 +358,57 @@ class ContactWarmStarter:
         return self._enabled
 
     def apply(self, contacts: "AxionContacts", data: "EngineData", dt: float) -> None:
-        """Phase 0: no-op. Phase 2 will read ``_prev_*`` and write
-        warm-started values into ``data._constr_force_prev_iter``."""
+        """Match every active contact against the snapshot stored from
+        the previous step and populate ``data._constr_force_prev_iter``
+        with the matched (and basis-projected) λ_n / λ_t values.
+
+        Caller must have zeroed ``data._constr_force_prev_iter`` before
+        invoking this — unmatched contacts rely on it staying zero.
+        """
         if not self._enabled:
             return
-        # Diagnostics reset for this step.
+
+        # Reset per-step diagnostic counters.
         self._diag_attempts.zero_()
         self._diag_matched.zero_()
         self._diag_max_dist.zero_()
-        # Match-and-write kernel lands in phase 2.
+
+        wp.launch(
+            kernel=_match_kernel,
+            dim=(contacts.num_worlds, contacts.max_contacts),
+            inputs=[
+                contacts.contact_count,
+                contacts.contact_point0,
+                contacts.contact_point1,
+                contacts.contact_normal,
+                contacts.contact_shape0,
+                contacts.contact_shape1,
+                contacts.contact_thickness0,
+                contacts.contact_thickness1,
+                self._shape_body,
+                self._body_pose,
+                self._body_vel,
+                self._prev_count,
+                self._prev_b0,
+                self._prev_b1,
+                self._prev_p_world,
+                self._prev_normal,
+                self._prev_lambda_n,
+                self._prev_lambda_t,
+                float(dt),
+                self._alpha,
+                self._min_threshold,
+                self._offset_n,
+                self._offset_f,
+            ],
+            outputs=[
+                data._constr_force_prev_iter,
+                self._diag_attempts,
+                self._diag_matched,
+                self._diag_max_dist,
+            ],
+            device=self._device,
+        )
 
     def snapshot(self, contacts: "AxionContacts", data: "EngineData") -> None:
         """Save the post-backtrack converged contact set + forces into

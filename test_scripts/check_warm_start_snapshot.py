@@ -97,6 +97,15 @@ def main(cfg: DictConfig):
           f"max={float(n_z.max()):+.3f}  "
           f"(should be ~+1 for ground contacts)")
 
+    print()
+    print("---- last-step match diagnostics (from .apply at start of step) ----")
+    diag_attempts = ws._diag_attempts.numpy()[0]
+    diag_matched = ws._diag_matched.numpy()[0]
+    diag_max_dist = ws._diag_max_dist.numpy()[0]
+    rate = (diag_matched / diag_attempts) if diag_attempts else 0.0
+    print(f"attempts={int(diag_attempts)}  matched={int(diag_matched)}  "
+          f"rate={rate:.1%}  max_match_dist={float(diag_max_dist)*1000:.2f} mm")
+
 
 if __name__ == "__main__":
     main()

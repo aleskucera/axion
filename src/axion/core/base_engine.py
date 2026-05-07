@@ -292,11 +292,22 @@ class AxionEngineBase(SolverBase):
         # default), preserving CUDA-graph capture behavior bit-for-bit.
         self.contact_reducer.apply(self.axion_contacts)
 
+        # Cold reset of the friction-lag buffer must happen here, BEFORE
+        # warm_starter.apply, so the warm starter's writes survive.
+        # Engine.step previously did this zero after load_data returned;
+        # we move it to here so that:
+        #   - warm_starter.apply (next line) can selectively overwrite
+        #     matched contact slots and leave unmatched ones at 0;
+        #   - if warm-start is disabled, the buffer is still zeroed
+        #     before any solver code runs (engine.step no longer needs
+        #     to do it).
+        self.data._constr_force_prev_iter.zero_()
+
         # Cross-step warm-start of contact normal/friction forces.
         # When disabled, this is a Python-side return (no kernel
-        # launches). When enabled (later phases), populates
-        # _constr_force_prev_iter from the previous step's converged
-        # state via predicted-position matching against _prev_* buffers.
+        # launches). When enabled, populates _constr_force_prev_iter
+        # from the previous step's converged state via
+        # predicted-position matching against _prev_* buffers.
         self.warm_starter.apply(self.axion_contacts, self.data, dt)
 
     def compute_warm_start_forces(self):
