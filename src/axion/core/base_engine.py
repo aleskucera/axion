@@ -2,6 +2,7 @@ from typing import Optional
 
 import numpy as np
 import warp as wp
+from axion.collision import build_reducer
 from axion.optim import JacobiPreconditioner
 from axion.optim import PCRSolver
 from axion.optim import SystemLinearData
@@ -52,13 +53,27 @@ def _check_newton_residuals_kernel(
 def _update_newton_iter_kernel(
     iter_count: wp.array(dtype=int),
     max_iters: int,
+    min_iter: int,
     keep_running: wp.array(dtype=int),
 ):
     # This kernel is explicitly launched with dim=1
     current_iter = iter_count[0] + 1
     iter_count[0] = current_iter
 
+    # Force NR to keep running until we have cleared the backtracking
+    # warmup window. The friction kernel early-exits at iter 0 because
+    # ``constr_force_prev_iter`` is zeroed at engine.step start, which
+    # makes the iter-0 residual "friction-blind" — it can pass the atol
+    # convergence check without representing a physically-valid state
+    # (zero friction force going into the next step). Holding the loop
+    # until iter_count >= backtrack_min_iter ensures any iterate
+    # backtracking can pick has the friction model fully engaged.
+    # Overrides the residual check above when triggered.
+    if current_iter < min_iter:
+        keep_running[0] = 1
+
     # Force stop if we hit max iterations, overriding any residual checks
+    # AND the min-iter override above.
     if current_iter >= max_iters:
         keep_running[0] = 0
 
@@ -134,6 +149,14 @@ class AxionEngineBase(SolverBase):
             device=self.device,
         )
 
+        self.contact_reducer = build_reducer(
+            self.config.contact_reduction,
+            self.axion_model,
+            self.data,
+            self.dims,
+            self.device,
+        )
+
         self.logger = None
         if self.logging_config.enable_hdf5_logging:
             self.logger = SimulationHDF5Logger(
@@ -200,13 +223,17 @@ class AxionEngineBase(SolverBase):
             device=self.device,
         )
 
-        # 2. Safely manage iter count with exactly 1 thread (Sets keep_running = 0 if max iters reached)
+        # 2. Safely manage iter count with exactly 1 thread.
+        #    Forces keep_running=1 while iter_count < backtrack_min_iter
+        #    (the friction model's warmup window) and keep_running=0
+        #    once iter_count >= max_newton_iters.
         wp.launch(
             kernel=_update_newton_iter_kernel,
             dim=(1,),
             inputs=[
                 self.data.iter_count,
                 self.config.max_newton_iters,
+                self.config.backtrack_min_iter,
                 self.data.keep_running,
             ],
             device=self.device,
@@ -250,6 +277,11 @@ class AxionEngineBase(SolverBase):
             self.data,
             self.dims,
         )
+
+        # Per-pair contact reduction. NoOpReducer is a Python-side return,
+        # so this adds zero kernel overhead when policy="none" (the
+        # default), preserving CUDA-graph capture behavior bit-for-bit.
+        self.contact_reducer.apply(self.axion_contacts)
 
     def compute_warm_start_forces(self):
         """Compute initial contact forces from the predicted body state.
@@ -341,6 +373,17 @@ class AxionEngineBase(SolverBase):
             """
             self.data.keep_running.zero_()
 
+            # Sync the friction-lag snapshot at the START of the iter so the
+            # linear system and the residual evaluation within this iter both
+            # see the same `prev_iter`. Previously this copy lived between the
+            # solve and the step, which caused a one-iter mismatch: the linear
+            # system was built using prev_iter from end of iter k-2 (friction
+            # often inactive), while the residual used prev_iter from end of
+            # iter k-1 (friction active). Linesearch could not reduce the
+            # friction residual because the search direction had zero in
+            # friction slots when the linear system thought friction was off.
+            wp.copy(dest=self.data._constr_force_prev_iter, src=self.data._constr_force)
+
             if per_component:
                 prof.record_boundary(0, slot_idx)
             compute_linear_system(
@@ -366,7 +409,6 @@ class AxionEngineBase(SolverBase):
             )
             compute_dbody_qd_from_dbody_lambda(self.axion_model, self.data, self.config, self.dims)
 
-            wp.copy(dest=self.data._constr_force_prev_iter, src=self.data._constr_force)
             if per_component:
                 prof.record_boundary(3, slot_idx)
 

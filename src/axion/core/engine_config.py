@@ -1,6 +1,8 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 from typing import Optional
+
+from axion.collision import ContactReductionConfig
 
 from .engine_profiler import VALID_MODES as _VALID_PROFILING_MODES
 
@@ -94,6 +96,10 @@ class AxionEngineConfig(EngineConfig):
 
     max_contacts_per_world: int = 128
 
+    contact_reduction: ContactReductionConfig = field(
+        default_factory=ContactReductionConfig
+    )
+
     joint_constraint_level: str = "pos"  # pos / vel
     contact_constraint_level: str = "pos"  # pos / vel
 
@@ -147,6 +153,13 @@ class AxionEngineConfig(EngineConfig):
 
     def __post_init__(self):
         """Validate all configuration parameters."""
+
+        # Hydra passes nested overrides as a DictConfig, not as a real
+        # ContactReductionConfig instance. Coerce so downstream code can
+        # always assume a frozen dataclass.
+        coerced = ContactReductionConfig.coerce(self.contact_reduction)
+        if coerced is not self.contact_reduction:
+            object.__setattr__(self, "contact_reduction", coerced)
 
         def _validate_positive_int(value: int, name: str, min_value: int = 1) -> None:
             if value < min_value:
