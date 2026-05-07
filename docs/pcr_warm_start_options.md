@@ -280,8 +280,10 @@ measurement (1 and 2 by analysis, 3 and 4 by direct profiling, 5
 by implementation+measurement). The remaining linear-solver-side
 ideas are at the *kernel* level rather than the *algorithm* level:
 
-  * **Block-Jacobi preconditioner**: per-body, NOT per-contact.
-    See "Block-Jacobi: which block?" below.
+  * **Block-Jacobi preconditioner**: per-body-pair (the cleanest
+    starting point). See "Block-Jacobi: which block?" below for
+    the design space of block schemes considered and why per-body-
+    pair is the recommended first attempt.
   * **CG instead of CR**: ruled out by the source paper's
     Figure 18 (Macklin et al. 2019, §10.4). They tested Jacobi /
     Gauss-Seidel / PCG / PCR on three test cases and found PCR
@@ -320,57 +322,149 @@ wheel's mass M_wheel⁻¹ couples those 4 contacts through
 each body's "constraint group" is ~10–13 dim (3–4 contacts × 3
 components + 1 joint).
 
-**Per-body block-Jacobi** is the natural fix. Group all constraints
-touching each body, extract A_BB ∈ ℝ^{k×k}, invert it, apply the
-inverse as the preconditioner per body.
+### Five block schemes considered
 
-Cost ratio vs plain Jacobi: ~1000× per preconditioner-apply
-(matrix-vector with a 10×10 inverse vs scalar division by a
-diagonal). Wins if PCR iter count drops by more than ~1.5× —
-plausible if the previously-uncaptured off-diagonals were doing
-real work. Needs measurement to confirm.
+For each constraint i, A_ij is non-zero iff i and j share a body
+(through the J·M⁻¹·Jᵀ term). The natural block schemes group
+constraints by which bodies they touch.
 
-**Implementation effort**: 1–2 weeks. Pieces:
+#### 1. Per-body with ownership rule
 
-1. **Group-assignment** at start of each step. Each constraint
-   touches 1–2 bodies; pick a canonical "owner" body per
-   constraint (e.g., the lighter body, or the lower body-id).
-   Build (body_idx → list of constraint_idx) mapping.
-2. **Block extraction**: build A_BB by gathering rows of A from
-   the constraint Jacobians J_i for i in body B's group.
-3. **Per-block dense factorization** (Cholesky or LU, ~10×10
-   dense). Warp tile primitives may help.
-4. **Apply** as preconditioner: for each body, solve A_BB·y_B =
-   x_B with the precomputed factor, scatter back.
+Each constraint assigned to one canonical body (e.g., the lighter
+body, or the lower body-id). No overlap, but body-body constraints
+lose half their coupling — only one body's M⁻¹ contribution gets
+captured. For our problem the heavier body's contribution is
+small anyway (we measured this; chassis-touching off-diagonals are
+~0), so the loss is mild but real.
 
-**Open questions** that should be answered by measurement before
-investing the implementation cost:
+**Drawback**: the ownership rule is arbitrary, and the dropped half
+of body-body coupling matters for stiff-joint problems.
 
-* How much do the off-diagonals within a per-body block actually
-  contribute to A's spectrum? If A_BB is mostly diagonal even
-  per-body, this won't help either. **Measure ‖off-diag(A_BB)‖_F
-  / ‖diag(A_BB)‖_2 across bodies and steps before implementing.**
-* For body-body contacts (touching two bodies): which body owns
-  the constraint? Naive choice (lighter body) might leave large
-  coupling uncaptured.
-* Conditioning of A_BB itself: small blocks could be near-singular
-  near impacts when contacts are still "settling". Need a
-  regularization strategy.
+#### 2. Per-body-pair (recommended starting point)
 
-**Other block-Jacobi variants** considered but lower priority:
+For each pair of bodies (B₁, B₂), group all constraints between
+them. Ground contacts (b₂ = −1) belong to (b₁, ground) pair. Each
+constraint has exactly one pair → **no overlap, no ownership rule**.
 
-* **Symmetric Gauss-Seidel (SGS)**: forward+backward sweeps
-  capture all off-diagonals, not just per-body ones. Stronger
-  than block-Jacobi but harder to parallelize (needs multi-coloring
-  for GPU). 1–2 weeks for the coloring infrastructure.
-* **Polynomial preconditioner**: M⁻¹ ≈ p(A) for low-degree p.
-  No sub-matrix extraction needed. Each apply costs k matvecs for
-  degree-k polynomial. Wins if PCR iter count drops by k×+. 1
-  week. Risk: needs eigenvalue estimation, same instability worry
-  as Chebyshev.
-* **AMG-as-preconditioner**: same setup-cost concerns as
-  AMG-as-solver. Paper's future-work direction; defer until our
-  problem scale grows.
+Block size: chassis-wheel pair ~5 (joint DOFs); wheel-ground pair
+~12 (4 contacts × 3 components). Comparable to per-body sizes.
+
+**Captures** both bodies' contributions to A_ij within the pair —
+strictly more than per-body's ownership-rule version.
+
+**Misses** cross-pair coupling through a shared body (e.g.,
+(chassis, wheel-1) and (chassis, wheel-2) joint constraints share
+chassis, with A_ij ≠ 0 through chassis). For Helhest the chassis
+contribution is small (heavy body, M_chassis⁻¹ tiny — measured),
+so the missed coupling is small in practice.
+
+**This is the cleanest first attempt** for our problem: simpler
+than per-body (no ownership rule), captures more coupling per
+block (both bodies), and the thing it misses we already measured
+to be negligible on this scene.
+
+#### 3. Per-body with overlap (Restricted Additive Schwarz)
+
+Each constraint joins *every* body group it touches (overlapping
+groups). RAS solves each block then writes back only to the
+constraint's "owned" rows. Captures both bodies' contributions
+AND cross-pair coupling through shared bodies.
+
+**Strictly more capture** than #1 or #2, at the cost of doubled
+per-body-block work for body-body constraints and more complex
+book-keeping. Convergence theory is mature in domain-decomposition
+literature.
+
+**When to choose**: if per-body-pair turns out marginal and the
+data shows uncaptured cross-pair coupling is what's limiting us.
+
+#### 4. Schur-on-constraint-types (joint vs contact)
+
+Block-factorize A by constraint type:
+
+```
+A = [A_jj  A_jc] = [I              0] [A_jj  0           ] [I  A_jj⁻¹·A_jc]
+    [A_cj  A_cc]   [A_cj·A_jj⁻¹    I] [0     S = A_cc − A_cj·A_jj⁻¹·A_jc] [0  I        ]
+```
+
+**Invert A_jj exactly** (joints are bilateral equality constraints —
+small, well-conditioned). Then approximate the contact-block Schur
+complement S = A_cc − A_cj·A_jj⁻¹·A_jc with a Jacobi (or per-pair)
+preconditioner.
+
+**Captures all chassis-mediated coupling exactly** because A_jj is
+solved without approximation — exactly the cross-pair coupling
+that per-body-pair misses. This is the structurally "right" answer
+for heavy-articulation problems.
+
+**Cost**: significantly more invasive. Need to identify joint vs
+contact rows, factorize A_jj (small, dense, exact), assemble the
+Schur complement update matrix-free. The Schur update assembly
+involves matvecs through A_jj⁻¹, which we'd compute via a small
+direct solver per world.
+
+**Status**: deferred. User has explicitly flagged this as a
+"would like to try later" direction. Per-body-pair first; if it
+delivers the speedup, Schur-on-types may not be needed. If
+per-body-pair is marginal, this is the natural escalation —
+particularly attractive for stiff-joint scenes where per-body-
+pair's cross-pair miss is the binding limitation.
+
+#### 5. Multi-colored Gauss-Seidel on body groups
+
+Color the body-group graph so adjacent bodies (sharing
+constraints) get different colors. Within each color, blocks are
+independent — process in parallel. Across colors, sequential.
+Each "sweep" gives a forward GS update; SGS adds a backward sweep.
+
+**Captures cross-body coupling** via the sequential structure —
+strictly stronger than per-body block-Jacobi.
+
+**Cost**: 4–6 color sweeps per preconditioner-apply (for typical
+contact graphs), each is a per-body block-Jacobi step. So ~4–6×
+the cost of per-body block-Jacobi for stronger capture. Net wins
+only if PCR iter count drops by 4–6×+, which is plausible for
+stiff problems but not guaranteed.
+
+**Cost on GPU**: coloring sweeps serialize. Lose 4–6× parallelism
+factor on the preconditioner.
+
+### Implementation: per-body-pair (recommended starting point)
+
+**Cost ratio vs plain Jacobi**: ~1000× per preconditioner-apply
+(matvec with a 10×10 inverse vs scalar division by a diagonal).
+Wins if PCR iter count drops by more than ~1.5× — plausible if
+the previously-uncaptured off-diagonals were doing real work.
+The measurement above shows ratio ~0.22–0.28 for wheel-ground
+pairs, so there's real coupling to capture.
+
+**Implementation pieces** (1–2 weeks):
+
+1. **Pair-assignment** at start of each step. For each constraint,
+   form its (b₁, b₂) pair (using b₂=GROUND_SENTINEL for ground
+   contacts). Build (pair_idx → list of constraint_idx) mapping.
+   Static across NR iters within a step (constraints don't move
+   between pairs during a step).
+2. **Block extraction**: for each pair group, build A_pair by
+   gathering rows of A from the constraint Jacobians J_i for i in
+   that pair's group. A_ij = J_i_b1ᵀ·M_b1⁻¹·J_j_b1 +
+   J_i_b2ᵀ·M_b2⁻¹·J_j_b2 (sum over BOTH bodies in the pair).
+3. **Per-block dense factorization** (Cholesky for SPD, LU as
+   fallback). Block sizes ~5–15 dense; Warp tile primitives may
+   help with batched factorization.
+4. **Apply** as preconditioner: for each pair, solve A_pair·y =
+   x_pair with the precomputed factor, scatter back.
+
+**Open questions** to validate during implementation:
+
+* **Conditioning of A_pair near impacts**: small blocks may be
+  near-singular when contacts are still "settling". May need a
+  per-block diagonal regularization shift.
+* **Empty pairs**: pairs with only 1 constraint degenerate to a
+  scalar Jacobi entry — handle as a separate fast path.
+* **Pair count vs body count**: pairs are roughly num_bodies +
+  num_active_contact_pairs. For Helhest, ~20 pairs vs ~16 bodies.
+  Marginal scaling difference.
 
 ### r-factor heuristics for the complementarity preconditioner
 
