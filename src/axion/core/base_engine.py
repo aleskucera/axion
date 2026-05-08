@@ -141,7 +141,17 @@ class AxionEngineBase(SolverBase):
             device=self.device,
         )
 
-        self.preconditioner = JacobiPreconditioner(self, self.config.regularization)
+        if self.config.preconditioner_type == "per_body_pair":
+            from axion.optim.per_body_pair_preconditioner import (
+                PerBodyPairPreconditioner,
+            )
+            self.preconditioner = PerBodyPairPreconditioner(
+                self, self.config.regularization
+            )
+        else:  # "jacobi"
+            self.preconditioner = JacobiPreconditioner(
+                self, self.config.regularization
+            )
 
         self.cr_solver = PCRSolver(
             max_iters=self.config.max_linear_iters,

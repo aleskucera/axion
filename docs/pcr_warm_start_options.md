@@ -466,6 +466,118 @@ pairs, so there's real coupling to capture.
   num_active_contact_pairs. For Helhest, ~20 pairs vs ~16 bodies.
   Marginal scaling difference.
 
+### Postscript: per-body-pair was implemented and measured
+
+Phases 1–4 of the per-body-pair block-Jacobi preconditioner shipped
+in commits `86bf36e`, `348edd3`, `c9e8bb9`, `0936b47`. The
+implementation in `src/axion/optim/per_body_pair_preconditioner.py`
+is correct and validated by 4 phase smoke tests against numpy
+references at float32 precision:
+
+  * Phase 1 (pair assignment): consistency checks across 67 sim steps
+  * Phase 2 (block extraction): max |A_gpu − A_ref| = 2.67e-7
+  * Phase 3 (Cholesky): max |L·Lᵀ − A_pair| = 3.36e-7, all SPD
+  * Phase 4 (matvec): max rel error 1e-7 across 4 (α, β) combos
+
+Wired into `base_engine` behind `preconditioner_type` config knob;
+default is `"jacobi"` (existing behavior preserved).
+
+**Convergence-rate result on Helhest, 3 replicates (obstacle, 200 steps):**
+
+```
+                  sumNR    PCR    PCR/NR    bad   uw_max range
+jacobi             1823  42191    23.2     1.3   1.2e-4..5.3e-2
+per_body_pair      1854  39832    21.5     2.3   3.6e-2..1.3e-1
+```
+
+Per-PCR-iter savings of ~7% — the preconditioner does capture real
+coupling, as predicted by the per-body off-diagonal measurement
+(0.22–0.28 ratio for wheel-sized groups in
+`test_scripts/measure_per_body_block_coupling.py`). NR iter count
+unchanged within noise. Worst-case quality slightly degraded but
+within the session-wide high-variance regime.
+
+**Wall-clock result is the binding regression.**
+
+End-to-end profiles on RTX A500 laptop GPU:
+
+```
+                                jacobi    per_body_pair    ratio
+nr_solve mean (16 worlds)      5.34 ms    10.58 ms        1.98×
+nr_solve mean (100 worlds)    18.10 ms    39.72 ms        2.20×
+total step (16 worlds)         6.26 ms    11.49 ms        1.84×
+total step (100 worlds)       19.34 ms    40.98 ms        2.12×
+```
+
+**The gap WIDENS with worlds**, contrary to the "more parallelism
+will help" hypothesis. Three structural reasons:
+
+1. **Two kernel launches per matvec** (baseline + per-pair) vs
+   Jacobi's one. PCR calls matvec on every inner iter, so this
+   multiplies through.
+2. **Poor memory coalescing** in the per-pair kernel. Each thread
+   accesses its own `L_blocks[w, p, :, :]` region; adjacent threads
+   in the launch grid (different `w` and/or `p`) read far-apart
+   memory. The opposite of what GPUs love. Adding more worlds adds
+   more threads but each thread's access pattern is still scattered.
+3. **8.8× higher setup cost** per NR iter (4 kernels: pair-assignment
+   + block-extract + Cholesky + Jacobi-fallback-update) vs Jacobi's
+   1 kernel.
+
+Per-component profile breakdown (16 worlds, 3200 NR iters):
+
+```
+phase                   jacobi      per_body_pair    ratio
+linear_system          0.050 ms      0.048 ms       similar
+preconditioner setup   0.010 ms      0.088 ms        8.8×
+cr_solve               0.402 ms      0.785 ms        2.0×
+step_or_linesearch     0.049 ms      0.050 ms       similar
+convergence_check      0.026 ms      0.027 ms       similar
+total per NR iter      0.537 ms      0.999 ms       1.86×
+```
+
+**What could plausibly close the gap:**
+
+1. **Different GPU hardware.** A laptop GPU (RTX A500, 16 SMs,
+   96 GB/s memory) is the worst case for our access pattern.
+   Server GPUs (A100: 108 SMs, 1555 GB/s; H100: similar profile)
+   have ~16× more memory bandwidth and 6–10× more SMs. The
+   coalescing penalty shrinks with bandwidth, the kernel-launch
+   overhead shrinks slightly with newer drivers, and the per-thread
+   small-block work amortizes over more SMs. **Plausible** that
+   per-body-pair is competitive or faster on A100, but unmeasured.
+
+2. **Warp tile primitives** (`wp.tile_load`, `wp.tile_cholesky`,
+   `wp.tile_lower_solve`, etc.). One CUDA block per
+   (world, pair_id) instead of one thread; threads cooperate via
+   shared memory on the triangular solves. Eliminates the
+   coalescing problem and amortizes kernel launch overhead via
+   fusion (gather + solve + scatter in one kernel using shared
+   memory). Estimated 3–5× speedup on the apply kernel,
+   plausibly enough to make per-body-pair competitive on the
+   laptop GPU. ~1 week of careful work; the variable per-pair
+   block size (5–15) needs padding to a fixed compile-time tile
+   shape (16 or 32).
+
+**Why the code stays in the repo (not reverted):**
+
+* The structural argument (off-diagonal coupling exists, capturing
+  it reduces PCR iters) was empirically validated. Future work on
+  GPU optimization or scaling has all four phases of correct
+  implementation to build on.
+* Default is `"jacobi"`, so there's no behavior change; the code
+  is opt-in via `engine.preconditioner_type=per_body_pair`.
+* If/when the simulator runs on server GPUs (A100/H100), the
+  hardware change alone may flip the wall-clock verdict; testing
+  is a 30-minute experiment.
+* Tile-primitives optimization is a real follow-up direction with
+  clear engineering scope.
+
+Future contributors who want to revisit: start by measuring on
+target GPU first (low cost, high information), then commit to
+tile-primitives optimization only if the spectral case is
+confirmed there.
+
 ### r-factor heuristics for the complementarity preconditioner
 
 The paper's complementarity preconditioner is **already implemented**

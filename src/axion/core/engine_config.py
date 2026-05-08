@@ -68,6 +68,15 @@ class AxionEngineConfig(EngineConfig):
     linear_tol: float = 1e-5
     linear_atol: float = 1e-5
 
+    # PCR preconditioner choice. "jacobi" is the original (1/diag(A))
+    # preconditioner; "per_body_pair" is the per-body-pair block-Jacobi
+    # preconditioner that captures inter-contact same-body coupling
+    # (see docs/pcr_warm_start_options.md and
+    # src/axion/optim/per_body_pair_preconditioner.py).
+    # Default "jacobi" preserves existing behavior; flip per-config
+    # to A/B test before changing the default.
+    preconditioner_type: str = "jacobi"
+
     joint_compliance: float = 1e-5
     # contact_compliance is scaled by 1/dt^2 inside the contact constraint
     # (see contact_constraint.py). The effective regularization is therefore
@@ -218,6 +227,12 @@ class AxionEngineConfig(EngineConfig):
         _validate_non_negative_float(self.newton_atol, "newton_atol")
         _validate_non_negative_float(self.linear_tol, "linear_tol")
         _validate_non_negative_float(self.linear_atol, "linear_atol")
+
+        if self.preconditioner_type not in ("jacobi", "per_body_pair"):
+            raise ValueError(
+                "preconditioner_type must be 'jacobi' | 'per_body_pair', "
+                f"got {self.preconditioner_type!r}"
+            )
 
         # Validate physics params
         _validate_non_negative_float(self.joint_compliance, "joint_compliance")
