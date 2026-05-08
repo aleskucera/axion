@@ -29,6 +29,10 @@ ASSETS_DIR = pathlib.Path(__file__).parent.parent.parent.joinpath("assets")
 WHEEL_DOF_OFFSET = 6
 NUM_WHEEL_DOFS = 3
 
+# Ground-truth controls used to generate the target trajectory (constant over time,
+# so the true spline has all K knots equal to this triple).
+TARGET_WHEEL_VEL = (5.0, 3.0, 4.0)
+
 
 def make_interp_matrix(T: int, K: int) -> tuple[np.ndarray, np.ndarray]:
     """Build [T, K] linear interpolation weight matrix and per-column normalization.
@@ -470,14 +474,17 @@ class HelhestTrajectorySplineSurfaceOptimizer(AxionDifferentiableSimulator):
 
         for i in range(T):
             target_ctrl = np.zeros(num_dofs, dtype=np.float32)
-            target_ctrl[WHEEL_DOF_OFFSET + 0] = 5.0
-            target_ctrl[WHEEL_DOF_OFFSET + 1] = 3.0
-            target_ctrl[WHEEL_DOF_OFFSET + 2] = 4.0
+            target_ctrl[WHEEL_DOF_OFFSET + 0] = TARGET_WHEEL_VEL[0]
+            target_ctrl[WHEEL_DOF_OFFSET + 1] = TARGET_WHEEL_VEL[1]
+            target_ctrl[WHEEL_DOF_OFFSET + 2] = TARGET_WHEEL_VEL[2]
 
             target_ctrl_wp = wp.array(target_ctrl, dtype=wp.float32, device=self.model.device)
             wp.copy(self.target_controls[i].joint_target_vel, target_ctrl_wp)
 
         self.run_target_episode()
+
+        # Constant target spline: every knot at TARGET_WHEEL_VEL — used for recovery diagnostics.
+        target_spline = np.tile(np.asarray(TARGET_WHEEL_VEL, dtype=np.float64), (self.K, 1))
 
         # --- Spline setup ---
         self.W, self.W_col_sums = make_interp_matrix(T, self.K)  # [T, K], [K]
@@ -502,9 +509,12 @@ class HelhestTrajectorySplineSurfaceOptimizer(AxionDifferentiableSimulator):
             t_episode = time.perf_counter() - t0
 
             curr_loss = self.loss.numpy()[0]
-            p0 = self.spline_params[0]
+            err = np.abs(self.spline_params - target_spline)  # [K, 3]
+            err_max = err.max()
+            err_mean = err.mean()
             print(
-                f"Iter {i}: Loss={curr_loss:.4f} | cp[0] L={p0[0]:.3f} R={p0[1]:.3f} | K={self.K} | episode={t_episode:.3f}s"
+                f"Iter {i}: Loss={curr_loss:.4f} | err_max={err_max:.3f} err_mean={err_mean:.3f} | "
+                f"K={self.K} | episode={t_episode:.3f}s"
             )
 
             self.render(i)
@@ -512,6 +522,20 @@ class HelhestTrajectorySplineSurfaceOptimizer(AxionDifferentiableSimulator):
 
             self.tape.zero()
             self.loss.zero_()
+
+        self._print_final_recovery(target_spline)
+
+    def _print_final_recovery(self, target_spline: np.ndarray):
+        """Show every knot vs target, so we don't have to trust cp[0] alone."""
+        print("\n=== Final spline recovery (knot vs target) ===")
+        print(f"Target (constant):  L={TARGET_WHEEL_VEL[0]:.3f} R={TARGET_WHEEL_VEL[1]:.3f} Rear={TARGET_WHEEL_VEL[2]:.3f}")
+        print("knot |   L     R    Rear |  errL   errR  errRear")
+        for k in range(self.K):
+            p = self.spline_params[k]
+            e = p - target_spline[k]
+            print(f"  {k:2d} | {p[0]:5.3f} {p[1]:5.3f} {p[2]:5.3f} | {e[0]:+6.3f} {e[1]:+6.3f} {e[2]:+6.3f}")
+        err = np.abs(self.spline_params - target_spline)
+        print(f"|err|_max = {err.max():.4f}   |err|_mean = {err.mean():.4f}   ||err||_F = {np.linalg.norm(err):.4f}")
 
 
 def main():
