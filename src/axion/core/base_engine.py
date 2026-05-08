@@ -112,7 +112,7 @@ class AxionEngineBase(SolverBase):
 
         # --- 2. Model & Data Setup ---
         self.axion_model = AxionModel(model)
-        self.axion_contacts = AxionContacts(model, self.config.max_contacts_per_world)
+        self.axion_contacts = AxionContacts(model, self.config.contacts.max_per_world)
 
         self.dims = EngineDimensions(
             num_worlds=self.axion_model.num_worlds,
@@ -120,7 +120,7 @@ class AxionEngineBase(SolverBase):
             contact_count=self.axion_contacts.max_contacts,
             joint_count=self.axion_model.joint_count,
             joint_dof_count=self.axion_model.joint_dof_count,
-            linesearch_step_count=self.config.num_linesearch_steps,
+            linesearch_step_count=self.config.linesearch.num_steps,
             joint_constraint_count=self.axion_model.num_joint_constraints,
             control_constraint_count=self.axion_model.num_control_constraints,
         )
@@ -137,31 +137,31 @@ class AxionEngineBase(SolverBase):
 
         self.A_op = SystemOperator(
             data=SystemLinearData.from_engine(self),
-            regularization=self.config.regularization,
+            regularization=self.config.linear.regularization,
             device=self.device,
         )
 
-        if self.config.preconditioner_type == "per_body_pair":
+        if self.config.linear.preconditioner_type == "per_body_pair":
             from axion.optim.per_body_pair_preconditioner import (
                 PerBodyPairPreconditioner,
             )
             self.preconditioner = PerBodyPairPreconditioner(
-                self, self.config.regularization
+                self, self.config.linear.regularization
             )
         else:  # "jacobi"
             self.preconditioner = JacobiPreconditioner(
-                self, self.config.regularization
+                self, self.config.linear.regularization
             )
 
         self.cr_solver = PCRSolver(
-            max_iters=self.config.max_linear_iters,
+            max_iters=self.config.linear.max_iters,
             batch_dim=self.dims.num_worlds,
             vec_dim=self.dims.N_c,
             device=self.device,
         )
 
         self.contact_reducer = build_reducer(
-            self.config.contact_reduction,
+            self.config.contacts.reduction,
             self.axion_model,
             self.data,
             self.dims,
@@ -169,15 +169,15 @@ class AxionEngineBase(SolverBase):
         )
 
         self.warm_starter = ContactWarmStarter(
-            enabled=self.config.enable_contact_warm_start,
+            enabled=self.config.warm_start.enabled,
             axion_model=self.axion_model,
             data=self.data,
             dims=self.dims,
             device=self.device,
-            cold_start_gravity=self.config.warm_start_cold_gravity,
-            cold_start_impact=self.config.warm_start_cold_impact,
+            cold_start_gravity=self.config.warm_start.cold_gravity,
+            cold_start_impact=self.config.warm_start.cold_impact,
             cold_start_friction_v_threshold=(
-                self.config.warm_start_cold_friction_v_threshold
+                self.config.warm_start.cold_friction_v_threshold
             ),
         )
 
@@ -219,8 +219,8 @@ class AxionEngineBase(SolverBase):
         self.timestep = wp.zeros(1, dtype=wp.int32, device=self.device)
 
         self.profiler = EngineProfiler(
-            mode=config.profiling_mode,
-            max_newton_iters=config.max_newton_iters,
+            mode=config.profiling.mode,
+            max_newton_iters=config.nr.max_iters,
             device=self.device,
         )
 
@@ -241,7 +241,7 @@ class AxionEngineBase(SolverBase):
             dim=(self.dims.num_worlds,),
             inputs=[
                 self.data.res_norm_sq,
-                self.config.newton_atol**2,
+                self.config.nr.atol**2,
                 self.data.keep_running,
             ],
             device=self.device,
@@ -256,8 +256,8 @@ class AxionEngineBase(SolverBase):
             dim=(1,),
             inputs=[
                 self.data.iter_count,
-                self.config.max_newton_iters,
-                self.config.backtrack_min_iter,
+                self.config.nr.max_iters,
+                self.config.nr.backtrack_min_iter,
                 self.data.keep_running,
             ],
             device=self.device,
@@ -351,9 +351,9 @@ class AxionEngineBase(SolverBase):
             b=self.data.rhs,
             x=self.data._constr_force,
             preconditioner=self.preconditioner,
-            iters=self.config.max_linear_iters,
-            tol=self.config.linear_tol,
-            atol=self.config.linear_atol,
+            iters=self.config.linear.max_iters,
+            tol=self.config.linear.tol,
+            atol=self.config.linear.atol,
             log=False,
         )
 
@@ -374,9 +374,9 @@ class AxionEngineBase(SolverBase):
             b=self.data.rhs,
             x=self.data._constr_force,
             preconditioner=self.preconditioner,
-            iters=self.config.max_linear_iters,
-            tol=self.config.linear_tol,
-            atol=self.config.linear_atol,
+            iters=self.config.linear.max_iters,
+            tol=self.config.linear.tol,
+            atol=self.config.linear.atol,
             log=False,
         )
 
@@ -441,9 +441,9 @@ class AxionEngineBase(SolverBase):
                 b=self.data.rhs,
                 x=self.data.dconstr_force.full,
                 preconditioner=self.preconditioner,
-                iters=self.config.max_linear_iters,
-                tol=self.config.linear_tol,
-                atol=self.config.linear_atol,
+                iters=self.config.linear.max_iters,
+                tol=self.config.linear.tol,
+                atol=self.config.linear.atol,
                 log=self.logging_config.enable_hdf5_logging,
             )
             compute_dbody_qd_from_dbody_lambda(self.axion_model, self.data, self.config, self.dims)
@@ -451,7 +451,7 @@ class AxionEngineBase(SolverBase):
             if per_component:
                 prof.record_boundary(3, slot_idx)
 
-            if self.config.enable_linesearch:
+            if self.config.linesearch.enabled:
                 perform_linesearch(
                     self.axion_model, self.axion_contacts, self.data, self.config, self.dims
                 )
@@ -478,7 +478,7 @@ class AxionEngineBase(SolverBase):
             # the loop always pays max_newton_iters iters regardless of
             # convergence. Convergence-check still runs and updates
             # keep_running for downstream code that inspects it.
-            for k in range(self.config.max_newton_iters):
+            for k in range(self.config.nr.max_iters):
                 nr_loop_step(slot_idx=k)
         elif self.device.is_capturing:
             wp.capture_while(self.data.keep_running, lambda: nr_loop_step(0))
@@ -521,7 +521,7 @@ class AxionEngineBase(SolverBase):
         # with linearized values based on the converged contact mode (sticking
         # vs sliding). Normal contacts are kept as-is (they converge well).
         # See docs/adjoint_warm_start_issue.md
-        if self.config.adjoint_soft_blending:
+        if self.config.adjoint.soft_blending:
             wp.launch(
                 kernel=freeze_contact_mode_soft_kernel,
                 dim=(self.dims.num_worlds, self.dims.contact_count),
@@ -537,9 +537,9 @@ class AxionEngineBase(SolverBase):
                     self.axion_contacts.contact_shape1,
                     self.axion_contacts.contact_count,
                     self.axion_model.shape_material_mu,
-                    self.config.joint_compliance,  # sticking: rigid like joints
+                    self.config.compliance.joint,  # sticking: rigid like joints
                     100.0,  # sliding: very soft
-                    self.config.adjoint_soft_blending_temperature,
+                    self.config.adjoint.soft_blending_temperature,
                 ],
                 outputs=[],
                 device=self.device,
@@ -560,7 +560,7 @@ class AxionEngineBase(SolverBase):
                     self.axion_contacts.contact_shape1,
                     self.axion_contacts.contact_count,
                     self.axion_model.shape_material_mu,
-                    self.config.joint_compliance,  # sticking: rigid like joints
+                    self.config.compliance.joint,  # sticking: rigid like joints
                     100.0,  # sliding: very soft
                 ],
                 outputs=[],
@@ -569,14 +569,14 @@ class AxionEngineBase(SolverBase):
 
         # Adjoint regularization: add gamma to all constraint compliances
         # Turns [J M⁻¹ Jᵀ + C] into [J M⁻¹ Jᵀ + C + γI]
-        if self.config.adjoint_regularization > 0.0:
+        if self.config.adjoint.regularization > 0.0:
             wp.launch(
                 kernel=adjoint_regularize_compliance_kernel,
                 dim=(self.dims.num_worlds, self.dims.num_constraints),
                 inputs=[
                     self.data.C_values.full,
                     self.data.constr_active_mask.full,
-                    self.config.adjoint_regularization,
+                    self.config.adjoint.regularization,
                 ],
                 outputs=[],
                 device=self.device,
@@ -621,9 +621,9 @@ class AxionEngineBase(SolverBase):
             b=self.data.adjoint_rhs,
             x=self.data.w.c.full,
             preconditioner=self.preconditioner,
-            iters=self.config.max_linear_iters,
-            tol=self.config.linear_tol,
-            atol=self.config.linear_atol,
+            iters=self.config.linear.max_iters,
+            tol=self.config.linear.tol,
+            atol=self.config.linear.atol,
             log=self.adjoint_logger is not None,
         )
 

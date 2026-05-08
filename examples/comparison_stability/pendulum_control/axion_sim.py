@@ -40,6 +40,11 @@ from axion import RenderingConfig
 from axion import SimulationConfig
 from axion.core.types import JointMode
 from axion.simulation.sim_config import SyncMode
+from axion import ComplianceConfig
+from axion import ContactsConfig
+from axion import LinearSolverConfig
+from axion import LinesearchConfig
+from axion import NewtonRaphsonConfig
 from newton import Model
 
 os.environ["PYOPENGL_PLATFORM"] = "glx"
@@ -184,23 +189,11 @@ class PendulumSim(InteractiveSimulator):
 # ---------------------------------------------------------------------------
 def _make_engine_config(kp: float, kd: float) -> AxionEngineConfig:
     return AxionEngineConfig(
-        max_newton_iters=16,
-        max_linear_iters=16,
-        backtrack_min_iter=8,
-        newton_atol=1e-4,
-        linear_atol=1e-4,
-        linear_tol=1e-4,
-        enable_linesearch=False,
-        linesearch_conservative_step_count=16,
-        linesearch_conservative_upper_bound=5e-2,
-        linesearch_min_step=1e-6,
-        linesearch_optimistic_step_count=48,
-        linesearch_optimistic_window=0.4,
-        joint_compliance=1e-6,
-        contact_compliance=1e-6,
-        friction_compliance=1e-6,
-        regularization=1e-6,
-        max_contacts_per_world=64,
+        nr=NewtonRaphsonConfig(max_iters=16, backtrack_min_iter=8, atol=0.0001),
+        linear=LinearSolverConfig(max_iters=16, atol=0.0001, tol=0.0001, regularization=1e-06),
+        compliance=ComplianceConfig(joint=1e-06, contact=1e-06, friction=1e-06),
+        linesearch=LinesearchConfig(enabled=False, conservative_step_count=16, conservative_upper_bound=0.05, min_step=1e-06, optimistic_step_count=48, optimistic_window=0.4),
+        contacts=ContactsConfig(max_per_world=64),
     )
 
 

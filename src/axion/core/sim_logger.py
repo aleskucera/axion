@@ -156,7 +156,7 @@ class SimulationHDF5Logger:
             "pcr_history_res_norm_sq_history", data.pcr_history_res_norm_sq_history
         )
 
-        if config.enable_linesearch:
+        if config.linesearch.enabled:
             self.ls_history_step_size = _register_log(
                 "ls_history_step_size", data.ls_history_step_size
             )

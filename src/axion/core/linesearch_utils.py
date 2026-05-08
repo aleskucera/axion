@@ -135,7 +135,7 @@ def _compute_batched_residual(
             model.joint_enabled,
             model.joint_constraint_offsets,
             data.dt,
-            config.joint_compliance,
+            config.compliance.joint,
             dims.linesearch_step_count,
         ],
         outputs=[
@@ -199,7 +199,7 @@ def _compute_batched_residual(
             contacts.contact_thickness1,
             contacts.contact_normal,
             data.dt,
-            config.contact_compliance,
+            config.compliance.contact,
             dims.linesearch_step_count,
         ],
         outputs=[
@@ -232,7 +232,7 @@ def _compute_batched_residual(
             contacts.contact_thickness1,
             contacts.contact_normal,
             data.dt,
-            config.friction_compliance,
+            config.compliance.friction,
             dims.linesearch_step_count,
         ],
         outputs=[

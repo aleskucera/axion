@@ -32,8 +32,8 @@ class HelhestSurfaceDiagnose(HelhestSurfaceBenchmark):
         self.npz_output = npz_output
 
         engine = self.solver
-        self.max_newton_iters = engine.config.max_newton_iters
-        self.max_linear_iters = engine.config.max_linear_iters
+        self.max_newton_iters = engine.config.nr.max_iters
+        self.max_linear_iters = engine.config.linear.max_iters
         self.num_worlds = engine.dims.num_worlds
 
         self._iter_counts_per_step = []   # [n_steps, max_newton_iters]

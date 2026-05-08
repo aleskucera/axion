@@ -59,7 +59,7 @@ def main(cfg: DictConfig):
 
     engine = sim.solver
     precond = PerBodyPairPreconditioner(
-        engine, regularization=engine.config.regularization
+        engine, regularization=engine.config.linear.regularization
     )
 
     state = {"step": -1, "iter": 0, "captured": False, "result": None}

@@ -20,7 +20,7 @@ def perform_backtracking(
         dim=(dims.num_worlds),
         inputs=[
             data.candidates_res_norm_sq,
-            config.backtrack_min_iter,
+            config.nr.backtrack_min_iter,
             data.iter_count,
         ],
         outputs=[

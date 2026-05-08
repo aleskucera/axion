@@ -61,7 +61,7 @@ def main(cfg: DictConfig):
     )
 
     engine = sim.solver
-    precond = PerBodyPairPreconditioner(engine, regularization=engine.config.regularization)
+    precond = PerBodyPairPreconditioner(engine, regularization=engine.config.linear.regularization)
 
     state = {"step": -1, "iter": 0, "captured": False, "result": None}
     target_step = 30  # mid-run, after the robot has settled into rolling

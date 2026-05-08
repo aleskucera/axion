@@ -1,6 +1,5 @@
 # @package logging
 _target_: axion.LoggingConfig
-enable_timing: false
 enable_hdf5_logging: false 
 enable_dataset_logging: true 
 dataset_log_file: "data/logs/${project_name}.h5"

@@ -21,6 +21,11 @@ from axion import LoggingConfig
 from axion import RenderingConfig
 from axion import SimulationConfig
 from axion.simulation.sim_config import SyncMode
+from axion import ComplianceConfig
+from axion import ContactsConfig
+from axion import LinearSolverConfig
+from axion import LinesearchConfig
+from axion import NewtonRaphsonConfig
 from newton import Model
 
 from examples.helhest.common import create_helhest_model
@@ -337,23 +342,11 @@ def main():
         headless_steps_per_segment=1,
     )
     engine_config = AxionEngineConfig(
-        max_newton_iters=12,
-        max_linear_iters=12,
-        backtrack_min_iter=8,
-        newton_atol=1e-1,
-        linear_atol=1e-3,
-        linear_tol=1e-3,
-        enable_linesearch=False,
-        linesearch_conservative_step_count=16,
-        linesearch_conservative_upper_bound=5e-2,
-        linesearch_min_step=1e-6,
-        linesearch_optimistic_step_count=48,
-        linesearch_optimistic_window=0.4,
-        joint_compliance=6e-8,
-        contact_compliance=1e-6,
-        friction_compliance=1e-6,
-        regularization=1e-6,
-        max_contacts_per_world=8,
+        nr=NewtonRaphsonConfig(max_iters=12, backtrack_min_iter=8, atol=0.1),
+        linear=LinearSolverConfig(max_iters=12, atol=0.001, tol=0.001, regularization=1e-06),
+        compliance=ComplianceConfig(joint=6e-08, contact=1e-06, friction=1e-06),
+        linesearch=LinesearchConfig(enabled=False, conservative_step_count=16, conservative_upper_bound=0.05, min_step=1e-06, optimistic_step_count=48, optimistic_window=0.4),
+        contacts=ContactsConfig(max_per_world=8),
     )
     logging_config = LoggingConfig(
         enable_timing=False,

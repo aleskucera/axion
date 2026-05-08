@@ -8,4 +8,5 @@ defaults:
   - axion
   - _self_
 
-profiling_mode: per_component
+profiling:
+  mode: per_component

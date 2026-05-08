@@ -132,7 +132,14 @@ class InteractiveSimulator(BaseSimulator, ABC):
         if self.cuda_graph is None:
             self._capture_cuda_graphs()
 
-        if self.logging_config and self.logging_config.enable_timing:
+        # Coarse segment timer lives on engine.profiling.segment_timing
+        # for AxionEngine; for non-Axion solvers there's no profiling
+        # config, so the timer is just disabled.
+        segment_timing = bool(
+            getattr(getattr(self.solver, "config", None), "profiling", None)
+            and self.solver.config.profiling.segment_timing
+        )
+        if segment_timing:
             wp.synchronize()
             t0 = time.perf_counter()
             wp.capture_launch(self.cuda_graph)

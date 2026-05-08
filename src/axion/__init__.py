@@ -1,12 +1,20 @@
+from .core import AdjointConfig
 from .core import AxionEngine
 from .core import AxionEngineConfig
+from .core import ComplianceConfig
+from .core import ContactsConfig
 from .core import EngineConfig
 from .core import EngineProfiler
 from .core import FeatherstoneEngineConfig
 from .core import JointMode
+from .core import LinearSolverConfig
+from .core import LinesearchConfig
 from .core import LoggingConfig
 from .core import MuJoCoEngineConfig
+from .core import NewtonRaphsonConfig
+from .core import ProfilingConfig
 from .core import SemiImplicitEngineConfig
+from .core import WarmStartConfig
 from .core import XPBDEngineConfig
 from .simulation import AxionDifferentiableSimulator
 from .simulation import DatasetSimulator
@@ -21,6 +29,14 @@ __all__ = [
     "AxionEngine",
     "EngineConfig",
     "AxionEngineConfig",
+    "AdjointConfig",
+    "ComplianceConfig",
+    "ContactsConfig",
+    "LinearSolverConfig",
+    "LinesearchConfig",
+    "NewtonRaphsonConfig",
+    "ProfilingConfig",
+    "WarmStartConfig",
     "EngineProfiler",
     "FeatherstoneEngineConfig",
     "MuJoCoEngineConfig",

@@ -1,6 +1,5 @@
 # @package logging
 _target_: axion.LoggingConfig
-enable_timing: false
 enable_hdf5_logging: true
 enable_dataset_logging: false
 enable_adjoint_logging: true
