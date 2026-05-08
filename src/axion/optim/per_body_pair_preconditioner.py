@@ -263,6 +263,63 @@ def _extract_pair_blocks_kernel(
     A_blocks[w, p, i, j] = val
 
 
+@wp.kernel
+def _factor_pair_blocks_kernel(
+    A_blocks: wp.array(dtype=wp.float32, ndim=4),         # (W, n_pairs_max, MAX, MAX)
+    pair_member_count: wp.array(dtype=wp.int32, ndim=2),  # (W, n_pairs_max)
+    # Outputs:
+    L_blocks: wp.array(dtype=wp.float32, ndim=4),         # (W, n_pairs_max, MAX, MAX)
+    factor_failure: wp.array(dtype=wp.int32, ndim=2),     # (W, n_pairs_max)
+):
+    """Per-pair lower-triangular Cholesky factorization, A_pair = L·Lᵀ.
+
+    Threading: one thread per (world, pair_id). Each thread runs the
+    serial column-Cholesky algorithm on its block. Block sizes are
+    small in practice (3-15 for Helhest) so per-thread cost is
+    bounded; the parallelism across (world × n_active_pairs) keeps
+    the GPU busy. Threads on inactive pairs (member count 0) early-
+    exit immediately.
+
+    Algorithm (standard column Cholesky):
+        for k = 0..n-1:
+            L[k,k] = sqrt(A[k,k] - sum_{q<k} L[k,q]²)
+            for i = k+1..n-1:
+                L[i,k] = (A[i,k] - sum_{q<k} L[i,q]·L[k,q]) / L[k,k]
+            L[k, k+1..n-1] = 0   (upper triangle stays at the per-step zero reset)
+
+    On non-SPD input (diag ≤ 0 during factorization), set
+    factor_failure[w, p] = 1 and return without writing further.
+    Phase 4's apply must check this flag and either fall back to
+    Jacobi for failed blocks or treat the failure as a fatal error.
+    """
+    w, p = wp.tid()
+    n = pair_member_count[w, p]
+    if n == 0:
+        return
+
+    for k in range(n):
+        # Diagonal: L[k,k] = sqrt(A[k,k] - Σ_{q<k} L[k,q]²)
+        diag_sum = float(0.0)
+        for q in range(k):
+            l_kq = L_blocks[w, p, k, q]
+            diag_sum += l_kq * l_kq
+
+        diag_val = A_blocks[w, p, k, k] - diag_sum
+        if diag_val <= 0.0:
+            factor_failure[w, p] = 1
+            return
+        L_kk = wp.sqrt(diag_val)
+        L_blocks[w, p, k, k] = L_kk
+        inv_L_kk = 1.0 / L_kk
+
+        # Off-diagonal column k: L[i,k] = (A[i,k] - Σ_{q<k} L[i,q]·L[k,q]) / L[k,k]
+        for i in range(k + 1, n):
+            row_sum = float(0.0)
+            for q in range(k):
+                row_sum += L_blocks[w, p, i, q] * L_blocks[w, p, k, q]
+            L_blocks[w, p, i, k] = (A_blocks[w, p, i, k] - row_sum) * inv_L_kk
+
+
 class PerBodyPairPreconditioner:
     """Block-Jacobi preconditioner with per-body-pair blocks.
 
@@ -320,6 +377,25 @@ class PerBodyPairPreconditioner:
                  self.MAX_MEMBERS_PER_PAIR,
                  self.MAX_MEMBERS_PER_PAIR),
                 dtype=wp.float32,
+            )
+
+            # Phase 3: lower-triangular Cholesky factor of each
+            # active A_pair block. Same shape as A_blocks. Upper
+            # triangle stays at the per-step zero reset; phase 4's
+            # apply only reads the lower triangle anyway.
+            self.L_blocks = wp.zeros(
+                (N_w, self.n_pairs_max,
+                 self.MAX_MEMBERS_PER_PAIR,
+                 self.MAX_MEMBERS_PER_PAIR),
+                dtype=wp.float32,
+            )
+            # Per-pair Cholesky failure flag. Set to 1 by the kernel
+            # if a non-positive diagonal is hit during factorization
+            # (i.e. A_pair was not SPD — likely from numerical issues
+            # near impacts). Phase 4's apply must treat failed blocks
+            # as a fall-back-to-Jacobi case.
+            self.factor_failure = wp.zeros(
+                (N_w, self.n_pairs_max), dtype=wp.int32
             )
 
     def update_pair_assignments(self):
@@ -405,6 +481,31 @@ class PerBodyPairPreconditioner:
                 self.regularization,
             ],
             outputs=[self.A_blocks],
+            device=self.device,
+        )
+
+    def factor_blocks(self):
+        """Phase 3: Cholesky-factor each active A_pair block.
+
+        Must be called after `update_blocks()`. Together they form
+        the full per-NR-iter setup pass; phase 4's apply then
+        triangular-solves against `L_blocks` to apply the
+        preconditioner.
+
+        Resets `L_blocks` and `factor_failure` to zero before the
+        kernel runs. After return, `factor_failure[w, p] == 1` if
+        block (w, p)'s Cholesky hit a non-positive diagonal — typical
+        signal of numerical SPD violation near impacts. Phase 4 must
+        check this and fall back to plain Jacobi for failed blocks.
+        """
+        self.L_blocks.zero_()
+        self.factor_failure.zero_()
+
+        wp.launch(
+            kernel=_factor_pair_blocks_kernel,
+            dim=(self.engine.dims.num_worlds, self.n_pairs_max),
+            inputs=[self.A_blocks, self.pair_member_count],
+            outputs=[self.L_blocks, self.factor_failure],
             device=self.device,
         )
 
