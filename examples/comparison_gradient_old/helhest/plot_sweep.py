@@ -95,7 +95,7 @@ sim = Sim(
         contacts=ContactsConfig(max_per_world=8),
         linesearch=LinesearchConfig(enabled=False),
     ),
-    LoggingConfig(enable_timing=False, enable_hdf5_logging=False))
+    LoggingConfig())
 
 model = sim.model
 newton.eval_fk(model, model.joint_q, model.joint_qd, sim.states[0])

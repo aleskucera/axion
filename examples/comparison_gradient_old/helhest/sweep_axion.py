@@ -81,7 +81,7 @@ sim = SweepSim(
         contacts=ContactsConfig(max_per_world=8),
         linesearch=LinesearchConfig(enabled=False),
     ),
-    LoggingConfig(enable_timing=False, enable_hdf5_logging=False),
+    LoggingConfig(),
 )
 
 model = sim.model

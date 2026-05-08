@@ -526,10 +526,7 @@ def main():
         linesearch=LinesearchConfig(enabled=False),
         contacts=ContactsConfig(max_per_world=256),
     )
-    logging_config = LoggingConfig(
-        enable_timing=False,
-        enable_hdf5_logging=False,
-    )
+    logging_config = LoggingConfig()
 
     sim = HelhestEndpointSplineBoxOptimizer(
         sim_config,

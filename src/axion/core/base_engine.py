@@ -130,8 +130,8 @@ class AxionEngineBase(SolverBase):
             dims=self.dims,
             config=self.config,
             device=self.device,
-            alloc_history_arrays=self.logging_config.enable_hdf5_logging
-            or self.logging_config.enable_adjoint_logging,
+            alloc_history_arrays=self.logging_config.hdf5.enabled
+            or self.logging_config.adjoint.enabled,
             alloc_grad_arrays=differentiable_simulation,
         )
 
@@ -182,7 +182,7 @@ class AxionEngineBase(SolverBase):
         )
 
         self.logger = None
-        if self.logging_config.enable_hdf5_logging:
+        if self.logging_config.hdf5.enabled:
             self.logger = SimulationHDF5Logger(
                 num_steps=sim_steps,
                 data=self.data,
@@ -192,7 +192,7 @@ class AxionEngineBase(SolverBase):
             )
 
         self.dataset_logger = None
-        if self.logging_config.enable_dataset_logging:
+        if self.logging_config.dataset.enabled:
             self.dataset_logger = DatasetHDF5Logger(
                 num_steps=sim_steps,
                 model=self.axion_model,
@@ -204,10 +204,10 @@ class AxionEngineBase(SolverBase):
             )
 
         self.adjoint_logger = None
-        if self.logging_config.enable_adjoint_logging:
+        if self.logging_config.adjoint.enabled:
             assert (
                 differentiable_simulation
-            ), "enable_adjoint_logging requires differentiable_simulation=True"
+            ), "logging.adjoint.enabled requires differentiable_simulation=True"
             self.adjoint_logger = AdjointHDF5Logger(
                 num_steps=sim_steps,
                 data=self.data,
@@ -225,7 +225,7 @@ class AxionEngineBase(SolverBase):
         )
 
     def _save_iter_to_history(self):
-        if not self.logging_config.enable_hdf5_logging:
+        if not self.logging_config.hdf5.enabled:
             return
 
         wp.copy(dest=self.data.pcr_iter_count, src=self.cr_solver.iter_count)
@@ -444,7 +444,7 @@ class AxionEngineBase(SolverBase):
                 iters=self.config.linear.max_iters,
                 tol=self.config.linear.tol,
                 atol=self.config.linear.atol,
-                log=self.logging_config.enable_hdf5_logging,
+                log=self.logging_config.hdf5.enabled,
             )
             compute_dbody_qd_from_dbody_lambda(self.axion_model, self.data, self.config, self.dims)
 
@@ -665,8 +665,8 @@ class AxionEngineBase(SolverBase):
 
     def save_logs(self):
         if self.logger:
-            self.logger.save_to_hdf5(self.logging_config.hdf5_log_file)
+            self.logger.save_to_hdf5(self.logging_config.hdf5.file)
         if self.dataset_logger:
-            self.dataset_logger.save_to_hdf5(self.logging_config.dataset_log_file)
+            self.dataset_logger.save_to_hdf5(self.logging_config.dataset.file)
         if self.adjoint_logger:
-            self.adjoint_logger.save_to_hdf5(self.logging_config.adjoint_log_file)
+            self.adjoint_logger.save_to_hdf5(self.logging_config.adjoint.file)

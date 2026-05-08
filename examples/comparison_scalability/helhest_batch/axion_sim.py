@@ -304,7 +304,7 @@ def main():
         regularization=1e-6,
         max_contacts_per_world=8,
     )
-    logging_config = LoggingConfig(enable_timing=False, enable_hdf5_logging=False)
+    logging_config = LoggingConfig()
 
     sim = HelhestBatchOptimizer(
         sim_config,

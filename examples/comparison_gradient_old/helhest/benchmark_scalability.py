@@ -95,7 +95,7 @@ sim = Sim(
         contacts=ContactsConfig(max_per_world=8),
         linesearch=LinesearchConfig(enabled=False),
     ),
-    LoggingConfig(enable_timing=False, enable_hdf5_logging=False))
+    LoggingConfig())
 
 sim.loss = wp.zeros(1, dtype=float, requires_grad=True)
 sim.track_body(body_idx=0, name="chassis", color=(0.0, 0.5, 1.0))

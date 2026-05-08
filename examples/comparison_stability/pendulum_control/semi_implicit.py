@@ -180,7 +180,7 @@ def run_one(dt: float, kp: float, kd: float) -> dict:
         use_cuda_graph=False,
         headless_steps_per_segment=T,
     )
-    logging_config = LoggingConfig(enable_timing=False, enable_hdf5_logging=False)
+    logging_config = LoggingConfig()
 
     sim = PendulumSim(
         sim_config, render_config, exec_config,

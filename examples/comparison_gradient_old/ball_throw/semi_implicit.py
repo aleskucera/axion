@@ -206,10 +206,7 @@ def main():
             angular_damping=0.05,
             friction_smoothing=1.0,
         ),
-        logging_config=LoggingConfig(
-            enable_timing=False,
-            enable_hdf5_logging=False,
-        ),
+        logging_config=LoggingConfig(),
         save_path=args.save,
     )
     sim.train(iterations=30)

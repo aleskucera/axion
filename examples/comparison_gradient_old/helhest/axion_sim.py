@@ -348,10 +348,7 @@ def main():
         linesearch=LinesearchConfig(enabled=False, conservative_step_count=16, conservative_upper_bound=0.05, min_step=1e-06, optimistic_step_count=48, optimistic_window=0.4),
         contacts=ContactsConfig(max_per_world=8),
     )
-    logging_config = LoggingConfig(
-        enable_timing=False,
-        enable_hdf5_logging=False,
-    )
+    logging_config = LoggingConfig()
 
     sim = HelhestTrajectorySplineOptimizer(
         sim_config,
