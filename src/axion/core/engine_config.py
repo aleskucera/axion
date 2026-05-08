@@ -57,9 +57,6 @@ class AxionEngineConfig(EngineConfig):
 
     backtrack_min_iter: int = 2
 
-    newton_mode: str = "convergence"  # "convergence" / "fixed"
-    linear_mode: str = "convergence"  # "convergence" / "fixed"
-
     # Tightened from 5e-2 so Newton runs to actual convergence with the
     # dt-adaptive contact_compliance regularization. With looser atol Newton
     # can exit early at a state still distorted by the regularization.
@@ -86,11 +83,6 @@ class AxionEngineConfig(EngineConfig):
     friction_compliance: float = 1e-6
 
     regularization: float = 1e-6
-
-    contact_fb_alpha: float = 1.0
-    contact_fb_beta: float = 1.0
-    friction_fb_alpha: float = 1.0
-    friction_fb_beta: float = 1.0
 
     enable_linesearch: bool = False
 
@@ -131,26 +123,17 @@ class AxionEngineConfig(EngineConfig):
     warm_start_cold_impact: bool = True
     warm_start_cold_friction_v_threshold: float = 0.1
 
-    joint_constraint_level: str = "pos"  # pos / vel
-    contact_constraint_level: str = "pos"  # pos / vel
-
-    # --- Differentiable Simulation ---
-    differentiable_simulation: bool = False
-
     # --- Adjoint Backward Pass Interventions ---
+    # NOTE: differentiable simulation is enabled via the
+    # `differentiable_simulation` kwarg on `create_engine()` /
+    # `AxionEngine.__init__`, NOT via a config field. Logging-related
+    # fields (enable_timing, enable_hdf5_logging, hdf5_log_file,
+    # log_dynamics_state, log_linear_system_data, log_constraint_data)
+    # live on `LoggingConfig` in `axion/core/logging_config.py`.
     adjoint_soft_blending: bool = True
     adjoint_soft_blending_temperature: float = 0.05
     adjoint_regularization: float = 0.0
     adjoint_gradient_normalization: bool = False
-
-    # --- Logging & Profiling (MOVED HERE from Base Class) ---
-    enable_timing: bool = False
-    enable_hdf5_logging: bool = False
-    hdf5_log_file: str = "simulation.h5"
-
-    log_dynamics_state: bool = True
-    log_linear_system_data: bool = True
-    log_constraint_data: bool = True
 
     # --- Profiling ---
     # "off" | "end_to_end" | "per_component". See engine_profiler.py for the
@@ -200,10 +183,6 @@ class AxionEngineConfig(EngineConfig):
             if value < 0:
                 raise ValueError(f"{name} must be >= 0, got {value}")
 
-        def _validate_unit_interval(value: float, name: str) -> None:
-            if not (0 <= value <= 1):
-                raise ValueError(f"{name} must be in [0, 1], got {value}")
-
         # Validate iteration counts
         _validate_positive_int(self.max_newton_iters, "max_newton_iters")
         _validate_positive_int(self.max_linear_iters, "max_linear_iters")
@@ -211,16 +190,6 @@ class AxionEngineConfig(EngineConfig):
         if self.backtrack_min_iter >= self.max_newton_iters:
             raise ValueError(
                 f"backtrack_min_iter mush be smaller than max_newton_iters, got {self.backtrack_min_iter} and {self.max_newton_iters}"
-            )
-
-        # Validate modes
-        if self.newton_mode not in ("convergence", "fixed"):
-            raise ValueError(
-                f"newton_mode must be 'convergence' or 'fixed', got {self.newton_mode}"
-            )
-        if self.linear_mode not in ("convergence", "fixed"):
-            raise ValueError(
-                f"linear_mode must be 'convergence' or 'fixed', got {self.linear_mode}"
             )
 
         # Validate tolerances
@@ -239,12 +208,6 @@ class AxionEngineConfig(EngineConfig):
         _validate_non_negative_float(self.contact_compliance, "contact_compliance")
         _validate_non_negative_float(self.friction_compliance, "friction_compliance")
         _validate_non_negative_float(self.regularization, "regularization")
-
-        # Validate Fisher-Burmeister parameters
-        _validate_unit_interval(self.contact_fb_alpha, "contact_fb_alpha")
-        _validate_unit_interval(self.contact_fb_beta, "contact_fb_beta")
-        _validate_unit_interval(self.friction_fb_alpha, "friction_fb_alpha")
-        _validate_unit_interval(self.friction_fb_beta, "friction_fb_beta")
 
         if self.enable_linesearch:
             _validate_positive_int(

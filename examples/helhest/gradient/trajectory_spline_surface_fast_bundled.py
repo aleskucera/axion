@@ -650,12 +650,7 @@ def main():
         contact_compliance=1e-10,
         friction_compliance=1e-6,
         regularization=1e-6,
-        contact_fb_alpha=0.5,
-        contact_fb_beta=1.0,
-        friction_fb_alpha=1.0,
-        friction_fb_beta=1.0,
         max_contacts_per_world=256,
-        differentiable_simulation=False,
     )
     logging_config = LoggingConfig(
         enable_timing=False,

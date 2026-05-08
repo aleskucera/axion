@@ -87,8 +87,7 @@ sim = Sim(
     AxionEngineConfig(max_newton_iters=12, max_linear_iters=12, backtrack_min_iter=8,
         newton_atol=1e-1, linear_atol=1e-3, linear_tol=1e-3, enable_linesearch=False,
         joint_compliance=6e-8, contact_compliance=1e-6, friction_compliance=1e-6,
-        regularization=1e-6, contact_fb_alpha=0.5, contact_fb_beta=1.0,
-        friction_fb_alpha=1.0, friction_fb_beta=1.0, max_contacts_per_world=8),
+        regularization=1e-6, max_contacts_per_world=8),
     LoggingConfig(enable_timing=False, enable_hdf5_logging=False))
 
 model = sim.model

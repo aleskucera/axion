@@ -484,8 +484,6 @@ def main():
         max_newton_iters=16,
         max_linear_iters=16,
         backtrack_min_iter=12,
-        newton_mode="convergence",
-        linear_mode="convergence",
         newton_atol=1e-3,
         linear_tol=1e-5,
         linear_atol=1e-5,
@@ -493,14 +491,8 @@ def main():
         contact_compliance=1.0,
         friction_compliance=1e-5,
         regularization=1e-6,
-        contact_fb_alpha=1.0,
-        contact_fb_beta=1.0,
-        friction_fb_alpha=1.0,
-        friction_fb_beta=1.0,
         enable_linesearch=False,
         max_contacts_per_world=512,
-        joint_constraint_level="pos",
-        contact_constraint_level="pos",
     )
     logging_config = LoggingConfig()
 
