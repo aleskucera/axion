@@ -48,6 +48,7 @@ member lists. No matvec yet; that's phase 4.
 """
 import warp as wp
 from axion.math import compute_spatial_momentum
+from warp.optim.linear import LinearOperator
 
 
 # Maximum number of constraints we expect in any one pair group. With
@@ -320,7 +321,96 @@ def _factor_pair_blocks_kernel(
             L_blocks[w, p, i, k] = (A_blocks[w, p, i, k] - row_sum) * inv_L_kk
 
 
-class PerBodyPairPreconditioner:
+@wp.kernel
+def _apply_baseline_kernel(
+    vec_y: wp.array(dtype=wp.float32, ndim=2),
+    beta: float,
+    out_z: wp.array(dtype=wp.float32, ndim=2),
+):
+    """First pass of matvec: out_z[w, c] = beta · y[w, c].
+
+    Sets a clean baseline for every entry, including constraints not
+    touched by any active pair. The per-pair pass then ADDS the
+    alpha·M⁻¹·x contribution on top for active-pair entries.
+    """
+    w, c = wp.tid()
+    if c >= vec_y.shape[1]:
+        return
+    out_z[w, c] = beta * vec_y[w, c]
+
+
+@wp.kernel
+def _apply_per_pair_kernel(
+    L_blocks: wp.array(dtype=wp.float32, ndim=4),         # (W, n_pairs_max, MAX, MAX)
+    pair_member_count: wp.array(dtype=wp.int32, ndim=2),  # (W, n_pairs_max)
+    pair_member_list: wp.array(dtype=wp.int32, ndim=3),    # (W, n_pairs_max, MAX)
+    factor_failure: wp.array(dtype=wp.int32, ndim=2),      # (W, n_pairs_max)
+    P_inv_diag: wp.array(dtype=wp.float32, ndim=2),        # (W, N_c) - Jacobi fallback
+    vec_x: wp.array(dtype=wp.float32, ndim=2),
+    alpha: float,
+    workspace: wp.array(dtype=wp.float32, ndim=3),         # (W, n_pairs_max, MAX)
+    # Output (read-modify-write — caller filled with beta·y first):
+    out_z: wp.array(dtype=wp.float32, ndim=2),
+):
+    """Per (world, pair_id), apply the per-pair preconditioner block:
+    solve A_pair · z = x_pair via the cached Cholesky factor, then
+    add alpha·z to out_z at the constraint indices in this pair.
+
+    For pairs whose Cholesky failed (factor_failure[w, p] == 1), fall
+    back to per-element Jacobi (using P_inv_diag from the existing
+    JacobiPreconditioner) for that pair's constraints — graceful
+    degradation when a block was numerically non-SPD.
+
+    `workspace` is a per-(world, pair) scratch buffer used to hold
+    x_pair and the intermediate y from the forward solve. Size MAX
+    per pair; reused across calls (no clearing needed since the
+    in-pair loop overwrites every used slot).
+    """
+    w, p = wp.tid()
+    n = pair_member_count[w, p]
+    if n == 0:
+        return
+
+    # ---- Failure path: Jacobi fallback for this block ----
+    if factor_failure[w, p] != 0:
+        for k in range(n):
+            ci = pair_member_list[w, p, k]
+            inv_diag = P_inv_diag[w, ci]
+            out_z[w, ci] += alpha * inv_diag * vec_x[w, ci]
+        return
+
+    # ---- Normal path: triangular solve against cached L ----
+
+    # Step 1: gather x_pair into workspace
+    for k in range(n):
+        ci = pair_member_list[w, p, k]
+        workspace[w, p, k] = vec_x[w, ci]
+
+    # Step 2: forward solve L·y = x_pair, in-place on workspace
+    # L is lower-triangular: y[i] = (x[i] - Σ_{j<i} L[i,j]·y[j]) / L[i,i]
+    for i in range(n):
+        s = workspace[w, p, i]
+        for j in range(i):
+            s -= L_blocks[w, p, i, j] * workspace[w, p, j]
+        workspace[w, p, i] = s / L_blocks[w, p, i, i]
+
+    # Step 3: back solve Lᵀ·z = y, in-place on workspace
+    # Lᵀ is upper-triangular: z[i] = (y[i] - Σ_{j>i} L[j,i]·z[j]) / L[i,i]
+    for ii in range(n):
+        i = n - 1 - ii  # iterate from n-1 down to 0
+        s = workspace[w, p, i]
+        for j in range(i + 1, n):
+            s -= L_blocks[w, p, j, i] * workspace[w, p, j]
+        workspace[w, p, i] = s / L_blocks[w, p, i, i]
+
+    # Step 4: scatter z to out_z, scaled by alpha and added on top of
+    # the beta·y baseline already there.
+    for k in range(n):
+        ci = pair_member_list[w, p, k]
+        out_z[w, ci] += alpha * workspace[w, p, k]
+
+
+class PerBodyPairPreconditioner(LinearOperator):
     """Block-Jacobi preconditioner with per-body-pair blocks.
 
     Phase 1: pair-assignment only. Subsequent phases will add block
@@ -338,8 +428,13 @@ class PerBodyPairPreconditioner:
     """
 
     def __init__(self, engine, regularization: float = 1e-6):
+        super().__init__(
+            shape=(engine.dims.N_w, engine.dims.N_c, engine.dims.N_c),
+            dtype=wp.float32,
+            device=engine.device,
+            matvec=None,  # bound to self.matvec below
+        )
         self.engine = engine
-        self.device = engine.device
         self.regularization = float(regularization)
 
         N_w = engine.dims.num_worlds
@@ -396,6 +491,24 @@ class PerBodyPairPreconditioner:
             # as a fall-back-to-Jacobi case.
             self.factor_failure = wp.zeros(
                 (N_w, self.n_pairs_max), dtype=wp.int32
+            )
+
+            # Phase 4: triangular-solve workspace (one per pair).
+            # Reused across solves; contents don't need clearing
+            # because the per-pair kernel overwrites every used slot
+            # before reading it.
+            self._workspace = wp.zeros(
+                (N_w, self.n_pairs_max, self.MAX_MEMBERS_PER_PAIR),
+                dtype=wp.float32,
+            )
+
+            # Phase 4: Jacobi-fallback inv-diag, used when a Cholesky
+            # block fails. Computed alongside the per-pair factor in
+            # `update()`; reuses the existing Jacobi diag formula
+            # from `axion.optim.preconditioner.compute_inv_diag_kernel`
+            # without bringing in the full JacobiPreconditioner.
+            self._P_inv_diag_fallback = wp.zeros(
+                (N_w, N_c), dtype=wp.float32
             )
 
     def update_pair_assignments(self):
@@ -506,6 +619,90 @@ class PerBodyPairPreconditioner:
             dim=(self.engine.dims.num_worlds, self.n_pairs_max),
             inputs=[self.A_blocks, self.pair_member_count],
             outputs=[self.L_blocks, self.factor_failure],
+            device=self.device,
+        )
+
+    def update(self):
+        """Drop-in replacement for `JacobiPreconditioner.update()`.
+
+        Performs the full per-NR-iter setup: pair assignment (cheap
+        but only needs to run once per step in principle — see
+        comment), block extraction, Cholesky factorization, and
+        Jacobi-fallback inv-diag computation.
+
+        For now this re-runs `update_pair_assignments()` every NR iter
+        too. The pair structure is constant within a step (member
+        constraints don't change between NR iters), so this is wasted
+        work. Phase 5 (or a follow-up) can hoist the assignment to
+        once-per-step from base_engine.load_data, leaving only
+        update_blocks + factor_blocks here.
+        """
+        self.update_pair_assignments()
+        self.update_blocks()
+        self.factor_blocks()
+        self._update_jacobi_fallback()
+
+    def _update_jacobi_fallback(self):
+        """Compute the Jacobi inv-diag used as fallback when a
+        per-pair Cholesky fails. Reuses the existing
+        `compute_inv_diag_kernel` from preconditioner.py rather than
+        duplicating the formula here.
+        """
+        # Lazy import to keep cross-file deps tidy
+        from axion.optim.preconditioner import compute_inv_diag_kernel
+
+        wp.launch(
+            kernel=compute_inv_diag_kernel,
+            dim=(self.engine.dims.num_worlds, self.engine.dims.num_constraints),
+            inputs=[
+                self.engine.axion_model.body_inv_mass,
+                self.engine.data.world_inv_inertia,
+                self.engine.data.J_values.full,
+                self.engine.data.C_values.full,
+                self.engine.data.constr_body_idx.full,
+                self.engine.data.constr_active_mask.full,
+                self.regularization,
+            ],
+            outputs=[self._P_inv_diag_fallback],
+            device=self.device,
+        )
+
+    def matvec(self, x, y, z, alpha, beta):
+        """Apply the per-body-pair block-Jacobi preconditioner:
+        `z = beta·y + alpha · M⁻¹·x`, where M is the block-diagonal
+        approximation of A with blocks indexed by per-body-pair.
+
+        Drop-in for `JacobiPreconditioner.matvec`. PCRSolver passes
+        (x, y, z, alpha, beta) once per inner iter.
+        """
+        N_w = self.engine.dims.num_worlds
+        N_c = self.engine.dims.num_constraints
+
+        # Pass 1: out_z = beta · y, for every (world, constraint).
+        # Sets baseline including constraints not in any active pair.
+        wp.launch(
+            kernel=_apply_baseline_kernel,
+            dim=(N_w, N_c),
+            inputs=[y, beta],
+            outputs=[z],
+            device=self.device,
+        )
+
+        # Pass 2: per-active-pair, accumulate alpha · M⁻¹·x onto z.
+        wp.launch(
+            kernel=_apply_per_pair_kernel,
+            dim=(N_w, self.n_pairs_max),
+            inputs=[
+                self.L_blocks,
+                self.pair_member_count,
+                self.pair_member_list,
+                self.factor_failure,
+                self._P_inv_diag_fallback,
+                x,
+                alpha,
+                self._workspace,
+            ],
+            outputs=[z],
             device=self.device,
         )
 
