@@ -1,6 +1,20 @@
 """Per-body-pair block-Jacobi preconditioner for the Schur-complement
 matrix A = J·M⁻¹·Jᵀ + C.
 
+NOTATION
+--------
+Throughout this file:
+  * `n_bodies` is the per-world body count.
+  * The "ground sentinel" is the integer value `n_bodies` (used in
+    place of -1 for static / world-frame bodies). It encodes "no
+    movable body on this side of the constraint".
+  * A *pair* is identified by a canonical (b_lo, b_hi) tuple where
+    b_lo ≤ b_hi and either is in [0, n_bodies] (with `n_bodies`
+    being the ground sentinel). Encoded as a single int `pair_id`.
+  * Members of a pair are the active constraints whose two body
+    slots match (b_lo, b_hi) (in either order). Member count per
+    pair is small (typically 3–8 for Helhest).
+
 Design rationale: see `docs/pcr_warm_start_options.md` (section
 "Five block schemes considered"). The 3×3 per-contact block-Jacobi
 fails because J_n ⊥ {J_t1, J_t2} by construction makes the within-
@@ -33,6 +47,7 @@ active constraint belongs to and builds (pair_id → constraint_list)
 member lists. No matvec yet; that's phase 4.
 """
 import warp as wp
+from axion.math import compute_spatial_momentum
 
 
 # Maximum number of constraints we expect in any one pair group. With
@@ -130,6 +145,124 @@ def _build_pair_member_lists_kernel(
         pair_overflow_flag[w] = 1
 
 
+@wp.func
+def _jacobian_for_body(
+    target_body: int,
+    constr_idx: int,
+    world_idx: int,
+    constr_body_idx: wp.array(dtype=wp.int32, ndim=3),
+    J_values: wp.array(dtype=wp.spatial_vector, ndim=3),
+    n_bodies: int,
+):
+    """Return the spatial-vector Jacobian of constraint `constr_idx`
+    on `target_body`, looking up which slot (0 or 1) of J_values has
+    the matching body.
+
+    Convention: target_body = n_bodies means "ground sentinel" — the
+    static reference, which has no Jacobian entry. We return
+    a zero spatial vector in that case (the caller skips the ground
+    sentinel before calling this anyway, but a defensive zero return
+    avoids garbage if invoked).
+
+    For real bodies (target_body ∈ [0, n_bodies)), exactly one of
+    constr_body_idx[w, c, 0] / [w, c, 1] equals target_body for any
+    constraint that's a member of the pair containing target_body.
+    """
+    if target_body >= n_bodies:
+        return wp.spatial_vector()
+
+    body_0 = constr_body_idx[world_idx, constr_idx, 0]
+    body_1 = constr_body_idx[world_idx, constr_idx, 1]
+
+    if body_0 == target_body:
+        return J_values[world_idx, constr_idx, 0]
+    if body_1 == target_body:
+        return J_values[world_idx, constr_idx, 1]
+    # Should not reach here for valid pair memberships, but return
+    # zero defensively.
+    return wp.spatial_vector()
+
+
+@wp.kernel
+def _extract_pair_blocks_kernel(
+    pair_member_count: wp.array(dtype=wp.int32, ndim=2),       # (W, n_pairs_max)
+    pair_member_list: wp.array(dtype=wp.int32, ndim=3),         # (W, n_pairs_max, MAX)
+    constr_body_idx: wp.array(dtype=wp.int32, ndim=3),          # (W, N_c, 2)
+    J_values: wp.array(dtype=wp.spatial_vector, ndim=3),        # (W, N_c, 2)
+    body_inv_mass: wp.array(dtype=wp.float32, ndim=2),          # (W, N_b)
+    world_inv_inertia: wp.array(dtype=wp.mat33, ndim=2),        # (W, N_b)
+    C_values: wp.array(dtype=wp.float32, ndim=2),               # (W, N_c)
+    n_bodies: int,
+    regularization: float,
+    # Output: dense (W, n_pairs_max, MAX, MAX) block storage. Empty
+    # pair slots and entries past the pair's member count remain at
+    # whatever was previously written (usually zero from the per-step
+    # reset). Phase 3 factorization scans only the live (i, j) range.
+    A_blocks: wp.array(dtype=wp.float32, ndim=4),
+):
+    """Build A_pair[i, j] = J_i^T · M⁻¹ · J_j (summed over both bodies
+    in the pair) for every (pair, i, j) cell.
+
+    Threads outside the live (i, j) range for their pair early-exit so
+    A_blocks remains at the per-step reset value (0). Inside the live
+    range we add C_ii on the diagonal plus a small `regularization`
+    floor for numerical stability of the per-block factorization.
+    """
+    w, p, i, j = wp.tid()
+
+    n_members = pair_member_count[w, p]
+    if i >= n_members or j >= n_members:
+        return
+
+    # Decode pair_id back to (b_lo, b_hi). With pair_id = b_lo·(n_b+1) + b_hi,
+    # the inverse is straightforward integer arithmetic.
+    stride = n_bodies + 1
+    b_hi = p % stride
+    b_lo = p / stride
+
+    c_i = pair_member_list[w, p, i]
+    c_j = pair_member_list[w, p, j]
+
+    val = float(0.0)
+
+    # Body b_lo's contribution. By construction b_lo ≤ b_hi, and the
+    # ground sentinel sorts to b_hi. So if b_lo equals n_bodies the
+    # pair would be (ground, ground), which can't occur for an active
+    # constraint. Skip is safe via the `< n_bodies` gate.
+    if b_lo < n_bodies:
+        J_i_lo = _jacobian_for_body(
+            b_lo, c_i, w, constr_body_idx, J_values, n_bodies
+        )
+        J_j_lo = _jacobian_for_body(
+            b_lo, c_j, w, constr_body_idx, J_values, n_bodies
+        )
+        m_inv = body_inv_mass[w, b_lo]
+        I_inv = world_inv_inertia[w, b_lo]
+        Mv = compute_spatial_momentum(m_inv, I_inv, J_j_lo)
+        val += wp.dot(J_i_lo, Mv)
+
+    # Body b_hi's contribution (skip the ground sentinel).
+    if b_hi < n_bodies:
+        J_i_hi = _jacobian_for_body(
+            b_hi, c_i, w, constr_body_idx, J_values, n_bodies
+        )
+        J_j_hi = _jacobian_for_body(
+            b_hi, c_j, w, constr_body_idx, J_values, n_bodies
+        )
+        m_inv = body_inv_mass[w, b_hi]
+        I_inv = world_inv_inertia[w, b_hi]
+        Mv = compute_spatial_momentum(m_inv, I_inv, J_j_hi)
+        val += wp.dot(J_i_hi, Mv)
+
+    # Diagonal: add the constraint's own compliance entry plus a small
+    # numerical regularization to keep A_pair safely SPD for the
+    # per-block factorization in phase 3.
+    if i == j:
+        val += C_values[w, c_i] + regularization
+
+    A_blocks[w, p, i, j] = val
+
+
 class PerBodyPairPreconditioner:
     """Block-Jacobi preconditioner with per-body-pair blocks.
 
@@ -147,9 +280,10 @@ class PerBodyPairPreconditioner:
         # a .matvec() (apply preconditioner).
     """
 
-    def __init__(self, engine):
+    def __init__(self, engine, regularization: float = 1e-6):
         self.engine = engine
         self.device = engine.device
+        self.regularization = float(regularization)
 
         N_w = engine.dims.num_worlds
         N_c = engine.dims.num_constraints
@@ -174,6 +308,19 @@ class PerBodyPairPreconditioner:
                 dtype=wp.int32,
             )
             self.pair_overflow_flag = wp.zeros((N_w,), dtype=wp.int32)
+
+            # Phase 2: dense (W, n_pairs_max, MAX, MAX) block storage.
+            # Most slots are inactive (zero member count) and stay
+            # zero; only ~7-20 pairs are live per step on Helhest.
+            # Per-world cost: n_pairs_max · MAX² · 4 bytes ≈ 4.7 MB
+            # for N_b=16, MAX=64. Tolerable; phase 3 may add a
+            # compaction step if scaling to many worlds.
+            self.A_blocks = wp.zeros(
+                (N_w, self.n_pairs_max,
+                 self.MAX_MEMBERS_PER_PAIR,
+                 self.MAX_MEMBERS_PER_PAIR),
+                dtype=wp.float32,
+            )
 
     def update_pair_assignments(self):
         """Recompute pair IDs and member lists.
@@ -217,6 +364,47 @@ class PerBodyPairPreconditioner:
                 self.pair_member_list,
                 self.pair_overflow_flag,
             ],
+            device=self.device,
+        )
+
+    def update_blocks(self):
+        """Phase 2: extract A_pair blocks from the current J_values,
+        body inertias, and C compliance entries.
+
+        Must be called every NR iter (or whenever J_values changes),
+        after `update_pair_assignments()` has populated the pair member
+        lists for the current step.
+
+        Resets `A_blocks` to zero before populating so empty pair slots
+        and (i, j) entries past the live member range are deterministic.
+        """
+        # Reset so empty slots and out-of-range cells stay zero.
+        # Phase 4's apply will scan only the live range, but a clean
+        # slate here makes inspection / validation cleaner.
+        self.A_blocks.zero_()
+
+        N_w = self.engine.dims.num_worlds
+
+        wp.launch(
+            kernel=_extract_pair_blocks_kernel,
+            dim=(
+                N_w,
+                self.n_pairs_max,
+                self.MAX_MEMBERS_PER_PAIR,
+                self.MAX_MEMBERS_PER_PAIR,
+            ),
+            inputs=[
+                self.pair_member_count,
+                self.pair_member_list,
+                self.engine.data._constr_body_idx,
+                self.engine.data._J_values,
+                self.engine.axion_model.body_inv_mass,
+                self.engine.data.world_inv_inertia,
+                self.engine.data._C_values,
+                self.n_bodies,
+                self.regularization,
+            ],
+            outputs=[self.A_blocks],
             device=self.device,
         )
 
