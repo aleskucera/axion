@@ -15,7 +15,6 @@ from .engine_config import ProfilingConfig
 from .engine_config import SemiImplicitEngineConfig
 from .engine_config import WarmStartConfig
 from .engine_config import XPBDEngineConfig
-from .engine_profiler import EngineProfiler
 from .logging_config import AdjointLoggingConfig
 from .logging_config import DatasetLoggingConfig
 from .logging_config import HDF5LoggingConfig
@@ -35,7 +34,6 @@ __all__ = [
     "NewtonRaphsonConfig",
     "ProfilingConfig",
     "WarmStartConfig",
-    "EngineProfiler",
     "FeatherstoneEngineConfig",
     "MuJoCoEngineConfig",
     "SemiImplicitEngineConfig",

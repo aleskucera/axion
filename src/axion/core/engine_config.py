@@ -26,7 +26,7 @@ from typing import Any, Optional
 
 from axion.collision import ContactReductionConfig
 
-from .engine_profiler import VALID_MODES as _VALID_PROFILING_MODES
+from axion.profiling import VALID_MODES as _VALID_PROFILING_MODES
 
 
 # -----------------------------------------------------------------------

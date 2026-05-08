@@ -14,19 +14,19 @@ from newton import Model
 from newton import State
 from newton.solvers import SolverBase
 
+from axion.adjoint import compute_adjoint_rhs_kernel
+from axion.adjoint import compute_body_adjoint_init_kernel
+from axion.adjoint import subtract_constraint_feedback_kernel
 from axion.logging import AdjointHDF5Logger
 from axion.logging import DatasetHDF5Logger
 from axion.logging import SimulationHDF5Logger
+from axion.profiling import EngineProfiler
 
-from .adjoint_utils import compute_adjoint_rhs_kernel
-from .adjoint_utils import compute_body_adjoint_init_kernel
-from .adjoint_utils import subtract_constraint_feedback_kernel
 from .backtracking_utils import perform_backtracking
 from .contacts import AxionContacts
 from .engine_config import AxionEngineConfig
 from .engine_data import EngineData
 from .engine_dims import EngineDimensions
-from .engine_profiler import EngineProfiler
 from .linear_utils import compute_dbody_qd_from_dbody_lambda
 from .linear_utils import compute_linear_system
 from .linesearch_utils import perform_linesearch
@@ -510,9 +510,9 @@ class AxionEngineBase(SolverBase):
         )
 
     def step_backward(self):
-        from .adjoint_friction import adjoint_regularize_compliance_kernel
-        from .adjoint_friction import freeze_contact_mode_kernel
-        from .adjoint_friction import freeze_contact_mode_soft_kernel
+        from axion.adjoint import adjoint_regularize_compliance_kernel
+        from axion.adjoint import freeze_contact_mode_kernel
+        from axion.adjoint import freeze_contact_mode_soft_kernel
 
         compute_linear_system(
             self.axion_model, self.axion_contacts, self.data, self.config, self.dims

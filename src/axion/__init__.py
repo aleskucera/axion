@@ -4,7 +4,6 @@ from .core import AxionEngineConfig
 from .core import ComplianceConfig
 from .core import ContactsConfig
 from .core import EngineConfig
-from .core import EngineProfiler
 from .core import FeatherstoneEngineConfig
 from .core import JointMode
 from .core import LinearSolverConfig
@@ -19,6 +18,7 @@ from .core import ProfilingConfig
 from .core import SemiImplicitEngineConfig
 from .core import WarmStartConfig
 from .core import XPBDEngineConfig
+from .profiling import EngineProfiler
 from .simulation import AxionDifferentiableSimulator
 from .simulation import DatasetSimulator
 from .simulation import DifferentiableSimulator
