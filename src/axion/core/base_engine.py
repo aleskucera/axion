@@ -14,13 +14,15 @@ from newton import Model
 from newton import State
 from newton.solvers import SolverBase
 
-from .adjoint_logger import AdjointHDF5Logger
+from axion.logging import AdjointHDF5Logger
+from axion.logging import DatasetHDF5Logger
+from axion.logging import SimulationHDF5Logger
+
 from .adjoint_utils import compute_adjoint_rhs_kernel
 from .adjoint_utils import compute_body_adjoint_init_kernel
 from .adjoint_utils import subtract_constraint_feedback_kernel
 from .backtracking_utils import perform_backtracking
 from .contacts import AxionContacts
-from .dataset_logger import DatasetHDF5Logger
 from .engine_config import AxionEngineConfig
 from .engine_data import EngineData
 from .engine_dims import EngineDimensions
@@ -32,7 +34,6 @@ from .logging_config import LoggingConfig
 from .model import AxionModel
 from .residual_utils import compute_residual
 from .residual_utils import compute_residual_gradient
-from .sim_logger import SimulationHDF5Logger
 from .update_utils import apply_stardard_newton_step
 from .warm_start_utils import project_contact_forces_kernel
 

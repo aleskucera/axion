@@ -1,10 +1,10 @@
 import h5py
 import warp as wp
 
-from .engine_config import EngineConfig
-from .engine_data import EngineData
-from .engine_dims import EngineDimensions
-from .history_group import create_save_to_buffer_kernel
+from axion.core.engine_config import EngineConfig
+from axion.core.engine_data import EngineData
+from axion.core.engine_dims import EngineDimensions
+from axion.core.history_group import create_save_to_buffer_kernel
 
 # Avoid a circular import — PCRSolver is only used for type hints here.
 from typing import TYPE_CHECKING
