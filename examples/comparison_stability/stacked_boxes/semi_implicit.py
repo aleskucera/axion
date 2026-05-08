@@ -21,7 +21,6 @@ import pathlib
 from config import DURATION, DENSITY, HX1, HX2, HX3, Z1, Z2, Z3, STABILITY_TOL, KE, KD, KF, MU, BSEARCH_TOL, BSEARCH_MAX
 import numpy as np
 import warp as wp
-from axion import ExecutionConfig
 from axion import InteractiveSimulator
 from axion import LoggingConfig
 from axion import RenderingConfig
@@ -169,15 +168,8 @@ def run_one(dt: float, engine_config: SemiImplicitEngineConfig) -> dict:
         world_offset_y=5.0,
         start_paused=False,
     )
-    exec_config = ExecutionConfig(
-        use_cuda_graph=True,
-        headless_steps_per_segment=T,
-    )
-    logging_config = LoggingConfig(
-        enable_timing=False,
-        enable_hdf5_logging=False,
-    )
-    sim = StackedBoxesSim(sim_config, render_config, exec_config, engine_config, logging_config)
+    logging_config = LoggingConfig()
+    sim = StackedBoxesSim(sim_config, render_config, engine_config, logging_config)
     return sim.run_headless()
 
 

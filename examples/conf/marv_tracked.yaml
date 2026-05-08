@@ -1,7 +1,6 @@
 defaults:
   - simulation: marv_tracked
   - rendering: gl
-  - execution: cuda_graph
   - logging: disabled
   - engine: axion 
   - control: helhest/velocity

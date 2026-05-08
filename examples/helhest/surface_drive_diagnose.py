@@ -32,14 +32,27 @@ class HelhestSurfaceDiagnose(HelhestSurfaceBenchmark):
         self.npz_output = npz_output
 
         engine = self.solver
-        self.max_newton_iters = engine.config.max_newton_iters
-        self.max_linear_iters = engine.config.max_linear_iters
+        self.max_newton_iters = engine.config.nr.max_iters
+        self.max_linear_iters = engine.config.linear.max_iters
         self.num_worlds = engine.dims.num_worlds
+        self.linesearch_enabled = bool(engine.config.linesearch.enabled)
+
+        # Linesearch step size grid is fixed at construction (a single 1D
+        # array shared across all NR iters). Capture it once.
+        if self.linesearch_enabled:
+            self._ls_step_sizes = engine.data.linesearch_step_size.numpy().copy()
+        else:
+            self._ls_step_sizes = None
 
         self._iter_counts_per_step = []   # [n_steps, max_newton_iters]
         self._residuals_per_step = []     # [n_steps, max_newton_iters, max_linear_iters+1, num_worlds]
         self._nr_iters_per_step = []      # [n_steps]
         self._nr_res_norm_sq_per_step = []  # [n_steps, max_newton_iters, num_worlds]
+        self._ls_min_idx_per_step = []    # [n_steps, max_newton_iters, num_worlds] (only if linesearch on)
+        self._ls_res_per_step = []        # [n_steps, max_newton_iters, step_count, num_worlds]
+        # Trajectories so we can diff w/ vs w/o linesearch.
+        self._body_pose_per_step = []     # [n_steps, num_worlds, body_count, 7]
+        self._body_vel_per_step = []      # [n_steps, num_worlds, body_count, 6]
 
     @override
     def _run_segment_with_graph(self, segment_num: int):
@@ -69,6 +82,19 @@ class HelhestSurfaceDiagnose(HelhestSurfaceBenchmark):
         self._residuals_per_step.append(residuals)
         self._nr_res_norm_sq_per_step.append(nr_res)
 
+        if self.linesearch_enabled:
+            # Per-NR-iter chosen-α index. Shape (K, W).
+            ls_idx = data.ls_history_minimal_index.numpy().copy()
+            self._ls_min_idx_per_step.append(ls_idx)
+            # Per-NR-iter, per-candidate residual squared. Shape (K, A, W).
+            ls_res = data.ls_history_res_norm_sq.numpy().copy()
+            self._ls_res_per_step.append(ls_res)
+
+        # Snapshot post-step body state (world 0). Used to diff trajectories
+        # between runs with and without linesearch.
+        self._body_pose_per_step.append(data.body_pose.numpy().copy())
+        self._body_vel_per_step.append(data.body_vel.numpy().copy())
+
     def run(self):
         try:
             super().run()
@@ -85,9 +111,12 @@ class HelhestSurfaceDiagnose(HelhestSurfaceBenchmark):
         residuals = np.stack(self._residuals_per_step)             # (S, K, L+1, W)
         nr_res = np.stack(self._nr_res_norm_sq_per_step)           # (S, K, W)
 
+        ls_min_idx = None
+        if self.linesearch_enabled and self._ls_min_idx_per_step:
+            ls_min_idx = np.stack(self._ls_min_idx_per_step)       # (S, K, W)
+
         os.makedirs(os.path.dirname(self.npz_output) or ".", exist_ok=True)
-        np.savez(
-            self.npz_output,
+        save_kwargs = dict(
             nr_iters=nr_iters,
             pcr_iter_counts=iter_counts,
             pcr_residual_sq_history=residuals,
@@ -96,10 +125,18 @@ class HelhestSurfaceDiagnose(HelhestSurfaceBenchmark):
             max_linear_iters=self.max_linear_iters,
             num_worlds=self.num_worlds,
         )
+        if ls_min_idx is not None:
+            save_kwargs["ls_min_idx"] = ls_min_idx
+            save_kwargs["ls_step_sizes"] = self._ls_step_sizes
+            if self._ls_res_per_step:
+                save_kwargs["ls_res_norm_sq"] = np.stack(self._ls_res_per_step)
+        save_kwargs["body_pose"] = np.stack(self._body_pose_per_step)
+        save_kwargs["body_vel"] = np.stack(self._body_vel_per_step)
+        np.savez(self.npz_output, **save_kwargs)
         print(f"\n[diagnose] dumped trace to {self.npz_output}")
-        self._print_summary(nr_iters, iter_counts, residuals, nr_res)
+        self._print_summary(nr_iters, iter_counts, residuals, nr_res, ls_min_idx)
 
-    def _print_summary(self, nr_iters, iter_counts, residuals, nr_res):
+    def _print_summary(self, nr_iters, iter_counts, residuals, nr_res, ls_min_idx=None):
         max_K = self.max_newton_iters
         max_L = self.max_linear_iters
         n_steps = iter_counts.shape[0]
@@ -234,27 +271,65 @@ class HelhestSurfaceDiagnose(HelhestSurfaceBenchmark):
         head = ", ".join(f"{v:+.2f}" for v in per_nr_log[:8])
         tail = ", ".join(f"{v:+.2f}" for v in per_nr_log[-8:])
         print(f"NR log10||r||² by iter median: [{head}, ..., {tail}]")
+
+        # 6. Linesearch chosen-α distribution (only when linesearch is on).
+        if ls_min_idx is not None and self._ls_step_sizes is not None:
+            print("-" * 72)
+            grid = self._ls_step_sizes        # shape (step_count,)
+            # Map per-(step, NR-iter, world) chosen index -> α value.
+            # ls_min_idx shape (S, K, W); apply ran_mask over (S, K).
+            world_alpha = grid[ls_min_idx[:, :, 0]]  # shape (S, K), world 0
+            chosen_alpha = world_alpha[ran_mask]
+            print(f"Linesearch step-size grid: {grid.size} candidates from "
+                  f"{grid.min():.3e} to {grid.max():.3e}; median {np.median(grid):.3f}")
+            print(f"Chosen α (world 0): "
+                  f"min={chosen_alpha.min():.3e}  "
+                  f"p25={np.percentile(chosen_alpha, 25):.3f}  "
+                  f"p50={np.percentile(chosen_alpha, 50):.3f}  "
+                  f"p75={np.percentile(chosen_alpha, 75):.3f}  "
+                  f"max={chosen_alpha.max():.3f}")
+            # Bucket into rough regimes
+            n_tiny = int((chosen_alpha < 0.05).sum())
+            n_small = int(((chosen_alpha >= 0.05) & (chosen_alpha < 0.5)).sum())
+            n_mid = int(((chosen_alpha >= 0.5) & (chosen_alpha < 0.9)).sum())
+            n_unit = int(((chosen_alpha >= 0.9) & (chosen_alpha <= 1.1)).sum())
+            n_over = int((chosen_alpha > 1.1).sum())
+            print(f"Chosen-α buckets:  "
+                  f"<0.05: {n_tiny}  "
+                  f"0.05–0.5: {n_small}  "
+                  f"0.5–0.9: {n_mid}  "
+                  f"~1.0: {n_unit}  "
+                  f">1.1: {n_over}  "
+                  f"(total: {chosen_alpha.size})")
+            # Per-NR-iter median α across steps (world 0).
+            per_nr_alpha = []
+            for k in range(max_K):
+                col = world_alpha[ran_mask[:, k], k]
+                if col.size:
+                    per_nr_alpha.append(float(np.median(col)))
+                else:
+                    per_nr_alpha.append(float("nan"))
+            head_a = ", ".join(f"{v:.3f}" for v in per_nr_alpha[:8])
+            tail_a = ", ".join(f"{v:.3f}" for v in per_nr_alpha[-8:])
+            print(f"Chosen α by NR-iter (median):  [{head_a}, ..., {tail_a}]")
         print("=" * 72)
 
 
 @hydra.main(config_path=str(CONFIG_PATH), config_name="helhest_diagnose", version_base=None)
 def helhest_surface_diagnose(cfg: DictConfig):
     from axion import EngineConfig
-    from axion import ExecutionConfig
     from axion import LoggingConfig
     from axion import RenderingConfig
     from axion import SimulationConfig
 
     sim_config: SimulationConfig = hydra.utils.instantiate(cfg.simulation)
     render_config: RenderingConfig = hydra.utils.instantiate(cfg.rendering)
-    exec_config: ExecutionConfig = hydra.utils.instantiate(cfg.execution)
     engine_config: EngineConfig = hydra.utils.instantiate(cfg.engine)
     logging_config: LoggingConfig = hydra.utils.instantiate(cfg.logging)
 
     simulator = HelhestSurfaceDiagnose(
         sim_config,
         render_config,
-        exec_config,
         engine_config,
         logging_config,
         control_mode=cfg.control.mode,

@@ -14,11 +14,15 @@ import numpy as np
 import warp as wp
 from axion import AxionDifferentiableSimulator
 from axion import AxionEngineConfig
-from axion import ExecutionConfig
 from axion import LoggingConfig
 from axion import RenderingConfig
 from axion import SimulationConfig
 from axion.simulation.sim_config import SyncMode
+from axion import ComplianceConfig
+from axion import ContactsConfig
+from axion import LinearSolverConfig
+from axion import LinesearchConfig
+from axion import NewtonRaphsonConfig
 from newton import Model
 
 os.environ["PYOPENGL_PLATFORM"] = "glx"
@@ -87,12 +91,11 @@ class BallThrowOptimizer(AxionDifferentiableSimulator):
         self,
         sim_config: SimulationConfig,
         render_config: RenderingConfig,
-        exec_config: ExecutionConfig,
         engine_config: AxionEngineConfig,
         logging_config: LoggingConfig,
         save_path: str = None,
     ):
-        super().__init__(sim_config, render_config, exec_config, engine_config, logging_config)
+        super().__init__(sim_config, render_config, engine_config, logging_config)
 
         self.save_path = save_path
         self.loss = wp.zeros(1, dtype=float, requires_grad=True)
@@ -223,42 +226,18 @@ def main():
         world_offset_y=5.0,
         start_paused=False,
     )
-    exec_config = ExecutionConfig(
-        use_cuda_graph=True,
-        headless_steps_per_segment=10,
-    )
     engine_config = AxionEngineConfig(
-        max_newton_iters=12,
-        max_linear_iters=12,
-        backtrack_min_iter=8,
-        newton_atol=1e-3,
-        linear_atol=1e-3,
-        linear_tol=1e-3,
-        enable_linesearch=False,
-        linesearch_conservative_step_count=16,
-        linesearch_conservative_upper_bound=5e-2,
-        linesearch_min_step=1e-6,
-        linesearch_optimistic_step_count=48,
-        linesearch_optimistic_window=0.4,
-        joint_compliance=6e-8,
-        contact_compliance=1e-6,
-        friction_compliance=1e-6,
-        regularization=1e-6,
-        contact_fb_alpha=0.5,
-        contact_fb_beta=1.0,
-        friction_fb_alpha=1.0,
-        friction_fb_beta=1.0,
-        max_contacts_per_world=256,
+        nr=NewtonRaphsonConfig(max_iters=12, backtrack_min_iter=8, atol=0.001),
+        linear=LinearSolverConfig(max_iters=12, atol=0.001, tol=0.001, regularization=1e-06),
+        compliance=ComplianceConfig(joint=6e-08, contact=1e-06, friction=1e-06),
+        linesearch=LinesearchConfig(enabled=False, conservative_step_count=16, conservative_upper_bound=0.05, min_step=1e-06, optimistic_step_count=48, optimistic_window=0.4),
+        contacts=ContactsConfig(max_per_world=256),
     )
-    logging_config = LoggingConfig(
-        enable_timing=False,
-        enable_hdf5_logging=False,
-    )
+    logging_config = LoggingConfig()
 
     sim = BallThrowOptimizer(
         sim_config,
         render_config,
-        exec_config,
         engine_config,
         logging_config,
         save_path=args.save,

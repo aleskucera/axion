@@ -193,7 +193,7 @@ def compute_linear_system(
             model.joint_constraint_offsets,
             model.joint_compliance,
             data.dt,
-            config.joint_compliance,
+            config.compliance.joint,
         ],
         outputs=[
             data.constr_active_mask.j,
@@ -261,7 +261,7 @@ def compute_linear_system(
             contacts.contact_thickness1,
             contacts.contact_normal,
             data.dt,
-            config.contact_compliance,
+            config.compliance.contact,
         ],
         outputs=[
             data.constr_active_mask.n,
@@ -297,7 +297,7 @@ def compute_linear_system(
             contacts.contact_thickness1,
             contacts.contact_normal,
             data.dt,
-            config.friction_compliance,
+            config.compliance.friction,
         ],
         outputs=[
             data.constr_active_mask.f,

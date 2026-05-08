@@ -16,12 +16,16 @@ import newton
 import numpy as np
 import warp as wp
 from axion import AxionDifferentiableSimulator
-from axion import ExecutionConfig
 from axion import LoggingConfig
 from axion import RenderingConfig
 from axion import SimulationConfig
 from axion.core.engine_config import AxionEngineConfig
 from axion.core.types import JointMode
+from axion import ComplianceConfig
+from axion import ContactsConfig
+from axion import LinearSolverConfig
+from axion import LinesearchConfig
+from axion import NewtonRaphsonConfig
 from newton import Model
 
 os.environ["PYOPENGL_PLATFORM"] = "glx"
@@ -156,7 +160,6 @@ class RobustUphillOptimizer(AxionDifferentiableSimulator):
         self,
         sim_config,
         render_config,
-        exec_config,
         engine_config,
         logging_config,
         num_control_points=10,
@@ -171,7 +174,6 @@ class RobustUphillOptimizer(AxionDifferentiableSimulator):
         super().__init__(
             sim_config,
             render_config,
-            exec_config,
             engine_config,
             logging_config,
         )
@@ -522,35 +524,18 @@ def main():
         num_worlds=len(world_masses),
     )
     render_config = RenderingConfig(vis_type="gl")
-    exec_config = ExecutionConfig(use_cuda_graph=True)
     engine_config = AxionEngineConfig(
-        max_newton_iters=16,
-        max_linear_iters=16,
-        backtrack_min_iter=12,
-        newton_mode="convergence",
-        linear_mode="convergence",
-        newton_atol=1e-3,
-        linear_tol=1e-5,
-        linear_atol=1e-5,
-        joint_compliance=5e-6,
-        contact_compliance=1.0,
-        friction_compliance=1e-5,
-        regularization=1e-6,
-        contact_fb_alpha=1.0,
-        contact_fb_beta=1.0,
-        friction_fb_alpha=1.0,
-        friction_fb_beta=1.0,
-        enable_linesearch=False,
-        max_contacts_per_world=512,
-        joint_constraint_level="pos",
-        contact_constraint_level="pos",
+        nr=NewtonRaphsonConfig(max_iters=16, backtrack_min_iter=12, atol=0.001),
+        linear=LinearSolverConfig(max_iters=16, tol=1e-05, atol=1e-05, regularization=1e-06),
+        compliance=ComplianceConfig(joint=5e-06, contact=1.0, friction=1e-05),
+        linesearch=LinesearchConfig(enabled=False),
+        contacts=ContactsConfig(max_per_world=512),
     )
     logging_config = LoggingConfig()
 
     sim = RobustUphillOptimizer(
         sim_config,
         render_config,
-        exec_config,
         engine_config,
         logging_config,
         num_control_points=10,

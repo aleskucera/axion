@@ -24,11 +24,15 @@ import openmesh
 import warp as wp
 from axion import AxionDifferentiableSimulator
 from axion import AxionEngineConfig
-from axion import ExecutionConfig
 from axion import LoggingConfig
 from axion import RenderingConfig
 from axion import SimulationConfig
 from axion.simulation.sim_config import SyncMode
+from axion import ComplianceConfig
+from axion import ContactsConfig
+from axion import LinearSolverConfig
+from axion import LinesearchConfig
+from axion import NewtonRaphsonConfig
 from newton import Model
 
 from examples.helhest.common import create_helhest_model
@@ -131,7 +135,6 @@ class TerrainTraversalOptimizer(AxionDifferentiableSimulator):
         self,
         sim_config,
         render_config,
-        exec_config,
         engine_config,
         logging_config,
         num_control_points=10,
@@ -143,7 +146,7 @@ class TerrainTraversalOptimizer(AxionDifferentiableSimulator):
         self.K = num_control_points
         self._target_ctrl = target_ctrl
         self._init_ctrl = init_ctrl
-        super().__init__(sim_config, render_config, exec_config, engine_config, logging_config)
+        super().__init__(sim_config, render_config, engine_config, logging_config)
         self.loss = wp.zeros(1, dtype=float, requires_grad=True)
         self.trajectory_weight = 10.0
         self.yaw_weight = 5.0
@@ -375,37 +378,18 @@ def main():
         usd_file=None,
         start_paused=False,
     )
-    exec_config = ExecutionConfig(
-        use_cuda_graph=True,
-        headless_steps_per_segment=1,
-    )
     engine_config = AxionEngineConfig(
-        max_newton_iters=14,
-        max_linear_iters=16,
-        backtrack_min_iter=10,
-        newton_atol=1e-3,
-        linear_atol=1e-3,
-        linear_tol=1e-3,
-        enable_linesearch=False,
-        joint_compliance=6e-8,
-        contact_compliance=0.1,
-        friction_compliance=1e-6,
-        regularization=1e-6,
-        contact_fb_alpha=0.5,
-        contact_fb_beta=1.0,
-        friction_fb_alpha=1.0,
-        friction_fb_beta=1.0,
-        max_contacts_per_world=256,
+        nr=NewtonRaphsonConfig(max_iters=14, backtrack_min_iter=10, atol=0.001),
+        linear=LinearSolverConfig(max_iters=16, atol=0.001, tol=0.001, regularization=1e-06),
+        compliance=ComplianceConfig(joint=6e-08, contact=0.1, friction=1e-06),
+        linesearch=LinesearchConfig(enabled=False),
+        contacts=ContactsConfig(max_per_world=256),
     )
-    logging_config = LoggingConfig(
-        enable_timing=False,
-        enable_hdf5_logging=False,
-    )
+    logging_config = LoggingConfig()
 
     sim = TerrainTraversalOptimizer(
         sim_config,
         render_config,
-        exec_config,
         engine_config,
         logging_config,
         num_control_points=args.K,

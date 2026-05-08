@@ -40,7 +40,11 @@ def benchmark_axion(batch_sizes):
 import os, json, time, numpy as np
 os.environ["PYOPENGL_PLATFORM"] = "glx"
 import newton, warp as wp
-from axion import AxionDifferentiableSimulator, AxionEngineConfig, ExecutionConfig, LoggingConfig, RenderingConfig, SimulationConfig
+from axion import (
+    AxionDifferentiableSimulator, AxionEngineConfig, ComplianceConfig,
+    ContactsConfig, LinearSolverConfig, LinesearchConfig,
+    LoggingConfig, NewtonRaphsonConfig, RenderingConfig, SimulationConfig,
+)
 from axion.simulation.sim_config import SyncMode
 from examples.helhest.common import create_helhest_model, HelhestConfig
 
@@ -81,15 +85,16 @@ class Sim(AxionDifferentiableSimulator):
 
 sim = Sim(
     SimulationConfig(duration_seconds=3.0, target_timestep_seconds=0.05,
-                     num_worlds={B}, sync_mode=SyncMode.ALIGN_FPS_TO_DT),
+                     num_worlds={B}, sync_mode=SyncMode.ALIGN_FPS_TO_DT, use_cuda_graph=True),
     RenderingConfig(vis_type="null", target_fps=30, usd_file=None, start_paused=False),
-    ExecutionConfig(use_cuda_graph=True, headless_steps_per_segment=1),
-    AxionEngineConfig(max_newton_iters=12, max_linear_iters=12, backtrack_min_iter=8,
-        newton_atol=1e-1, linear_atol=1e-3, linear_tol=1e-3, enable_linesearch=False,
-        joint_compliance=6e-8, contact_compliance=1e-6, friction_compliance=1e-6,
-        regularization=1e-6, contact_fb_alpha=0.5, contact_fb_beta=1.0,
-        friction_fb_alpha=1.0, friction_fb_beta=1.0, max_contacts_per_world=8),
-    LoggingConfig(enable_timing=False, enable_hdf5_logging=False))
+    AxionEngineConfig(
+        nr=NewtonRaphsonConfig(max_iters=12, backtrack_min_iter=8, atol=1e-1),
+        linear=LinearSolverConfig(max_iters=12, tol=1e-3, atol=1e-3, regularization=1e-6),
+        compliance=ComplianceConfig(joint=6e-8, contact=1e-6, friction=1e-6),
+        contacts=ContactsConfig(max_per_world=8),
+        linesearch=LinesearchConfig(enabled=False),
+    ),
+    LoggingConfig())
 
 sim.loss = wp.zeros(1, dtype=float, requires_grad=True)
 sim.track_body(body_idx=0, name="chassis", color=(0.0, 0.5, 1.0))

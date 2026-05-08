@@ -6,4 +6,5 @@ defaults:
   - axion
   - _self_
 
-profiling_mode: end_to_end
+profiling:
+  mode: end_to_end

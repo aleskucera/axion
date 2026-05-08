@@ -167,8 +167,8 @@ def detached_newton_loss(
         pcr_solver.solve(
             A=A_op, b=data.rhs, x=data.dconstr_force.full,
             preconditioner=preconditioner,
-            iters=config.max_linear_iters,
-            tol=config.linear_tol, atol=config.linear_atol,
+            iters=config.linear.max_iters,
+            tol=config.linear.tol, atol=config.linear.atol,
         )
         dlam = wp.to_torch(data.dconstr_force.full).clone()
 

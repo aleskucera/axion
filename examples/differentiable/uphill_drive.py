@@ -11,13 +11,17 @@ import sys
 import newton
 import numpy as np
 import warp as wp
-from axion import ExecutionConfig
 from axion import InteractiveSimulator
 from axion import LoggingConfig
 from axion import RenderingConfig
 from axion import SimulationConfig
 from axion.core.engine_config import AxionEngineConfig
 from axion.core.types import JointMode
+from axion import ComplianceConfig
+from axion import ContactsConfig
+from axion import LinearSolverConfig
+from axion import LinesearchConfig
+from axion import NewtonRaphsonConfig
 
 os.environ["PYOPENGL_PLATFORM"] = "glx"
 
@@ -214,8 +218,8 @@ def drive_kernel(
 
 
 class UphillDrive(InteractiveSimulator):
-    def __init__(self, sim_config, render_config, exec_config, engine_config, logging_config):
-        super().__init__(sim_config, render_config, exec_config, engine_config, logging_config)
+    def __init__(self, sim_config, render_config, engine_config, logging_config):
+        super().__init__(sim_config, render_config, engine_config, logging_config)
 
         self._step_counter = wp.zeros(1, dtype=wp.int32, device=self.model.device)
         self._settle_steps = int(1.0 / self.clock.dt)
@@ -277,32 +281,16 @@ def main():
         num_worlds=1,
     )
     render_config = RenderingConfig(vis_type="gl")
-    exec_config = ExecutionConfig(use_cuda_graph=True)
     engine_config = AxionEngineConfig(
-        max_newton_iters=16,
-        max_linear_iters=16,
-        backtrack_min_iter=12,
-        newton_mode="convergence",
-        linear_mode="convergence",
-        newton_atol=1e-3,
-        linear_tol=1e-5,
-        linear_atol=1e-5,
-        joint_compliance=5e-6,
-        contact_compliance=1.0,
-        friction_compliance=1e-12,
-        regularization=1e-6,
-        contact_fb_alpha=1.0,
-        contact_fb_beta=1.0,
-        friction_fb_alpha=1.0,
-        friction_fb_beta=1.0,
-        enable_linesearch=False,
-        max_contacts_per_world=512,
-        joint_constraint_level="pos",
-        contact_constraint_level="pos",
+        nr=NewtonRaphsonConfig(max_iters=16, backtrack_min_iter=12, atol=0.001),
+        linear=LinearSolverConfig(max_iters=16, tol=1e-05, atol=1e-05, regularization=1e-06),
+        compliance=ComplianceConfig(joint=5e-06, contact=1.0, friction=1e-12),
+        linesearch=LinesearchConfig(enabled=False),
+        contacts=ContactsConfig(max_per_world=512),
     )
     logging_config = LoggingConfig()
 
-    sim = UphillDrive(sim_config, render_config, exec_config, engine_config, logging_config)
+    sim = UphillDrive(sim_config, render_config, engine_config, logging_config)
     sim.run()
 
 

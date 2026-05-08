@@ -25,6 +25,10 @@ from axion.core.engine_config import AxionEngineConfig
 from axion.core.logging_config import LoggingConfig
 from axion.core.model_builder import AxionModelBuilder
 from axion.core.types import JointMode
+from axion import AdjointConfig
+from axion import LinearSolverConfig
+from axion import LinesearchConfig
+from axion import NewtonRaphsonConfig
 
 # Reuse all tangent-space machinery from the A_t test (committed earlier).
 from test_ilqr_jacobian import (
@@ -79,14 +83,10 @@ def build_pendulum(num_worlds: int):
 
 def make_engine(model, differentiable: bool):
     config = AxionEngineConfig(
-        max_newton_iters=NEWTON_ITERS,
-        max_linear_iters=LINEAR_ITERS,
-        linear_tol=LINEAR_TOL,
-        linear_atol=LINEAR_TOL,
-        newton_atol=NEWTON_ATOL,
-        enable_linesearch=False,
-        adjoint_soft_blending=False,
-        adjoint_regularization=0.0,
+        nr=NewtonRaphsonConfig(max_iters=NEWTON_ITERS, atol=NEWTON_ATOL),
+        linear=LinearSolverConfig(max_iters=LINEAR_ITERS, tol=LINEAR_TOL, atol=LINEAR_TOL),
+        linesearch=LinesearchConfig(enabled=False),
+        adjoint=AdjointConfig(soft_blending=False, regularization=0.0),
     )
     return AxionEngine(
         model=model,

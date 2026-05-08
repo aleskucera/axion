@@ -8,10 +8,14 @@ import numpy as np
 import warp as wp
 from axion import AxionDifferentiableSimulator
 from axion import AxionEngineConfig
-from axion import ExecutionConfig
 from axion import LoggingConfig
 from axion import RenderingConfig
 from axion import SimulationConfig
+from axion import ComplianceConfig
+from axion import ContactsConfig
+from axion import LinearSolverConfig
+from axion import LinesearchConfig
+from axion import NewtonRaphsonConfig
 from newton import Model
 
 from examples.helhest.common import create_helhest_model
@@ -134,7 +138,6 @@ class HelhestTrajectorySplineBoxOptimizer(AxionDifferentiableSimulator):
         self,
         sim_config: SimulationConfig,
         render_config: RenderingConfig,
-        exec_config: ExecutionConfig,
         engine_config: AxionEngineConfig,
         logging_config: LoggingConfig,
         num_control_points: int = 10,
@@ -142,7 +145,6 @@ class HelhestTrajectorySplineBoxOptimizer(AxionDifferentiableSimulator):
         super().__init__(
             sim_config,
             render_config,
-            exec_config,
             engine_config,
             logging_config,
         )
@@ -558,38 +560,18 @@ def main():
         world_offset_x=20.0,
         world_offset_y=20.0,
     )
-    exec_config = ExecutionConfig(
-        use_cuda_graph=True,
-        headless_steps_per_segment=10,
-    )
     engine_config = AxionEngineConfig(
-        max_newton_iters=16,
-        max_linear_iters=16,
-        backtrack_min_iter=12,
-        newton_atol=1e-3,
-        linear_atol=1e-3,
-        linear_tol=1e-3,
-        enable_linesearch=False,
-        joint_compliance=6e-8,
-        contact_compliance=1e-6,
-        friction_compliance=1e-6,
-        regularization=1e-6,
-        contact_fb_alpha=0.5,
-        contact_fb_beta=1.0,
-        friction_fb_alpha=1.0,
-        friction_fb_beta=1.0,
-        max_contacts_per_world=256,
-        differentiable_simulation=False,
+        nr=NewtonRaphsonConfig(max_iters=16, backtrack_min_iter=12, atol=0.001),
+        linear=LinearSolverConfig(max_iters=16, atol=0.001, tol=0.001, regularization=1e-06),
+        compliance=ComplianceConfig(joint=6e-08, contact=1e-06, friction=1e-06),
+        linesearch=LinesearchConfig(enabled=False),
+        contacts=ContactsConfig(max_per_world=256),
     )
-    logging_config = LoggingConfig(
-        enable_timing=False,
-        enable_hdf5_logging=False,
-    )
+    logging_config = LoggingConfig()
 
     sim = HelhestTrajectorySplineBoxOptimizer(
         sim_config,
         render_config,
-        exec_config,
         engine_config,
         logging_config,
         num_control_points=10,

@@ -14,7 +14,6 @@ from axion.core.logging_config import LoggingConfig
 from axion.core.model_builder import AxionModelBuilder
 from newton import Model
 
-from .sim_config import ExecutionConfig
 from .sim_config import RenderingConfig
 from .sim_config import SimulationConfig
 from .simulation_clock import SimulationClock
@@ -30,19 +29,17 @@ class BaseSimulator(ABC):
         self,
         simulation_config: SimulationConfig,
         rendering_config: RenderingConfig,
-        execution_config: ExecutionConfig,
         engine_config: EngineConfig,
         logging_config: Optional[LoggingConfig] = None,
     ):
         self.simulation_config = simulation_config
         self.rendering_config = rendering_config
-        self.execution_config = execution_config
         self.engine_config = engine_config
         self.logging_config = logging_config
 
         # --- Time Management ---
         # Delegated to the external clock class
-        self.clock = SimulationClock(simulation_config, rendering_config, execution_config)
+        self.clock = SimulationClock(simulation_config, rendering_config)
 
         self.builder = AxionModelBuilder()
         self.model = self.build_model()
@@ -69,7 +66,7 @@ class BaseSimulator(ABC):
 
     @property
     def use_cuda_graph(self) -> bool:
-        return self.execution_config.use_cuda_graph and wp.get_device().is_cuda
+        return self.simulation_config.use_cuda_graph and wp.get_device().is_cuda
 
     @abstractmethod
     def build_model(self) -> Model:

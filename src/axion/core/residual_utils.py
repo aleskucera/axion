@@ -59,7 +59,7 @@ def compute_residual(
             model.joint_constraint_offsets,
             model.joint_compliance,
             data.dt,
-            config.joint_compliance,
+            config.compliance.joint,
         ],
         outputs=[
             data.res.d_spatial,
@@ -121,7 +121,7 @@ def compute_residual(
             contacts.contact_thickness1,
             contacts.contact_normal,
             data.dt,
-            config.contact_compliance,
+            config.compliance.contact,
         ],
         outputs=[
             data.res.d_spatial,
@@ -153,7 +153,7 @@ def compute_residual(
             contacts.contact_thickness1,
             contacts.contact_normal,
             data.dt,
-            config.friction_compliance,
+            config.compliance.friction,
         ],
         outputs=[
             data.res.d_spatial,
