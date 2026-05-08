@@ -42,7 +42,7 @@ os.environ["PYOPENGL_PLATFORM"] = "glx"
 import newton, warp as wp
 from axion import (
     AxionDifferentiableSimulator, AxionEngineConfig, ComplianceConfig,
-    ContactsConfig, ExecutionConfig, LinearSolverConfig, LinesearchConfig,
+    ContactsConfig, LinearSolverConfig, LinesearchConfig,
     LoggingConfig, NewtonRaphsonConfig, RenderingConfig, SimulationConfig,
 )
 from axion.simulation.sim_config import SyncMode
@@ -85,9 +85,8 @@ class Sim(AxionDifferentiableSimulator):
 
 sim = Sim(
     SimulationConfig(duration_seconds=3.0, target_timestep_seconds=0.05,
-                     num_worlds={B}, sync_mode=SyncMode.ALIGN_FPS_TO_DT),
+                     num_worlds={B}, sync_mode=SyncMode.ALIGN_FPS_TO_DT, use_cuda_graph=True),
     RenderingConfig(vis_type="null", target_fps=30, usd_file=None, start_paused=False),
-    ExecutionConfig(use_cuda_graph=True, headless_steps_per_segment=1),
     AxionEngineConfig(
         nr=NewtonRaphsonConfig(max_iters=12, backtrack_min_iter=8, atol=1e-1),
         linear=LinearSolverConfig(max_iters=12, tol=1e-3, atol=1e-3, regularization=1e-6),

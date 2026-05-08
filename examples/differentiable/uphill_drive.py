@@ -11,7 +11,6 @@ import sys
 import newton
 import numpy as np
 import warp as wp
-from axion import ExecutionConfig
 from axion import InteractiveSimulator
 from axion import LoggingConfig
 from axion import RenderingConfig
@@ -219,8 +218,8 @@ def drive_kernel(
 
 
 class UphillDrive(InteractiveSimulator):
-    def __init__(self, sim_config, render_config, exec_config, engine_config, logging_config):
-        super().__init__(sim_config, render_config, exec_config, engine_config, logging_config)
+    def __init__(self, sim_config, render_config, engine_config, logging_config):
+        super().__init__(sim_config, render_config, engine_config, logging_config)
 
         self._step_counter = wp.zeros(1, dtype=wp.int32, device=self.model.device)
         self._settle_steps = int(1.0 / self.clock.dt)
@@ -282,7 +281,6 @@ def main():
         num_worlds=1,
     )
     render_config = RenderingConfig(vis_type="gl")
-    exec_config = ExecutionConfig(use_cuda_graph=True)
     engine_config = AxionEngineConfig(
         nr=NewtonRaphsonConfig(max_iters=16, backtrack_min_iter=12, atol=0.001),
         linear=LinearSolverConfig(max_iters=16, tol=1e-05, atol=1e-05, regularization=1e-06),
@@ -292,7 +290,7 @@ def main():
     )
     logging_config = LoggingConfig()
 
-    sim = UphillDrive(sim_config, render_config, exec_config, engine_config, logging_config)
+    sim = UphillDrive(sim_config, render_config, engine_config, logging_config)
     sim.run()
 
 

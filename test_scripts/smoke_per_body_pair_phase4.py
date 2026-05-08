@@ -35,7 +35,6 @@ def main(cfg: DictConfig):
     import warp as wp
     from axion import (
         EngineConfig,
-        ExecutionConfig,
         LoggingConfig,
         RenderingConfig,
         SimulationConfig,
@@ -52,12 +51,11 @@ def main(cfg: DictConfig):
 
     sim_config: SimulationConfig = hydra.utils.instantiate(cfg.simulation)
     render_config: RenderingConfig = hydra.utils.instantiate(cfg.rendering)
-    exec_config: ExecutionConfig = hydra.utils.instantiate(cfg.execution)
     engine_config: EngineConfig = hydra.utils.instantiate(cfg.engine)
     logging_config: LoggingConfig = hydra.utils.instantiate(cfg.logging)
 
     sim = HelhestObstacleBenchmark(
-        sim_config, render_config, exec_config, engine_config, logging_config,
+        sim_config, render_config, engine_config, logging_config,
         control_mode=cfg.control.mode, k_p=cfg.control.k_p, k_d=cfg.control.k_d,
         friction=cfg.friction_coeff, drive_velocity=cfg.drive_velocity,
     )

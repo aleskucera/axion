@@ -16,7 +16,6 @@ import numpy as np
 import warp as wp
 from axion import AxionDifferentiableSimulator
 from axion import AxionEngineConfig
-from axion import ExecutionConfig
 from axion import LoggingConfig
 from axion import RenderingConfig
 from axion import SimulationConfig
@@ -117,13 +116,12 @@ class HelhestTrajectorySplineOptimizer(AxionDifferentiableSimulator):
         self,
         sim_config: SimulationConfig,
         render_config: RenderingConfig,
-        exec_config: ExecutionConfig,
         engine_config: AxionEngineConfig,
         logging_config: LoggingConfig,
         num_control_points: int = K,
         save_path: str = None,
     ):
-        super().__init__(sim_config, render_config, exec_config, engine_config, logging_config)
+        super().__init__(sim_config, render_config, engine_config, logging_config)
 
         self.save_path = save_path
         self.K = num_control_points
@@ -337,10 +335,6 @@ def main():
         world_offset_y=5.0,
         start_paused=False,
     )
-    exec_config = ExecutionConfig(
-        use_cuda_graph=True,
-        headless_steps_per_segment=1,
-    )
     engine_config = AxionEngineConfig(
         nr=NewtonRaphsonConfig(max_iters=12, backtrack_min_iter=8, atol=0.1),
         linear=LinearSolverConfig(max_iters=12, atol=0.001, tol=0.001, regularization=1e-06),
@@ -353,7 +347,6 @@ def main():
     sim = HelhestTrajectorySplineOptimizer(
         sim_config,
         render_config,
-        exec_config,
         engine_config,
         logging_config,
         num_control_points=K,

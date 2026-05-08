@@ -14,7 +14,6 @@ import newton
 import numpy as np
 import warp as wp
 from axion import AxionDifferentiableSimulator
-from axion import ExecutionConfig
 from axion import LoggingConfig
 from axion import RenderingConfig
 from axion import SimulationConfig
@@ -166,7 +165,6 @@ class UphillOptimizer(AxionDifferentiableSimulator):
         self,
         sim_config,
         render_config,
-        exec_config,
         engine_config,
         logging_config,
         num_control_points=10,
@@ -174,7 +172,6 @@ class UphillOptimizer(AxionDifferentiableSimulator):
         super().__init__(
             sim_config,
             render_config,
-            exec_config,
             engine_config,
             logging_config,
         )
@@ -484,7 +481,6 @@ def main():
         num_worlds=1,
     )
     render_config = RenderingConfig(vis_type="gl")
-    exec_config = ExecutionConfig(use_cuda_graph=True)
     engine_config = AxionEngineConfig(
         nr=NewtonRaphsonConfig(max_iters=16, backtrack_min_iter=12, atol=0.001),
         linear=LinearSolverConfig(max_iters=16, tol=1e-05, atol=1e-05, regularization=1e-06),
@@ -497,7 +493,6 @@ def main():
     sim = UphillOptimizer(
         sim_config,
         render_config,
-        exec_config,
         engine_config,
         logging_config,
         num_control_points=10,

@@ -12,7 +12,6 @@ from axion.core.engine_config import EngineConfig
 from axion.core.logging_config import LoggingConfig
 
 from .base_simulator import BaseSimulator
-from .sim_config import ExecutionConfig
 from .sim_config import RenderingConfig
 from .sim_config import SimulationConfig
 from .trajectory import NewtonTargetTrajectory
@@ -31,14 +30,12 @@ class DifferentiableSimulator(BaseSimulator, ABC):
         self,
         simulation_config: SimulationConfig,
         rendering_config: RenderingConfig,
-        execution_config: ExecutionConfig,
         engine_config: EngineConfig,
         logging_config: Optional[LoggingConfig] = None,
     ):
         super().__init__(
             simulation_config,
             rendering_config,
-            execution_config,
             engine_config,
             logging_config,
         )
@@ -214,7 +211,6 @@ class AxionDifferentiableSimulator(DifferentiableSimulator, ABC):
         self,
         simulation_config: SimulationConfig,
         rendering_config: RenderingConfig,
-        execution_config: ExecutionConfig,
         engine_config: AxionEngineConfig,
         logging_config: Optional[LoggingConfig] = None,
     ):
@@ -223,7 +219,6 @@ class AxionDifferentiableSimulator(DifferentiableSimulator, ABC):
         super().__init__(
             simulation_config,
             rendering_config,
-            execution_config,
             engine_config,
             logging_config,
         )
@@ -297,14 +292,12 @@ class NewtonDifferentiableSimulator(DifferentiableSimulator, ABC):
         self,
         simulation_config: SimulationConfig,
         rendering_config: RenderingConfig,
-        execution_config: ExecutionConfig,
         engine_config: EngineConfig,
         logging_config: Optional[LoggingConfig] = None,
     ):
         super().__init__(
             simulation_config,
             rendering_config,
-            execution_config,
             engine_config,
             logging_config,
         )

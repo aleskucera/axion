@@ -1,7 +1,6 @@
 defaults:
   - simulation: helhest
   - rendering: headless
-  - execution: cuda_graph
   - logging: hdf5
   - engine: axion
   - control: helhest/velocity
@@ -12,10 +11,6 @@ project_name: ${hydra:job.name}
 friction_coeff: 0.5
 
 drive_velocity: 5.0
-
-# One step per captured graph so we can read PCR history between steps.
-execution:
-  headless_steps_per_segment: 1
 
 # Disable HDF5 file write (we read in-memory buffers and dump NPZ ourselves).
 logging:

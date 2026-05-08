@@ -24,7 +24,6 @@ import openmesh
 import warp as wp
 from axion import AxionDifferentiableSimulator
 from axion import AxionEngineConfig
-from axion import ExecutionConfig
 from axion import LoggingConfig
 from axion import RenderingConfig
 from axion import SimulationConfig
@@ -136,7 +135,6 @@ class TerrainTraversalOptimizer(AxionDifferentiableSimulator):
         self,
         sim_config,
         render_config,
-        exec_config,
         engine_config,
         logging_config,
         num_control_points=10,
@@ -148,7 +146,7 @@ class TerrainTraversalOptimizer(AxionDifferentiableSimulator):
         self.K = num_control_points
         self._target_ctrl = target_ctrl
         self._init_ctrl = init_ctrl
-        super().__init__(sim_config, render_config, exec_config, engine_config, logging_config)
+        super().__init__(sim_config, render_config, engine_config, logging_config)
         self.loss = wp.zeros(1, dtype=float, requires_grad=True)
         self.trajectory_weight = 10.0
         self.yaw_weight = 5.0
@@ -380,10 +378,6 @@ def main():
         usd_file=None,
         start_paused=False,
     )
-    exec_config = ExecutionConfig(
-        use_cuda_graph=True,
-        headless_steps_per_segment=1,
-    )
     engine_config = AxionEngineConfig(
         nr=NewtonRaphsonConfig(max_iters=14, backtrack_min_iter=10, atol=0.001),
         linear=LinearSolverConfig(max_iters=16, atol=0.001, tol=0.001, regularization=1e-06),
@@ -396,7 +390,6 @@ def main():
     sim = TerrainTraversalOptimizer(
         sim_config,
         render_config,
-        exec_config,
         engine_config,
         logging_config,
         num_control_points=args.K,

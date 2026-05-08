@@ -22,7 +22,6 @@ from .profiling import EngineProfiler
 from .simulation import AxionDifferentiableSimulator
 from .simulation import DatasetSimulator
 from .simulation import DifferentiableSimulator
-from .simulation import ExecutionConfig
 from .simulation import InteractiveSimulator
 from .simulation import NewtonDifferentiableSimulator
 from .simulation import RenderingConfig
@@ -50,7 +49,6 @@ __all__ = [
     "DifferentiableSimulator",
     "NewtonDifferentiableSimulator",
     "DatasetSimulator",
-    "ExecutionConfig",
     "RenderingConfig",
     "SimulationConfig",
     "JointMode",

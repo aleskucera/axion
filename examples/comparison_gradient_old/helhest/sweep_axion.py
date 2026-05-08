@@ -40,7 +40,7 @@ os.environ["PYOPENGL_PLATFORM"] = "glx"
 import newton, numpy as np, warp as wp
 from axion import (
     AxionDifferentiableSimulator, AxionEngineConfig, ComplianceConfig,
-    ContactsConfig, ExecutionConfig, LinearSolverConfig, LinesearchConfig,
+    ContactsConfig, LinearSolverConfig, LinesearchConfig,
     LoggingConfig, NewtonRaphsonConfig, RenderingConfig, SimulationConfig,
 )
 from axion.simulation.sim_config import SyncMode
@@ -71,9 +71,8 @@ class SweepSim(AxionDifferentiableSimulator):
     def update(self): pass
 
 sim = SweepSim(
-    SimulationConfig(duration_seconds=DURATION, target_timestep_seconds=DT, num_worlds=1, sync_mode=SyncMode.ALIGN_FPS_TO_DT),
+    SimulationConfig(duration_seconds=DURATION, target_timestep_seconds=DT, num_worlds=1, sync_mode=SyncMode.ALIGN_FPS_TO_DT, use_cuda_graph=False),
     RenderingConfig(vis_type="null", target_fps=30, usd_file=None, start_paused=False),
-    ExecutionConfig(use_cuda_graph=False, headless_steps_per_segment=1),
     AxionEngineConfig(
         nr=NewtonRaphsonConfig(max_iters=12, backtrack_min_iter=8, atol=1e-1),
         linear=LinearSolverConfig(max_iters=12, tol=1e-3, atol=1e-3, regularization=1e-6),

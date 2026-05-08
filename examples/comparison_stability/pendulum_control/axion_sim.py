@@ -33,7 +33,6 @@ import newton
 import numpy as np
 import warp as wp
 from axion import AxionEngineConfig
-from axion import ExecutionConfig
 from axion import InteractiveSimulator
 from axion import LoggingConfig
 from axion import RenderingConfig
@@ -73,7 +72,6 @@ class PendulumSim(InteractiveSimulator):
         self,
         sim_config,
         render_config,
-        exec_config,
         engine_config,
         logging_config,
         kp: float,
@@ -81,7 +79,7 @@ class PendulumSim(InteractiveSimulator):
     ):
         self.kp = kp
         self.kd = kd
-        super().__init__(sim_config, render_config, exec_config, engine_config, logging_config)
+        super().__init__(sim_config, render_config, engine_config, logging_config)
         self._set_initial_displacement()
 
     def build_model(self) -> Model:
@@ -204,6 +202,7 @@ def run_one(dt: float, kp: float, kd: float) -> dict:
         target_timestep_seconds=dt,
         num_worlds=1,
         sync_mode=SyncMode.ALIGN_FPS_TO_DT,
+        use_cuda_graph=False,
     )
     render_config = RenderingConfig(
         vis_type="null",
@@ -213,16 +212,11 @@ def run_one(dt: float, kp: float, kd: float) -> dict:
         world_offset_y=5.0,
         start_paused=False,
     )
-    exec_config = ExecutionConfig(
-        use_cuda_graph=False,
-        headless_steps_per_segment=T,
-    )
     logging_config = LoggingConfig()
 
     sim = PendulumSim(
         sim_config,
         render_config,
-        exec_config,
         _make_engine_config(kp, kd),
         logging_config,
         kp=kp,

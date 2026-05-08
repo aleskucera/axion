@@ -16,7 +16,6 @@ import time
 import newton
 import numpy as np
 import warp as wp
-from axion import ExecutionConfig
 from axion import LoggingConfig
 from axion import RenderingConfig
 from axion import SemiImplicitEngineConfig
@@ -55,7 +54,6 @@ class BallThrowSemiImplicitOptimizer(NewtonDifferentiableSimulator):
         self,
         simulation_config: SimulationConfig,
         rendering_config: RenderingConfig,
-        execution_config: ExecutionConfig,
         engine_config: SemiImplicitEngineConfig,
         logging_config: LoggingConfig,
         save_path: str = None,
@@ -63,7 +61,6 @@ class BallThrowSemiImplicitOptimizer(NewtonDifferentiableSimulator):
         super().__init__(
             simulation_config,
             rendering_config,
-            execution_config,
             engine_config,
             logging_config,
         )
@@ -189,6 +186,7 @@ def main():
             target_timestep_seconds=DT,
             num_worlds=1,
             sync_mode=SyncMode.ALIGN_FPS_TO_DT,
+            use_cuda_graph=False,
         ),
         rendering_config=RenderingConfig(
             vis_type="null" if args.save else "gl",
@@ -197,10 +195,6 @@ def main():
             world_offset_x=5.0,
             world_offset_y=5.0,
             start_paused=False,
-        ),
-        execution_config=ExecutionConfig(
-            use_cuda_graph=False,
-            headless_steps_per_segment=10,
         ),
         engine_config=SemiImplicitEngineConfig(
             angular_damping=0.05,

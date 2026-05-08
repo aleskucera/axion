@@ -8,17 +8,16 @@ from omegaconf import DictConfig
 
 @hydra.main(config_path="../examples/conf", config_name="helhest", version_base=None)
 def main(cfg):
-    from axion import EngineConfig, ExecutionConfig, LoggingConfig, RenderingConfig, SimulationConfig
+    from axion import EngineConfig, LoggingConfig, RenderingConfig, SimulationConfig
     from axion.collision.warm_start import ContactWarmStarter
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "examples", "helhest"))
     from surface_drive import HelhestSurfaceSimulator as HelhestSurfaceDrive
 
     sim_config = hydra.utils.instantiate(cfg.simulation)
     render_config = hydra.utils.instantiate(cfg.rendering)
-    exec_config = hydra.utils.instantiate(cfg.execution)
     engine_config = hydra.utils.instantiate(cfg.engine)
     logging_config = hydra.utils.instantiate(cfg.logging)
-    sim = HelhestSurfaceDrive(sim_config, render_config, exec_config, engine_config, logging_config,
+    sim = HelhestSurfaceDrive(sim_config, render_config, engine_config, logging_config,
         control_mode=cfg.control.mode, k_p=cfg.control.k_p, k_d=cfg.control.k_d,
         friction=cfg.friction_coeff)
     records = []
