@@ -262,6 +262,7 @@ def compute_linear_system(
             contacts.contact_normal,
             data.dt,
             config.compliance.contact,
+            config.compliance.contact_fb_smooth_eps_sq,
         ],
         outputs=[
             data.constr_active_mask.n,

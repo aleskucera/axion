@@ -568,6 +568,7 @@ class ContactWarmStarter:
         cold_start_impact: bool = True,
         cold_start_friction_v_threshold: float = DEFAULT_V_T_THRESHOLD,
         n_dot_up_min: float = DEFAULT_N_DOT_UP_MIN,
+        method: str = "position_match",
     ):
         self._enabled = bool(enabled)
         self._device = device
@@ -578,6 +579,12 @@ class ContactWarmStarter:
         self._cold_friction = float(cold_start_friction_v_threshold) > 0.0
         self._v_t_threshold_sq = float(cold_start_friction_v_threshold) ** 2
         self._n_dot_up_min = float(n_dot_up_min)
+        if method not in ("position_match", "pair_aggregate"):
+            raise ValueError(
+                f"WarmStartConfig.method must be 'position_match' or "
+                f"'pair_aggregate', got {method!r}"
+            )
+        self._method = method
 
         # References needed by apply/snapshot.
         self._shape_body = axion_model.shape_body
@@ -641,6 +648,15 @@ class ContactWarmStarter:
             self._diag_closest_d_raw_sum = wp.zeros((N_w,), dtype=wp.float32)
             self._diag_closest_d_count = wp.zeros((N_w,), dtype=wp.int32)
 
+            # Pair-aggregate state. Body indices are stored as ``b + 1``
+            # so b = -1 (ground / world) maps to 0; the +1 padding gives
+            # us [N_b + 1, N_b + 1] addressing.
+            B1 = N_b + 1
+            self._pair_lambda_n_sum = wp.zeros((N_w, B1, B1), dtype=wp.float32)
+            self._pair_count_prev   = wp.zeros((N_w, B1, B1), dtype=wp.int32)
+            self._pair_count_curr   = wp.zeros((N_w, B1, B1), dtype=wp.int32)
+            self._diag_pair_seeded  = wp.zeros((N_w,), dtype=wp.int32)
+
     @property
     def enabled(self) -> bool:
         return self._enabled
@@ -667,9 +683,16 @@ class ContactWarmStarter:
         self._diag_closest_d_sum.zero_()
         self._diag_closest_d_raw_sum.zero_()
         self._diag_closest_d_count.zero_()
+        self._diag_pair_seeded.zero_()
         self._is_matched.zero_()
         self._body_matched_support.zero_()
         self._body_unmatched_count.zero_()
+
+        if self._method == "pair_aggregate":
+            self._launch_pair_aggregate(contacts, data)
+            if self._cold_gravity or self._cold_impact:
+                self._launch_cold_start(contacts, data, dt)
+            return
 
         wp.launch(
             kernel=_match_kernel,
@@ -722,6 +745,45 @@ class ContactWarmStarter:
         if self._cold_gravity or self._cold_impact:
             self._launch_cold_start(contacts, data, dt)
         return
+
+    def _launch_pair_aggregate(self, contacts, data) -> None:
+        """Distribute prev-step pair-total λ_n uniformly over current-step
+        contacts in the same body pair. Two passes: count current contacts
+        per pair, then write seeds.
+        """
+        self._pair_count_curr.zero_()
+        wp.launch(
+            kernel=_pair_count_current_kernel,
+            dim=(contacts.num_worlds, contacts.max_contacts),
+            inputs=[
+                contacts.contact_count,
+                contacts.contact_shape0,
+                contacts.contact_shape1,
+                self._shape_body,
+            ],
+            outputs=[self._pair_count_curr],
+            device=self._device,
+        )
+        wp.launch(
+            kernel=_pair_apply_kernel,
+            dim=(contacts.num_worlds, contacts.max_contacts),
+            inputs=[
+                contacts.contact_count,
+                contacts.contact_shape0,
+                contacts.contact_shape1,
+                self._shape_body,
+                self._pair_lambda_n_sum,
+                self._pair_count_prev,
+                self._pair_count_curr,
+                self._offset_n,
+            ],
+            outputs=[
+                data._constr_force_prev_iter,
+                self._is_matched,
+                self._diag_pair_seeded,
+            ],
+            device=self._device,
+        )
 
     def _launch_cold_start(self, contacts, data, dt) -> None:
         wp.launch(
@@ -776,6 +838,28 @@ class ContactWarmStarter:
         if not self._enabled:
             return
 
+        if self._method == "pair_aggregate":
+            self._pair_lambda_n_sum.zero_()
+            self._pair_count_prev.zero_()
+            wp.launch(
+                kernel=_pair_snapshot_kernel,
+                dim=(contacts.num_worlds, contacts.max_contacts),
+                inputs=[
+                    contacts.contact_count,
+                    contacts.contact_shape0,
+                    contacts.contact_shape1,
+                    self._shape_body,
+                    data._constr_force,
+                    self._offset_n,
+                ],
+                outputs=[
+                    self._pair_lambda_n_sum,
+                    self._pair_count_prev,
+                ],
+                device=self._device,
+            )
+            return
+
         # Mirror the active count so apply knows how many slots to scan.
         wp.copy(self._prev_count, contacts.contact_count)
 
@@ -807,3 +891,120 @@ class ContactWarmStarter:
             ],
             device=self._device,
         )
+
+
+# ============================================================================
+#                       PAIR-AGGREGATE WARM-START METHOD
+# ============================================================================
+# Aggregate prev-step λ_n by body pair, then distribute the pair total
+# uniformly across current-step contacts in the same pair. Body indices
+# are stored as ``b + 1`` so b = -1 (ground / static world) maps to 0.
+# Robust to per-contact identity drift caused by mesh-vertex jitter,
+# terrain-triangle changes, and rolling-wheel kinematics — the things
+# that broke ``_match_kernel`` for moving contacts. See
+# docs/warm_start_iterate_seeding_issue.md for the diagnostic that led
+# here.
+
+
+@wp.kernel
+def _pair_snapshot_kernel(
+    contact_count: wp.array(dtype=wp.int32, ndim=1),
+    contact_shape0: wp.array(dtype=wp.int32, ndim=2),
+    contact_shape1: wp.array(dtype=wp.int32, ndim=2),
+    shape_body: wp.array(dtype=wp.int32, ndim=2),
+    constr_force: wp.array(dtype=wp.float32, ndim=2),
+    offset_n: wp.int32,
+    # Outputs (zeroed by caller before launch).
+    pair_lambda_n_sum: wp.array(dtype=wp.float32, ndim=3),  # [W, B+1, B+1]
+    pair_count_prev: wp.array(dtype=wp.int32, ndim=3),       # [W, B+1, B+1]
+):
+    world_idx, c_idx = wp.tid()
+    n_count = contact_count[world_idx]
+    if c_idx >= n_count:
+        return
+
+    s0 = contact_shape0[world_idx, c_idx]
+    s1 = contact_shape1[world_idx, c_idx]
+    if s0 == s1:
+        return
+
+    b0 = _resolve_body(world_idx, s0, shape_body)
+    b1 = _resolve_body(world_idx, s1, shape_body)
+
+    lam_n = constr_force[world_idx, offset_n + c_idx]
+    i0 = b0 + 1
+    i1 = b1 + 1
+
+    wp.atomic_add(pair_lambda_n_sum, world_idx, i0, i1, lam_n)
+    wp.atomic_add(pair_count_prev, world_idx, i0, i1, 1)
+
+
+@wp.kernel
+def _pair_count_current_kernel(
+    contact_count: wp.array(dtype=wp.int32, ndim=1),
+    contact_shape0: wp.array(dtype=wp.int32, ndim=2),
+    contact_shape1: wp.array(dtype=wp.int32, ndim=2),
+    shape_body: wp.array(dtype=wp.int32, ndim=2),
+    pair_count_curr: wp.array(dtype=wp.int32, ndim=3),  # [W, B+1, B+1] (zeroed by caller)
+):
+    world_idx, c_idx = wp.tid()
+    n_count = contact_count[world_idx]
+    if c_idx >= n_count:
+        return
+
+    s0 = contact_shape0[world_idx, c_idx]
+    s1 = contact_shape1[world_idx, c_idx]
+    if s0 == s1:
+        return
+
+    b0 = _resolve_body(world_idx, s0, shape_body)
+    b1 = _resolve_body(world_idx, s1, shape_body)
+    i0 = b0 + 1
+    i1 = b1 + 1
+    wp.atomic_add(pair_count_curr, world_idx, i0, i1, 1)
+
+
+@wp.kernel
+def _pair_apply_kernel(
+    contact_count: wp.array(dtype=wp.int32, ndim=1),
+    contact_shape0: wp.array(dtype=wp.int32, ndim=2),
+    contact_shape1: wp.array(dtype=wp.int32, ndim=2),
+    shape_body: wp.array(dtype=wp.int32, ndim=2),
+    pair_lambda_n_sum: wp.array(dtype=wp.float32, ndim=3),
+    pair_count_prev: wp.array(dtype=wp.int32, ndim=3),
+    pair_count_curr: wp.array(dtype=wp.int32, ndim=3),
+    offset_n: wp.int32,
+    # Outputs.
+    constr_force_prev_iter: wp.array(dtype=wp.float32, ndim=2),
+    is_matched: wp.array(dtype=wp.int32, ndim=2),
+    diag_pair_seeded: wp.array(dtype=wp.int32, ndim=1),
+):
+    world_idx, c_idx = wp.tid()
+    n_count = contact_count[world_idx]
+    if c_idx >= n_count:
+        return
+
+    s0 = contact_shape0[world_idx, c_idx]
+    s1 = contact_shape1[world_idx, c_idx]
+    if s0 == s1:
+        return
+
+    b0 = _resolve_body(world_idx, s0, shape_body)
+    b1 = _resolve_body(world_idx, s1, shape_body)
+    i0 = b0 + 1
+    i1 = b1 + 1
+
+    n_prev = pair_count_prev[world_idx, i0, i1]
+    if n_prev <= 0:
+        return  # genuinely new body pair — leave for cold-start kernel
+
+    n_curr = pair_count_curr[world_idx, i0, i1]
+    if n_curr <= 0:
+        return  # shouldn't happen since this thread IS in the pair, but guard
+
+    total = pair_lambda_n_sum[world_idx, i0, i1]
+    avg = total / wp.float32(n_curr)
+
+    constr_force_prev_iter[world_idx, offset_n + c_idx] = avg
+    is_matched[world_idx, c_idx] = 1
+    wp.atomic_add(diag_pair_seeded, world_idx, 1)

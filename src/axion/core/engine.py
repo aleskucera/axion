@@ -52,6 +52,11 @@ class AxionEngine(AxionEngineBase):
         self.data._constr_force.zero_()
         # _constr_force_prev_iter is zeroed inside load_data, before
         # warm_starter.apply, so warm-started values aren't clobbered.
+        if self.config.warm_start.seed_iterate:
+            # Seed NR's initial λ from the warm-starter's output. Only
+            # contact-normal slots are populated; joint / friction slots
+            # remain zero (cold-start). See warm_start_iterate_seeding_issue.md.
+            wp.copy(dest=self.data._constr_force, src=self.data._constr_force_prev_iter)
         if end_to_end:
             prof.record_boundary(3)
 

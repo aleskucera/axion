@@ -122,6 +122,7 @@ def compute_residual(
             contacts.contact_normal,
             data.dt,
             config.compliance.contact,
+            config.compliance.contact_fb_smooth_eps_sq,
         ],
         outputs=[
             data.res.d_spatial,

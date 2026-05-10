@@ -180,6 +180,7 @@ class AxionEngineBase(SolverBase):
             cold_start_friction_v_threshold=(
                 self.config.warm_start.cold_friction_v_threshold
             ),
+            method=self.config.warm_start.method,
         )
 
         self.logger = None

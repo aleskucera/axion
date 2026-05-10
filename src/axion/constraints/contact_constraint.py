@@ -54,6 +54,7 @@ def compute_contact_core(
     f_n: float,
     dt: float,
     compliance: float,
+    fb_eps_sq: float,
 ):
     """
     Computes all Jacobians and contact residuals dynamically.
@@ -94,7 +95,7 @@ def compute_contact_core(
     precond = wp.pow(dt, 2.0) * effective_mass
 
     # --- 3. Fisher-Burmeister Complementarity ---
-    phi_n, dphi_dc_n, dphi_dlambda_n = scaled_fisher_burmeister_diff(signed_dist, f_n, 1.0, precond)
+    phi_n, dphi_dc_n, dphi_dlambda_n = scaled_fisher_burmeister_diff(signed_dist, f_n, 1.0, precond, fb_eps_sq)
 
     # --- 4. Final Solver Terms ---
     J_hat_0 = dphi_dc_n * J0
@@ -139,6 +140,7 @@ def contact_residual_kernel(
     # Simulation parameters
     dt: wp.float32,
     compliance: wp.float32,
+    fb_eps_sq: wp.float32,
     # Outputs
     res_d: wp.array(dtype=wp.spatial_vector, ndim=2),
     res_n: wp.array(dtype=wp.float32, ndim=2),
@@ -204,6 +206,7 @@ def contact_residual_kernel(
         f_n,
         dt,
         compliance,
+        fb_eps_sq,
     )
 
     if body0 >= 0:
@@ -240,6 +243,7 @@ def contact_constraint_kernel(
     # Simulation parameters
     dt: wp.float32,
     compliance: wp.float32,
+    fb_eps_sq: wp.float32,
     # Outputs
     constr_active_mask: wp.array(dtype=wp.float32, ndim=2),
     constr_body_idx: wp.array(dtype=wp.int32, ndim=3),
@@ -319,6 +323,7 @@ def contact_constraint_kernel(
         f_n,
         dt,
         compliance,
+        fb_eps_sq,
     )
 
     constr_active_mask[world_idx, contact_idx] = 1.0
@@ -367,6 +372,7 @@ def batch_contact_residual_kernel(
     # Simulation parameters
     dt: wp.float32,
     compliance: wp.float32,
+    fb_eps_sq: wp.float32,
     # Outputs (3D)
     res_d: wp.array(dtype=wp.spatial_vector, ndim=3),
     res_n: wp.array(dtype=wp.float32, ndim=3),
@@ -432,6 +438,7 @@ def batch_contact_residual_kernel(
         f_n,
         dt,
         compliance,
+        fb_eps_sq,
     )
 
     if body0 >= 0:
@@ -468,6 +475,7 @@ def fused_batch_contact_residual_kernel(
     # Simulation parameters
     dt: wp.float32,
     compliance: wp.float32,
+    fb_eps_sq: wp.float32,
     num_batches: int,
     # Outputs (3D)
     res_d: wp.array(dtype=wp.spatial_vector, ndim=3),
@@ -545,6 +553,7 @@ def fused_batch_contact_residual_kernel(
             f_n,
             dt,
             compliance,
+            fb_eps_sq,
         )
 
         if body0 >= 0:

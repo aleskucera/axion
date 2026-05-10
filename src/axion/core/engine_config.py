@@ -165,6 +165,13 @@ class ComplianceConfig:
     joint: float = 1e-5
     contact: float = 1e-4
     friction: float = 1e-6
+    # Smoothing parameter inside the contact-FB norm:
+    #   φ_ε(a, b) = α·a + β·b − √((α·a)² + (β·b)² + fb_smooth_eps_sq).
+    # Default 1e-8 reproduces pre-existing behavior. Larger values
+    # remove the corner degeneracy at (λ_n>0, signed_dist=0) — the
+    # place seeded warm-starts land — at the cost of slightly soft
+    # complementarity (λ·g ≈ fb_smooth_eps_sq at convergence).
+    contact_fb_smooth_eps_sq: float = 1e-8
 
     def __post_init__(self):
         for name in ("joint", "contact", "friction"):
@@ -235,11 +242,32 @@ class WarmStartConfig:
     cold_gravity: bool = True       # alpha: per-body residual-gravity split
     cold_impact: bool = True        # beta: m_eff * (-v_n) / dt
     cold_friction_v_threshold: float = 0.1  # gamma; auto-off when ≤ 0
+    # Matching method:
+    #   "position_match"  — original per-contact predicted-position match.
+    #                       Reliable in stationary regimes, fails for
+    #                       moving contacts (mesh-vertex jitter, terrain-
+    #                       triangle changes, rolling-wheel kinematics).
+    #   "pair_aggregate"  — sum prev-step λ_n per body pair, distribute
+    #                       uniformly over current contacts in the same
+    #                       pair. Robust to contact identity drift.
+    method: str = "position_match"
+    # If True, seed the NR initial iterate ``_constr_force`` from
+    # ``_constr_force_prev_iter`` after warm_starter.apply. Only the
+    # contact-normal slots are populated by warm_starter; joint and
+    # friction slots stay zero. Default False — pair_aggregate is the
+    # first method that produces seeds reliable enough for this to be
+    # worth wiring up.
+    seed_iterate: bool = False
 
     def __post_init__(self):
         if self.cold_friction_v_threshold < 0:
             # Negative threshold is allowed as "off" — just normalize.
             pass
+        if self.method not in ("position_match", "pair_aggregate"):
+            raise ValueError(
+                f"WarmStartConfig.method must be 'position_match' or "
+                f"'pair_aggregate', got {self.method!r}"
+            )
 
     @classmethod
     def coerce(cls, obj):
