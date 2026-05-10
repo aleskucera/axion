@@ -10,7 +10,7 @@ from axion import EngineConfig
 from axion import LoggingConfig
 from axion import RenderingConfig
 from axion import SimulationConfig
-from axion.generation.scene_generator_new import SceneGenerator
+from axion.generation import RandomSceneGenerator
 from omegaconf import DictConfig
 
 os.environ["PYOPENGL_PLATFORM"] = "glx"
@@ -47,7 +47,7 @@ class RandomSimulator(DatasetSimulator):
         self.builder.add_ground_plane()
 
         # 2. Initialize SceneGenerator with our builder
-        gen = SceneGenerator(self.builder, seed=self.seed)
+        gen = RandomSceneGenerator(self.builder, seed=self.seed)
 
         gen.generate_chaotic_tree(
             num_objects=5,

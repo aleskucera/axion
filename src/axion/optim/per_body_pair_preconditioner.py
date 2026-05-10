@@ -47,7 +47,7 @@ active constraint belongs to and builds (pair_id → constraint_list)
 member lists. No matvec yet; that's phase 4.
 """
 import warp as wp
-from axion.math import compute_spatial_momentum
+from axion.mechanics import compute_spatial_momentum
 from warp.optim.linear import LinearOperator
 
 

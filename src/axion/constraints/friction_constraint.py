@@ -1,6 +1,6 @@
 import warp as wp
-from axion.math import orthogonal_basis
-from axion.math import scaled_fisher_burmeister
+from axion.mechanics import orthogonal_basis
+from axion.mechanics import scaled_fisher_burmeister
 
 from .utils import compute_effective_mass
 

@@ -3,7 +3,7 @@ import numpy as np
 import warp as wp
 import newton
 from axion.core.engine import AxionEngine
-from axion.core.engine_config import AxionEngineConfig
+from axion.core.engine_config import AxionEngineConfig, LinearSolverConfig, NewtonRaphsonConfig
 from axion.core.logging_config import LoggingConfig
 from axion.core.model_builder import AxionModelBuilder
 from axion.simulation.trajectory_buffer import TrajectoryBuffer
@@ -117,10 +117,8 @@ def build_two_boxes_symmetric(num_worlds=1):
 def make_engine(model, config=None, sim_steps=5):
     if config is None:
         config = AxionEngineConfig(
-            max_newton_iters=20,
-            max_linear_iters=200,
-            linear_tol=1e-8,
-            linear_atol=1e-8,
+            nr=NewtonRaphsonConfig(max_iters=20),
+            linear=LinearSolverConfig(max_iters=200, tol=1e-8, atol=1e-8),
         )
     return AxionEngine(
         model=model,

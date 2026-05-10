@@ -1,8 +1,8 @@
 from dataclasses import dataclass
 
 import warp as wp
-from axion.math import compute_spatial_momentum
-from axion.math import compute_world_inertia
+from axion.mechanics import compute_spatial_momentum
+from axion.mechanics import compute_world_inertia
 
 
 @dataclass

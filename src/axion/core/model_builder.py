@@ -194,4 +194,35 @@ class AxionModelBuilder(newton.ModelBuilder):
             # tag so they get shape_world=-1 in the final model.
             final_builder.add_builder(global_builder)
         final_builder.replicate(self, world_count=num_worlds)
-        return final_builder.finalize(requires_grad=requires_grad)
+        model = final_builder.finalize(requires_grad=requires_grad)
+        self._backfill_empty_custom_attributes(final_builder, model, requires_grad=requires_grad)
+        return model
+
+    @staticmethod
+    def _backfill_empty_custom_attributes(
+        builder: newton.ModelBuilder, model: Model, requires_grad: bool
+    ) -> None:
+        """Ensure every registered MODEL custom attribute exists on the model.
+
+        Why: Newton's ``ModelBuilder.finalize()`` skips custom-attribute arrays
+        whose frequency count is 0 (see ``builder.py`` — ``if count == 0: continue``).
+        Axion downstream code assumes registered attributes (e.g. ``joint_dof_mode``)
+        always exist on the model, which fails for valid models that happen to have
+        zero entities at a given frequency (e.g. a model containing only fixed
+        joints has ``joint_dof_count == 0``).
+        """
+        for custom_attr in builder.custom_attributes.values():
+            if custom_attr.assignment != Model.AttributeAssignment.MODEL:
+                continue
+
+            namespace = custom_attr.namespace
+            name = custom_attr.name
+            if namespace:
+                ns_obj = getattr(model, namespace, None)
+                if ns_obj is not None and hasattr(ns_obj, name):
+                    continue
+            elif hasattr(model, name):
+                continue
+
+            empty = custom_attr.build_array(0, device=model.device, requires_grad=requires_grad)
+            model.add_attribute(name, empty, custom_attr.frequency, custom_attr.assignment, namespace)

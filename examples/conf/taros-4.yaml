@@ -11,5 +11,6 @@ project_name: ${hydra:job.name}
 
 friction_coeff: 1.4
 engine:
-    joint_compliance: 6e-10
-    contact_compliance: 1e-10
+  compliance:
+    joint: 6e-10
+    contact: 1e-10

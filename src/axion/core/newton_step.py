@@ -1,7 +1,7 @@
 from typing import Any
 
 import warp as wp
-from axion.math import integrate_body_pose_kernel
+from axion.mechanics import integrate_body_pose_kernel
 
 from .engine_data import EngineData
 from .engine_dims import EngineDimensions
@@ -19,7 +19,7 @@ def _update_kernel(
     x[world_idx, x_idx] = x[world_idx, x_idx] + dx[world_idx, x_idx]
 
 
-def apply_stardard_newton_step(
+def apply_standard_newton_step(
     model: AxionModel,
     data: EngineData,
     dims: EngineDimensions,

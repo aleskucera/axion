@@ -14,7 +14,7 @@ wp.init()
 import numpy as np
 import newton
 from axion.core.engine import AxionEngine
-from axion.core.engine_config import AxionEngineConfig
+from axion.core.engine_config import AxionEngineConfig, LinearSolverConfig, NewtonRaphsonConfig
 from axion.core.logging_config import LoggingConfig
 from axion.core.model_builder import AxionModelBuilder
 
@@ -40,7 +40,8 @@ def run_drive(dt, drive_time=1.0, settle_time=0.5, wheel_speed=5.0,
     total_steps = settle_steps + drive_steps
 
     config = AxionEngineConfig(
-        max_newton_iters=newton_iters, max_linear_iters=linear_iters,
+        nr=NewtonRaphsonConfig(max_iters=newton_iters),
+        linear=LinearSolverConfig(max_iters=linear_iters),
     )
     engine = AxionEngine(
         model=model, sim_steps=total_steps, config=config,
@@ -163,7 +164,8 @@ def run_drive_on_slope(dt, slope_deg=20.0, drive_time=1.0, settle_time=0.5,
     total_steps = settle_steps + drive_steps
 
     config = AxionEngineConfig(
-        max_newton_iters=newton_iters, max_linear_iters=linear_iters,
+        nr=NewtonRaphsonConfig(max_iters=newton_iters),
+        linear=LinearSolverConfig(max_iters=linear_iters),
     )
     engine = AxionEngine(
         model=model, sim_steps=total_steps, config=config,

@@ -21,12 +21,12 @@ from axion.core.contacts import AxionContacts
 from axion.core.engine_config import EngineConfig
 from axion.core.engine_data import EngineData
 from axion.core.engine_dims import EngineDimensions
-from axion.core.linear_utils import (
+from axion.core.linear_system import (
     compute_linear_system,
     compute_dbody_qd_from_dbody_lambda,
 )
 from axion.core.model import AxionModel
-from axion.math import integrate_body_pose_kernel
+from axion.mechanics import integrate_body_pose_kernel
 from axion.optim import PCRSolver, SystemOperator, JacobiPreconditioner
 
 

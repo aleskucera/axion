@@ -10,8 +10,8 @@ from axion.core.engine_config import EngineConfig
 from axion.core.engine_data import EngineData
 from axion.core.engine_dims import EngineDimensions
 from axion.core.model import AxionModel
-from axion.math import compute_spatial_momentum
-from axion.math import compute_world_inertia
+from axion.mechanics import compute_spatial_momentum
+from axion.mechanics import compute_world_inertia
 
 from .contacts import AxionContacts
 from .types import JointMode
@@ -122,6 +122,7 @@ def compute_residual(
             contacts.contact_normal,
             data.dt,
             config.compliance.contact,
+            config.compliance.contact_fb_smooth_eps_sq,
         ],
         outputs=[
             data.res.d_spatial,

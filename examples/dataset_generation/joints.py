@@ -9,7 +9,7 @@ from axion import EngineConfig
 from axion import RenderingConfig
 from axion import SimulationConfig
 from axion import LoggingConfig
-from axion.generation import SceneGenerator
+from axion.generation import PlacementSceneGenerator
 from omegaconf import DictConfig
 
 os.environ["PYOPENGL_PLATFORM"] = "glx"
@@ -37,7 +37,7 @@ class JointsSimulator(InteractiveSimulator):
         self.builder.add_ground_plane()
 
         # Initialize SceneGenerator
-        gen = SceneGenerator(self.builder, seed=123)
+        gen = PlacementSceneGenerator(self.builder, seed=123)
 
         # 1. Revolute Chain (Snake-like)
         gen.generate_chain(length=2, start_pos=(-3, -3, 1), shape_type="box", joint_type="revolute")
