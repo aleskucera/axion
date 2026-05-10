@@ -54,6 +54,24 @@ def calculate_position_error(t_joint_parent, t_joint_child):
     return np.linalg.norm(p0 - p1)
 
 
+def calculate_position_error_orthogonal(t_joint_parent, t_joint_child, axis_local):
+    """Position error orthogonal to the prismatic axis, plus signed sliding distance along it."""
+    p_p_wp = wp.transform_get_translation(t_joint_parent)
+    p_c_wp = wp.transform_get_translation(t_joint_child)
+    p_p = np.array([p_p_wp[0], p_p_wp[1], p_p_wp[2]])
+    p_c = np.array([p_c_wp[0], p_c_wp[1], p_c_wp[2]])
+
+    delta = p_c - p_p
+
+    q_p = wp.transform_get_rotation(t_joint_parent)
+    axis_w_wp = wp.quat_rotate(q_p, axis_local)
+    axis_w = np.array([axis_w_wp[0], axis_w_wp[1], axis_w_wp[2]])
+
+    proj = np.dot(delta, axis_w)
+    ortho = delta - proj * axis_w
+    return np.linalg.norm(ortho), proj
+
+
 def calculate_relative_angle(t_joint_parent, t_joint_child):
     """Calculates the angle of the relative rotation between two joint frames."""
     q_j0 = wp.transform_get_rotation(t_joint_parent)
@@ -112,6 +130,13 @@ def verify_spherical(t_joint_parent, t_joint_child):
     return pos_error, 0.0, dof_motion
 
 
+def verify_prismatic(t_joint_parent, t_joint_child, axis):
+    """Verifies Prismatic joint: orthogonal position alignment, no relative rotation, sliding along axis."""
+    pos_error, sliding_dist = calculate_position_error_orthogonal(t_joint_parent, t_joint_child, axis)
+    angle_error = calculate_relative_angle(t_joint_parent, t_joint_child)
+    return pos_error, angle_error, abs(sliding_dist)
+
+
 def run_joint_test(joint_type, joint_axis=wp.vec3(0.0, 1.0, 0.0)):
     print(f"\n=== Testing {joint_type} Joint ===")
 
@@ -129,6 +154,14 @@ def run_joint_test(joint_type, joint_axis=wp.vec3(0.0, 1.0, 0.0)):
 
     if joint_type == "Revolute":
         j0 = builder.add_joint_revolute(
+            parent=-1,
+            child=link_1,
+            axis=joint_axis,
+            parent_xform=parent_local_xform,
+            child_xform=child_local_xform,
+        )
+    elif joint_type == "Prismatic":
+        j0 = builder.add_joint_prismatic(
             parent=-1,
             child=link_1,
             axis=joint_axis,
@@ -206,6 +239,8 @@ def run_joint_test(joint_type, joint_axis=wp.vec3(0.0, 1.0, 0.0)):
 
         if joint_type == "Revolute":
             pos_error, axis_error, dof_motion = verify_revolute(t_joint_0, t_joint_1, joint_axis)
+        elif joint_type == "Prismatic":
+            pos_error, axis_error, dof_motion = verify_prismatic(t_joint_0, t_joint_1, joint_axis)
         elif joint_type == "Fixed":
             pos_error, axis_error, dof_motion = verify_fixed(t_joint_0, t_joint_1)
         elif joint_type == "Spherical":
@@ -227,7 +262,7 @@ def run_joint_test(joint_type, joint_axis=wp.vec3(0.0, 1.0, 0.0)):
     print(f"SUCCESS: {joint_type} joint constraints satisfied.")
 
 
-@pytest.mark.parametrize("joint_type", ["Revolute", "Fixed", "Spherical"])
+@pytest.mark.parametrize("joint_type", ["Revolute", "Prismatic", "Fixed", "Spherical"])
 def test_joint_constraints(joint_type):
     run_joint_test(joint_type)
 
@@ -235,6 +270,7 @@ def test_joint_constraints(joint_type):
 if __name__ == "__main__":
     try:
         run_joint_test("Revolute")
+        run_joint_test("Prismatic")
         run_joint_test("Fixed")
         run_joint_test("Spherical")
     except Exception as e:
