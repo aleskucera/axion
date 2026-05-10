@@ -1,5 +1,5 @@
 import warp as wp
-from axion.math import scaled_fisher_burmeister_diff
+from axion.mechanics import scaled_fisher_burmeister_diff
 
 from .utils import compute_effective_mass
 

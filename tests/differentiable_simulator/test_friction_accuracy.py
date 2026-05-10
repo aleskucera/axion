@@ -15,7 +15,7 @@ wp.init()
 import numpy as np
 import newton
 from axion.core.engine import AxionEngine
-from axion.core.engine_config import AxionEngineConfig
+from axion.core.engine_config import AxionEngineConfig, LinearSolverConfig, NewtonRaphsonConfig
 from axion.core.logging_config import LoggingConfig
 from axion.core.model_builder import AxionModelBuilder
 
@@ -51,7 +51,10 @@ def run_robot_on_slope(
     drive_steps = max(1, int(drive_time / dt))
     total_steps = settle_steps + drive_steps
 
-    config = AxionEngineConfig(max_newton_iters=newton_iters, max_linear_iters=linear_iters)
+    config = AxionEngineConfig(
+        nr=NewtonRaphsonConfig(max_iters=newton_iters),
+        linear=LinearSolverConfig(max_iters=linear_iters),
+    )
     engine = AxionEngine(model=model, sim_steps=total_steps, config=config, logging_config=LoggingConfig())
 
     state_in = model.state()

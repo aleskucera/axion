@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 
 import warp as wp
-from axion.math import compute_spatial_momentum
+from axion.mechanics import compute_spatial_momentum
 from warp.optim.linear import LinearOperator
 
 

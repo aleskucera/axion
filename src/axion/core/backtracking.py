@@ -4,9 +4,9 @@ from .engine_config import EngineConfig
 from .engine_data import EngineData
 from .engine_dims import EngineDimensions
 from .model import AxionModel
-from .reduction_kernels import batched_argmin_dynamic_kernel
-from .reduction_kernels import gather_1d_kernel
-from .reduction_kernels import gather_2d_kernel
+from .reductions import batched_argmin_dynamic_kernel
+from .reductions import gather_1d_kernel
+from .reductions import gather_2d_kernel
 
 
 def perform_backtracking(

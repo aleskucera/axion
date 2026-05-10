@@ -1,3 +1,14 @@
+"""Careless random scene generator.
+
+`RandomSceneGenerator` scatters bodies and builds randomized articulated
+trees with no overlap checks. Per-call bounds + density let it generate
+diverse, dense, and potentially-interpenetrating starts — useful for
+training data, stress tests, or any scenario where physical plausibility
+on frame zero is not required.
+
+For collision-aware placement (free / ground-resting / touching / chains),
+see ``placement_scene_generator.PlacementSceneGenerator``.
+"""
 import math
 import random
 
@@ -6,7 +17,7 @@ import numpy as np
 import warp as wp
 
 
-class SceneGenerator:
+class RandomSceneGenerator:
     def __init__(self, builder: newton.ModelBuilder, seed=42):
         """
         Initialize the scene generator.

@@ -3,7 +3,7 @@ import numpy as np
 import pytest
 import warp as wp
 from axion.core.engine import AxionEngine
-from axion.core.engine_config import AxionEngineConfig
+from axion.core.engine_config import AxionEngineConfig, ComplianceConfig, LinearSolverConfig, NewtonRaphsonConfig
 from axion.core.model_builder import AxionModelBuilder
 
 wp.init()
@@ -105,25 +105,20 @@ def run_prismatic_test():
         child_xform=child_local_xform,
     )
 
-    builder.add_articulation([j0], key="test_articulation")
+    builder.add_articulation([j0])
 
     # Use gravity along X (prismatic axis) to induce motion
-    model = builder.finalize_replicated(num_worlds=1, gravity=0.0) 
+    model = builder.finalize_replicated(num_worlds=1, gravity=0.0)
     model.gravity = wp.array([wp.vec3(10.0, 0.0, 0.0)], dtype=wp.vec3, device=model.device)
 
     # 2. Setup Engine
     config = AxionEngineConfig(
-        joint_constraint_level="pos",
-        contact_constraint_level="pos",
-        joint_compliance=1e-8,
-        max_newton_iters=10,
-        max_linear_iters=10,
+        nr=NewtonRaphsonConfig(max_iters=10),
+        linear=LinearSolverConfig(max_iters=10),
+        compliance=ComplianceConfig(joint=1e-8),
     )
 
-    def init_state_fn(state_in, state_out, contacts, dt):
-        engine.integrate_bodies(model, state_in, state_out, dt)
-
-    engine = AxionEngine(model=model, init_state_fn=init_state_fn, config=config)
+    engine = AxionEngine(model=model, sim_steps=100, config=config)
 
     state_in = model.state()
     state_out = model.state()

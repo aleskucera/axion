@@ -27,7 +27,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import warp as wp
-from axion.math import orthogonal_basis
+from axion.mechanics import orthogonal_basis
 
 if TYPE_CHECKING:
     from axion.core.contacts import AxionContacts

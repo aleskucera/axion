@@ -1,3 +1,13 @@
+"""Collision-aware scene generator.
+
+`PlacementSceneGenerator` tracks every body it creates and AABB-checks each
+placement against existing objects (and the ground). Use it when scenes
+need physically-plausible non-overlapping starts: free-floating objects,
+ground-resting objects, contact-touching pairs, and kinematic chains.
+
+For random scattering or randomized articulated trees with no overlap
+checks, see ``random_scene_generator.RandomSceneGenerator``.
+"""
 import math
 import random
 from dataclasses import dataclass
@@ -11,7 +21,7 @@ import numpy as np
 import warp as wp
 
 # ---------------------------------------------------------------------------
-# Geometric Utilities
+# Geometric Utilities (module-private; not re-exported from the package)
 # ---------------------------------------------------------------------------
 
 
@@ -163,7 +173,7 @@ class GeneratedObject:
     aabb: Tuple[wp.vec3, wp.vec3]
 
 
-class SceneGenerator:
+class PlacementSceneGenerator:
     def __init__(self, builder: newton.ModelBuilder, seed=42):
         """
         Initialize the scene generator.

@@ -11,16 +11,16 @@ from axion.constraints import fused_batch_control_residual_kernel
 from axion.constraints import fused_batch_friction_residual_kernel
 from axion.constraints import fused_batch_joint_residual_kernel
 from axion.constraints import fused_batch_unconstrained_dynamics_kernel
-from axion.math import integrate_batched_body_pose_kernel
+from axion.mechanics import integrate_batched_body_pose_kernel
 
 from .contacts import AxionContacts
 from .engine_config import EngineConfig
 from .engine_data import EngineData
 from .engine_dims import EngineDimensions
 from .model import AxionModel
-from .reduction_kernels import batched_argmin_kernel
-from .reduction_kernels import gather_1d_kernel
-from .reduction_kernels import gather_2d_kernel
+from .reductions import batched_argmin_kernel
+from .reductions import gather_1d_kernel
+from .reductions import gather_2d_kernel
 
 
 @wp.kernel

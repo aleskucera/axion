@@ -22,20 +22,20 @@ from axion.logging import DatasetHDF5Logger
 from axion.logging import SimulationHDF5Logger
 from axion.profiling import EngineProfiler
 
-from .backtracking_utils import perform_backtracking
+from .backtracking import perform_backtracking
 from .contacts import AxionContacts
 from .engine_config import AxionEngineConfig
 from .engine_data import EngineData
 from .engine_dims import EngineDimensions
-from .linear_utils import compute_dbody_qd_from_dbody_lambda
-from .linear_utils import compute_linear_system
-from .linesearch_utils import perform_linesearch
+from .linear_system import compute_dbody_qd_from_dbody_lambda
+from .linear_system import compute_linear_system
+from .linesearch import perform_linesearch
 from .logging_config import LoggingConfig
 from .model import AxionModel
-from .residual_utils import compute_residual
-from .residual_utils import compute_residual_gradient
-from .update_utils import apply_stardard_newton_step
-from .warm_start_utils import project_contact_forces_kernel
+from .residual import compute_residual
+from .residual import compute_residual_gradient
+from .newton_step import apply_standard_newton_step
+from .force_projection import project_contact_forces_kernel
 
 
 @wp.kernel
@@ -458,7 +458,7 @@ class AxionEngineBase(SolverBase):
                     self.axion_model, self.axion_contacts, self.data, self.config, self.dims
                 )
             else:
-                apply_stardard_newton_step(self.axion_model, self.data, self.dims)
+                apply_standard_newton_step(self.axion_model, self.data, self.dims)
                 compute_residual(
                     self.axion_model, self.axion_contacts, self.data, self.config, self.dims
                 )
