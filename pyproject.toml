@@ -19,6 +19,9 @@ sim = [
   "pytest==8.4.0",
   "scipy==1.16.1",
   "taichi==1.7.3",
+  "tensorrt-cu12==10.16.1.11",
+  "tensorrt-cu12-bindings==10.16.1.11",
+  "tensorrt-cu12-libs==10.16.1.11",
   "torch==2.9.1+cu128",
   "tqdm==4.67.1",
   "trimesh==4.6.12",
@@ -69,6 +72,13 @@ conflicts = [
 
 [tool.uv.sources]
 newton = { workspace = true }
+<<<<<<< HEAD
+=======
+torch = [{ index = "pytorch-cu128", extra = "sim" }]
+tensorrt-cu12 = { index = "nvidia" }
+tensorrt-cu12-bindings = { index = "nvidia" }
+tensorrt-cu12-libs = { index = "nvidia" }
+>>>>>>> c08d799 (fast-inference: Add tensorrt sucessfully to the project)
 warp-lang = { index = "nvidia" }
 
 [[tool.uv.index]]
