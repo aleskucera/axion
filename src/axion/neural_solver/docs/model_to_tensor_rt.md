@@ -159,7 +159,7 @@ dummy_input = torch.randn(B, T, D).cuda()
 
 ---
 
-# 📤 4. Export to ONNX .... or... use Torch-TensorRT (maybe use torch-TensorRT for transformer only)!
+# 📤 4. Export to ONNX
 
 ```python
 torch.onnx.export(
