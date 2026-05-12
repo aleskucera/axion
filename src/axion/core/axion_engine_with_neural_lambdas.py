@@ -32,7 +32,7 @@ from axion.neural_solver.train.trained_models.selected_trained_models import (
     MSE_STATE_JOINT_LAMBDA_MODELS
 )
 
-NN_BASE_PATH = Path.cwd() /"src"/"axion"/"neural_solver"/"train"/"trained_models"/MSE_STATE_JOINT_LAMBDA_MODELS[2]
+NN_BASE_PATH = Path.cwd() /"src"/"axion"/"neural_solver"/"train"/"trained_models"/"mse"/"05-12-2026-08-49-22"
 NN_PENDULUM_PT_PATH = NN_BASE_PATH/"nn"/"best_valid_valid_model.pt"
 NN_PENDULUM_CFG_PATH = NN_BASE_PATH/"cfg.yaml"
 

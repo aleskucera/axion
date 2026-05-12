@@ -1,23 +1,10 @@
 """
 Export a trained MSEModel checkpoint to ONNX.
 
-Usage
------
-python export_to_onnx.py \\
-    --checkpoint path/to/best_model.pt \\
-    --cfg       path/to/mseNetwork.yaml \\
-    --output    fast_mse.onnx \\
-    --batch-size 1 \\
-    --device    cuda:0
-
-All flags except --checkpoint have sensible defaults:
-  --cfg         not required; enables yaml cross-validation when supplied
-  --output      defaults to <checkpoint_stem>.onnx beside the checkpoint
-  --batch-size  1
-  --device      cuda:0 (use cpu if no GPU available)
+Press F5 to run. Edit the four constants below to point at your checkpoint.
+Output .onnx is written beside the checkpoint by default (OUTPUT = None).
 """
 
-import argparse
 import sys
 import warnings
 from pathlib import Path
@@ -25,6 +12,14 @@ from pathlib import Path
 import onnx
 import torch
 import yaml
+
+# ── configure here ────────────────────────────────────────────────────────────
+MODEL_PT    = "src/axion/neural_solver/train/trained_models/mse/05-12-2026-08-49-22/nn/best_valid_valid_model.pt"
+NN_MODEL_CFG = "src/axion/neural_solver/train/trained_models/mse/05-12-2026-08-49-22/cfg.yaml"
+BATCH_SIZE  = 1          # number of robots/worlds processed in one forward pass
+DEVICE      = "cuda:0"   # use "cpu" if no GPU is available
+OUTPUT      = None       # None → <checkpoint_stem>.onnx beside the checkpoint
+# ──────────────────────────────────────────────────────────────────────────────
 
 try:
     from axion.neural_solver.models.fast_mse_model import FastMSEModel
@@ -145,12 +140,12 @@ def export(
     dummy = torch.zeros(B, T, D, device=device)
 
     # Export
-    print(f"Running torch.onnx.export  (opset 17, static shapes B={B} T={T} D={D}) ...")
+    print(f"Running torch.onnx.export  (opset 18, static shapes B={B} T={T} D={D}) ...")
     torch.onnx.export(
         fast_model,
         dummy,
         str(output_path),
-        opset_version=17,
+        opset_version=18,
         input_names=["input"],
         output_names=["output"],
         dynamic_axes=None,       # static shapes required for TRT + CUDA graph capture
@@ -166,40 +161,11 @@ def export(
     return output_path
 
 
-def _parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Export a trained MSEModel checkpoint to ONNX.",
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
-    )
-    parser.add_argument(
-        "--checkpoint", required=True,
-        help="Path to the trained .pt checkpoint (saved as [model, robot_name]).",
-    )
-    parser.add_argument(
-        "--cfg", default=None,
-        help="Path to mseNetwork.yaml. Optional; enables cross-validation when supplied.",
-    )
-    parser.add_argument(
-        "--output", default=None,
-        help="Output .onnx file path. Defaults to <checkpoint>.onnx beside the checkpoint.",
-    )
-    parser.add_argument(
-        "--batch-size", type=int, default=1,
-        help="Static batch size baked into the ONNX graph.",
-    )
-    parser.add_argument(
-        "--device", default="cuda:0",
-        help="Device to run the export on.",
-    )
-    return parser.parse_args()
-
-
 if __name__ == "__main__":
-    args = _parse_args()
     export(
-        checkpoint_path=args.checkpoint,
-        cfg_path=args.cfg,
-        output_path=args.output,
-        batch_size=args.batch_size,
-        device=args.device,
+        checkpoint_path=MODEL_PT,
+        cfg_path=NN_MODEL_CFG,
+        output_path=OUTPUT,
+        batch_size=BATCH_SIZE,
+        device=DEVICE,
     )

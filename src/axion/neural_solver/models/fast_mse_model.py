@@ -218,13 +218,19 @@ class FastMSEModel(nn.Module):
         # (input_rms / regression_output_rms) and possibly an `is_transformer`
         # flag that the fast model intentionally drops.
         missing, unexpected = fast.load_state_dict(mse_model.state_dict(), strict=False)
-        # Cause-noisy unexpected keys are acceptable (RMS buffers); missing keys
-        # would indicate a real mismatch.
-        if missing:
-            raise RuntimeError(
-                f"FastMSEModel.from_mse_model: missing keys when loading state_dict: {missing}"
-            )
         del unexpected
+
+        # attn.bias is a causal-mask buffer (lower-triangular constant). When the
+        # source model was trained with flash attention enabled it never registers
+        # this buffer, so it is absent from the checkpoint state_dict. The fast
+        # model always registers it (flash is disabled for ONNX compatibility) and
+        # initialises it correctly from block_size — no data from the checkpoint
+        # is needed. Any other missing key is a real mismatch and should fail.
+        truly_missing = [k for k in missing if not k.endswith(".attn.bias")]
+        if truly_missing:
+            raise RuntimeError(
+                f"FastMSEModel.from_mse_model: missing keys when loading state_dict: {truly_missing}"
+            )
 
         fast.eval()
         return fast
