@@ -476,11 +476,19 @@ class FastNeuralPredictor:
             dtype=torch.float32,
         )
         self._next_state_wp = wp.from_torch(self._next_state_buf, dtype=wp.float32)
-        # Current state for the convert kernel is the (already-wrapped) raw
-        # states_embedding row.
-        self._states_emb_wp_for_predict = wp.from_torch(
-            self._raw["states_embedding"], dtype=wp.float32
+        # Physical (pre-normalization) state needed by _convert_relative_prediction_kernel.
+        # _raw["states_embedding"] is normalized in-place by _normalize_raw_keys() before
+        # predict() is called, so we cannot alias it directly. Instead we keep a
+        # separate buffer that process_inputs() copies the physical state into BEFORE
+        # the in-place normalization step.
+        self._physical_states_buf = torch.empty(
+            self.num_worlds,
+            self.state_dim,
+            device=device,
+            dtype=torch.float32,
         )
+        self._physical_states_wp = wp.from_torch(self._physical_states_buf, dtype=wp.float32)
+        self._states_emb_wp_for_predict = self._physical_states_wp
 
         # Engine output views (static; the TRT wrapper registers the
         # _output_buf address once at construction). We slice the last
@@ -507,6 +515,18 @@ class FastNeuralPredictor:
             )
         else:
             self._lambda_prediction = None
+
+        # Output denormalization: slice the engine's denorm tensors to match the
+        # state output dim. In-place mul_/add_ in predict() undoes the training-time
+        # output normalization that FastMSEModel intentionally drops.
+        _out_mean = getattr(nn_model, "_out_denorm_mean", None)
+        _out_std  = getattr(nn_model, "_out_denorm_std", None)
+        if _out_mean is not None:
+            self._out_denorm_mean = _out_mean[: self.state_output_dim]  # (state_output_dim,)
+            self._out_denorm_std  = _out_std[: self.state_output_dim]
+        else:
+            self._out_denorm_mean = None
+            self._out_denorm_std  = None
 
         # Pre-wrap self.lambdas as a warp array for the clip kernel.
         if self.lambdas is not None:
@@ -625,6 +645,12 @@ class FastNeuralPredictor:
         write the new row at slot T-1. Shape-static; uses only kernel
         launches and (T-1) + len(keys) disjoint `copy_` ops."""
         self._compute_new_row(state_in, axion_contacts, dt)
+        # Save the physical (wrapped but not normalized) state before
+        # _normalize_raw_keys() overwrites _raw["states_embedding"] in-place.
+        # _convert_relative_prediction_kernel in predict() adds the physical
+        # delta to this physical current state.
+        with torch.cuda.stream(self._torch_stream_from_warp()):
+            self._physical_states_buf.copy_(self._raw["states_embedding"])
         self._normalize_raw_keys()
         with torch.cuda.stream(self._torch_stream_from_warp()):
             for t in range(self.T - 1):
@@ -642,6 +668,13 @@ class FastNeuralPredictor:
         torch_stream = self._torch_stream_from_warp()
         with torch.cuda.stream(torch_stream):
             self.nn_model.evaluate_prepopulated()
+
+            # Un-normalize the raw engine output back to physical units.
+            # The model was trained with normalize_output=True, so its raw output
+            # is unit-variance. We reverse: prediction_physical = raw * std + mean.
+            # In-place ops on a fixed-address tensor are CUDA-graph safe.
+            if self._out_denorm_mean is not None:
+                self._state_prediction.mul_(self._out_denorm_std).add_(self._out_denorm_mean)
 
             wp.launch(
                 kernel=_convert_relative_prediction_kernel,

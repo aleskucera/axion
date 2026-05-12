@@ -313,6 +313,24 @@ def build(
             stacklevel=2,
         )
 
+    # ModelMixedInput stores it as `output_rms`; MSEModel as `regression_output_rms`.
+    out_rms = getattr(mse_model, "regression_output_rms", None) or \
+              getattr(mse_model, "output_rms", None)
+    if out_rms is not None:
+        output_rms_meta = {
+            "mean": out_rms.mean.detach().cpu().clone(),
+            "var":  out_rms.var.detach().cpu().clone(),
+        }
+        print(f"  output_rms: mean shape={tuple(output_rms_meta['mean'].shape)}, "
+              f"var shape={tuple(output_rms_meta['var'].shape)}")
+    else:
+        output_rms_meta = None
+        warnings.warn(
+            "[build_tensorrt_engine] output_rms absent on checkpoint; "
+            "TRT path will skip output un-normalization.",
+            stacklevel=2,
+        )
+
     meta = {
         "low_dim_keys": low_dim_keys,
         "low_dim_dims": low_dim_dims,
@@ -323,6 +341,7 @@ def build(
         "block_size": T,
         "batch_size": B,
         "input_rms": input_rms,
+        "output_rms": output_rms_meta,
         "engine_filename": plan_path.name,
         "fp16": bool(fp16),
     }

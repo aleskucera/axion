@@ -76,6 +76,7 @@ class TensorRTMSEEngine(nn.Module):
         self.batch_size:         int = int(meta["batch_size"])
         self._input_rms_meta = meta.get("input_rms", {})
         self.low_dim_dims: dict[str, int] = dict(meta.get("low_dim_dims", {}))
+        self._output_rms_meta = meta.get("output_rms")
 
         # Sentinel so the MSE duck-type checks pass (hasattr(..., "regression_head")).
         # No classification_head attribute → engine is detected as MSE, not MTL.
@@ -122,6 +123,16 @@ class TensorRTMSEEngine(nn.Module):
 
         # ── Pre-build normalization tensors aligned to concat order ───────────
         self._norm_mean, self._norm_inv_std = self._build_norm_buffers(device)
+
+        # ── Output denormalization tensors (inverse of training output norm) ──
+        if self._output_rms_meta is not None:
+            _out_mean = self._output_rms_meta["mean"].to(dtype=torch.float32)
+            _out_var  = self._output_rms_meta["var"].to(dtype=torch.float32)
+            self._out_denorm_mean = _out_mean.to(device)
+            self._out_denorm_std  = torch.sqrt(_out_var + 1e-5).to(device)
+        else:
+            self._out_denorm_mean = None
+            self._out_denorm_std  = None
 
     # ─────────────────────────────────────────────────────────────────────────
     # nn.Module machinery — keep .to / .eval / .train no-ops in spirit.

@@ -22,7 +22,7 @@ from pendulum_utils import set_tilted_plane_from_coefficients
 
 CONFIG_PATH = pathlib.Path(__file__).parent.parent.joinpath("conf")
 
-ENABLE_STATE_LOGGING = True  # set True to write pendulum-state HDF5
+ENABLE_STATE_LOGGING = False  # set True to write pendulum-state HDF5
 if ENABLE_STATE_LOGGING:
     from axion.neural_solver.logging.state_logger_for_examples import PendulumStateLogger
 
