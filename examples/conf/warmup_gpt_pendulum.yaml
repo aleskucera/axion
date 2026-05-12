@@ -1,10 +1,9 @@
 defaults:
   - simulation: pendulum
   - rendering: gl # headless
-  - execution:  no_graph  # cuda_graph
+  - execution: no_graph
   - logging: disabled
-  - engine: gpt 
+  - engine: warmup_gpt
   - _self_
 
-# Use the recommended hybrid approach for project names
 project_name: ${hydra:job.name}

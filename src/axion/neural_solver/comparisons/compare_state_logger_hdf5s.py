@@ -18,8 +18,11 @@ _DEFAULT_LOG_DIR = Path(__file__).resolve().parents[4] / "data" / "logs"
 
 # for INITIAL_STATE = (-0.5704, 2.8907, -3.6530, -7.6918)
 LOGS = [
-    "AxionEngine_example_2026-05-12_18-33-26.h5",
-    "GPTEngine_example_2026-05-12_18-34-39.h5"
+    "AxionEngine_example_2026-05-12_18-33-26.h5",   
+    "GPTEngine_example_2026-05-12_18-34-39.h5", # model mse 298
+    "GPTEngine_example_2026-05-12_22-46-27.h5",  # model mse 299
+    "WarmupGPTEngine_example_2026-05-12_23-03-33.h5", # model 299
+    "GPTEngine_example_2026-05-12_23-20-59.h5" # model 32
 ]
 
 COORD_LABELS = ["q0 (rad)", "q1 (rad)", "qd0 (rad/s)", "qd1 (rad/s)"]

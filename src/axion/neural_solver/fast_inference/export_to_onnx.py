@@ -14,8 +14,8 @@ import torch
 import yaml
 
 # ── configure here ────────────────────────────────────────────────────────────
-MODEL_PT    = "src/axion/neural_solver/train/trained_models/mse/05-12-2026-08-49-22/nn/best_valid_valid_model.pt"
-NN_MODEL_CFG = "src/axion/neural_solver/train/trained_models/mse/05-12-2026-08-49-22/cfg.yaml"
+MODEL_PT    = "src/axion/neural_solver/train/trained_models/03-17-2026-15-12-19/nn/best_eval_model.pt"
+NN_MODEL_CFG = "src/axion/neural_solver/train/trained_models/03-17-2026-15-12-19/cfg.yaml"
 BATCH_SIZE  = 1          # number of robots/worlds processed in one forward pass
 T_OVERRIDE  = None       # None → use yaml `env.utils_provider_cfg.num_states_history`,
                          #        falling back to transformer block_size if missing.
@@ -26,10 +26,10 @@ OUTPUT      = None       # None → <checkpoint_stem>.onnx beside the checkpoint
 # ──────────────────────────────────────────────────────────────────────────────
 
 try:
-    from axion.neural_solver.models.fast_mse_model import FastMSEModel
+    from axion.neural_solver.models.fast_mse_model import FastMSEModel, make_fast_model
 except ModuleNotFoundError:
     sys.path.insert(0, str(Path(__file__).resolve().parents[4]))
-    from axion.neural_solver.models.fast_mse_model import FastMSEModel
+    from axion.neural_solver.models.fast_mse_model import FastMSEModel, make_fast_model
 
 
 def _load_yaml(cfg_path: Path) -> dict:
@@ -128,9 +128,9 @@ def export(
         print(f"  robot: {robot_name}")
     mse_model.eval()
 
-    # Convert to export-friendly model
+    # Convert to export-friendly model (handles both MSEModel and ModelMixedInput)
     print("Converting to FastMSEModel...")
-    fast_model = FastMSEModel.from_mse_model(mse_model, device=device)
+    fast_model = make_fast_model(mse_model, device=device)
     fast_model.eval()
 
     # Cross-validate yaml vs checkpoint

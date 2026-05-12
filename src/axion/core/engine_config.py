@@ -612,6 +612,40 @@ class HybridGPTEngineConfig(AxionEngineConfig):
 
 
 @dataclass(frozen=True)
+class WarmupGPTEngineConfig(AxionEngineConfig):
+    """
+    Configuration for WarmupGPTEngine.
+
+    Runs the classical Axion Newton-Raphson solver for the first ``warmup_steps``
+    physics steps (populating the NN history with real dynamics), then switches
+    permanently to pure neural-network integration.
+
+    All standard AxionEngineConfig solver parameters apply during the warmup
+    phase.  TensorRT is not supported; use execution: no_graph.
+    """
+
+    warmup_steps: int = 10
+
+    def create_engine(
+        self,
+        model: Any,
+        sim_steps: Optional[int] = None,
+        logging_config: Optional[Any] = None,
+        differentiable_simulation: bool = False,
+        **kwargs,
+    ) -> Any:
+        from axion.core.warmup_gpt_engine import WarmupGPTEngine
+
+        return WarmupGPTEngine(
+            model=model,
+            sim_steps=int(sim_steps or 0),
+            config=self,
+            logging_config=logging_config,
+            differentiable_simulation=differentiable_simulation,
+        )
+
+
+@dataclass(frozen=True)
 class RepeatedAxionEngineConfig(AxionEngineConfig):
     """
     Configuration for the `RepeatedAxionEngine` backend.

@@ -27,9 +27,9 @@ import torch
 import yaml
 
 # ── configure here ────────────────────────────────────────────────────────────
-ONNX_PATH         = "src/axion/neural_solver/train/trained_models/mse/05-12-2026-08-49-22/nn/best_valid_valid_model.onnx"
-CHECKPOINT_PT     = "src/axion/neural_solver/train/trained_models/mse/05-12-2026-08-49-22/nn/best_valid_valid_model.pt"
-NN_MODEL_CFG      = "src/axion/neural_solver/train/trained_models/mse/05-12-2026-08-49-22/cfg.yaml"
+ONNX_PATH         = "src/axion/neural_solver/train/trained_models/03-17-2026-15-12-19/nn/best_eval_model.onnx"
+CHECKPOINT_PT     = "src/axion/neural_solver/train/trained_models/03-17-2026-15-12-19/nn/best_eval_model.pt"
+NN_MODEL_CFG      = "src/axion/neural_solver/train/trained_models/03-17-2026-15-12-19/cfg.yaml"
 FP16              = True       # falls back to FP32 if the GPU has no fast FP16
 WORKSPACE_GB      = 1          # tactic-search scratch memory, not runtime memory
 OUTPUT_PLAN       = None       # None → <onnx_stem>.plan beside the ONNX
@@ -39,10 +39,10 @@ DEVICE            = "cuda:0"
 # ──────────────────────────────────────────────────────────────────────────────
 
 try:
-    from axion.neural_solver.models.fast_mse_model import FastMSEModel
+    from axion.neural_solver.models.fast_mse_model import FastMSEModel, make_fast_model
 except ModuleNotFoundError:
     sys.path.insert(0, str(Path(__file__).resolve().parents[4]))
-    from axion.neural_solver.models.fast_mse_model import FastMSEModel
+    from axion.neural_solver.models.fast_mse_model import FastMSEModel, make_fast_model
 
 
 def _load_yaml(cfg_path: Path) -> dict:
@@ -271,8 +271,15 @@ def build(
             f"Input/output batch+seq mismatch: input={(B, T)}, output={(Bo, To)}."
         )
 
-    state_output_dim = int(mse_model.state_output_dim)
-    lambda_output_dim = int(mse_model.lambda_output_dim)
+    _lambda_head = getattr(mse_model, "lambda_model", None)
+    state_output_dim = int(getattr(
+        mse_model, "state_output_dim",
+        mse_model.model.output_net.out_features,
+    ))
+    lambda_output_dim = int(getattr(
+        mse_model, "lambda_output_dim",
+        _lambda_head.output_net.out_features if _lambda_head is not None else 0,
+    ))
     if state_output_dim + lambda_output_dim != R:
         raise RuntimeError(
             f"regression_output_dim mismatch: "
@@ -326,7 +333,7 @@ def build(
 
     if run_parity_check:
         print("Running parity check (FastMSEModel vs TRT, no normalization)...")
-        fast_model = FastMSEModel.from_mse_model(mse_model, device=device)
+        fast_model = make_fast_model(mse_model, device=device)
         fast_model.eval()
         _parity_check(plan_bytes, fast_model, device=device, fp16=fp16)
 

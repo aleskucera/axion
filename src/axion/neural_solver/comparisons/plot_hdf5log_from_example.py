@@ -74,9 +74,9 @@ MSE_STATE_JOINT_LAMBDA_MODELS_MODEL_INFOS = [
 ]
 
 ID = 2
-MODEL_INFO = "mse 298"
+MODEL_INFO = "mse 299"
 COMPARISON_CSV_PATH = None # Path(__file__).resolve().parent / "mse_state_and_joint_lambdas.csv" # None
-DEFAULT_HDF5_PATH = Path(__file__).resolve().parents[4] / "data/logs" / "AxioneEngineWithNeuralLambdas_example_2026-05-12_09-07-56.h5"
+DEFAULT_HDF5_PATH = Path(__file__).resolve().parents[4] / "data/logs" / "AxioneEngineWithNeuralLambdas_example_2026-05-12_22-44-59.h5" #AxioneEngineWithNeuralLambdas_example_2026-05-12_09-07-56.h5"
 DEFAULT_LAMBDA_SLICE = slice(0, 24) # FIX: mse mdoels should now have 24 lambdas
 ANALYZE_INCOMPLETE_MTL = False
 ANALYZE_CONTACT_MTL_LAMBDA_REGR_ONLY = False

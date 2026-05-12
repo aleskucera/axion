@@ -33,13 +33,13 @@ sys.modules['utils'] = utils
 # Default to the MSE checkpoint that already has a built .plan / .engine_meta.pt
 # (see `src/axion/neural_solver/docs/torch_to_tensorrt_conversion.md`). The
 # torch-only path still works against this .pt file.
-NN_BASE_PATH = Path.cwd() /"src"/"axion"/"neural_solver"/"train"/"trained_models"/"mse"/"05-12-2026-08-49-22"
-NN_PENDULUM_PT_PATH = NN_BASE_PATH/"nn"/"best_valid_valid_model.pt"
+NN_BASE_PATH = Path.cwd() /"src"/"axion"/"neural_solver"/"train"/"trained_models"/"03-17-2026-15-12-19" #"mse"/"05-12-2026-17-30-11"
+NN_PENDULUM_PT_PATH = NN_BASE_PATH/"nn"/"best_eval_model.pt"
 NN_PENDULUM_CFG_PATH = NN_BASE_PATH/"cfg.yaml"
 
 # Flip to True after running export_to_onnx.py + build_tensorrt_engine.py.
 # Required for `execution: cuda_graph` — only the TRT path is capture-safe.
-USE_TENSORRT_ENGINE = False
+USE_TENSORRT_ENGINE = True
 NN_PENDULUM_PLAN_PATH = NN_PENDULUM_PT_PATH.with_suffix(".plan")
 NN_PENDULUM_META_PATH = NN_PENDULUM_PT_PATH.with_suffix(".engine_meta.pt")
 
@@ -120,6 +120,12 @@ class GPTEngine(SolverBase):
                 nn_model_path, map_location=str(self.device), weights_only=False
             )
             print(f"Loaded model for robot: {robot_name}")
+            # Older checkpoints were saved before has_state_head / has_lambda_head (Backfill sensible defaults)
+            if not hasattr(loaded_nn_model, 'has_state_head'):
+                loaded_nn_model.has_state_head = True
+                print("Warning: checkpoint predates 'has_state_head' — assuming True (state-only model)")
+            if not hasattr(loaded_nn_model, 'has_lambda_head'):
+                loaded_nn_model.has_lambda_head = False
             # PyTorch path
             self.nn_predictor = NeuralPredictor(
                 newton_model=self.model,

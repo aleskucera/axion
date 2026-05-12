@@ -235,6 +235,123 @@ class FastMSEModel(nn.Module):
         fast.eval()
         return fast
 
+    @classmethod
+    def from_model_mixed_input(cls, source_model, device=None):
+        """
+        Instantiate a FastMSEModel and copy weights from a trained ModelMixedInput.
+
+        ModelMixedInput stores the state head as `self.model` (an MLPDeterministic)
+        rather than `self.regression_head`, and does not persist `state_output_dim` /
+        `lambda_output_dim` as top-level scalars.  This factory handles both
+        differences: it infers the dims from the sub-module shapes and remaps the
+        state-dict keys before loading.
+        """
+        if "low_dim" not in source_model.encoders:
+            raise ValueError(
+                "from_model_mixed_input requires a 'low_dim' encoder on the source model."
+            )
+
+        # --- encoder config (identical logic to from_mse_model) ---
+        low_dim_encoder = source_model.encoders["low_dim"]
+        if any(isinstance(m, nn.Linear) for m in low_dim_encoder.body):
+            first_linear = next(m for m in low_dim_encoder.body if isinstance(m, nn.Linear))
+            total_low_dim = int(first_linear.in_features)
+        else:
+            total_low_dim = int(low_dim_encoder.out_features)
+
+        layer_sizes, activation, layernorm = [], "relu", False
+        for module in low_dim_encoder.body:
+            if isinstance(module, nn.Linear):
+                layer_sizes.append(int(module.out_features))
+            elif isinstance(module, nn.LayerNorm):
+                layernorm = True
+            elif isinstance(module, nn.Tanh):
+                activation = "tanh"
+            elif isinstance(module, nn.ReLU):
+                activation = "relu"
+            elif isinstance(module, nn.ELU):
+                activation = "elu"
+            elif isinstance(module, nn.SiLU):
+                activation = "silu"
+            elif isinstance(module, nn.Identity):
+                activation = "identity"
+        encoder_cfg = {"layer_sizes": layer_sizes, "activation": activation, "layernorm": layernorm}
+
+        # --- transformer config ---
+        src_cfg = source_model.transformer_model.config
+        transformer_cfg = {
+            "n_layer": src_cfg.n_layer,
+            "n_head": src_cfg.n_head,
+            "n_embd": src_cfg.n_embd,
+            "block_size": src_cfg.block_size,
+            "bias": src_cfg.bias,
+            "dropout": src_cfg.dropout,
+        }
+
+        # --- output dims (inferred from sub-module weights) ---
+        state_head = source_model.model  # MLPDeterministic
+        state_output_dim = int(state_head.output_net.out_features)
+        lambda_head = getattr(source_model, "lambda_model", None)
+        lambda_output_dim = int(lambda_head.output_net.out_features) if lambda_head is not None else 0
+
+        # --- head MLP config ---
+        head_mlp_cfg = None
+        if hasattr(state_head, "feature_net"):
+            head_layer_sizes, head_activation, head_layernorm = [], "relu", False
+            for module in state_head.feature_net.body:
+                if isinstance(module, nn.Linear):
+                    head_layer_sizes.append(int(module.out_features))
+                elif isinstance(module, nn.LayerNorm):
+                    head_layernorm = True
+                elif isinstance(module, nn.Tanh):
+                    head_activation = "tanh"
+                elif isinstance(module, nn.ReLU):
+                    head_activation = "relu"
+                elif isinstance(module, nn.ELU):
+                    head_activation = "elu"
+                elif isinstance(module, nn.SiLU):
+                    head_activation = "silu"
+                elif isinstance(module, nn.Identity):
+                    head_activation = "identity"
+            head_mlp_cfg = {
+                "layer_sizes": head_layer_sizes,
+                "activation": head_activation,
+                "layernorm": head_layernorm,
+            }
+
+        target_device = device if device is not None else getattr(source_model, "device", "cuda:0")
+
+        fast = cls(
+            total_low_dim=total_low_dim,
+            state_output_dim=state_output_dim,
+            lambda_output_dim=lambda_output_dim,
+            encoder_cfg=encoder_cfg,
+            transformer_cfg=transformer_cfg,
+            head_mlp_cfg=head_mlp_cfg,
+            states_only=(lambda_output_dim == 0),
+            device=target_device,
+        )
+
+        # Remap "model." → "regression_head." so load_state_dict finds the weights.
+        remapped = {}
+        for k, v in source_model.state_dict().items():
+            if k.startswith("model."):
+                remapped["regression_head." + k[len("model."):]] = v
+            else:
+                remapped[k] = v
+
+        missing, unexpected = fast.load_state_dict(remapped, strict=False)
+        del unexpected
+
+        truly_missing = [k for k in missing if not k.endswith(".attn.bias")]
+        if truly_missing:
+            raise RuntimeError(
+                f"FastMSEModel.from_model_mixed_input: missing keys when loading state_dict: {truly_missing}"
+            )
+
+        fast.eval()
+        return fast
+
     def to(self, device):
         self.device = device
         for (_, encoder) in self.encoders.items():
@@ -242,3 +359,15 @@ class FastMSEModel(nn.Module):
         self.transformer_model.to(device)
         self.regression_head.to(device)
         return self
+
+
+def make_fast_model(source_model, device=None) -> "FastMSEModel":
+    """
+    Dispatch factory: returns a FastMSEModel loaded from either an MSEModel
+    (has `regression_head`) or a ModelMixedInput (uses `model` for the state head).
+
+    Duck-typing is used so no cross-module import is required.
+    """
+    if hasattr(source_model, "regression_head"):
+        return FastMSEModel.from_mse_model(source_model, device=device)
+    return FastMSEModel.from_model_mixed_input(source_model, device=device)
