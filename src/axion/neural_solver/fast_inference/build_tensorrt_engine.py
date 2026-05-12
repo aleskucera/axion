@@ -27,9 +27,9 @@ import torch
 import yaml
 
 # ── configure here ────────────────────────────────────────────────────────────
-ONNX_PATH         = "src/axion/neural_solver/train/trained_models/03-17-2026-15-12-19/nn/best_eval_model.onnx"
-CHECKPOINT_PT     = "src/axion/neural_solver/train/trained_models/03-17-2026-15-12-19/nn/best_eval_model.pt"
-NN_MODEL_CFG      = "src/axion/neural_solver/train/trained_models/03-17-2026-15-12-19/cfg.yaml"
+ONNX_PATH         = "src/axion/neural_solver/train/trained_models/mse/05-12-2026-17-30-11/nn/best_valid_valid_model.onnx"
+CHECKPOINT_PT     = "src/axion/neural_solver/train/trained_models/mse/05-12-2026-17-30-11/nn/best_valid_valid_model.pt"
+NN_MODEL_CFG      = "src/axion/neural_solver/train/trained_models/mse/05-12-2026-17-30-11/cfg.yaml"
 FP16              = True       # falls back to FP32 if the GPU has no fast FP16
 WORKSPACE_GB      = 1          # tactic-search scratch memory, not runtime memory
 OUTPUT_PLAN       = None       # None → <onnx_stem>.plan beside the ONNX
@@ -272,14 +272,16 @@ def build(
         )
 
     _lambda_head = getattr(mse_model, "lambda_model", None)
-    state_output_dim = int(getattr(
-        mse_model, "state_output_dim",
-        mse_model.model.output_net.out_features,
-    ))
-    lambda_output_dim = int(getattr(
-        mse_model, "lambda_output_dim",
-        _lambda_head.output_net.out_features if _lambda_head is not None else 0,
-    ))
+    state_output_dim = int(
+        mse_model.state_output_dim
+        if hasattr(mse_model, "state_output_dim")
+        else mse_model.model.output_net.out_features
+    )
+    lambda_output_dim = int(
+        mse_model.lambda_output_dim
+        if hasattr(mse_model, "lambda_output_dim")
+        else (_lambda_head.output_net.out_features if _lambda_head is not None else 0)
+    )
     if state_output_dim + lambda_output_dim != R:
         raise RuntimeError(
             f"regression_output_dim mismatch: "

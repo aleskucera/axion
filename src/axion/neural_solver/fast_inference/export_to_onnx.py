@@ -14,8 +14,8 @@ import torch
 import yaml
 
 # ── configure here ────────────────────────────────────────────────────────────
-MODEL_PT    = "src/axion/neural_solver/train/trained_models/03-17-2026-15-12-19/nn/best_eval_model.pt"
-NN_MODEL_CFG = "src/axion/neural_solver/train/trained_models/03-17-2026-15-12-19/cfg.yaml"
+MODEL_PT    = "src/axion/neural_solver/train/trained_models/mse/05-12-2026-17-30-11/nn/best_valid_valid_model.pt"
+NN_MODEL_CFG = "src/axion/neural_solver/train/trained_models/mse/05-12-2026-17-30-11/cfg.yaml"
 BATCH_SIZE  = 1          # number of robots/worlds processed in one forward pass
 T_OVERRIDE  = None       # None → use yaml `env.utils_provider_cfg.num_states_history`,
                          #        falling back to transformer block_size if missing.

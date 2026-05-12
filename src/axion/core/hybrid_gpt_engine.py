@@ -21,13 +21,13 @@ from axion.neural_solver.standalone.neural_predictor_helpers import shift_body_q
 
 # Shared MSE checkpoint with .plan / .engine_meta.pt already built (see
 # docs/torch_to_tensorrt_conversion.md for the rebuild recipe).
-NN_BASE_PATH = Path.cwd() /"src"/"axion"/"neural_solver"/"train"/"trained_models"/"mse"/"05-12-2026-08-49-22"
+NN_BASE_PATH = Path.cwd() /"src"/"axion"/"neural_solver"/"train"/"trained_models"/"mse"/"05-12-2026-17-30-11"
 NN_PENDULUM_PT_PATH = NN_BASE_PATH/"nn"/"best_valid_valid_model.pt"
 NN_PENDULUM_CFG_PATH = NN_BASE_PATH/"cfg.yaml"
 
 # Flip to True after running export_to_onnx.py + build_tensorrt_engine.py.
 # Required for `execution: cuda_graph` — only the TRT path is capture-safe.
-USE_TENSORRT_ENGINE = False
+USE_TENSORRT_ENGINE = True
 NN_PENDULUM_PLAN_PATH = NN_PENDULUM_PT_PATH.with_suffix(".plan")
 NN_PENDULUM_META_PATH = NN_PENDULUM_PT_PATH.with_suffix(".engine_meta.pt")
 
