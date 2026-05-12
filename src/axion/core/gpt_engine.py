@@ -23,7 +23,6 @@ import torch
 import sys
 from axion.neural_solver.standalone.neural_predictor import NeuralPredictor
 from axion.neural_solver.standalone.fast_neural_predictor import FastNeuralPredictor
-from axion.neural_solver.standalone.neural_predictor_helpers import shift_body_qd_to_com_frame
 from axion.nn_prediction import models, utils
 
 # Allow pickled checkpoints that reference classes under "models.*" and "utils.*"
@@ -44,12 +43,6 @@ USE_TENSORRT_ENGINE = False
 NN_PENDULUM_PLAN_PATH = NN_PENDULUM_PT_PATH.with_suffix(".plan")
 NN_PENDULUM_META_PATH = NN_PENDULUM_PT_PATH.with_suffix(".engine_meta.pt")
 
-# Flip to False to skip the post-eval_fk body_qd frame correction for testing.
-# Should normally stay True: eval_fk writes body_qd at the parent-side joint
-# anchor; this shift moves it to the CoM frame expected by the rest of the
-# pipeline (NeuralPredictor uses eval_ik which re-derives joint_qd from body_qd).
-SHIFT_BODY_QD_TO_COM = False
- 
 class GPTEngine(SolverBase):
     """
     This class implements a neural physics solver.
@@ -135,14 +128,6 @@ class GPTEngine(SolverBase):
                 device=str(self.device),
             )
 
-        # Preallocated scratch for shift_body_qd_to_com_frame. Must be
-        # allocated once (not per step) to remain CUDA-graph capture-safe.
-        self._raw_body_qd = wp.empty(
-            self.model.body_count,
-            dtype=wp.spatial_vector,
-            device=self.device,
-        )
-
     def prewarm(
         self,
         state_in: newton.State,
@@ -188,6 +173,3 @@ class GPTEngine(SolverBase):
         )
 
         newton.eval_fk(self.model, state_out.joint_q, state_out.joint_qd, state_out)
-
-        if SHIFT_BODY_QD_TO_COM:
-            shift_body_qd_to_com_frame(self.model, state_out, self._raw_body_qd, self.device)

@@ -21,7 +21,12 @@ from pendulum_utils import set_tilted_plane_from_coefficients
 # from axion.articulations.pendulum_articulation_definition import build_pendulum_model, PENDULUM_HEIGHT
 
 CONFIG_PATH = pathlib.Path(__file__).parent.parent.joinpath("conf")
-ENABLE_CONTROL = True  # True=controller active, False=controller off
+
+ENABLE_STATE_LOGGING = True  # set True to write pendulum-state HDF5
+if ENABLE_STATE_LOGGING:
+    from axion.neural_solver.logging.state_logger_for_examples import PendulumStateLogger
+
+ENABLE_CONTROL = False  # True=controller active, False=controller off
 TARGET_POS_Q0 = -np.pi/2
 TARGET_POS_Q1 = -np.pi/3
 
@@ -91,8 +96,10 @@ class Simulator(InteractiveSimulator):
         logging_config: LoggingConfig,
         plane_coefficients: tuple[float, float, float, float] = (0.0, 0.0, 1.0, 0.0),
         initial_state: tuple[float, float, float, float] | None = None,
+        state_logger=None,
     ):
         self.plane_coefficients = plane_coefficients
+        self.state_logger = state_logger
         super().__init__(
             sim_config,
             render_config,
@@ -207,6 +214,18 @@ class Simulator(InteractiveSimulator):
         
         self.viewer.end_frame()
 
+        # AxionEngine only updates body_q/body_qd; recover joint_q/joint_qd for HDF5 logging.
+        if ENABLE_STATE_LOGGING:
+            newton.eval_ik(
+                self.model,
+                self.current_state,
+                self.current_state.joint_q,
+                self.current_state.joint_qd,
+            )
+
+        if self.state_logger is not None:
+            self.state_logger.log_step(self.current_state, sim_time)
+
     def build_model(self,) -> newton.Model:
         """
         Use the same pendulum articulation as AxionEngineWrapper.py
@@ -232,12 +251,14 @@ def basic_pendulum_example(cfg: DictConfig):
 
     # Plane equation: nx*x + ny*y + nz*z + d = 0 (default: horizontal z=0)
     plane_coefficients = [0.0, 0.0, 1.0, 0.0]
-    plane_coefficients = [-0.2354, -0.0000, 0.9719, -2.3318]
+    #plane_coefficients = [-0.2354, -0.0000, 0.9719, -2.3318]
 
     # Custom initial conditions: (q0, q1, qd0, qd1)
     # Set to None to start from the default rest position.
     INITIAL_STATE = None #(-0.5704, 2.8907, -3.6530, -7.6918)  # e.g. 
     INITIAL_STATE = (0, -0, 0, 0)
+    INITIAL_STATE = (0.5, -0.3, 1.0, -2.0)
+    INITIAL_STATE = (-0.5704, 2.8907, -3.6530, -7.6918)
 
     simulator = Simulator(
         sim_config=sim_config,
@@ -249,7 +270,18 @@ def basic_pendulum_example(cfg: DictConfig):
         initial_state=INITIAL_STATE,
     )
 
+    if ENABLE_STATE_LOGGING:
+        log_dt = simulator.steps_per_segment * simulator.clock.dt
+        simulator.state_logger = PendulumStateLogger(
+            script_name="AxionEngine_example",
+            dt=log_dt,
+            duration_seconds=sim_config.duration_seconds,
+        )
+
     simulator.run()
+
+    if ENABLE_STATE_LOGGING:
+        simulator.state_logger.save()
 
 if __name__ == "__main__":
     basic_pendulum_example()

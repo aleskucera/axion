@@ -20,6 +20,10 @@ from pendulum_utils import set_tilted_plane_from_coefficients
 
 CONFIG_PATH = pathlib.Path(__file__).parent.parent.joinpath("conf")
 
+ENABLE_STATE_LOGGING: bool = False  # set True to write pendulum-state HDF5
+if ENABLE_STATE_LOGGING:
+    from axion.neural_solver.logging.state_logger_for_examples import PendulumStateLogger
+
 # ---------------------------------------------------------------------------
 # Helper: generalized → maximal coordinate conversion
 # ---------------------------------------------------------------------------
@@ -78,8 +82,10 @@ class Simulator(InteractiveSimulator):
         logging_config: LoggingConfig,
         plane_coefficients: tuple[float, float, float, float] = (0.0, 0.0, 1.0, 0.0),
         initial_state: tuple[float, float, float, float] | None = None,
+        state_logger=None,
     ):
         self.plane_coefficients = plane_coefficients
+        self.state_logger = state_logger
         super().__init__(
             sim_config,
             render_config,
@@ -164,6 +170,9 @@ class Simulator(InteractiveSimulator):
         
         self.viewer.end_frame()
 
+        if self.state_logger is not None:
+            self.state_logger.log_step(self.current_state, sim_time)
+
     def build_model(self,) -> newton.Model:
         """
         Use the same pendulum articulation as AxionEngineWrapper.py
@@ -201,7 +210,18 @@ def basic_pendulum_example(cfg: DictConfig):
         initial_state=INITIAL_STATE,
     )
 
+    if ENABLE_STATE_LOGGING:
+        log_dt = simulator.steps_per_segment * simulator.clock.dt
+        simulator.state_logger = PendulumStateLogger(
+            script_name="HybridGPTEngine_example",
+            dt=log_dt,
+            duration_seconds=sim_config.duration_seconds,
+        )
+
     simulator.run()
+
+    if ENABLE_STATE_LOGGING:
+        simulator.state_logger.save()
 
 if __name__ == "__main__":
     basic_pendulum_example()
