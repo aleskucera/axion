@@ -17,6 +17,10 @@ import yaml
 MODEL_PT    = "src/axion/neural_solver/train/trained_models/mse/05-12-2026-08-49-22/nn/best_valid_valid_model.pt"
 NN_MODEL_CFG = "src/axion/neural_solver/train/trained_models/mse/05-12-2026-08-49-22/cfg.yaml"
 BATCH_SIZE  = 1          # number of robots/worlds processed in one forward pass
+T_OVERRIDE  = None       # None → use yaml `env.utils_provider_cfg.num_states_history`,
+                         #        falling back to transformer block_size if missing.
+                         # NeuralPredictor caps history at num_states_history,
+                         # so the engine T must equal that value (not block_size).
 DEVICE      = "cuda:0"   # use "cpu" if no GPU is available
 OUTPUT      = None       # None → <checkpoint_stem>.onnx beside the checkpoint
 # ──────────────────────────────────────────────────────────────────────────────
@@ -67,8 +71,9 @@ def _cross_validate(fast_model: FastMSEModel, cfg: dict, yaml_path: Path) -> Non
         )
 
 
-def _print_summary(fast_model: FastMSEModel, low_dim_names: list[str], output_path: Path) -> None:
-    T = fast_model.transformer_model.config.block_size
+def _print_summary(
+    fast_model: FastMSEModel, low_dim_names: list[str], output_path: Path, T: int
+) -> None:
     D = fast_model.total_low_dim
     print("\n--- Export summary ---")
     print(f"  input shape      : (B, T={T}, D={D})")
@@ -90,6 +95,7 @@ def export(
     output_path: str | None = None,
     batch_size: int = 1,
     device: str = "cuda:0",
+    t_override: int | None = None,
 ) -> Path:
     """
     Convert a trained MSEModel checkpoint to ONNX.
@@ -131,11 +137,29 @@ def export(
     if cfg:
         _cross_validate(fast_model, cfg, cfg_path)
 
-    _print_summary(fast_model, low_dim_names, output_path)
+    # Resolve the static sequence length to bake into the ONNX. NeuralPredictor
+    # caps history at `num_states_history`, so the engine T must equal that
+    # number. block_size is only the transformer's maximum capacity (T ≤ block_size).
+    block_size = int(fast_model.transformer_model.config.block_size)
+    if t_override is not None:
+        T = int(t_override)
+    else:
+        history_len = (
+            cfg.get("env", {})
+               .get("utils_provider_cfg", {})
+               .get("num_states_history")
+        )
+        T = int(history_len) if history_len is not None else block_size
+    if T > block_size:
+        raise ValueError(
+            f"T={T} exceeds transformer block_size={block_size}; "
+            "lower T_OVERRIDE or retrain with a larger block_size."
+        )
+
+    _print_summary(fast_model, low_dim_names, output_path, T=T)
 
     # Build static dummy input (zeros; shape is all that matters for tracing)
     B = batch_size
-    T = fast_model.transformer_model.config.block_size
     D = fast_model.total_low_dim
     dummy = torch.zeros(B, T, D, device=device)
 
@@ -168,4 +192,5 @@ if __name__ == "__main__":
         output_path=OUTPUT,
         batch_size=BATCH_SIZE,
         device=DEVICE,
+        t_override=T_OVERRIDE,
     )

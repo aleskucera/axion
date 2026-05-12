@@ -36,6 +36,11 @@ NN_BASE_PATH = Path.cwd() /"src"/"axion"/"neural_solver"/"train"/"trained_models
 NN_PENDULUM_PT_PATH = NN_BASE_PATH/"nn"/"best_valid_valid_model.pt"
 NN_PENDULUM_CFG_PATH = NN_BASE_PATH/"cfg.yaml"
 
+# Flip to True after running export_to_onnx.py + build_tensorrt_engine.py 
+USE_TENSORRT_ENGINE = False
+NN_PENDULUM_PLAN_PATH = NN_PENDULUM_PT_PATH.with_suffix(".plan")
+NN_PENDULUM_META_PATH = NN_PENDULUM_PT_PATH.with_suffix(".engine_meta.pt")
+
 # Ground-truth lambda activity for neural logging (binary mask, float 0/1).
 # If SIM_LAMBDA_ACTIVITY_ABS_DELTA_THRESHOLD is set: mask = (|next_lambdas - lambdas| >= threshold)
 #   (matches Pendulum MTL datasets "Th05" / cfg classification_prob_threshold).
@@ -291,29 +296,49 @@ class AxionEngineWithNeuralLambdas(AxionEngineBase):
         nn_model_path = NN_PENDULUM_PT_PATH
         nn_cfg_path = NN_PENDULUM_CFG_PATH
 
-        # Load the nn .pt file and .cfg file correctly
-        print(f"Loading model from: {nn_model_path}")
-        loaded_nn_model, robot_name = torch.load(
-            nn_model_path, map_location=str(self.device), weights_only=False
-        )
-        self._use_mtl_model = self._is_mtl_model(loaded_nn_model)
-        self._use_contact_mtl_model = self._is_contact_mtl_model(loaded_nn_model)
-        self._use_residual_model = self._is_residual_model(loaded_nn_model)
-        self._use_lambda_classification = self._is_lambda_classification_model(loaded_nn_model)
-        self._use_mse_model = self._is_mse_model(loaded_nn_model)
-        print(f"Loaded model for robot: {robot_name}")
-        if self._use_contact_mtl_model:
-            model_mode = "contact_mtl"
-        elif self._use_mtl_model:
-            model_mode = "mtl"
-        elif self._use_lambda_classification:
-            model_mode = "classification"
-        elif self._use_residual_model:
-            model_mode = "residual"
-        elif self._use_mse_model:
-            model_mode = "mse"
+        # The TensorRT engine is built from an MSEModel checkpoint, so when the
+        # TRT toggle is on we hard-set the MSE branch and skip the model-type
+        # detection (the wrapper doesn't carry the legacy class identity).
+        if USE_TENSORRT_ENGINE:
+            from axion.neural_solver.fast_inference.tensorrt_mse_engine import (
+                TensorRTMSEEngine,
+            )
+            print(f"Loading TensorRT engine: {NN_PENDULUM_PLAN_PATH}")
+            loaded_nn_model = TensorRTMSEEngine(
+                plan_path=NN_PENDULUM_PLAN_PATH,
+                meta_path=NN_PENDULUM_META_PATH,
+                device=str(self.device),
+            )
+            self._use_mtl_model = False
+            self._use_contact_mtl_model = False
+            self._use_residual_model = False
+            self._use_lambda_classification = False
+            self._use_mse_model = True
+            model_mode = "mse (tensorrt)"
         else:
-            model_mode = "regression"
+            # Load the nn .pt file
+            print(f"Loading model from: {nn_model_path}")
+            loaded_nn_model, robot_name = torch.load(
+                nn_model_path, map_location=str(self.device), weights_only=False
+            )
+            self._use_mtl_model = self._is_mtl_model(loaded_nn_model)
+            self._use_contact_mtl_model = self._is_contact_mtl_model(loaded_nn_model)
+            self._use_residual_model = self._is_residual_model(loaded_nn_model)
+            self._use_lambda_classification = self._is_lambda_classification_model(loaded_nn_model)
+            self._use_mse_model = self._is_mse_model(loaded_nn_model)
+            print(f"Loaded model for robot: {robot_name}")
+            if self._use_contact_mtl_model:
+                model_mode = "contact_mtl"
+            elif self._use_mtl_model:
+                model_mode = "mtl"
+            elif self._use_lambda_classification:
+                model_mode = "classification"
+            elif self._use_residual_model:
+                model_mode = "residual"
+            elif self._use_mse_model:
+                model_mode = "mse"
+            else:
+                model_mode = "regression"
         print("Loaded neural lambda model mode:", model_mode)
         print(f"Loading configuration from: {nn_cfg_path}")
         with open(nn_cfg_path, "r") as f:

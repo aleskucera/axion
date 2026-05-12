@@ -218,7 +218,7 @@ This performs a **structural/schema check** only:
 - Type and shape consistency throughout the graph.
 - No dangling edges.
 
-It does **not** run a forward pass or check numerical correctness. That requires a separate comparison against the PyTorch model (see Section 3, Step 5).
+It does **not** run a forward pass or check numerical correctness. That requires a separate comparison against the PyTorch model (see Section 3, Step 6).
 
 ---
 
@@ -228,16 +228,16 @@ It does **not** run a forward pass or check numerical correctness. That requires
 Train PyTorch model
         │
         ▼
-Export to ONNX  (export_to_onnx.py)
+Export to ONNX                 (export_to_onnx.py)
         │
         ▼
-Build TensorRT engine  (trtexec)
+Build TensorRT engine          (build_tensorrt_engine.py)
+        │   produces .plan + .engine_meta.pt
+        ▼
+Flip USE_TENSORRT_ENGINE = True   (gpt_engine.py / axion_engine_with_neural_lambdas.py)
         │
         ▼
-Numerical sanity check
-        │
-        ▼
-Fast inference
+Fast inference via TensorRTMSEEngine (duck-types MSEModel)
 ```
 
 ### Step 1 — Train the MSE model
@@ -275,18 +275,83 @@ Note the low_dim key concatenation order printed in the export summary — the i
 
 ### Step 4 — Build the TensorRT engine
 
+Use the Python builder script (`trtexec` from the CLI also works but isn't on the path on this workstation):
+
 ```bash
-trtexec \
-  --onnx=src/.../nn/best_valid_valid_model.onnx \
-  --saveEngine=src/.../nn/best_valid_valid_model.plan \
-  --fp16
+python src/axion/neural_solver/fast_inference/build_tensorrt_engine.py
 ```
 
-This step is not yet implemented as a Python script. See `docs/model_to_tensor_rt.md` for the Python API alternative.
+Edit the constants at the top of the file:
 
-### Step 5 — Numerical sanity check (recommended)
+```python
+ONNX_PATH         = "src/.../nn/best_valid_valid_model.onnx"
+CHECKPOINT_PT     = "src/.../nn/best_valid_valid_model.pt"
+NN_MODEL_CFG      = "src/.../cfg.yaml"
+FP16              = True       # falls back to FP32 if the GPU has no fast FP16
+WORKSPACE_GB      = 1
+OUTPUT_PLAN       = None       # → <onnx_stem>.plan beside the ONNX
+OUTPUT_META       = None       # → <onnx_stem>.engine_meta.pt beside the ONNX
+RUN_PARITY_CHECK  = True
+```
 
-Before using the engine in production, verify that TRT outputs match PyTorch:
+The script:
+
+1. Parses the ONNX with the TensorRT 10 `OnnxParser`, builds a serialized engine via `builder.build_serialized_network(network, config)`, and writes the bytes to `<stem>.plan`.
+2. Loads the matching `.pt` to extract per-key `input_rms` (mean, var) plus `state_output_dim`, `lambda_output_dim`, `block_size`, and the low-dim concatenation order from `cfg.yaml`, and saves them as `<stem>.engine_meta.pt`. This sidecar is what `TensorRTMSEEngine` reads at inference time — the engine itself does **not** carry normalization.
+3. Optionally runs a one-shot parity check: builds a `FastMSEModel` from the same checkpoint, feeds the same random input through both PyTorch and TRT (with normalization skipped on both sides), and prints the max-abs error.
+
+Expected tolerances vs. PyTorch (FastMSEModel):
+- FP32 engine → max-abs ~`1e-5`
+- FP16 engine → max-abs ~`1e-3`
+
+After this step the `nn/` directory holds:
+
+```
+best_valid_valid_model.pt              # original training checkpoint
+best_valid_valid_model.onnx (+ .data)  # static-shape ONNX
+best_valid_valid_model.plan            # serialized TensorRT engine
+best_valid_valid_model.engine_meta.pt  # low_dim_keys, dims, input_rms
+```
+
+### Step 5 — Use the engine at simulation time
+
+`TensorRTMSEEngine` (`fast_inference/tensorrt_mse_engine.py`) is a tiny `nn.Module` that duck-types `MSEModel`. It:
+
+- pre-allocates one static input buffer and one static output buffer on the GPU,
+- registers their addresses with the execution context once (CUDA-graph-friendly),
+- concatenates the dict input in `low_dim_keys` order,
+- applies normalization on the GPU using the stored `input_rms`,
+- runs `execute_async_v3` on a dedicated stream and returns `(B, 1, regression_output_dim)`.
+
+To swap it in, flip the toggle constant in the engine you're running. For example, in `src/axion/core/axion_engine_with_neural_lambdas.py`:
+
+```python
+USE_TENSORRT_ENGINE = True   # was False
+```
+
+The same constant exists in `src/axion/core/gpt_engine.py`. When the toggle is on, the engine constructor instantiates `TensorRTMSEEngine(plan_path, meta_path)` and hands it to `NeuralPredictor` in place of the torch model. No other changes are required.
+
+#### Warm-up note (first `num_states_history - 1` steps)
+
+The PyTorch model accepts any sequence length `T <= block_size` and runs the transformer dynamically on whatever history is currently available (1 token at step 0, 2 at step 1, …, `num_states_history` from then on). The TensorRT engine has a fixed `T = num_states_history` baked in, so the wrapper left-pads short inputs by replicating the oldest entry to fill the buffer.
+
+This means torch and TRT outputs match to FP16 tolerance from step `num_states_history - 1` onward, but **differ during the warm-up** — both backends are computing a different thing there (1 token through a 1-token transformer vs. 10 copies of the same token through a 10-token transformer). For predictors used as solver warm-starts (`AxionEngineWithNeuralLambdas`) this is immaterial; for predictors that determine the actual next state (`GPTEngine`) the warm-up will look different for the first few frames before converging.
+
+### Step 6 — Numerical sanity check (recommended)
+
+This is **already done automatically by `build_tensorrt_engine.py`** when `RUN_PARITY_CHECK = True` (the default). The script builds a `FastMSEModel` from the same checkpoint, runs both PyTorch and TRT on a random tensor of the engine's exact `(B, T, D)` shape, and prints a line like:
+
+```
+parity vs FastMSEModel: max_abs=2.023e+00, mean_abs=5.947e-02, rel_max=1.405e-03  (|torch|_max=1.438e+03, |trt|_max=1.440e+03, expected rel ~1e-3)
+```
+
+Expected tolerances (matching the FP16/FP32 tradeoff above):
+- FP32 engine → `rel_max` ~ `1e-5`
+- FP16 engine → `rel_max` ~ `1e-3`
+
+**Read the `rel_max` field, not `max_abs`.** With un-normalized random input the network's lambda head produces values of magnitude `~1e3`, so the absolute number looks large; the relative error is what tells you whether FP16 quantization is behaving. If you want to skip the check (e.g. faster iteration on the build step), set `RUN_PARITY_CHECK = False` at the top of `build_tensorrt_engine.py`.
+
+If you'd rather run a one-shot parity check yourself (e.g. with normalized in-distribution inputs), the same pattern works:
 
 ```python
 import numpy as np
@@ -299,6 +364,94 @@ print(f"Max absolute error: {max_err:.2e}")
 # FP32 engine → expect ~1e-5
 # FP16 engine → expect ~1e-3
 ```
+
+### Step 7 — Run with CUDA Graph capture (TODO)
+
+Status: **not yet implemented**. The pieces below are what's still missing for `GPTEngine` / `HybridGPTEngine` to run under `examples/conf/gpt_pendulum.yaml` with `execution: cuda_graph` (i.e. `use_cuda_graph: True`).
+
+The interactive simulator wraps `steps_per_segment` calls to `solver.step(...)` inside a `wp.ScopedCapture()` (`src/axion/simulation/interactive_simulator.py:147-153`). Everything that runs during capture must be (a) pure stream work — no host syncs, no host allocations, no Python branches on tensor values — and (b) shape-static — every kernel/launch must see the same shapes on every iteration. The current torch-only path in `NeuralPredictor` violates both. The TensorRT engine swap takes care of the model itself, but the rest of the predictor / engine plumbing still needs work.
+
+#### What already works (no changes needed)
+
+- `TensorRTMSEEngine` already uses one static input buffer, one static output buffer, fixed tensor addresses (`set_tensor_address` is called once at init), and `execute_async_v3` on a CUDA stream — the model call itself is capturable.
+- The TRT engine left-pads short inputs to the engine's fixed `T`, so output shape is constant.
+- `GPTEngine` and `HybridGPTEngine` both have `USE_TENSORRT_ENGINE` toggles that swap the wrapper in.
+- The Warp portions of `_convert_newton_contacts_to_contacts_for_nn_model` and `_solve` are already kernel launches and are capturable as-is.
+
+#### What needs to change
+
+1. **Pre-warm the history before the first capture.**  `NeuralPredictor.states_history` is a `deque(maxlen=num_states_history)`. At simulation start `len(history) = 0` and grows by 1 per step. The engine T is fixed (= `num_states_history`); the wrapper handles short inputs via left-padding, but every step before `num_states_history - 1` still calls Python code with different intermediate shapes. The simulator must run `num_states_history - 1` warm-up steps **outside** the captured region so the first captured segment is fully shape-stable. Likely path: add a `warmup_steps()` method on `GPTEngine` / `HybridGPTEngine` that the simulator calls before `_capture_cuda_graphs` (or pre-fill the deque with the initial state).
+
+2. **Eliminate host allocations / `.clone()` inside `process_inputs`.**  `src/axion/neural_solver/standalone/neural_predictor.py` currently does, every step:
+   - `wp.to_torch(...)` + `torch.cat(...)` + `.unsqueeze(0)` (lines ~362-365)
+   - `history_entry = {... "states": states.clone(), ...}` (lines ~375-385)
+   - `torch.stack([entry[key] for entry in self.states_history], dim=1)` (line ~390)
+   - `tensor.view(B, T, -1)` reshape (lines ~395-396)
+   - `wrap2PI(states_flat, ...)` which writes into a freshly-viewed tensor (lines ~401-403)
+   - `self._embed_states(...)` which calls `.clone()` (line ~489)
+
+   Each `clone()` / `cat()` / `stack()` allocates a fresh torch tensor; that allocation is not capturable. Refactor to keep one fixed-shape ring buffer per low-dim key (e.g. `(1, T, D_key)`), advance an index, and `copy_` new data in. The dict `nn_model_inputs` should then be a *constant* set of views into those ring buffers.
+
+3. **Drop `self._stream.synchronize()` in the TRT wrapper.**  `TensorRTMSEEngine.evaluate(...)` calls `stream.synchronize()` after `execute_async_v3`. Stream syncs are illegal during capture. Two options:
+   - Detect capture mode and skip the sync (CUDA Graph already orders launches; the next kernel won't run until the engine finishes).
+   - Run TRT on the **same stream Warp is capturing into** (`wp.get_stream()` ⇄ `torch.cuda.ExternalStream(int(wp_stream.cuda_stream))`). That way no extra stream → no sync needed.
+
+4. **Use the Warp capture stream for torch ops.**  Inside `wp.ScopedCapture()`, Warp captures kernel launches onto its current stream. Torch ops run on their own stream by default; mixing them under a single capture means routing both through one stream. Wrap the relevant torch math (normalization, concat-view, slicing) under `torch.cuda.stream(torch_stream_from_warp)` where `torch_stream_from_warp = torch.cuda.ExternalStream(int(wp.get_stream().cuda_stream))`.
+
+5. **Replace `state_out.joint_q = wp.from_torch(...)` with `wp.copy(...)` into a preallocated buffer.**  `GPTEngine.step` (lines 138-139) does:
+   ```python
+   state_out.joint_q = wp.from_torch(state_predicted[0,:2].reshape(2,))
+   state_out.joint_qd = wp.from_torch(state_predicted[0,2:].reshape(2,))
+   ```
+   This rebinds `state_out`'s arrays to new pointers each step — incompatible with graph replay (the captured graph hard-codes addresses). Use `wp.copy(dest=state_out.joint_q, src=wp.from_torch(state_predicted_slice_view))` instead. `HybridGPTEngine` already does this correctly; mirror the same pattern in `GPTEngine`.
+
+6. **Make `HybridGPTEngine._neural_init_state_fn` capture-safe.**  Two specific lines need attention (`src/axion/core/hybrid_gpt_engine.py:173-178`):
+   ```python
+   next_lambdas = torch.where(torch.abs(next_lambdas) < 0.01, ..., next_lambdas)
+   next_lambdas[..., 11:] = 0.0
+   ```
+   `torch.where` allocates; the slice-assign `[..., 11:] = 0.0` does not, so that's fine. Switch to an in-place form: pre-allocate `next_lambdas_buf`, mask in place via `next_lambdas_buf.mul_(mask)`. Also the diagnostic captures `last_predicted_next_body_pose = state_out.body_q.numpy().copy()` (line 197) — `.numpy()` is a host transfer, must be skipped or done outside capture.
+
+7. **Pin the engine's `step()` to a single CUDA stream.**  `wp.copy(...)` calls inside `step()` run on Warp's current stream, which during capture is the capture stream. As long as we don't push torch ops onto a *different* stream (see point 4), Warp + torch + TRT all serialize correctly into one captured graph.
+
+8. **Disable the rendering / HDF5 logger inside the captured region.**  `examples/conf/gpt_pendulum.yaml` defaults to `rendering: gl` and `logging: disabled`, which is already capture-friendly. But `AxionEngineWithNeuralLambdas`'s `_log_neural_step` calls `.numpy()` — that engine should not be combined with `cuda_graph: True` until point 2 above is also resolved end-to-end.
+
+9. **Configure `rendering: headless` for benchmarking.**  ViewerGL begins/ends frames per segment, which is fine, but rendering throughput will dominate if `gl` is on. For pure throughput measurement, switch the gpt_pendulum config to `rendering: headless`.
+
+#### Minimal end-to-end happy-path order
+
+Once all of the above are in place, the run should be:
+
+```bash
+# 1. Train an MSE checkpoint that GPTEngine is happy with (Step 1).
+# 2. python src/axion/neural_solver/fast_inference/export_to_onnx.py
+# 3. python src/axion/neural_solver/fast_inference/build_tensorrt_engine.py
+# 4. Flip USE_TENSORRT_ENGINE = True in src/axion/core/gpt_engine.py
+#    (or src/axion/core/hybrid_gpt_engine.py).
+# 5. Edit examples/conf/gpt_pendulum.yaml:
+#       - execution: cuda_graph
+# 6. python examples/double_pendulum/<GPTEngine driver script>.py
+```
+
+#### Quick smoke test for graph capture before integration
+
+A small standalone test that captures `engine.step(...)` directly (without the simulator) on a fixed state is the fastest way to flush out remaining shape / allocation issues. Pattern:
+
+```python
+# warm up
+for _ in range(num_states_history):
+    engine.step(state_in, state_out, control, contacts, dt)
+
+# capture
+with wp.ScopedCapture() as cap:
+    engine.step(state_in, state_out, control, contacts, dt)
+
+# replay
+for _ in range(1000):
+    wp.capture_launch(cap.graph)
+```
+
+If this loop runs without "operation not permitted while stream is capturing" errors and produces the same `state_out` as the eager path, the simulator-level capture in Step 7 will succeed too.
 
 ---
 

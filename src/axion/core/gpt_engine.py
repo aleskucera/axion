@@ -32,6 +32,11 @@ sys.modules['utils'] = utils
 NN_BASE_PATH = Path.cwd() /"src"/"axion"/"neural_solver"/"train"/"trained_models"/"03-26-2026-12-22-27" 
 NN_PENDULUM_PT_PATH = NN_BASE_PATH/"nn"/"best_eval_model.pt"
 NN_PENDULUM_CFG_PATH = NN_BASE_PATH/"cfg.yaml"
+
+# Flip to True after running export_to_onnx.py + build_tensorrt_engine.py
+USE_TENSORRT_ENGINE = False
+NN_PENDULUM_PLAN_PATH = NN_PENDULUM_PT_PATH.with_suffix(".plan")
+NN_PENDULUM_META_PATH = NN_PENDULUM_PT_PATH.with_suffix(".engine_meta.pt")
  
 class GPTEngine(SolverBase):
     """
@@ -78,13 +83,29 @@ class GPTEngine(SolverBase):
         
         print("GPTEngine is using the device = ", self.device)
 
-        # Load the nn .pt file and .cfg file correctly
-        print(f"Loading model from: {nn_model_path}")
-        loaded_nn_model, robot_name = torch.load(nn_model_path, map_location= str(self.device), weights_only= False)
-        print(f"Loaded model for robot: {robot_name}")
+        # Load the nn config file (always — needed for NeuralPredictor regardless of backend)
         print(f"Loading configuration from: {nn_cfg_path}")
         with open(nn_cfg_path, 'r') as f:
             loaded_nn_cfg = yaml.load(f, Loader=yaml.SafeLoader)
+
+        # Load either the TensorRT engine wrapper (duck-types MSEModel) or the
+        # torch .pt checkpoint, depending on the toggle above.
+        if USE_TENSORRT_ENGINE:
+            from axion.neural_solver.fast_inference.tensorrt_mse_engine import (
+                TensorRTMSEEngine,
+            )
+            print(f"Loading TensorRT engine: {NN_PENDULUM_PLAN_PATH}")
+            loaded_nn_model = TensorRTMSEEngine(
+                plan_path=NN_PENDULUM_PLAN_PATH,
+                meta_path=NN_PENDULUM_META_PATH,
+                device=str(self.device),
+            )
+        else:
+            print(f"Loading model from: {nn_model_path}")
+            loaded_nn_model, robot_name = torch.load(
+                nn_model_path, map_location=str(self.device), weights_only=False
+            )
+            print(f"Loaded model for robot: {robot_name}")
 
         # Initialize NeRDPredictor: robot config is inferred from self.model (newton.Model)
         self.nn_predictor = NeuralPredictor(
