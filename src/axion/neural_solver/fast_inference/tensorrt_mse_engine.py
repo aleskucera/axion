@@ -34,6 +34,7 @@ from pathlib import Path
 import tensorrt as trt
 import torch
 import torch.nn as nn
+import warp as wp
 
 
 class _RegressionHeadSentinel:
@@ -74,6 +75,7 @@ class TensorRTMSEEngine(nn.Module):
         self.block_size:         int = int(meta["block_size"])
         self.batch_size:         int = int(meta["batch_size"])
         self._input_rms_meta = meta.get("input_rms", {})
+        self.low_dim_dims: dict[str, int] = dict(meta.get("low_dim_dims", {}))
 
         # Sentinel so the MSE duck-type checks pass (hasattr(..., "regression_head")).
         # No classification_head attribute → engine is detected as MSE, not MTL.
@@ -200,11 +202,37 @@ class TensorRTMSEEngine(nn.Module):
         """
         Mirror of MSEModel.evaluate: returns (B, 1, regression_output_dim).
         Concatenates input_dict in low_dim_keys order, normalizes, runs TRT.
+
+        Eager-mode path (kept for parity benchmarks and `NeuralPredictor`).
+        For the CUDA-graph path use `evaluate_prepopulated`.
         """
         del deterministic
         x = self._concat_low_dim(input_dict)
         out = self._run_engine(x, normalize=self.apply_normalization)
         return out[:, -1:, :].clone()
+
+    @torch.no_grad()
+    def evaluate_prepopulated(self) -> torch.Tensor:
+        """
+        Run the engine assuming the caller has already written the new input
+        into `self._input_buf` directly. Skips all concat / normalization /
+        clone work. Returns a (B, 1, regression_output_dim) view into the
+        engine's pre-allocated output buffer — DO NOT modify it, and DO NOT
+        keep references past the next call.
+
+        This is the fast path used by `FastNeuralPredictor` under capture.
+        """
+        # Run on Warp's current stream so the enqueue is captured into the
+        # same graph as the surrounding kernel launches.
+        stream_handle = int(wp.get_stream().cuda_stream)
+        ext_stream = torch.cuda.ExternalStream(stream_handle)
+        with torch.cuda.stream(ext_stream):
+            ok = self._context.execute_async_v3(stream_handle)
+            if not ok:
+                raise RuntimeError(
+                    "TensorRT execute_async_v3 returned False (evaluate_prepopulated)."
+                )
+        return self._output_buf[:, -1:, :]
 
     # ─────────────────────────────────────────────────────────────────────────
     # Internals
@@ -253,6 +281,10 @@ class TensorRTMSEEngine(nn.Module):
 
         self._input_buf.copy_(x)
 
+        # Eager-mode path: run on a dedicated stream and sync at the end so
+        # the caller can read the output buffer from torch's default stream
+        # without further coordination. The CUDA-graph path goes through
+        # `evaluate_prepopulated` (no sync, runs on Warp's capture stream).
         with torch.cuda.stream(self._stream):
             ok = self._context.execute_async_v3(self._stream.cuda_stream)
             if not ok:

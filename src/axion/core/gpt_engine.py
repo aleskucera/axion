@@ -22,6 +22,8 @@ import yaml
 import torch
 import sys
 from axion.neural_solver.standalone.neural_predictor import NeuralPredictor
+from axion.neural_solver.standalone.fast_neural_predictor import FastNeuralPredictor
+from axion.neural_solver.standalone.neural_predictor_helpers import shift_body_qd_to_com_frame
 from axion.nn_prediction import models, utils
 
 # Allow pickled checkpoints that reference classes under "models.*" and "utils.*"
@@ -29,14 +31,24 @@ from axion.nn_prediction import models, utils
 sys.modules['models'] = models
 sys.modules['utils'] = utils
 
-NN_BASE_PATH = Path.cwd() /"src"/"axion"/"neural_solver"/"train"/"trained_models"/"03-26-2026-12-22-27" 
-NN_PENDULUM_PT_PATH = NN_BASE_PATH/"nn"/"best_eval_model.pt"
+# Default to the MSE checkpoint that already has a built .plan / .engine_meta.pt
+# (see `src/axion/neural_solver/docs/torch_to_tensorrt_conversion.md`). The
+# torch-only path still works against this .pt file.
+NN_BASE_PATH = Path.cwd() /"src"/"axion"/"neural_solver"/"train"/"trained_models"/"mse"/"05-12-2026-08-49-22"
+NN_PENDULUM_PT_PATH = NN_BASE_PATH/"nn"/"best_valid_valid_model.pt"
 NN_PENDULUM_CFG_PATH = NN_BASE_PATH/"cfg.yaml"
 
-# Flip to True after running export_to_onnx.py + build_tensorrt_engine.py
+# Flip to True after running export_to_onnx.py + build_tensorrt_engine.py.
+# Required for `execution: cuda_graph` — only the TRT path is capture-safe.
 USE_TENSORRT_ENGINE = False
 NN_PENDULUM_PLAN_PATH = NN_PENDULUM_PT_PATH.with_suffix(".plan")
 NN_PENDULUM_META_PATH = NN_PENDULUM_PT_PATH.with_suffix(".engine_meta.pt")
+
+# Flip to False to skip the post-eval_fk body_qd frame correction for testing.
+# Should normally stay True: eval_fk writes body_qd at the parent-side joint
+# anchor; this shift moves it to the CoM frame expected by the rest of the
+# pipeline (NeuralPredictor uses eval_ik which re-derives joint_qd from body_qd).
+SHIFT_BODY_QD_TO_COM = False
  
 class GPTEngine(SolverBase):
     """
@@ -100,20 +112,52 @@ class GPTEngine(SolverBase):
                 meta_path=NN_PENDULUM_META_PATH,
                 device=str(self.device),
             )
+            # The TRT path is the only capture-safe one — use the fast
+            # predictor so subsequent `step()` calls become pure kernel
+            # launches under `wp.ScopedCapture()`.
+            self.nn_predictor = FastNeuralPredictor(
+                newton_model=self.model,
+                nn_model=loaded_nn_model,
+                nn_cfg=loaded_nn_cfg,
+                device=str(self.device),
+            )
         else:
             print(f"Loading model from: {nn_model_path}")
             loaded_nn_model, robot_name = torch.load(
                 nn_model_path, map_location=str(self.device), weights_only=False
             )
             print(f"Loaded model for robot: {robot_name}")
+            # PyTorch path
+            self.nn_predictor = NeuralPredictor(
+                newton_model=self.model,
+                nn_model=loaded_nn_model,
+                nn_cfg=loaded_nn_cfg,
+                device=str(self.device),
+            )
 
-        # Initialize NeRDPredictor: robot config is inferred from self.model (newton.Model)
-        self.nn_predictor = NeuralPredictor(
-            newton_model=self.model,
-            nn_model=loaded_nn_model,
-            nn_cfg=loaded_nn_cfg,
-            device=str(self.device),
+        # Preallocated scratch for shift_body_qd_to_com_frame. Must be
+        # allocated once (not per step) to remain CUDA-graph capture-safe.
+        self._raw_body_qd = wp.empty(
+            self.model.body_count,
+            dtype=wp.spatial_vector,
+            device=self.device,
         )
+
+    def prewarm(
+        self,
+        state_in: newton.State,
+        contacts: newton.Contacts,
+        dt: float,
+    ):
+        """Seed the predictor's history buffer with the current state so the
+        first captured step has a valid input. Called once eagerly by the
+        InteractiveSimulator before `wp.ScopedCapture()` when the predictor
+        supports it (FastNeuralPredictor only)."""
+        prewarm_fn = getattr(self.nn_predictor, "prewarm", None)
+        if prewarm_fn is None:
+            return
+        axion_contacts = self.nn_predictor.create_axion_contacts(contacts)
+        prewarm_fn(state_in, axion_contacts, dt)
 
     def step(
         self,
@@ -123,7 +167,6 @@ class GPTEngine(SolverBase):
         contacts: newton.Contacts,
         dt: float,
     ):
-
         # PASS ALL THE INPUTS TO THE NN------------------------------------------------------------
         # Create AxionContacts object from Newton contacts
         axion_contacts = self.nn_predictor.create_axion_contacts(contacts)
@@ -134,9 +177,17 @@ class GPTEngine(SolverBase):
         # Predict using self.nn_predictor
         state_predicted, _ = self.nn_predictor.predict(dt=dt)
 
-        # Write into state_out 
-        state_out.joint_q = wp.from_torch(state_predicted[0,:2].reshape(2,))
-        state_out.joint_qd = wp.from_torch(state_predicted[0,2:].reshape(2,))
-        
+        # Write the prediction back to state_out via wp.copy(...)
+        wp.copy(
+            dest=state_out.joint_q,
+            src=wp.from_torch(state_predicted[0, :self.nn_predictor.dof_q_per_env]),
+        )
+        wp.copy(
+            dest=state_out.joint_qd,
+            src=wp.from_torch(state_predicted[0, self.nn_predictor.dof_q_per_env:]),
+        )
+
         newton.eval_fk(self.model, state_out.joint_q, state_out.joint_qd, state_out)
-        
+
+        if SHIFT_BODY_QD_TO_COM:
+            shift_body_qd_to_com_frame(self.model, state_out, self._raw_body_qd, self.device)

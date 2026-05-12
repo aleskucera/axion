@@ -208,6 +208,21 @@ class NeuralPredictor:
         if self.lambdas is not None:
             self.lambdas.zero_()
 
+    def prewarm(self, state_in, axion_contacts, dt: float) -> None:
+        """Fill the history buffer with the initial state before the first prediction.
+
+        The transformer was trained on sequences of length ``num_states_history``.
+        Without prewarm, the first ``num_states_history - 1`` steps receive shorter
+        contexts than the model was trained on, producing out-of-distribution
+        predictions whose errors feed back into subsequent steps.
+
+        Calling this once (before the simulation loop) with the initial state
+        repeats it ``num_states_history - 1`` times so that the very first call to
+        ``process_inputs`` inside ``step()`` completes a full-length context.
+        """
+        for _ in range(self.num_states_history - 1):
+            self.process_inputs(state_in, axion_contacts, dt)
+
     
     def _convert_newton_contacts_to_contacts_for_nn_model(
         self,

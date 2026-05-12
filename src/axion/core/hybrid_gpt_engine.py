@@ -16,74 +16,29 @@ import yaml
 import torch
 from newton import eval_fk
 from axion.neural_solver.standalone.neural_predictor import NeuralPredictor
-NN_BASE_PATH = Path.cwd() /"src"/"axion"/"neural_solver"/"train"/"trained_models"/"mse"/"04-24-2026-21-06-20" 
+from axion.neural_solver.standalone.fast_neural_predictor import FastNeuralPredictor
+from axion.neural_solver.standalone.neural_predictor_helpers import shift_body_qd_to_com_frame
+
+# Shared MSE checkpoint with .plan / .engine_meta.pt already built (see
+# docs/torch_to_tensorrt_conversion.md for the rebuild recipe).
+NN_BASE_PATH = Path.cwd() /"src"/"axion"/"neural_solver"/"train"/"trained_models"/"mse"/"05-12-2026-08-49-22"
 NN_PENDULUM_PT_PATH = NN_BASE_PATH/"nn"/"best_valid_valid_model.pt"
 NN_PENDULUM_CFG_PATH = NN_BASE_PATH/"cfg.yaml"
 
-# Flip to True after running export_to_onnx.py + build_tensorrt_engine.py
+# Flip to True after running export_to_onnx.py + build_tensorrt_engine.py.
+# Required for `execution: cuda_graph` — only the TRT path is capture-safe.
 USE_TENSORRT_ENGINE = False
 NN_PENDULUM_PLAN_PATH = NN_PENDULUM_PT_PATH.with_suffix(".plan")
 NN_PENDULUM_META_PATH = NN_PENDULUM_PT_PATH.with_suffix(".engine_meta.pt")
 
-
-@wp.kernel
-def _shift_body_qd_joint_to_com_kernel(
-    joint_count: int,
-    joint_parent: wp.array(dtype=int),
-    joint_child: wp.array(dtype=int),
-    joint_X_p: wp.array(dtype=wp.transform),
-    body_com: wp.array(dtype=wp.vec3),
-    body_q: wp.array(dtype=wp.transform),
-    raw_body_qd: wp.array(dtype=wp.spatial_vector),
-    body_qd: wp.array(dtype=wp.spatial_vector),
-):
-    # Newton's eval_fk writes body_qd whose linear part is the velocity at the
-    # parent-side joint anchor; the Axion solver expects it at the body CoM.
-    #
-    # This must be applied in model topology order because child raw velocities
-    # include parent-anchor velocities derived from the parent's raw FK velocity.
-    # Replace that stale parent contribution with the already-corrected parent
-    # CoM velocity before shifting the child velocity to its CoM.
-    for i in range(joint_count):
-        parent = joint_parent[i]
-        child = joint_child[i]
-        if child < 0:
-            continue
-
-        X_pj = joint_X_p[i]
-        if parent >= 0:
-            X_wpj = body_q[parent] * X_pj
-        else:
-            X_wpj = X_pj
-        parent_anchor = wp.transform_get_translation(X_wpj)
-
-        raw_child = raw_body_qd[child]
-        child_linear_at_anchor = wp.spatial_top(raw_child)
-        child_omega = wp.spatial_bottom(raw_child)
-
-        corrected_parent_anchor_linear = wp.vec3(0.0)
-        relative_linear = child_linear_at_anchor
-        if parent >= 0:
-            parent_com = wp.transform_point(body_q[parent], body_com[parent])
-
-            corrected_parent = body_qd[parent]
-            corrected_parent_anchor_linear = wp.spatial_top(corrected_parent) + wp.cross(
-                wp.spatial_bottom(corrected_parent), parent_anchor - parent_com
-            )
-
-            raw_parent = raw_body_qd[parent]
-            raw_parent_anchor_linear = wp.spatial_top(raw_parent) + wp.cross(
-                wp.spatial_bottom(raw_parent), parent_anchor - parent_com
-            )
-            relative_linear = child_linear_at_anchor - raw_parent_anchor_linear
-
-        child_com = wp.transform_point(body_q[child], body_com[child])
-        child_linear_at_com = (
-            corrected_parent_anchor_linear
-            + relative_linear
-            + wp.cross(child_omega, child_com - parent_anchor)
-        )
-        body_qd[child] = wp.spatial_vector(child_linear_at_com, child_omega)
+# Pendulum-specific lambda warm-start cleanup applied before passing the
+# neural prediction to the solver: zero entries with |λ| < HYBRID_LAMBDA_THRESH,
+# and zero entries past index HYBRID_LAMBDA_ZERO_FROM (contact-feature lambdas
+# the engine doesn't use for the pendulum). Mirrors the old eager-path
+# `torch.where(... < 0.01, ...)` + `[..., 11:] = 0.0` logic, now done inside
+# the predictor so it stays graph-capture-safe.
+HYBRID_LAMBDA_THRESH = 0.01
+HYBRID_LAMBDA_ZERO_FROM = 11
 
 
 class HybridGPTEngine(AxionEngineBase):
@@ -127,50 +82,50 @@ class HybridGPTEngine(AxionEngineBase):
                 meta_path=NN_PENDULUM_META_PATH,
                 device=str(self.device),
             )
+            # FastNeuralPredictor wraps the TRT engine in a capture-safe
+            # process_inputs / predict cycle and handles the lambda
+            # warm-start cleanup in-kernel (see HYBRID_LAMBDA_* above).
+            self.nn_predictor = FastNeuralPredictor(
+                newton_model=self.model,
+                nn_model=loaded_nn_model,
+                nn_cfg=loaded_nn_cfg,
+                device=str(self.device),
+                clip_small_lambdas=True,
+                small_lambda_threshold=HYBRID_LAMBDA_THRESH,
+                lambda_zero_from=HYBRID_LAMBDA_ZERO_FROM,
+            )
         else:
             print(f"Loading model from: {nn_model_path}")
             loaded_nn_model, robot_name = torch.load(
                 nn_model_path, map_location=str(self.device), weights_only=False
             )
             print(f"Loaded model for robot: {robot_name}")
+            # Torch path: keep the original predictor (incompatible with
+            # cuda_graph; lambda cleanup happens in `_neural_init_state_fn`).
+            self.nn_predictor = NeuralPredictor(
+                newton_model=self.model,
+                nn_model=loaded_nn_model,
+                nn_cfg=loaded_nn_cfg,
+                device=str(self.device),
+            )
 
-        # Initialize NeRDPredictor: robot config is inferred from self.model (newton.Model)
-        self.nn_predictor = NeuralPredictor(
-            newton_model=self.model,
-            nn_model=loaded_nn_model,
-            nn_cfg=loaded_nn_cfg,
-            device=str(self.device),
+        # Preallocated scratch for `_shift_body_qd_to_com_frame`. The kernel
+        # reads the raw eval_fk velocity and writes the shifted one into
+        # state.body_qd; we need a stable copy of the raw values, but a fresh
+        # `wp.empty_like` per step would break CUDA-graph replay. Allocate
+        # once here with shape `(body_count,)` (the same shape Newton uses for
+        # `state.body_qd`).
+        self._raw_body_qd = wp.empty(
+            self.model.body_count,
+            dtype=wp.spatial_vector,
+            device=self.device,
         )
+
         # Exposed for external diagnostics capture (e.g., engine comparison scripts).
+        # These are skipped during graph capture (see `_neural_init_state_fn`).
         self.last_predicted_next_lambdas = None
         self.last_predicted_next_body_pose = None
         self.last_predicted_next_body_vel = None
-
-    def _shift_body_qd_to_com_frame(self, state: State) -> None:
-        """Convert ``state.body_qd`` from the parent-side joint-anchor frame
-        produced by :func:`eval_fk` to the CoM frame expected by the Axion solver.
-
-        Operates in place on ``state.body_qd`` using the corresponding
-        ``state.body_q`` and the model's joint topology.
-        """
-        raw_body_qd = wp.empty_like(state.body_qd)
-        wp.copy(dest=raw_body_qd, src=state.body_qd)
-
-        wp.launch(
-            kernel=_shift_body_qd_joint_to_com_kernel,
-            dim=1,
-            inputs=[
-                self.model.joint_count,
-                self.model.joint_parent,
-                self.model.joint_child,
-                self.model.joint_X_p,
-                self.model.body_com,
-                state.body_q,
-                raw_body_qd,
-            ],
-            outputs=[state.body_qd],
-            device=self.device,
-        )
 
     def _neural_init_state_fn(
         self,
@@ -188,40 +143,48 @@ class HybridGPTEngine(AxionEngineBase):
 
         # Trigger neural network inference:
         next_states, next_lambdas = self.nn_predictor.predict(dt)
-        if next_lambdas is not None:
-            # Remove tiny neural lambda predictions so near-inactive constraints
-            # warm-start from exactly zero force.
+        if next_lambdas is not None and not isinstance(
+            self.nn_predictor, FastNeuralPredictor
+        ):
             next_lambdas = torch.where(
-                torch.abs(next_lambdas) < 0.01,
+                torch.abs(next_lambdas) < HYBRID_LAMBDA_THRESH,
                 torch.zeros_like(next_lambdas),
                 next_lambdas,
             )
-            next_lambdas[..., 11:] = 0.0
+            next_lambdas[..., HYBRID_LAMBDA_ZERO_FROM:] = 0.0
 
         dof_q = self.nn_predictor.dof_q_per_env
         dof_qd = self.nn_predictor.dof_qd_per_env
-        pred_joint_q = wp.from_torch(next_states[0, :dof_q].reshape(dof_q,).contiguous())
-        pred_joint_qd = wp.from_torch(next_states[0, dof_q:dof_q + dof_qd].reshape(dof_qd,).contiguous())
-
-        # Perform FK: joint_q -> body_q
-        wp.copy(dest=state_out.joint_q, src=pred_joint_q)
-        wp.copy(dest=state_out.joint_qd, src=pred_joint_qd)
+        # Note: rely on `next_states` being a contiguous preallocated buffer
+        # (FastNeuralPredictor guarantees this). For the eager path the tensor
+        # is also contiguous because it was constructed via torch.empty_like.
+        wp.copy(
+            dest=state_out.joint_q,
+            src=wp.from_torch(next_states[0, :dof_q]),
+        )
+        wp.copy(
+            dest=state_out.joint_qd,
+            src=wp.from_torch(next_states[0, dof_q:dof_q + dof_qd]),
+        )
         eval_fk(self.model, state_out.joint_q, state_out.joint_qd, state_out)
 
         # Newton's eval_fk produces body_qd in the parent-side joint-anchor frame,
         # but the Axion solver represents body_vel at the CoM. Shift in place so
         # both the diagnostic capture below and the warm-start copy into
         # self.data.body_vel are consistent with the engine's CoM-frame convention.
-        self._shift_body_qd_to_com_frame(state_out)
+        shift_body_qd_to_com_frame(self.model, state_out, self._raw_body_qd, self.device)
 
-        #-This part is only for exposing it to test_engines.py ---------------------------
-        self.last_predicted_next_body_pose = state_out.body_q.numpy().copy()
-        self.last_predicted_next_body_vel = state_out.body_qd.numpy().copy()
-        if next_lambdas is None:
-            self.last_predicted_next_lambdas = None
-        else:
-            self.last_predicted_next_lambdas = next_lambdas.detach().cpu().numpy().copy()
-        #---------------------------------------------------------------------------------
+        # Diagnostic capture (used by test_engines.py / comparison scripts).
+        # Skipped during graph capture because `.numpy()` is a host transfer.
+        if not self.device.is_capturing:
+            self.last_predicted_next_body_pose = state_out.body_q.numpy().copy()
+            self.last_predicted_next_body_vel = state_out.body_qd.numpy().copy()
+            if next_lambdas is None:
+                self.last_predicted_next_lambdas = None
+            else:
+                self.last_predicted_next_lambdas = (
+                    next_lambdas.detach().cpu().numpy().copy()
+                )
 
         # Transfer neural prediction of states into solver's working arrays:
         wp.copy(dest=self.data.body_pose, src=state_out.body_q)
@@ -229,7 +192,10 @@ class HybridGPTEngine(AxionEngineBase):
 
         # Initial guess of lambda (constraint forces).
         if next_lambdas is not None and getattr(self.config, "use_neural_lambda_init", True):
-            lambdas_wp = wp.from_torch(next_lambdas.squeeze(0).contiguous())
+            # Use the squeezed view directly — next_lambdas is already a
+            # preallocated buffer of shape (1, lambda_dim). wp.from_torch on
+            # a (lambda_dim,) view is zero-copy.
+            lambdas_wp = wp.from_torch(next_lambdas[0])
             wp.copy(dest=self.data._constr_force, src=lambdas_wp)
             wp.copy(dest=self.data._constr_force_prev_iter, src=lambdas_wp)
         elif getattr(self.config, "use_warm_start_forces", False):
@@ -237,6 +203,22 @@ class HybridGPTEngine(AxionEngineBase):
         else:
             self.data._constr_force.zero_()
             self.data._constr_force_prev_iter.zero_()
+
+    def prewarm(
+        self,
+        state_in: State,
+        contacts: Contacts,
+        dt: float,
+    ):
+        """Seed the predictor's history buffer with the current state so the
+        first captured step has a valid input. Called once eagerly by the
+        InteractiveSimulator before `wp.ScopedCapture()` when the predictor
+        supports it (FastNeuralPredictor only)."""
+        prewarm_fn = getattr(self.nn_predictor, "prewarm", None)
+        if prewarm_fn is None:
+            return
+        axion_contacts = self.nn_predictor.create_axion_contacts(contacts)
+        prewarm_fn(state_in, axion_contacts, dt)
 
     def step(
         self,

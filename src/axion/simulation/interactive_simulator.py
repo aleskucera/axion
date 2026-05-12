@@ -138,6 +138,11 @@ class InteractiveSimulator(BaseSimulator, ABC):
             self._run_segment_without_graph(segment_num)
 
     def _run_segment_without_graph(self, segment_num: int):
+        if segment_num == 0:
+            prewarm_fn = getattr(self.solver, "prewarm", None)
+            if prewarm_fn is not None:
+                print("INFO: Pre-warming neural solver history buffer (no-graph path)...")
+                prewarm_fn(self.current_state, self.contacts, self.clock.dt)
         n_steps = self.steps_per_segment
         for step in range(n_steps):
             self._single_physics_step(step)
@@ -176,6 +181,15 @@ class InteractiveSimulator(BaseSimulator, ABC):
 
     def _capture_cuda_graphs(self):
         n_steps = self.steps_per_segment
+        # Some solvers (GPTEngine / HybridGPTEngine with the TensorRT path)
+        # need an eager prewarm pass to seed their history ring buffer
+        # *before* capture so that the first captured step has a stable,
+        # fully-populated input. AxionEngine and similar classic solvers
+        # don't define `prewarm`, in which case we skip it.
+        prewarm_fn = getattr(self.solver, "prewarm", None)
+        if prewarm_fn is not None:
+            print("INFO: Pre-warming neural solver history buffer...")
+            prewarm_fn(self.current_state, self.contacts, self.clock.dt)
         print(f"INFO: Capturing CUDA Graph (steps={n_steps})...")
         with wp.ScopedCapture() as capture:
             for i in range(n_steps):

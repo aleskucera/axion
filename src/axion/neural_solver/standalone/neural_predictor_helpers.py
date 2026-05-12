@@ -1,6 +1,8 @@
 
 import numpy as np
 import torch
+import warp as wp
+import newton
 try:
     from src.axion.neural_solver.utils import torch_utils
 except ModuleNotFoundError:
@@ -407,3 +409,100 @@ def convert_coordinate_frame(
         return states_body, next_states_body, contact_points_1_body, contact_normals_body, gravity_dir_body
     else:
         raise NotImplementedError
+
+
+# ---------------------------------------------------------------------------
+# body_qd frame correction after eval_fk
+# ---------------------------------------------------------------------------
+
+@wp.kernel
+def _shift_body_qd_joint_to_com_kernel(
+    joint_count: int,
+    joint_parent: wp.array(dtype=int),
+    joint_child: wp.array(dtype=int),
+    joint_X_p: wp.array(dtype=wp.transform),
+    body_com: wp.array(dtype=wp.vec3),
+    body_q: wp.array(dtype=wp.transform),
+    raw_body_qd: wp.array(dtype=wp.spatial_vector),
+    body_qd: wp.array(dtype=wp.spatial_vector),
+):
+    # Newton's eval_fk writes body_qd whose linear part is the velocity at the
+    # parent-side joint anchor; the Axion solver expects it at the body CoM.
+    #
+    # This must be applied in model topology order because child raw velocities
+    # include parent-anchor velocities derived from the parent's raw FK velocity.
+    # Replace that stale parent contribution with the already-corrected parent
+    # CoM velocity before shifting the child velocity to its CoM.
+    for i in range(joint_count):
+        parent = joint_parent[i]
+        child = joint_child[i]
+        if child < 0:
+            continue
+
+        X_pj = joint_X_p[i]
+        if parent >= 0:
+            X_wpj = body_q[parent] * X_pj
+        else:
+            X_wpj = X_pj
+        parent_anchor = wp.transform_get_translation(X_wpj)
+
+        raw_child = raw_body_qd[child]
+        child_linear_at_anchor = wp.spatial_top(raw_child)
+        child_omega = wp.spatial_bottom(raw_child)
+
+        corrected_parent_anchor_linear = wp.vec3(0.0)
+        relative_linear = child_linear_at_anchor
+        if parent >= 0:
+            parent_com = wp.transform_point(body_q[parent], body_com[parent])
+
+            corrected_parent = body_qd[parent]
+            corrected_parent_anchor_linear = wp.spatial_top(corrected_parent) + wp.cross(
+                wp.spatial_bottom(corrected_parent), parent_anchor - parent_com
+            )
+
+            raw_parent = raw_body_qd[parent]
+            raw_parent_anchor_linear = wp.spatial_top(raw_parent) + wp.cross(
+                wp.spatial_bottom(raw_parent), parent_anchor - parent_com
+            )
+            relative_linear = child_linear_at_anchor - raw_parent_anchor_linear
+
+        child_com = wp.transform_point(body_q[child], body_com[child])
+        child_linear_at_com = (
+            corrected_parent_anchor_linear
+            + relative_linear
+            + wp.cross(child_omega, child_com - parent_anchor)
+        )
+        body_qd[child] = wp.spatial_vector(child_linear_at_com, child_omega)
+
+
+def shift_body_qd_to_com_frame(
+    model: newton.Model,
+    state: newton.State,
+    raw_body_qd_scratch: wp.array,
+    device,
+) -> None:
+    """Convert ``state.body_qd`` from the parent-side joint-anchor frame
+    produced by :func:`newton.eval_fk` to the CoM frame expected by Newton's
+    maximal-coordinate convention and the Axion solver.
+
+    Operates in place on ``state.body_qd``.  ``raw_body_qd_scratch`` must be a
+    preallocated ``wp.array`` of shape ``(model.body_count,)`` and dtype
+    ``wp.spatial_vector`` — pass ``self._raw_body_qd`` from the engine so the
+    call remains CUDA-graph capture-safe (no allocation inside the graph).
+    """
+    wp.copy(dest=raw_body_qd_scratch, src=state.body_qd)
+    wp.launch(
+        kernel=_shift_body_qd_joint_to_com_kernel,
+        dim=1,
+        inputs=[
+            model.joint_count,
+            model.joint_parent,
+            model.joint_child,
+            model.joint_X_p,
+            model.body_com,
+            state.body_q,
+            raw_body_qd_scratch,
+        ],
+        outputs=[state.body_qd],
+        device=device,
+    )
