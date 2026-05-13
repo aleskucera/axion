@@ -175,8 +175,8 @@ def collect_dataset(
         data=rollouts['axion_contacts']['contact_thickness1'].detach().cpu().numpy()
     )
     data_grp.create_dataset(
-        name="joint_target_pos",
-        data=rollouts["joint_target_pos"].detach().cpu().numpy(),
+        name="control_active",
+        data=rollouts["control_active"].detach().cpu().numpy(),
     )
     data_grp.create_dataset(
         name="joint_position_control_error",
@@ -200,12 +200,13 @@ def collect_dataset(
     data_grp.attrs['axion_contacts_format'] = (
         "batched AxionContacts arrays captured before convert_newton_contacts_to_contacts_for_nn_model"
     )
-    data_grp.attrs["joint_target_dim"] = rollouts["joint_target_pos"].shape[-1]
+    data_grp.attrs["control_active_dim"] = rollouts["control_active"].shape[-1]
     data_grp.attrs["joint_position_control_error_dim"] = rollouts["joint_position_control_error"].shape[-1]
     data_grp.attrs["joint_position_control_error_definition"] = (
         "Per-DOF TARGET_POSITION error before /dt: q - target with revolute shortest-path "
         "wrap [-pi, pi], matching axion.constraints.control_constraint.compute_control_properties "
-        "lines 131-145; q taken from states at step start (same time index as joint_target_pos broadcast)."
+        "lines 131-145; q taken from states at step start (same time index as control_active). "
+        "Pair with control_active (1 = constrained joint target active, 0 = passive / no position drive)."
     )
     data_grp.attrs['next_state_dim'] = rollouts['next_states'].shape[-1]
     data_grp.attrs['lambda_dim'] = int(rollouts['lambdas'].shape[-1])

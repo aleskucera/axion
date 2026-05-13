@@ -15,7 +15,10 @@ from pathlib import Path
 import yaml
 import torch
 from newton import eval_fk
-from axion.neural_solver.standalone.neural_predictor import NeuralPredictor
+from axion.neural_solver.standalone.neural_predictor import (
+    NeuralPredictor,
+    control_active_mask_from_newton_model,
+)
 from axion.neural_solver.standalone.fast_neural_predictor import FastNeuralPredictor
 from axion.neural_solver.standalone.neural_predictor_helpers import shift_body_qd_to_com_frame
 
@@ -133,13 +136,21 @@ class HybridGPTEngine(AxionEngineBase):
         state_out: State,
         axion_contacts: Contacts,
         dt: float,
+        joint_target_pos: Optional[torch.Tensor] = None,
+        control_active: Optional[torch.Tensor] = None,
     ) -> None:
         """
         Perform neural network model inference to get an initial guess for the Newton method.
         For MSEModel: extracts both state and lambda predictions from the joint regression output.
         """
         # Process inputs: coordinate frame conversion, state embedding.
-        self.nn_predictor.process_inputs(state_in, axion_contacts, dt)
+        self.nn_predictor.process_inputs(
+            state_in,
+            axion_contacts,
+            dt,
+            joint_target_pos=joint_target_pos,
+            control_active=control_active,
+        )
 
         # Trigger neural network inference:
         next_states, next_lambdas = self.nn_predictor.predict(dt)
@@ -231,8 +242,28 @@ class HybridGPTEngine(AxionEngineBase):
         # Process Newton Contacts -> Axion Contacts
         self.load_data(state_in, control, contacts, dt)
 
+        # Extract joint target positions from control (shape: dof_q -> (1, dof_q)).
+        joint_target_pos = wp.to_torch(control.joint_target_pos).unsqueeze(0)
+        pred = self.nn_predictor
+        control_active = control_active_mask_from_newton_model(
+            self.model,
+            dof_q_per_env=pred.dof_q_per_env,
+            num_worlds=pred.num_worlds,
+            num_joints_per_env=pred.num_joints_per_env,
+            joint_q_start=pred.joint_q_start,
+            joint_q_end=pred.joint_q_end,
+            device=pred.device,
+        )
+
         # Perform neural network model inference to get a initial guess for the Newton method.
-        self._neural_init_state_fn(state_in, state_out, self.axion_contacts, dt)
+        self._neural_init_state_fn(
+            state_in,
+            state_out,
+            self.axion_contacts,
+            dt,
+            joint_target_pos=joint_target_pos,
+            control_active=control_active,
+        )
 
         # Call Newton solver
         self._solve()

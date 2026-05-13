@@ -54,7 +54,7 @@ inputs:
     contact_points_1,
     contact_depths,
     gravity_dir,
-    joint_target_pos,
+    control_active,
     joint_position_control_error,
   ]
 

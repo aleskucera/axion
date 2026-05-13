@@ -10,7 +10,7 @@ python src/axion/neural_solver/generate/generate_dataset_pendulum.py --env-name 
 ```
 Use `--passive` to run free/passive dynamics:
 - sets `joint_dof_mode=JointMode.NONE` (no implicit target-position tracking),
-- keeps sampled `joint_target_pos` at zero and does not apply it to stepping,
+- records `control_active` as zero and does not apply sampled targets to stepping,
 - disables the additive FF gravity term.
 
 Generated HDF5 includes:

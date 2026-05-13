@@ -155,7 +155,7 @@ Optional keys that can be used if configured as inputs:
 
 - `gravity_dir` (used if listed in `inputs.low_dim`)
 - `root_body_q` (only used if listed in `inputs.low_dim`)
-- `joint_target_pos`, `joint_position_control_error` — per-DOF control-related channels when present in the HDF5 `data/` group (e.g. Pendulum datasets from the trajectory sampler); list them explicitly in `inputs.low_dim`. They are not synthesized; if they are listed but missing from the file, training will error when batches are built or fed to the model.
+- `control_active`, `joint_position_control_error` — per-DOF control-related channels when present in the HDF5 `data/` group (e.g. Pendulum datasets from the trajectory sampler); list them explicitly in `inputs.low_dim`. They are not synthesized; if they are listed but missing from the file, training will error when batches are built or fed to the model. Legacy datasets may still expose `joint_target_pos` instead of `control_active`; regenerate data or adjust `inputs.low_dim` to match the file.
 
 `states_embedding` may appear in `inputs.low_dim` without a matching HDF5 dataset when `states_embedding_type` is `identical`; the utils provider builds it from `states`.
 

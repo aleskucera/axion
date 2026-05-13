@@ -58,8 +58,8 @@ def build_pendulum_model(
             p=wp.vec3(0.0, 0.0, PENDULUM_HEIGHT), q=wp.quat_identity()
         ),
         child_xform=wp.transform(p=wp.vec3(-hx, 0.0, 0.0), q=wp.quat_identity()),
-        target_ke=1000.0,
-        target_kd=50.0,
+        target_ke=2000.0,
+        target_kd=100.0,
         custom_attributes={
             #"joint_target_ki": [0.5],
             "joint_dof_mode": [joint_dof_mode],
@@ -71,8 +71,8 @@ def build_pendulum_model(
         axis=wp.vec3(0.0, 1.0, 0.0),
         parent_xform=wp.transform(p=wp.vec3(hx, 0.0, 0.0), q=wp.quat_identity()),
         child_xform=wp.transform(p=wp.vec3(-hx, 0.0, 0.0), q=wp.quat_identity()),
-        target_ke=1000.0,
-        target_kd=50.0,
+        target_ke=2000.0,
+        target_kd=100.0,
         custom_attributes={
             #"joint_target_ki": [0.5],
             "joint_dof_mode": [joint_dof_mode],

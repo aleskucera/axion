@@ -466,7 +466,7 @@ class TransformerNeuralModelUtilsProvider:
             if contact_key in model_inputs and model_inputs[contact_key] is not None:
                 model_inputs[contact_key] = _ensure_bt(model_inputs[contact_key])
 
-        for ctrl_key in ("joint_target_pos", "joint_position_control_error"):
+        for ctrl_key in ("control_active", "joint_position_control_error"):
             if ctrl_key in model_inputs and model_inputs[ctrl_key] is not None:
                 model_inputs[ctrl_key] = _ensure_bt(model_inputs[ctrl_key])
 
@@ -504,7 +504,7 @@ class TransformerNeuralModelUtilsProvider:
                     "states"
                 ].clone()
             for name in self.expected_low_dim_keys:
-                if name in ("joint_target_pos", "joint_position_control_error"):
+                if name in ("control_active", "joint_position_control_error"):
                     processed_model_inputs[name] = torch.zeros(
                         (self.num_worlds, 1, self.dof_q_per_env),
                         dtype=torch.float32,

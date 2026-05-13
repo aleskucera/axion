@@ -47,6 +47,15 @@ except ModuleNotFoundError:
         TensorRTMSEEngine,
     )
 
+try:
+    from src.axion.neural_solver.generate.joint_target_position_error import (
+        joint_position_target_errors_torch,
+    )
+except ModuleNotFoundError:
+    from axion.neural_solver.generate.joint_target_position_error import (
+        joint_position_target_errors_torch,
+    )
+
 
 PENDULUM_MAX_NUM_CONTACTS_PER_ROBOT_MODEL = 4
 DT_FROM_TRAINING = 0.01
@@ -556,6 +565,8 @@ class FastNeuralPredictor:
             self.nn_model_inputs["states"] = self.nn_model_inputs["states_embedding"]
 
         self._prewarmed = False
+        self._pending_joint_target_pos: Optional[torch.Tensor] = None
+        self._pending_control_active: Optional[torch.Tensor] = None
 
     # ─────────────────────────────────────────────────────────────
     # Construction helpers
@@ -570,6 +581,9 @@ class FastNeuralPredictor:
             "contact_points_1": PENDULUM_MAX_NUM_CONTACTS_PER_ROBOT_MODEL * 3,
             "contact_depths": PENDULUM_MAX_NUM_CONTACTS_PER_ROBOT_MODEL,
             "gravity_dir": 3,
+            "control_active": self.dof_q_per_env,
+            "joint_position_control_error": self.dof_q_per_env,
+            "joint_target_pos": self.dof_q_per_env,
         }
         if key not in mapping:
             raise KeyError(
@@ -609,6 +623,39 @@ class FastNeuralPredictor:
             self._cached_body_q_id = bq_id
         return self._cached_body_q_2d
 
+    def _fill_pending_control_channels(self, state_in) -> None:
+        """Populate TRT raw rows for position-control inputs when present in the engine."""
+        if not any(
+            k in self._raw
+            for k in ("control_active", "joint_position_control_error", "joint_target_pos")
+        ):
+            return
+        jq_t = wp.to_torch(state_in.joint_q).reshape(self.num_worlds, self.dof_q_per_env)
+        current_q = jq_t.to(device=str(self.device), dtype=torch.float32)
+        if self._pending_joint_target_pos is None:
+            target = torch.zeros_like(current_q)
+        else:
+            target = self._pending_joint_target_pos.to(
+                device=str(self.device), dtype=torch.float32
+            )
+        err = joint_position_target_errors_torch(current_q, target, is_angular=True)
+        if self._pending_control_active is None:
+            active = (
+                torch.zeros_like(current_q)
+                if self._pending_joint_target_pos is None
+                else torch.ones_like(current_q)
+            )
+        else:
+            active = self._pending_control_active.to(
+                device=str(self.device), dtype=torch.float32
+            )
+        if "control_active" in self._raw:
+            self._raw["control_active"].copy_(active)
+        if "joint_position_control_error" in self._raw:
+            self._raw["joint_position_control_error"].copy_(err)
+        if "joint_target_pos" in self._raw:
+            self._raw["joint_target_pos"].copy_(target)
+
     # ─────────────────────────────────────────────────────────────
     # Public API (matches NeuralPredictor)
     # ─────────────────────────────────────────────────────────────
@@ -619,6 +666,8 @@ class FastNeuralPredictor:
         if self.lambdas is not None:
             self.lambdas.zero_()
         self._prewarmed = False
+        self._pending_joint_target_pos = None
+        self._pending_control_active = None
 
     def create_axion_contacts(self, newton_contacts) -> AxionContacts:
         """Reuse the preallocated AxionContacts; just refresh contact data.
@@ -632,6 +681,8 @@ class FastNeuralPredictor:
         every slot. Equivalent to the original "history of length 1, pad with
         first entry" behaviour on step 0. Must be called once eagerly before
         `wp.ScopedCapture()`."""
+        self._pending_joint_target_pos = None
+        self._pending_control_active = None
         self._compute_new_row(state_in, axion_contacts, dt)
         self._normalize_raw_keys()
         with torch.cuda.stream(self._torch_stream_from_warp()):
@@ -640,10 +691,19 @@ class FastNeuralPredictor:
                     self._engine_input_buf[:, t, s:e].copy_(self._raw[key])
         self._prewarmed = True
 
-    def process_inputs(self, state_in, axion_contacts, dt: float) -> dict:
+    def process_inputs(
+        self,
+        state_in,
+        axion_contacts,
+        dt: float,
+        joint_target_pos: Optional[torch.Tensor] = None,
+        control_active: Optional[torch.Tensor] = None,
+    ) -> dict:
         """Compute the new row, shift-left the engine input ring buffer, and
         write the new row at slot T-1. Shape-static; uses only kernel
         launches and (T-1) + len(keys) disjoint `copy_` ops."""
+        self._pending_joint_target_pos = joint_target_pos
+        self._pending_control_active = control_active
         self._compute_new_row(state_in, axion_contacts, dt)
         # Save the physical (wrapped but not normalized) state before
         # _normalize_raw_keys() overwrites _raw["states_embedding"] in-place.
@@ -857,6 +917,8 @@ class FastNeuralPredictor:
                 wp.to_torch(self._contact_depths_masked_wp)
             )
             self._raw["gravity_dir"].copy_(wp.to_torch(self._gravity_body_wp))
+
+            self._fill_pending_control_channels(state_in)
 
     def _normalize_raw_keys(self):
         """Apply per-key (x - mean) * inv_std in place on each raw buffer."""

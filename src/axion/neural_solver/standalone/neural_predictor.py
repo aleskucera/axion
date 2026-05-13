@@ -9,7 +9,7 @@ import numpy as np
 import torch
 import warp as wp
 import newton
-from typing import Dict, Optional
+from typing import Dict, Optional, Sequence
 from collections import deque
 
 try:
@@ -28,8 +28,12 @@ try:
     from src.axion.neural_solver.utils import torch_utils
     from src.axion.types import reorder_ground_contacts_kernel, contact_penetration_depth_kernel
     from src.axion.core.contacts import AxionContacts
+    from src.axion.core.types import JointMode
     from src.axion.neural_solver.models.mtl_model import MTLModel as _MTLModel
     from src.axion.neural_solver.models.mse_model import MSEModel as _MSEModel
+    from src.axion.neural_solver.generate.joint_target_position_error import (
+        joint_position_target_errors_torch,
+    )
 
 except ModuleNotFoundError:
     from axion.neural_solver.neural_model_utils_providers.transformer_neural_utils_provider_new import (
@@ -47,8 +51,12 @@ except ModuleNotFoundError:
     from axion.neural_solver.utils import torch_utils
     from axion.types import reorder_ground_contacts_kernel, contact_penetration_depth_kernel
     from axion.core.contacts import AxionContacts
+    from axion.core.types import JointMode
     from axion.neural_solver.models.mtl_model import MTLModel as _MTLModel
     from axion.neural_solver.models.mse_model import MSEModel as _MSEModel
+    from axion.neural_solver.generate.joint_target_position_error import (
+        joint_position_target_errors_torch,
+    )
 
 
 
@@ -61,6 +69,42 @@ JOINT_DISTANCE = newton.JointType.DISTANCE
 
 PENDULUM_MAX_NUM_CONTACTS_PER_ROBOT_MODEL = 4
 DT_FROM_TRAINING = 0.01
+
+
+def control_active_mask_from_newton_model(
+    model: newton.Model,
+    *,
+    dof_q_per_env: int,
+    num_worlds: int,
+    num_joints_per_env: int,
+    joint_q_start: Sequence[int],
+    joint_q_end: Sequence[int],
+    device: torch.device | str,
+) -> torch.Tensor:
+    """
+    Build a (num_worlds, dof_q_per_env) mask matching dataset ``control_active``:
+    1.0 where ``model.joint_dof_mode`` indicates TARGET_POSITION for that joint's
+    driven DOFs, else 0.0. Aligns with ``JointMode.NONE`` vs ``TARGET_POSITION``
+    set on the articulation (e.g. ENABLE_CONTROL in double_pendulum examples).
+    """
+    mask = torch.zeros((num_worlds, dof_q_per_env), device=device, dtype=torch.float32)
+    wc = int(model.world_count)
+    jdm = wp.to_torch(model.joint_dof_mode).reshape(wc, -1)
+    qd_st = wp.to_torch(model.joint_qd_start).reshape(wc, -1).long()
+    tp = float(JointMode.TARGET_POSITION)
+    for w in range(min(wc, num_worlds)):
+        for ji in range(num_joints_per_env):
+            qds = int(qd_st[w, ji].item())
+            mode = float(jdm[w, qds].item())
+            if mode != tp:
+                continue
+            q_lo = int(joint_q_start[ji])
+            q_hi = int(joint_q_end[ji])
+            q_lo = max(0, min(q_lo, dof_q_per_env))
+            q_hi = max(q_lo, min(q_hi, dof_q_per_env))
+            mask[w, q_lo:q_hi] = 1.0
+    return mask
+
 
 class NeuralPredictor:
     """
@@ -201,6 +245,10 @@ class NeuralPredictor:
             self.state_embedding_dim = self.state_dim
         else:
             raise NotImplementedError(f"Unknown states_embedding_type: {self.states_embedding_type}")
+
+        # Detect whether this model requires control-active mask (+ computed position error).
+        _input_low_dim = nn_cfg.get('inputs', {}).get('low_dim', [])
+        self.needs_control_active: bool = 'control_active' in _input_low_dim
     
     def reset(self):
         """Reset the history buffer (call at start of new trajectory)."""
@@ -208,7 +256,14 @@ class NeuralPredictor:
         if self.lambdas is not None:
             self.lambdas.zero_()
 
-    def prewarm(self, state_in, axion_contacts, dt: float) -> None:
+    def prewarm(
+        self,
+        state_in,
+        axion_contacts,
+        dt: float,
+        joint_target_pos: Optional[torch.Tensor] = None,
+        control_active: Optional[torch.Tensor] = None,
+    ) -> None:
         """Fill the history buffer with the initial state before the first prediction.
 
         The transformer was trained on sequences of length ``num_states_history``.
@@ -221,7 +276,13 @@ class NeuralPredictor:
         ``process_inputs`` inside ``step()`` completes a full-length context.
         """
         for _ in range(self.num_states_history - 1):
-            self.process_inputs(state_in, axion_contacts, dt)
+            self.process_inputs(
+                state_in,
+                axion_contacts,
+                dt,
+                joint_target_pos=joint_target_pos,
+                control_active=control_active,
+            )
 
     
     def _convert_newton_contacts_to_contacts_for_nn_model(
@@ -363,9 +424,22 @@ class NeuralPredictor:
         state_in, #newton.State,
         axion_contacts, #newton.Contacts,
         dt: float,
+        joint_target_pos: Optional[torch.Tensor] = None,
+        control_active: Optional[torch.Tensor] = None,
     ) -> Dict[str, torch.Tensor]:
         """
         Process model inputs: coordinate frame conversion, state embedding.
+
+        Args:
+            state_in: Current Newton state.
+            axion_contacts: Preprocessed Axion contacts.
+            dt: Simulation timestep.
+            joint_target_pos: Target joint positions from the simulator control buffer,
+                shape (num_worlds, dof_q). Used with ``current_q`` to compute
+                ``joint_position_control_error``. When None, targets are treated as zero.
+            control_active: Per-DOF mask in ``{0, 1}``, shape (num_worlds, dof_q).
+                When None and ``needs_control_active``, inferred as zeros if
+                ``joint_target_pos`` is None else ones (implicit PD tracking on).
         """
         # Axion engine integrates maximal coordinates (body_q/body_qd). Ensure
         # generalized coordinates are synchronized before reading joint_q/joint_qd.
@@ -397,6 +471,28 @@ class NeuralPredictor:
         }
         if self.lambdas is not None:
             history_entry["lambdas"] = self.lambdas.clone()
+
+        # Position-control channels (dataset-aligned): mask + shortest-path error vs targets.
+        if self.needs_control_active:
+            current_q = states[:, :self.dof_q_per_env]  # (num_worlds, dof_q)
+            if joint_target_pos is None:
+                target = torch.zeros_like(current_q)
+            else:
+                target = joint_target_pos.to(self.device)
+            control_error = joint_position_target_errors_torch(
+                current_q, target, is_angular=True
+            )
+            if control_active is None:
+                active = (
+                    torch.zeros_like(current_q)
+                    if joint_target_pos is None
+                    else torch.ones_like(current_q)
+                )
+            else:
+                active = control_active.to(self.device)
+            history_entry["control_active"] = active.clone()
+            history_entry["joint_position_control_error"] = control_error.clone()
+
         self.states_history.append(history_entry)
 
         # Assemble model inputs

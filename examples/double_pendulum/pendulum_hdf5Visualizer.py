@@ -16,7 +16,7 @@ from pendulum_utils import set_tilted_plane_from_coefficients
 HDF5_PATH = (
     pathlib.Path(__file__).resolve().parents[2]
     / "src" / "axion" / "neural_solver" / "datasets" / "Pendulum"
-    / "pendulumControlTest3.hdf5"
+    / "pendulumControlTestPassive.hdf5"
 )
 
 DT = 0.01
@@ -31,8 +31,10 @@ def _print_dataset_summary(
     plane_coeffs: Optional[np.ndarray],
     next_states: Optional[np.ndarray],
     joint_target_pos: Optional[np.ndarray],
+    control_active: Optional[np.ndarray],
     state_dim_attr,
     joint_target_dim_attr,
+    control_active_dim_attr,
     traj_idx: int,
 ):
     print(f"Loaded trajectory {traj_idx}: {states.shape[0]} timesteps")
@@ -67,8 +69,17 @@ def _print_dataset_summary(
     else:
         print("  joint_target_pos not found.")
 
+    if control_active is not None:
+        print(f"  control_active shape={control_active.shape}")
+        print(f"    unique values (approx): {np.unique(np.round(control_active, 4))}")
+        print(f"    first-step mask = {control_active[0].tolist()}")
+    else:
+        print("  control_active not found.")
+
     if joint_target_dim_attr is not None:
         print(f"  metadata joint_target_dim={int(joint_target_dim_attr)}")
+    if control_active_dim_attr is not None:
+        print(f"  metadata control_active_dim={int(control_active_dim_attr)}")
 
     q0, q1, qd0, qd1 = states[0, 0], states[0, 1], states[0, 2], states[0, 3]
     print(f"  Initial state (q0, q1, q0_dot, q1_dot): [{q0:.4f}, {q1:.4f}, {qd0:.4f}, {qd1:.4f}]")
@@ -80,7 +91,8 @@ def load_trajectory(hdf5_path: pathlib.Path, traj_idx: int):
         states: (num_steps, 4) with [q0, q1, q0_dot, q1_dot]
         plane_coeffs: (4,) or None
         next_states: (num_steps, 4) or None
-        joint_target_pos: (num_steps, 2) or None
+        joint_target_pos: (num_steps, 2) or None (legacy datasets)
+        control_active: (num_steps, 2) or None
     """
     with h5py.File(hdf5_path, "r") as f:
         if "data" not in f:
@@ -98,6 +110,7 @@ def load_trajectory(hdf5_path: pathlib.Path, traj_idx: int):
 
         state_dim_attr = _safe_attr(data_grp.attrs, "state_dim")
         joint_target_dim_attr = _safe_attr(data_grp.attrs, "joint_target_dim")
+        control_active_dim_attr = _safe_attr(data_grp.attrs, "control_active_dim")
 
         if "plane_coefficients" in data_grp:
             # (num_steps, num_trajectories, 4) -> first step defines plane for trajectory
@@ -115,16 +128,23 @@ def load_trajectory(hdf5_path: pathlib.Path, traj_idx: int):
         else:
             joint_target_pos = None
 
+        if "control_active" in data_grp:
+            control_active = np.array(data_grp["control_active"][:, traj_idx, :])
+        else:
+            control_active = None
+
     _print_dataset_summary(
         states=states,
         plane_coeffs=plane_coeffs,
         next_states=next_states,
         joint_target_pos=joint_target_pos,
+        control_active=control_active,
         state_dim_attr=state_dim_attr,
         joint_target_dim_attr=joint_target_dim_attr,
+        control_active_dim_attr=control_active_dim_attr,
         traj_idx=traj_idx,
     )
-    return states, plane_coeffs, next_states, joint_target_pos
+    return states, plane_coeffs, next_states, joint_target_pos, control_active
 
 
 def set_state_from_generalized(
@@ -177,7 +197,7 @@ def draw_axes(viewer, device):
 def main():
     wp.init()
 
-    trajectory, plane_coeffs, _next_states, _joint_target_pos = load_trajectory(HDF5_PATH, TRAJECTORY_INDEX)
+    trajectory, plane_coeffs, _next_states, _joint_target_pos, _control_active = load_trajectory(HDF5_PATH, TRAJECTORY_INDEX)
     num_steps = trajectory.shape[0]
     total_sim_time = num_steps * DT
 

@@ -21,7 +21,10 @@ from .engine_logger import EngineLogger
 import yaml
 import torch
 import sys
-from axion.neural_solver.standalone.neural_predictor import NeuralPredictor
+from axion.neural_solver.standalone.neural_predictor import (
+    NeuralPredictor,
+    control_active_mask_from_newton_model,
+)
 from axion.neural_solver.standalone.fast_neural_predictor import FastNeuralPredictor
 from axion.nn_prediction import models, utils
 
@@ -30,16 +33,17 @@ from axion.nn_prediction import models, utils
 sys.modules['models'] = models
 sys.modules['utils'] = utils
 
-# Default to the MSE checkpoint that already has a built .plan / .engine_meta.pt
-# (see `src/axion/neural_solver/docs/torch_to_tensorrt_conversion.md`). The
-# torch-only path still works against this .pt file.
-NN_BASE_PATH = Path.cwd() /"src"/"axion"/"neural_solver"/"train"/"trained_models"/"03-17-2026-15-12-19" #"mse"/"05-12-2026-17-30-11"
-NN_PENDULUM_PT_PATH = NN_BASE_PATH/"nn"/"best_eval_model.pt"
+
+BEST_STATE_ONLY_MODEL = "03-17-2026-15-12-19"   # debatable. # bet_eval_model.pt
+BEST_STATE_AND_LAMBDA_MODEL = Path("mse") / "05-12-2026-17-30-11"  # best_valid_valid_model.pt
+
+NN_BASE_PATH = Path.cwd() /"src"/"axion"/"neural_solver"/"train"/"trained_models"/ "mse"/"05-06-2026-11-20-59" 
+NN_PENDULUM_PT_PATH = NN_BASE_PATH/"nn"/"best_valid_valid_model.pt"
 NN_PENDULUM_CFG_PATH = NN_BASE_PATH/"cfg.yaml"
 
 # Flip to True after running export_to_onnx.py + build_tensorrt_engine.py.
 # Required for `execution: cuda_graph` — only the TRT path is capture-safe.
-USE_TENSORRT_ENGINE = True
+USE_TENSORRT_ENGINE = False
 NN_PENDULUM_PLAN_PATH = NN_PENDULUM_PT_PATH.with_suffix(".plan")
 NN_PENDULUM_META_PATH = NN_PENDULUM_PT_PATH.with_suffix(".engine_meta.pt")
 
@@ -162,8 +166,27 @@ class GPTEngine(SolverBase):
         # Create AxionContacts object from Newton contacts
         axion_contacts = self.nn_predictor.create_axion_contacts(contacts)
 
+        # Extract joint target positions from control (shape: dof_q -> (1, dof_q)).
+        joint_target_pos = wp.to_torch(control.joint_target_pos).unsqueeze(0)
+        pred = self.nn_predictor
+        control_active = control_active_mask_from_newton_model(
+            self.model,
+            dof_q_per_env=pred.dof_q_per_env,
+            num_worlds=pred.num_worlds,
+            num_joints_per_env=pred.num_joints_per_env,
+            joint_q_start=pred.joint_q_start,
+            joint_q_end=pred.joint_q_end,
+            device=pred.device,
+        )
+
         # Process the inputs (Neural Predictor does this internally using process_inputs)
-        self.nn_predictor.process_inputs(state_in, axion_contacts, dt)
+        self.nn_predictor.process_inputs(
+            state_in,
+            axion_contacts,
+            dt,
+            joint_target_pos=joint_target_pos,
+            control_active=control_active,
+        )
 
         # Predict using self.nn_predictor
         state_predicted, _ = self.nn_predictor.predict(dt=dt)

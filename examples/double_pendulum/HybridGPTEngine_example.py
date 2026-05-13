@@ -10,6 +10,7 @@ import warp as wp
 from axion import EngineConfig
 from axion import ExecutionConfig
 from axion import InteractiveSimulator
+from axion import JointMode
 from axion import LoggingConfig
 from axion import RenderingConfig
 from axion import SimulationConfig
@@ -23,6 +24,10 @@ CONFIG_PATH = pathlib.Path(__file__).parent.parent.joinpath("conf")
 ENABLE_STATE_LOGGING: bool = False  # set True to write pendulum-state HDF5
 if ENABLE_STATE_LOGGING:
     from axion.neural_solver.logging.state_logger_for_examples import PendulumStateLogger
+
+ENABLE_CONTROL = True  # True=controller active, False=controller off
+TARGET_POS_Q0 = np.pi / 2
+TARGET_POS_Q1 = np.pi / 6
 
 # ---------------------------------------------------------------------------
 # Helper: generalized → maximal coordinate conversion
@@ -102,9 +107,18 @@ class Simulator(InteractiveSimulator):
                 q0=q0, q1=q1, qd0=qd0, qd1=qd1,
             )
 
+        # Preallocate the target buffer once so it stays alive across CUDA graph replays.
+        self.q_target = wp.array(
+            [TARGET_POS_Q0, TARGET_POS_Q1],
+            dtype=wp.float32,
+            device=self.model.device,
+        )
+
     @override
     def control_policy(self, state: newton.State):
-        pass
+        if not ENABLE_CONTROL:
+            return
+        wp.copy(self.control.joint_target_pos, self.q_target)
 
     @override
     def _render(self, segment_num: int):
@@ -178,6 +192,8 @@ class Simulator(InteractiveSimulator):
         Use the same pendulum articulation as AxionEngineWrapper.py
         """
         model = build_pendulum_model(num_worlds=1, device="cuda:0")
+        mode = JointMode.TARGET_POSITION if ENABLE_CONTROL else JointMode.NONE
+        model.joint_dof_mode.assign(wp.array([mode, mode], dtype=wp.int32, device=model.device))
         a, b, c, d = self.plane_coefficients
         set_tilted_plane_from_coefficients(model, a, b, c, d, world_idx=0)
         return model

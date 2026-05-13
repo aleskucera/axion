@@ -337,6 +337,13 @@ class TrajectorySamplerPendulum(TrajectorySampler):
             dtype=torch.float32,
             device=self.torch_device,
         )
+        control_active = torch.empty(
+            trajectory_length,
+            self.num_envs,
+            nq,
+            dtype=torch.float32,
+            device=self.torch_device,
+        )
         root_body_q = torch.empty(
             trajectory_length,
             self.num_envs,
@@ -472,6 +479,7 @@ class TrajectorySamplerPendulum(TrajectorySampler):
             "next_lambdas": next_lambdas,
             "joint_target_pos": joint_target_pos,
             "joint_position_control_error": joint_position_control_error,
+            "control_active": control_active,
             "root_body_q": root_body_q,
             "gravity_dir": gravity_dir,
             "contact_normals": contact_normals,
@@ -524,7 +532,7 @@ class TrajectorySamplerPendulum(TrajectorySampler):
                 'contact_thicknesses': []
             },
             'lambdas': [],
-            'joint_target_pos': [],
+            'control_active': [],
             'joint_position_control_error': [],
             'next_states': [],
             'next_lambdas': [],
@@ -549,6 +557,7 @@ class TrajectorySamplerPendulum(TrajectorySampler):
         next_lambdas = buffers["next_lambdas"]
         joint_target_pos = buffers["joint_target_pos"]
         joint_position_control_error = buffers["joint_position_control_error"]
+        control_active = buffers["control_active"]
         root_body_q = buffers["root_body_q"]
         gravity_dir = buffers["gravity_dir"]
         contact_normals = buffers["contact_normals"]
@@ -590,6 +599,7 @@ class TrajectorySamplerPendulum(TrajectorySampler):
             # Passive mode uses free dynamics; targets stay zero and are not fed to the sim.
             if passive:
                 joint_target_pos.zero_()
+                control_active.fill_(0.0)
             else:
                 self.sampler.sample(
                     batch_size=self.num_envs,
@@ -597,6 +607,7 @@ class TrajectorySamplerPendulum(TrajectorySampler):
                     high=self.joint_target_max,
                     data=joint_target_pos,
                 )
+                control_active.fill_(1.0)
             # ground plane normals (batched per env), at most 0.64 rad from world z
             if self.with_contacts:
                 self.sampler.sample_plane_normals(
@@ -722,7 +733,7 @@ class TrajectorySamplerPendulum(TrajectorySampler):
             rollout_batches['contacts']['contact_points_0'].append(contact_points_0.clone())
             rollout_batches['contacts']['contact_points_1'].append(contact_points_1.clone())
             rollout_batches['contacts']['contact_thicknesses'].append(contact_thicknesses.clone())
-            rollout_batches['joint_target_pos'].append(joint_target_pos.unsqueeze(0).expand(trajectory_length, -1, -1).clone())
+            rollout_batches['control_active'].append(control_active.clone())
             rollout_batches['joint_position_control_error'].append(joint_position_control_error.clone())
             rollout_batches['next_states'].append(next_states.clone())
             rollout_batches['plane_coefficients'].append(plane_coefficients.clone())
