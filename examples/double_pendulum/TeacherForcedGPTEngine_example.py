@@ -115,8 +115,21 @@ class Simulator(InteractiveSimulator):
 
         self.viewer.end_frame()
 
-        if self.state_logger is not None:
+        if self.state_logger is not None and self.use_cuda_graph:
             self.state_logger.log_step(self.current_state, sim_time)
+
+    @override
+    def _run_segment_without_graph(self, segment_num: int):
+        if segment_num == 0:
+            prewarm_fn = getattr(self.solver, "prewarm", None)
+            if prewarm_fn is not None:
+                print("INFO: Pre-warming neural solver history buffer (no-graph path)...")
+                prewarm_fn(self.current_state, self.contacts, self.clock.dt)
+        for step in range(self.steps_per_segment):
+            self._single_physics_step(step)
+            if self.state_logger is not None:
+                global_step = segment_num * self.steps_per_segment + step + 1
+                self.state_logger.log_step(self.current_state, global_step * self.clock.dt)
 
     def build_model(self) -> newton.Model:
         model = build_pendulum_model(num_worlds=1, device="cuda:0")
@@ -125,7 +138,7 @@ class Simulator(InteractiveSimulator):
         return model
 
 
-@hydra.main(config_path=str(CONFIG_PATH), config_name="warmup_gpt_pendulum", version_base=None)
+@hydra.main(config_path=str(CONFIG_PATH), config_name="teacher_forced_gpt_pendulum", version_base=None)
 def basic_pendulum_example(cfg: DictConfig):
     sim_config: SimulationConfig = hydra.utils.instantiate(cfg.simulation)
     render_config: RenderingConfig = hydra.utils.instantiate(cfg.rendering)
@@ -135,10 +148,12 @@ def basic_pendulum_example(cfg: DictConfig):
 
     # Plane equation: nx*x + ny*y + nz*z + d = 0 (default: horizontal z=0)
     plane_coefficients = [0.0, 0.0, 1.0, 0.0]
+    plane_coefficients = [-0.2354, -0.0000, 0.9719, -2.3318]
 
     # Custom initial conditions: (q0, q1, qd0, qd1)
     # Set to None to start from the default rest position.
     INITIAL_STATE = (-0.5704, 2.8907, -3.6530, -7.6918)  # e.g. (0.5, -0.3, 1.0, -2.0)
+    INITIAL_STATE = (0, -0, 0, 0)
 
     simulator = Simulator(
         sim_config=sim_config,
@@ -151,9 +166,13 @@ def basic_pendulum_example(cfg: DictConfig):
     )
 
     if ENABLE_STATE_LOGGING:
-        log_dt = simulator.steps_per_segment * simulator.clock.dt
+        log_dt = (
+            simulator.clock.dt
+            if not simulator.use_cuda_graph
+            else simulator.steps_per_segment * simulator.clock.dt
+        )
         simulator.state_logger = PendulumStateLogger(
-            script_name="WarmupGPTEngine_example",
+            script_name="TeacherForcedGPTEngine_example",
             dt=log_dt,
             duration_seconds=sim_config.duration_seconds,
         )

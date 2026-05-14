@@ -7,7 +7,20 @@ import h5py
 import matplotlib.pyplot as plt
 import numpy as np
 
-_DEFAULT_LOG_DIR = Path(__file__).resolve().parents[4] / "data" / "logs"
+_DEFAULT_LOG_DIR = Path(__file__).resolve().parents[4] / "data" / "logs" / "multirollouts"
+
+# Publication-style typography / layout (matches plot_hdf5log_from_example.py academic mode).
+BASE_FONTSIZE = 13
+AXES_TICKS_FONTSIZE = BASE_FONTSIZE + 2
+LEGEND_FONTSIZE = BASE_FONTSIZE
+AXES_LABELS_FONTSIZE = BASE_FONTSIZE + 2
+TITLE_FONTSIZE = BASE_FONTSIZE + 2
+LINEWIDTH = 2.5
+GRID_ALPHA = 0.3
+MODE = "autoregressive"
+
+LEGEND_AXION = "Axion simulator"
+LEGEND_NEURAL = f"Neural prediction ({MODE})"
 
 # #for INITIAL_STATE = (0.5, -0.3, 1.0, -2.0)
 # LOGS = [
@@ -16,16 +29,67 @@ _DEFAULT_LOG_DIR = Path(__file__).resolve().parents[4] / "data" / "logs"
 #     "GPTEngine_example_2026-05-12_18-18-08.h5", # with COM shifting
 # ]
 
-# for INITIAL_STATE = (-0.5704, 2.8907, -3.6530, -7.6918)
+# # for INITIAL_STATE = (-0.5704, 2.8907, -3.6530, -7.6918)
+# LOGS = [
+#     "AxionEngine_example_2026-05-12_18-33-26.h5",   
+#     "GPTEngine_example_2026-05-12_18-34-39.h5", # model mse 298
+#     "GPTEngine_example_2026-05-12_22-46-27.h5",  # model mse 299
+#     "WarmupGPTEngine_example_2026-05-12_23-03-33.h5", # model 299
+#     "GPTEngine_example_2026-05-12_23-20-59.h5" # model 32
+# ]
+
+# for initial state INITIAL_STATE = (0.5, -0.3, 1.0, -2.0)
+# LOGS = [
+#     "AxionEngine_example_2026-05-14_15-13-26.h5",
+#     "GPTEngine_example_2026-05-14_15-12-59.h5"
+# ]
+
+# with contacts and INITIAL_STATE = (0,0,0,0)
 LOGS = [
-    "AxionEngine_example_2026-05-12_18-33-26.h5",   
-    "GPTEngine_example_2026-05-12_18-34-39.h5", # model mse 298
-    "GPTEngine_example_2026-05-12_22-46-27.h5",  # model mse 299
-    "WarmupGPTEngine_example_2026-05-12_23-03-33.h5", # model 299
-    "GPTEngine_example_2026-05-12_23-20-59.h5" # model 32
+    "AxionEngine_example_2026-05-16_20-34-19.h5",
+    #"TeacherForcedGPTEngine_example_2026-05-16_20-32-45.h5" # best from sweep
+    "GPTEngine_example_2026-05-16_20-31-57.h5"  # best from sweep
 ]
 
-COORD_LABELS = ["q0 (rad)", "q1 (rad)", "qd0 (rad/s)", "qd1 (rad/s)"]
+def _apply_matplotlib_style() -> None:
+    plt.rcParams.update(
+        {
+            "font.size": BASE_FONTSIZE,
+            "axes.labelsize": AXES_LABELS_FONTSIZE,
+            "axes.titlesize": AXES_LABELS_FONTSIZE + 1,
+            "xtick.labelsize": AXES_TICKS_FONTSIZE,
+            "ytick.labelsize": AXES_TICKS_FONTSIZE,
+            "legend.fontsize": LEGEND_FONTSIZE,
+            "figure.titlesize": TITLE_FONTSIZE,
+        }
+    )
+
+
+def _format_x_label_for_plot(x_label: str) -> str:
+    if x_label == "Step":
+        return r"Time step $t$ [-]"
+    if x_label == "Time [s]":
+        return r"Time $t$ [s]"
+    return x_label
+
+
+def _state_ylabel(idx: int) -> str:
+    return (
+        r"$q_0$   [rad]",
+        r"$q_1$   [rad]",
+        r"$u_0$   [$\mathrm{rad}\cdot\mathrm{s}^{-1}$]",
+        r"$u_1$   [$\mathrm{rad}\cdot\mathrm{s}^{-1}$]",
+    )[idx]
+
+
+def _plot_legend_label(source_label: str) -> str:
+    """Map HDF5 script_name / file stem to fixed legend text."""
+    s = source_label.lower()
+    if "axionengine" in s:
+        return LEGEND_AXION
+    if "gptengine" in s:
+        return LEGEND_NEURAL
+    return source_label
 
 
 def resolve_hdf5_path(entry: str | Path, log_dir: Path) -> Path:
@@ -61,8 +125,9 @@ def load_pendulum_state_log(path: Path) -> tuple[np.ndarray, np.ndarray, str]:
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Plot PendulumStateLogger HDF5 logs: four stacked time series "
-            "(q0, q1, qd0, qd1) with simulation time on the x-axis."
+            "Plot PendulumStateLogger HDF5 logs as a 2×2 grid of time series "
+            "(q0, q1, qd0, qd1) vs time step index (same x-axis convention as "
+            "plot_hdf5log_from_example.py without --dt)."
         )
     )
     parser.add_argument(
@@ -90,6 +155,8 @@ def _parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = _parse_args()
+    _apply_matplotlib_style()
+
     log_dir = _DEFAULT_LOG_DIR
     entries = args.hdf5_paths if args.hdf5_paths else LOGS
     paths = [resolve_hdf5_path(e, log_dir) for e in entries]
@@ -100,30 +167,41 @@ def main() -> None:
             raise FileNotFoundError(f"HDF5 not found: {p}")
         series.append(load_pendulum_state_log(p))
 
-    t_min = min(float(t.min()) for t, _, _ in series)
-    t_max = max(float(t.max()) for t, _, _ in series)
+    # Step index on x-axis (matches plot_hdf5log_from_example._build_time_axis when dt is None).
+    max_steps = max(states.shape[0] for _, states, _ in series)
+    x_step_min = 0.0
+    x_step_max = float(max_steps - 1) if max_steps > 0 else 0.0
 
     cmap = plt.get_cmap("tab10")
-    fig, axes = plt.subplots(
-        4,
-        1,
-        figsize=(10, 10),
-        sharex="all",
-        constrained_layout=True,
+
+    fig, axes = plt.subplots(2, 2, figsize=(14, 8), sharex=True)
+    fig.suptitle(
+        f"Comparison of next state values: Axion ground truth vs {MODE} rollout of neural network"
     )
-
-    for idx, (time, states, label) in enumerate(series):
-        color = cmap(idx % 10)
-        for k in range(4):
-            axes[k].plot(time, states[:, k], color=color, label=label, linewidth=1.2)
-
-    for k, ax in enumerate(axes):
-        ax.set_ylabel(COORD_LABELS[k])
-        ax.grid(True, alpha=0.3)
-        ax.legend(loc="best", fontsize=8)
-
-    axes[-1].set_xlabel("simulation time (s)")
-    axes[0].set_xlim(t_min, t_max)
+    axes_flat = np.asarray(axes).ravel()
+    x_disp = _format_x_label_for_plot("Step")
+    for k in range(4):
+        ax = axes_flat[k]
+        for idx, (_time, states, source_label) in enumerate(series):
+            color = cmap(idx % 10)
+            n = states.shape[0]
+            step_axis = np.arange(n, dtype=float)
+            legend = _plot_legend_label(source_label)
+            linestyle = "--" if legend == LEGEND_NEURAL else "-"
+            ax.plot(
+                step_axis,
+                states[:, k],
+                color=color,
+                label=legend,
+                linewidth=LINEWIDTH,
+                linestyle=linestyle,
+            )
+        ax.set_ylabel(_state_ylabel(k))
+        ax.set_xlabel(x_disp)
+        ax.grid(True, alpha=GRID_ALPHA)
+        ax.legend(loc="best")
+    axes_flat[0].set_xlim(x_step_min, x_step_max)
+    fig.tight_layout()
 
     if args.save is not None:
         args.save.parent.mkdir(parents=True, exist_ok=True)

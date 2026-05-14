@@ -369,6 +369,10 @@ class AxionEngineWithNeuralLambdas(AxionEngineBase):
             ),
         )
 
+        # Last NN-predicted next state (1, state_dim) tensor, refreshed every step.
+        # None for model types that have no state head (lambda-only / contact-MTL).
+        self.last_predicted_next_states: Optional[torch.Tensor] = None
+
     @staticmethod
     def _to_numpy(tensor: torch.Tensor):
         return tensor.detach().cpu().numpy()
@@ -606,6 +610,9 @@ class AxionEngineWithNeuralLambdas(AxionEngineBase):
             predicted_next_states, predicted_next_lambdas = self.nn_predictor.predict(dt)
         else:
             predicted_next_lambdas = self.nn_predictor.predict_lambdas_only(dt)
+
+        # Expose the NN-predicted state for external consumers (e.g. multi-rollout logger).
+        self.last_predicted_next_states = predicted_next_states
 
         self._solve()
 

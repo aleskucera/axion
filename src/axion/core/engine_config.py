@@ -612,19 +612,18 @@ class HybridGPTEngineConfig(AxionEngineConfig):
 
 
 @dataclass(frozen=True)
-class WarmupGPTEngineConfig(AxionEngineConfig):
+class TeacherForcedGPTEngineConfig(AxionEngineConfig):
     """
-    Configuration for WarmupGPTEngine.
+    Configuration for TeacherForcedGPTEngine.
 
-    Runs the classical Axion Newton-Raphson solver for the first ``warmup_steps``
-    physics steps (populating the NN history with real dynamics), then switches
-    permanently to pure neural-network integration.
+    The Axion Newton-Raphson solver advances a private trajectory every step
+    and always provides the NN's input context (teacher forcing).  The NN's
+    predictions always drive the simulation output (state_out).
 
-    All standard AxionEngineConfig solver parameters apply during the warmup
-    phase.  TensorRT is not supported; use execution: no_graph.
+    All standard AxionEngineConfig solver parameters apply to the internal
+    Axion teacher trajectory.  TensorRT is not supported; use execution:
+    no_graph.
     """
-
-    warmup_steps: int = 10
 
     def create_engine(
         self,
@@ -634,9 +633,9 @@ class WarmupGPTEngineConfig(AxionEngineConfig):
         differentiable_simulation: bool = False,
         **kwargs,
     ) -> Any:
-        from axion.core.warmup_gpt_engine import WarmupGPTEngine
+        from axion.core.teacher_forced_gpt_engine import TeacherForcedGPTEngine
 
-        return WarmupGPTEngine(
+        return TeacherForcedGPTEngine(
             model=model,
             sim_steps=int(sim_steps or 0),
             config=self,

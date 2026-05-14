@@ -1,5 +1,5 @@
 # @package engine
-_target_: axion.WarmupGPTEngineConfig
+_target_: axion.TeacherForcedGPTEngineConfig
 max_newton_iters: 16
 max_linear_iters: 16
 backtrack_min_iter: 12
@@ -22,4 +22,3 @@ friction_fb_alpha: 1.0
 friction_fb_beta: 1.0
 max_contacts_per_world: 4
 differentiable_simulation: false
-warmup_steps: 10

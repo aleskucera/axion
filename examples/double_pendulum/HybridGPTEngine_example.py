@@ -184,8 +184,21 @@ class Simulator(InteractiveSimulator):
         
         self.viewer.end_frame()
 
-        if self.state_logger is not None:
+        if self.state_logger is not None and self.use_cuda_graph:
             self.state_logger.log_step(self.current_state, sim_time)
+
+    @override
+    def _run_segment_without_graph(self, segment_num: int):
+        if segment_num == 0:
+            prewarm_fn = getattr(self.solver, "prewarm", None)
+            if prewarm_fn is not None:
+                print("INFO: Pre-warming neural solver history buffer (no-graph path)...")
+                prewarm_fn(self.current_state, self.contacts, self.clock.dt)
+        for step in range(self.steps_per_segment):
+            self._single_physics_step(step)
+            if self.state_logger is not None:
+                global_step = segment_num * self.steps_per_segment + step + 1
+                self.state_logger.log_step(self.current_state, global_step * self.clock.dt)
 
     def build_model(self,) -> newton.Model:
         """
@@ -227,7 +240,11 @@ def basic_pendulum_example(cfg: DictConfig):
     )
 
     if ENABLE_STATE_LOGGING:
-        log_dt = simulator.steps_per_segment * simulator.clock.dt
+        log_dt = (
+            simulator.clock.dt
+            if not simulator.use_cuda_graph
+            else simulator.steps_per_segment * simulator.clock.dt
+        )
         simulator.state_logger = PendulumStateLogger(
             script_name="HybridGPTEngine_example",
             dt=log_dt,

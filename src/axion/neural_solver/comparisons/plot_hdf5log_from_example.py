@@ -39,6 +39,8 @@ MSE_STATE_JOINT_LAMBDA_MODELS_HDF5_LOG_FILE_NAMES = [
     "AxioneEngineWithNeuralLambdas_example_2026-04-26_16-21-58.h5",
 ]
 
+MSE_32 = "AxioneEngineWithNeuralLambdas_example_2026-05-14_12-57-47.h5"
+
 NO_CONTACT_MODELS_INFO = [
     "pure mse, w_state = 500",
     "mse with lambda in log space, w_state = 2",
@@ -73,10 +75,21 @@ MSE_STATE_JOINT_LAMBDA_MODELS_MODEL_INFOS = [
     "mse, w_state = 5e4, 2M datadet, ||q||^2 term NOT included in angle loss",
 ]
 
+#--------------------------------------------------------
+ACADEMIC_PLOTTING = True
+BASE_FONTSIZE = 13
+AXES_TICKS_FONTSIZE = BASE_FONTSIZE + 2 
+LEGEND_FONTSIZE = BASE_FONTSIZE
+AXES_LABELS_FONTSIZE = BASE_FONTSIZE + 2
+TITLE_FONTSIZE = BASE_FONTSIZE + 2
+LINEWIDTH = 2.5  # Used for every ax.plot linewidth in this script
+GRID_ALPHA = 0.3
+# Logged constraint forces are treated as SI Newtons for axis labels when ACADEMIC_PLOTTING.
+#--------------------------------------------------------
 ID = 2
-MODEL_INFO = "mse 299"
+MODEL_INFO = "mse 32"
 COMPARISON_CSV_PATH = None # Path(__file__).resolve().parent / "mse_state_and_joint_lambdas.csv" # None
-DEFAULT_HDF5_PATH = Path(__file__).resolve().parents[4] / "data/logs" / "AxioneEngineWithNeuralLambdas_example_2026-05-12_22-44-59.h5" #AxioneEngineWithNeuralLambdas_example_2026-05-12_09-07-56.h5"
+DEFAULT_HDF5_PATH = Path(__file__).resolve().parents[4] / "data/logs" / MSE_32 #AxioneEngineWithNeuralLambdas_example_2026-05-12_09-07-56.h5"
 DEFAULT_LAMBDA_SLICE = slice(0, 24) # FIX: mse mdoels should now have 24 lambdas
 ANALYZE_INCOMPLETE_MTL = False
 ANALYZE_CONTACT_MTL_LAMBDA_REGR_ONLY = False
@@ -85,6 +98,44 @@ ANALYZE_CONTACT_MTL_CONDITIONED_LAMBDA_REGR_ONLY = False
 DEFAULT_JUMP_TARGET_SCALE = 100.0
 SIM_COLOR = "tab:blue"
 PRED_COLOR = "tab:orange"
+
+
+def _apply_academic_matplotlib_style() -> None:
+    """Set matplotlib rcParams for publication-style typography when ACADEMIC_PLOTTING."""
+    if not ACADEMIC_PLOTTING:
+        return
+    plt.rcParams.update(
+        {
+            "font.size": BASE_FONTSIZE,
+            "axes.labelsize": AXES_LABELS_FONTSIZE,
+            "axes.titlesize": AXES_LABELS_FONTSIZE + 1,
+            "xtick.labelsize": AXES_TICKS_FONTSIZE,
+            "ytick.labelsize": AXES_TICKS_FONTSIZE,
+            "legend.fontsize": LEGEND_FONTSIZE,
+            "figure.titlesize": TITLE_FONTSIZE,
+        }
+    )
+
+
+def _format_x_label_for_plot(x_label: str) -> str:
+    if not ACADEMIC_PLOTTING:
+        return x_label
+    if x_label == "Step":
+        return r"Time step $t$ [-]"
+    if x_label == "Time [s]":
+        return r"Time $t$ [s]"
+    return x_label
+
+
+def _state_ylabel_academic(idx: int) -> str:
+    """Y-axis label for the 4-DOF pendulum state vector (joint_q + joint_qd)."""
+    return (
+        r"$q_0$   [rad]",
+        r"$q_1$   [rad]",
+        r"$u_0$   [$\mathrm{rad}\cdot\mathrm{s}^{-1}$]",
+        r"$u_1$   [$\mathrm{rad}\cdot\mathrm{s}^{-1}$]",
+    )[idx]
+
 
 def _parse_optional_path(value: str) -> Path | None:
     if value.lower() in {"none", "null"}:
@@ -144,14 +195,13 @@ def _parse_args() -> argparse.Namespace:
 
 def _load_and_validate(
     hdf5_path: Path,
-) -> tuple[np.ndarray, np.ndarray | None, np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray | None, np.ndarray, np.ndarray | None]:
     if not hdf5_path.exists():
         raise FileNotFoundError(f"HDF5 file not found: {hdf5_path}")
 
     required = [
         "next_states",
         "next_lambdas",
-        "predicted_next_lambdas",
     ]
     require_predicted_states = not (
         ANALYZE_CONTACT_MTL_LAMBDA_REGR_ONLY
@@ -177,7 +227,11 @@ def _load_and_validate(
             else None
         )
         next_lambdas = np.asarray(group["next_lambdas"][:]).squeeze()
-        predicted_next_lambdas = np.asarray(group["predicted_next_lambdas"][:]).squeeze()
+        predicted_next_lambdas = (
+            np.asarray(group["predicted_next_lambdas"][:]).squeeze()
+            if "predicted_next_lambdas" in group
+            else None
+        )
 
     if next_states.ndim != 2:
         raise ValueError(
@@ -188,17 +242,22 @@ def _load_and_validate(
             "predicted_next_states must become shape (T, 4) after squeezing; "
             f"got {predicted_next_states.shape}"
         )
-    if next_lambdas.ndim != 2 or predicted_next_lambdas.ndim != 2:
+    if next_lambdas.ndim != 2:
         raise ValueError(
-            "Lambda arrays must become shape (T, N) after squeezing; "
-            f"got {next_lambdas.shape} and {predicted_next_lambdas.shape}"
+            "next_lambdas must become shape (T, N) after squeezing; "
+            f"got {next_lambdas.shape}"
+        )
+    if predicted_next_lambdas is not None and predicted_next_lambdas.ndim != 2:
+        raise ValueError(
+            "predicted_next_lambdas must become shape (T, N) after squeezing; "
+            f"got {predicted_next_lambdas.shape}"
         )
     if predicted_next_states is not None and next_states.shape != predicted_next_states.shape:
         raise ValueError(
             "next_states and predicted_next_states shape mismatch: "
             f"{next_states.shape} vs {predicted_next_states.shape}"
         )
-    if next_lambdas.shape != predicted_next_lambdas.shape:
+    if predicted_next_lambdas is not None and next_lambdas.shape != predicted_next_lambdas.shape:
         raise ValueError(
             "next_lambdas and predicted_next_lambdas shape mismatch: "
             f"{next_lambdas.shape} vs {predicted_next_lambdas.shape}"
@@ -326,28 +385,32 @@ def _build_time_axis(length: int, dt: float | None) -> tuple[np.ndarray, str]:
 
 def _plot_states(time_axis: np.ndarray, x_label: str, real: np.ndarray, pred: np.ndarray) -> None:
     fig, axes = plt.subplots(2, 2, figsize=(14, 8), sharex=True)
-    fig.suptitle("Next State: Simulator vs Neural Prediction")
+    fig.suptitle("Comparison of next state values: Axion ground truth vs neural network")
 
+    x_disp = _format_x_label_for_plot(x_label)
     for idx, ax in enumerate(axes.flat):
         ax.plot(
             time_axis,
             real[:, idx],
-            label="Simulator next state",
-            linewidth=1.8,
+            label="Axion simulator",
+            linewidth=LINEWIDTH,
             color=SIM_COLOR,
         )
         ax.plot(
             time_axis,
             pred[:, idx],
-            label="Predicted next state",
-            linewidth=1.6,
+            label="Neural prediction",
+            linewidth=LINEWIDTH,
             linestyle="--",
             color=PRED_COLOR,
         )
-        ax.set_title(f"state[{idx}]")
-        ax.set_xlabel(x_label)
-        ax.set_ylabel("Value")
-        ax.grid(True, alpha=0.3)
+        if ACADEMIC_PLOTTING and real.shape[1] == 4:
+            ax.set_ylabel(_state_ylabel_academic(idx))
+        else:
+            ax.set_title(f"state[{idx}]")
+            ax.set_ylabel("Value")
+        ax.set_xlabel(x_disp)
+        ax.grid(True, alpha=GRID_ALPHA)
         ax.legend(loc="best")
 
     fig.tight_layout()
@@ -379,13 +442,15 @@ def _plot_lambdas(
     axes_arr = np.atleast_1d(axes).ravel()
     fig.suptitle(f"Next Lambdas: Simulator vs Neural Prediction (indices {start}:{stop})")
 
+    x_disp = _format_x_label_for_plot(x_label)
+
     for local_idx, lambda_idx in enumerate(selected):
         ax = axes_arr[local_idx]
         ax.plot(
             time_axis,
             real[:, lambda_idx],
             label="Simulator next lambda",
-            linewidth=1.6,
+            linewidth=LINEWIDTH,
             color=SIM_COLOR,
         )
         pred_series = pred[:, lambda_idx]
@@ -429,14 +494,17 @@ def _plot_lambdas(
                 time_axis,
                 pred_series,
                 label="Predicted next lambda",
-                linewidth=1.4,
+                linewidth=LINEWIDTH,
                 linestyle="--",
                 color=PRED_COLOR,
             )
-        ax.set_title(f"lambda[{lambda_idx}]")
-        ax.set_xlabel(x_label)
-        ax.set_ylabel("Value")
-        ax.grid(True, alpha=0.3)
+        ax.set_xlabel(x_disp)
+        ax.set_ylabel(
+            rf"$\lambda_{{{lambda_idx}}}$ [N]" if ACADEMIC_PLOTTING else "Value"
+        )
+        if not ACADEMIC_PLOTTING:
+            ax.set_title(f"lambda[{lambda_idx}]")
+        ax.grid(True, alpha=GRID_ALPHA)
         ax.legend(loc="best")
 
     for extra_idx in range(n, len(axes_arr)):
@@ -473,27 +541,31 @@ def _plot_lambda_activity_labels(
         f"Lambda activity: predicted vs ground truth (indices {start}:{stop})"
     )
 
+    x_disp = _format_x_label_for_plot(x_label)
+    activity_ylabel = "Activity [-]" if ACADEMIC_PLOTTING else "Label"
+
     for local_idx, ch_idx in enumerate(selected):
         ax = axes_arr[local_idx]
         ax.plot(
             time_axis,
             pred[:, ch_idx],
             label="Predicted activity",
-            linewidth=1.6,
+            linewidth=LINEWIDTH,
             color=PRED_COLOR,
         )
         ax.plot(
             time_axis,
             gt[:, ch_idx],
             label="Simulator GT",
-            linewidth=1.4,
+            linewidth=LINEWIDTH,
             linestyle="--",
             color=SIM_COLOR,
         )
-        ax.set_title(f"channel[{ch_idx}]")
-        ax.set_xlabel(x_label)
-        ax.set_ylabel("Label")
-        ax.grid(True, alpha=0.3)
+        if not ACADEMIC_PLOTTING:
+            ax.set_title(f"channel[{ch_idx}]")
+        ax.set_xlabel(x_disp)
+        ax.set_ylabel(activity_ylabel)
+        ax.grid(True, alpha=GRID_ALPHA)
         ax.legend(loc="best")
 
     for extra_idx in range(n, len(axes_arr)):
@@ -506,13 +578,14 @@ def _compute_prediction_metrics(
     next_states: np.ndarray,
     predicted_next_states: np.ndarray | None,
     next_lambdas: np.ndarray,
-    predicted_next_lambdas: np.ndarray,
+    predicted_next_lambdas: np.ndarray | None,
 ) -> tuple[float, float, float, float, float, float]:
     """
     Returns (state_mae, lambda_mae, state_total_abs, lambda_total_abs,
              total_abs_error, total_squared_error).
     total_abs_error is sum of absolute errors over all state and lambda elements.
     total_squared_error is sum of squared errors over all state and lambda elements.
+    When ``predicted_next_lambdas`` is None, lambda metrics are NaN / omitted from totals.
     """
     if predicted_next_states is not None:
         state_abs_err = np.abs(next_states - predicted_next_states)
@@ -523,6 +596,20 @@ def _compute_prediction_metrics(
         state_mae = float("nan")
         state_total = 0.0
         state_sq = 0.0
+    if predicted_next_lambdas is None:
+        lambda_mae = float("nan")
+        lambda_total = float("nan")
+        lambda_sq = 0.0
+        total_abs_error = state_total
+        total_squared_error = float(state_sq + lambda_sq)
+        return (
+            state_mae,
+            lambda_mae,
+            state_total,
+            lambda_total,
+            total_abs_error,
+            total_squared_error,
+        )
     lambda_diff = next_lambdas - predicted_next_lambdas
     lambda_valid = np.isfinite(lambda_diff)
     lambda_abs_err = np.abs(lambda_diff)
@@ -600,41 +687,51 @@ def _plot_mae_summary(
     fig.suptitle("Overall Prediction Error Summary")
 
     state_label = "State MAE" if not math.isnan(state_mae) else "State MAE (N/A)"
-    mae_labels = [state_label, "Lambda MAE"]
+    lambda_label = "Lambda MAE" if not math.isnan(lambda_mae) else "Lambda MAE (N/A)"
+    mae_labels = [state_label, lambda_label]
     mae_values = [state_mae, lambda_mae]
-    mae_bars = ax_mae.bar(mae_labels, mae_values, width=0.45)
+    mae_plot_heights = [0.0 if math.isnan(v) else v for v in mae_values]
+    mae_bars = ax_mae.bar(mae_labels, mae_plot_heights, width=0.45)
     for bar, value in zip(mae_bars, mae_values):
+        text = "N/A" if math.isnan(value) else f"{value:.6f}"
         ax_mae.text(
             bar.get_x() + bar.get_width() / 2,
             bar.get_height(),
-            f"{value:.6f}",
+            text,
             ha="center",
             va="bottom",
         )
     ax_mae.set_ylabel("Mean Absolute Error")
     ax_mae.set_title("MAE")
-    ax_mae.grid(True, axis="y", alpha=0.3)
+    ax_mae.grid(True, axis="y", alpha=GRID_ALPHA)
 
-    total_labels = ["State total acc. abs. error", "Lambda total acc. abs. error"]
+    total_labels = [
+        "State total acc. abs. error",
+        "Lambda total acc. abs. error"
+        if not math.isnan(lambda_total) else "Lambda total (N/A)",
+    ]
     total_values = [state_total, lambda_total]
-    total_bars = ax_total.bar(total_labels, total_values, width=0.45)
+    total_plot_heights = [0.0 if math.isnan(v) else v for v in total_values]
+    total_bars = ax_total.bar(total_labels, total_plot_heights, width=0.45)
     for bar, value in zip(total_bars, total_values):
+        text = "N/A" if math.isnan(value) else f"{value:.4f}"
         ax_total.text(
             bar.get_x() + bar.get_width() / 2,
             bar.get_height(),
-            f"{value:.4f}",
+            text,
             ha="center",
             va="bottom",
         )
     ax_total.set_ylabel("Total Accumulated Absolute Error")
     ax_total.set_title("Total Accumulated Absolute Error")
-    ax_total.grid(True, axis="y", alpha=0.3)
+    ax_total.grid(True, axis="y", alpha=GRID_ALPHA)
 
     fig.tight_layout()
 
 
 def main() -> None:
     args = _parse_args()
+    _apply_academic_matplotlib_style()
     next_states, predicted_next_states, next_lambdas, predicted_next_lambdas = _load_and_validate(
         args.hdf5
     )
@@ -661,6 +758,11 @@ def main() -> None:
         and not ANALYZE_CONTACT_MTL_LAMBDA_REGR_ONLY
         and not ANALYZE_INCOMPLETE_MTL
     ):
+        if predicted_next_lambdas is None:
+            raise ValueError(
+                "ANALYZE_CONTACT_MTL_CONDITIONED_LAMBDA_REGR_ONLY requires "
+                "predicted_next_lambdas in the HDF5 log."
+            )
         if activity_pair is None:
             raise ValueError(
                 "ANALYZE_CONTACT_MTL_CONDITIONED_LAMBDA_REGR_ONLY requires "
@@ -676,15 +778,16 @@ def main() -> None:
 
     if predicted_next_states is not None:
         _plot_states(time_axis, x_label, next_states, predicted_next_states)
-    _plot_lambdas(
-        time_axis=time_axis,
-        x_label=x_label,
-        real=next_lambdas,
-        pred=predicted_next_lambdas,
-        lambda_start=args.lambda_start,
-        lambda_stop=args.lambda_stop,
-        jump_raw=lambda_jump_arr if ANALYZE_INCOMPLETE_MTL else None,
-    )
+    if predicted_next_lambdas is not None:
+        _plot_lambdas(
+            time_axis=time_axis,
+            x_label=x_label,
+            real=next_lambdas,
+            pred=predicted_next_lambdas,
+            lambda_start=args.lambda_start,
+            lambda_stop=args.lambda_stop,
+            jump_raw=lambda_jump_arr if ANALYZE_INCOMPLETE_MTL else None,
+        )
     (
         state_mae,
         lambda_mae,
