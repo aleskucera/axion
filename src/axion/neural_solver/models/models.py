@@ -220,9 +220,20 @@ class ModelMixedInput(nn.Module):
 
         features = self.extract_input_features(input_dict)
 
-        if self.is_transformer:
+        if getattr(self, 'is_transformer', False):
             features = self.transformer_model(features)
-        if self.has_state_head and self.model is not None:
+
+        # Legacy ModelMixedInput checkpoints: self.model is the sole state predictor;
+        # has_state_head / has_lambda_head / lambda_model did not exist yet.
+        if not hasattr(self, 'has_state_head') and not hasattr(self, 'has_lambda_head') and self.model is not None:
+            state_output = self.model(features, deterministic=deterministic)
+            if getattr(self, 'output_tanh', False):
+                state_output = torch.tanh(state_output)
+            if getattr(self, 'normalize_output', False) and getattr(self, 'output_rms', None) is not None:
+                state_output = self.output_rms.normalize(state_output, un_norm=True)
+            return {'state': state_output[:, -1:, :], 'lambda': None}
+
+        if getattr(self, 'has_state_head', False) and self.model is not None:
             state_output = self.model(features, deterministic=deterministic)
             if self.output_tanh:
                 state_output = torch.tanh(state_output)
@@ -232,16 +243,15 @@ class ModelMixedInput(nn.Module):
         else:
             output = {'state': None}
 
-        has_lambda_head = bool(getattr(self, "has_lambda_head", False))
         lambda_model = getattr(self, "lambda_model", None)
         skip_proj = getattr(self, "lambda_state_skip_proj", None)
-        if has_lambda_head and (lambda_model is not None):
+        if lambda_model is not None:
             lambda_features = features
             if skip_proj is not None:
                 skip = skip_proj(self._concat_raw_low_dim(input_dict))
                 lambda_features = lambda_features + skip
             lambda_output = lambda_model(lambda_features, deterministic = deterministic)
-            if self.lambda_output_tanh:
+            if getattr(self, 'lambda_output_tanh', False):
                 lambda_output = torch.tanh(lambda_output)
             lambda_output_rms = getattr(self, "lambda_output_rms", None)
             if self.normalize_output and (lambda_output_rms is not None):
@@ -271,7 +281,7 @@ class ModelMixedInput(nn.Module):
 
         B, T, feature_dim = features.shape
         features_flatten = features.contiguous().view(-1, feature_dim)
-        if self.has_state_head and self.model is not None:
+        if getattr(self, 'has_state_head', False) and self.model is not None:
             state_output_flatten = self.model(features_flatten, deterministic=deterministic)
             state_output = state_output_flatten.view(B, T, -1)
             if self.output_tanh:
@@ -282,10 +292,9 @@ class ModelMixedInput(nn.Module):
         else:
             output = {'state': None}
 
-        has_lambda_head = bool(getattr(self, "has_lambda_head", False))
         lambda_model = getattr(self, "lambda_model", None)
         skip_proj = getattr(self, "lambda_state_skip_proj", None)
-        if has_lambda_head and (lambda_model is not None):
+        if self.has_lambda_head and (lambda_model is not None):
             lambda_features_flatten = features_flatten
             if skip_proj is not None:
                 skip_full = self._concat_raw_low_dim(input_dict)

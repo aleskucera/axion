@@ -32,8 +32,10 @@ from axion.neural_solver.train.trained_models.selected_trained_models import (
     MSE_STATE_JOINT_LAMBDA_MODELS
 )
 
-NN_BASE_PATH = Path.cwd() /"src"/"axion"/"neural_solver"/"train"/"trained_models"/"mse"/"05-12-2026-17-30-11"
-NN_PENDULUM_PT_PATH = NN_BASE_PATH/"nn"/"best_valid_valid_model.pt"
+NN_32_PATH = "03-17-2026-15-12-19" 
+
+NN_BASE_PATH = Path.cwd() /"src"/"axion"/"neural_solver"/"train"/"trained_models"/NN_32_PATH
+NN_PENDULUM_PT_PATH = NN_BASE_PATH/"nn"/"best_eval_model.pt"
 NN_PENDULUM_CFG_PATH = NN_BASE_PATH/"cfg.yaml"
 
 # Flip to True after running export_to_onnx.py + build_tensorrt_engine.py 
@@ -314,6 +316,7 @@ class AxionEngineWithNeuralLambdas(AxionEngineBase):
             self._use_residual_model = False
             self._use_lambda_classification = False
             self._use_mse_model = True
+            self._use_legacy_state_model = False
             model_mode = "mse (tensorrt)"
         else:
             # Load the nn .pt file
@@ -326,6 +329,13 @@ class AxionEngineWithNeuralLambdas(AxionEngineBase):
             self._use_residual_model = self._is_residual_model(loaded_nn_model)
             self._use_lambda_classification = self._is_lambda_classification_model(loaded_nn_model)
             self._use_mse_model = self._is_mse_model(loaded_nn_model)
+            # Legacy ModelMixedInput checkpoints lack has_state_head / has_lambda_head;
+            # self.model is a pure state predictor with no lambda output.
+            self._use_legacy_state_model = (
+                not hasattr(loaded_nn_model, 'has_state_head')
+                and not hasattr(loaded_nn_model, 'has_lambda_head')
+                and getattr(loaded_nn_model, 'model', None) is not None
+            )
             print(f"Loaded model for robot: {robot_name}")
             if self._use_contact_mtl_model:
                 model_mode = "contact_mtl"
@@ -337,6 +347,8 @@ class AxionEngineWithNeuralLambdas(AxionEngineBase):
                 model_mode = "residual"
             elif self._use_mse_model:
                 model_mode = "mse"
+            elif self._use_legacy_state_model:
+                model_mode = "legacy_state"
             else:
                 model_mode = "regression"
         print("Loaded neural lambda model mode:", model_mode)
@@ -353,6 +365,7 @@ class AxionEngineWithNeuralLambdas(AxionEngineBase):
             device=str(self.device),
             lambda_prediction_only=not (
                 self._use_residual_model or self._use_mtl_model or self._use_mse_model
+                or self._use_legacy_state_model
             ),
         )
 
@@ -589,6 +602,8 @@ class AxionEngineWithNeuralLambdas(AxionEngineBase):
                 lambda_prediction,
             )
             # lambda_activity stays None — no classification head
+        elif self._use_legacy_state_model:
+            predicted_next_states, predicted_next_lambdas = self.nn_predictor.predict(dt)
         else:
             predicted_next_lambdas = self.nn_predictor.predict_lambdas_only(dt)
 
