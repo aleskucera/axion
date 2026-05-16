@@ -152,6 +152,16 @@ def parse_args() -> argparse.Namespace:
             "like a wall of fog."
         ),
     )
+    p.add_argument(
+        "--labels",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help=(
+            "Show floating labels above the robots: 'Target Trajectory' "
+            "above the ghost, 'Iter N | Loss X' above the live robot. "
+            "Off by default; pass --labels to enable."
+        ),
+    )
     return p.parse_args(argv)
 
 
@@ -1184,33 +1194,34 @@ def main():
         empty.empty_display_size = 0.0
     add_terrain_wireframe(static_coll)
 
-    # Floating labels: "Target Trajectory" above the ghost chassis,
-    # per-iteration "Iter N | Loss X" above the live chassis.
-    label_coll = bpy.data.collections.new("floating_labels")
-    scene.collection.children.link(label_coll)
-    camera = bpy.context.scene.camera
-    if 0 in ghost_bodies:
-        make_floating_label(
-            name="target_label",
-            follow_body=ghost_bodies[0],
-            text="Target Trajectory",
-            size=0.4,
-            z_offset=1.7,
-            collection=label_coll,
-            color=tuple(args.ghost_color),
-            camera=camera,
-        )
-    if 0 in live_bodies:
-        make_floating_iteration_labels(
-            follow_body=live_bodies[0],
-            iter_indices=iter_indices,
-            iter_losses=iter_losses,
-            T=T,
-            collection=label_coll,
-            camera=camera,
-            color=LIVE_PALETTE[0],
-            period=period,
-        )
+    if args.labels:
+        # Floating labels: "Target Trajectory" above the ghost chassis,
+        # per-iteration "Iter N | Loss X" above the live chassis.
+        label_coll = bpy.data.collections.new("floating_labels")
+        scene.collection.children.link(label_coll)
+        camera = bpy.context.scene.camera
+        if 0 in ghost_bodies:
+            make_floating_label(
+                name="target_label",
+                follow_body=ghost_bodies[0],
+                text="Target Trajectory",
+                size=0.4,
+                z_offset=1.7,
+                collection=label_coll,
+                color=tuple(args.ghost_color),
+                camera=camera,
+            )
+        if 0 in live_bodies:
+            make_floating_iteration_labels(
+                follow_body=live_bodies[0],
+                iter_indices=iter_indices,
+                iter_losses=iter_losses,
+                T=T,
+                collection=label_coll,
+                camera=camera,
+                color=LIVE_PALETTE[0],
+                period=period,
+            )
 
     # Breadcrumbs: chassis path per iteration, accumulating across the timeline.
     trail_coll = bpy.data.collections.new("breadcrumbs")
