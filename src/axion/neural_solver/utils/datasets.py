@@ -110,3 +110,10 @@ class TrajectoryDataset(Dataset):
 
     def shuffle(self):
         pass
+
+
+def read_lambda_dim_from_dataset(hdf5_path: str):
+    """Return data.attrs['lambda_dim'] from an HDF5 dataset file, or None if the attr is absent."""
+    with h5py.File(hdf5_path, 'r') as f:
+        val = f['data'].attrs.get('lambda_dim', None)
+        return int(val) if val is not None else None

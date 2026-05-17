@@ -65,7 +65,9 @@ class MSEModel(nn.Module):
 
         self.input_rms = None
         self.normalize_input = network_cfg.get("normalize_input", False)
-        self.regression_output_rms = None
+        self.regression_output_rms = None   # kept for backward compat with old checkpoints
+        self.regression_state_rms = None
+        self.regression_lambda_rms = None
         self.normalize_output = network_cfg.get("normalize_output", False)
 
         self.encoders, self.feature_dim = self._construct_input_encoders(
@@ -138,8 +140,10 @@ class MSEModel(nn.Module):
                 self.input_rms[input_name] = data_rms[input_name]
 
     def set_output_rms(self, output_rms=None, lambda_output_rms=None):
-        del lambda_output_rms
-        self.regression_output_rms = output_rms
+        self.regression_state_rms = output_rms
+        self.regression_lambda_rms = None if self.states_only else lambda_output_rms
+        # regression_output_rms is kept only for states_only checkpoints / legacy callers.
+        self.regression_output_rms = output_rms if self.states_only else None
 
     def _extract_input_features(self, input_dict):
         features = []
@@ -155,11 +159,22 @@ class MSEModel(nn.Module):
         return torch.cat(features, dim=-1)
 
     def _format_output(self, regression_output):
-        if self.normalize_output and self.regression_output_rms is not None:
-            regression_output = self.regression_output_rms.normalize(
-                regression_output, un_norm=True
-            )
-        return regression_output
+        if not self.normalize_output:
+            return regression_output
+        if self.states_only:
+            # Legacy / states-only path: single RMS covering the whole output.
+            rms = getattr(self, "regression_state_rms", None) or self.regression_output_rms
+            if rms is not None:
+                regression_output = rms.normalize(regression_output, un_norm=True)
+            return regression_output
+        # Combined [state | lambda] output: unnormalize each slice independently.
+        state_part = regression_output[..., : self.state_output_dim]
+        lambda_part = regression_output[..., self.state_output_dim :]
+        if getattr(self, "regression_state_rms", None) is not None:
+            state_part = self.regression_state_rms.normalize(state_part, un_norm=True)
+        if getattr(self, "regression_lambda_rms", None) is not None:
+            lambda_part = self.regression_lambda_rms.normalize(lambda_part, un_norm=True)
+        return torch.cat([state_part, lambda_part], dim=-1)
 
     def evaluate(self, input_dict, deterministic=False):
         del deterministic
@@ -204,4 +219,8 @@ class MSEModel(nn.Module):
                 self.input_rms[key] = self.input_rms[key].to(device)
         if self.regression_output_rms is not None:
             self.regression_output_rms = self.regression_output_rms.to(device)
+        if getattr(self, "regression_state_rms", None) is not None:
+            self.regression_state_rms = self.regression_state_rms.to(device)
+        if getattr(self, "regression_lambda_rms", None) is not None:
+            self.regression_lambda_rms = self.regression_lambda_rms.to(device)
         return self

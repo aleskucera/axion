@@ -156,12 +156,11 @@ class SequenceModelTrainer:
                     device=self.device,
                 )
             elif model_impl == 'mse':
-                engine_dims = self.neural_env.simulator_wrapper.engine.dims
                 state_output_dim = int(self.neural_env.dof_q_per_env + self.neural_env.dof_qd_per_env)
                 self.neural_model = MSEModel(
                     input_sample=input_sample,
                     state_output_dim=state_output_dim,
-                    lambda_output_dim=engine_dims.num_constraints,
+                    lambda_output_dim=self.utils_provider.lambda_dim,
                     input_cfg=cfg['inputs'],
                     network_cfg=cfg['network'],
                     device=self.device,

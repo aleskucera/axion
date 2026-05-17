@@ -18,6 +18,7 @@ from axion.neural_solver.train.config_builder import (
     load_default_cfg,
     validate_cfg,
 )
+from axion.neural_solver.utils.datasets import read_lambda_dim_from_dataset
 from axion.neural_solver.utils.python_utils import get_time_stamp, set_random_seed
 
 
@@ -64,6 +65,14 @@ if __name__ == "__main__":
         cfg=cfg,
         skip_check_log_override=False,
     )
+
+    train_paths = cfg["algorithm"]["dataset"].get("train_dataset_path", [])
+    if isinstance(train_paths, str):
+        train_paths = [train_paths]
+    if train_paths:
+        dataset_lambda_dim = read_lambda_dim_from_dataset(train_paths[0])
+        if dataset_lambda_dim is not None:
+            cfg["env"].setdefault("utils_provider_cfg", {})["lambda_dim"] = dataset_lambda_dim
 
     print(f"Device = {args.device}")
     neural_env = NnTrainingInterface(**cfg["env"], device=args.device)
