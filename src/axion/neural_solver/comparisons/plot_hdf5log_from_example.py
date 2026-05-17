@@ -8,6 +8,7 @@ from pathlib import Path
 import h5py
 import matplotlib.pyplot as plt
 import numpy as np
+from matplotlib.axes import Axes
 
 NO_CONTACT_MODELS_HDF5_LOG_FILE_NAMES = [
     "AxioneEngineWithNeuralLambdas_example_2026-04-24_14-01-52.h5"
@@ -40,6 +41,13 @@ MSE_STATE_JOINT_LAMBDA_MODELS_HDF5_LOG_FILE_NAMES = [
 ]
 
 MSE_32 = "AxioneEngineWithNeuralLambdas_example_2026-05-14_12-57-47.h5"
+MODEL_299 = [
+    "AxioneEngineWithNeuralLambdas_example_2026-05-17_13-01-48.h5", # INITIAL_STATE = (0.5, -0.3, 1.0, -2.0)
+    "AxioneEngineWithNeuralLambdas_example_2026-05-17_13-09-27.h5", # INITIAL_STATE = (-3.1415/2, -0.1, 2.0, 3.0)
+    "AxioneEngineWithNeuralLambdas_example_2026-05-17_13-16-29.h5", # INITIAL_STATE = (-3.1415/3, -0.3, 1.0, -1.5)
+    "AxioneEngineWithNeuralLambdas_example_2026-05-17_13-21-25.h5"  # INITIAL_STATE = (-3.1415/3, -0.3, 0.5, -1.5) 
+]
+
 
 NO_CONTACT_MODELS_INFO = [
     "pure mse, w_state = 500",
@@ -76,21 +84,21 @@ MSE_STATE_JOINT_LAMBDA_MODELS_MODEL_INFOS = [
 ]
 
 #--------------------------------------------------------
-ACADEMIC_PLOTTING = True
+ACADEMIC_PLOTTING = False
 BASE_FONTSIZE = 13
-AXES_TICKS_FONTSIZE = BASE_FONTSIZE + 2 
+AXES_TICKS_FONTSIZE = BASE_FONTSIZE
 LEGEND_FONTSIZE = BASE_FONTSIZE
 AXES_LABELS_FONTSIZE = BASE_FONTSIZE + 2
 TITLE_FONTSIZE = BASE_FONTSIZE + 2
-LINEWIDTH = 2.5  # Used for every ax.plot linewidth in this script
+LINEWIDTH = 2.25  # Used for every ax.plot linewidth in this script
 GRID_ALPHA = 0.3
-# Logged constraint forces are treated as SI Newtons for axis labels when ACADEMIC_PLOTTING.
+# Academic lambda panels use dimensionless [-] on the axis label (was SI Newtons [N]).
 #--------------------------------------------------------
 ID = 2
 MODEL_INFO = "mse 32"
 COMPARISON_CSV_PATH = None # Path(__file__).resolve().parent / "mse_state_and_joint_lambdas.csv" # None
-DEFAULT_HDF5_PATH = Path(__file__).resolve().parents[4] / "data/logs" / MSE_32 #AxioneEngineWithNeuralLambdas_example_2026-05-12_09-07-56.h5"
-DEFAULT_LAMBDA_SLICE = slice(0, 24) # FIX: mse mdoels should now have 24 lambdas
+DEFAULT_HDF5_PATH = Path(__file__).resolve().parents[4] / "data/logs" /MTL_JUMP_MODELS_HDF5_LOG_FILE_NAMES[0]#MODEL_299[3] #AxioneEngineWithNeuralLambdas_example_2026-05-12_09-07-56.h5"
+DEFAULT_LAMBDA_SLICE = slice(10,20) # FIX: mse models should now have 24 lambdas
 ANALYZE_INCOMPLETE_MTL = False
 ANALYZE_CONTACT_MTL_LAMBDA_REGR_ONLY = False
 ANALYZE_CONTACT_MTL_CONDITIONED_LAMBDA_REGR_ONLY = False
@@ -98,6 +106,16 @@ ANALYZE_CONTACT_MTL_CONDITIONED_LAMBDA_REGR_ONLY = False
 DEFAULT_JUMP_TARGET_SCALE = 100.0
 SIM_COLOR = "tab:blue"
 PRED_COLOR = "tab:orange"
+ACADEMIC_SMALL_LAMBDA_YLIM = 0.1
+ACADEMIC_SMALL_LAMBDA_MAX_ABS_THRESHOLD = 0.05
+# Inclination of time-step tick labels on academic lambda subplots (bottom row).
+ACADEMIC_LAMBDA_SUBPLOT_XTICK_ROTATION_DEG = 32
+# Endpoint labels for blue (simulator) state traces on the academic state panel.
+# Offsets are per state component index (q_0, q_1, u_0, u_1).
+ACADEMIC_STATE_TRACE_LABEL_XOFFSET_PTS = (-486, -457, -475, -440)
+ACADEMIC_STATE_TRACE_LABEL_YOFFSET_PTS = (0, -13, +27, +100)
+ACADEMIC_STATE_TRACE_LABEL_COLOR = "black"
+ACADEMIC_STATE_TRACE_LABEL_FONTSIZE = BASE_FONTSIZE + 3
 
 
 def _apply_academic_matplotlib_style() -> None:
@@ -135,6 +153,11 @@ def _state_ylabel_academic(idx: int) -> str:
         r"$u_0$   [$\mathrm{rad}\cdot\mathrm{s}^{-1}$]",
         r"$u_1$   [$\mathrm{rad}\cdot\mathrm{s}^{-1}$]",
     )[idx]
+
+
+def _state_component_math_symbol(idx: int) -> str:
+    """Short LaTeX symbol for pendulum state component (matches `_state_ylabel_academic` order)."""
+    return (r"$q_0$", r"$q_1$", r"$u_0$", r"$u_1$")[idx]
 
 
 def _parse_optional_path(value: str) -> Path | None:
@@ -416,6 +439,95 @@ def _plot_states(time_axis: np.ndarray, x_label: str, real: np.ndarray, pred: np
     fig.tight_layout()
 
 
+def _plot_single_lambda_on_ax(
+    ax: Axes,
+    time_axis: np.ndarray,
+    real: np.ndarray,
+    pred: np.ndarray,
+    lambda_idx: int,
+    x_disp: str,
+    *,
+    jump_raw: np.ndarray | None = None,
+    show_xlabel: bool = True,
+    show_legend: bool = True,
+) -> None:
+    ax.plot(
+        time_axis,
+        real[:, lambda_idx],
+        label="Simulator next lambda",
+        linewidth=LINEWIDTH,
+        color=SIM_COLOR,
+    )
+    pred_series = pred[:, lambda_idx]
+    valid = np.isfinite(pred_series)
+    if ANALYZE_INCOMPLETE_MTL:
+        ax.scatter(
+            time_axis[valid],
+            pred_series[valid],
+            label="Predicted next lambda (active only)",
+            s=22.0,
+            marker="o",
+            color=PRED_COLOR,
+        )
+        if jump_raw is not None:
+            for t_idx in np.where(valid)[0]:
+                gt_lambda = real[t_idx, lambda_idx]
+                scaled_jump = jump_raw[t_idx, lambda_idx] * DEFAULT_JUMP_TARGET_SCALE
+                ax.annotate(
+                    f"{gt_lambda:.2f}+{scaled_jump:.2f}={pred_series[t_idx]:.2f}",
+                    (time_axis[t_idx], pred_series[t_idx]),
+                    textcoords="offset points",
+                    xytext=(4, 4),
+                    fontsize=7,
+                    color="black",
+                )
+    elif (
+        ANALYZE_CONTACT_MTL_CONDITIONED_LAMBDA_REGR_ONLY
+        and not ANALYZE_CONTACT_MTL_LAMBDA_REGR_ONLY
+        and not ANALYZE_INCOMPLETE_MTL
+    ):
+        ax.scatter(
+            time_axis[valid],
+            pred_series[valid],
+            label="Predicted next lambda (GT-active only)",
+            s=22.0,
+            marker="o",
+            color=PRED_COLOR,
+        )
+    else:
+        ax.plot(
+            time_axis,
+            pred_series,
+            label="Predicted next lambda",
+            linewidth=LINEWIDTH,
+            linestyle="--",
+            color=PRED_COLOR,
+        )
+    if show_xlabel:
+        ax.set_xlabel(x_disp)
+    ax.set_ylabel(rf"$\lambda_{{{lambda_idx}}}$ [N]" if ACADEMIC_PLOTTING else "Value")
+    if not ACADEMIC_PLOTTING:
+        ax.set_title(f"lambda[{lambda_idx}]")
+    ax.grid(True, alpha=GRID_ALPHA)
+    if show_legend:
+        ax.legend(loc="best")
+
+
+def _maybe_apply_small_lambda_ylim(
+    ax: Axes, real_series: np.ndarray, pred_series: np.ndarray
+) -> None:
+    vals = np.concatenate(
+        [
+            real_series[np.isfinite(real_series)],
+            pred_series[np.isfinite(pred_series)],
+        ]
+    )
+    if vals.size == 0:
+        return
+    if float(np.nanmax(np.abs(vals))) <= ACADEMIC_SMALL_LAMBDA_MAX_ABS_THRESHOLD:
+        ax.set_ylim(-ACADEMIC_SMALL_LAMBDA_YLIM, ACADEMIC_SMALL_LAMBDA_YLIM)
+
+
 def _plot_lambdas(
     time_axis: np.ndarray,
     x_label: str,
@@ -446,70 +558,129 @@ def _plot_lambdas(
 
     for local_idx, lambda_idx in enumerate(selected):
         ax = axes_arr[local_idx]
-        ax.plot(
+        _plot_single_lambda_on_ax(
+            ax,
             time_axis,
-            real[:, lambda_idx],
-            label="Simulator next lambda",
-            linewidth=LINEWIDTH,
-            color=SIM_COLOR,
+            real,
+            pred,
+            lambda_idx,
+            x_disp,
+            jump_raw=jump_raw,
+            show_xlabel=True,
         )
-        pred_series = pred[:, lambda_idx]
-        valid = np.isfinite(pred_series)
-        if ANALYZE_INCOMPLETE_MTL:
-            ax.scatter(
-                time_axis[valid],
-                pred_series[valid],
-                label="Predicted next lambda (active only)",
-                s=22.0,
-                marker="o",
-                color=PRED_COLOR,
-            )
-            if jump_raw is not None:
-                for t_idx in np.where(valid)[0]:
-                    gt_lambda = real[t_idx, lambda_idx]
-                    scaled_jump = jump_raw[t_idx, lambda_idx] * DEFAULT_JUMP_TARGET_SCALE
-                    ax.annotate(
-                        f"{gt_lambda:.2f}+{scaled_jump:.2f}={pred_series[t_idx]:.2f}",
-                        (time_axis[t_idx], pred_series[t_idx]),
-                        textcoords="offset points",
-                        xytext=(4, 4),
-                        fontsize=7,
-                        color="black",
-                    )
-        elif (
-            ANALYZE_CONTACT_MTL_CONDITIONED_LAMBDA_REGR_ONLY
-            and not ANALYZE_CONTACT_MTL_LAMBDA_REGR_ONLY
-            and not ANALYZE_INCOMPLETE_MTL
-        ):
-            ax.scatter(
-                time_axis[valid],
-                pred_series[valid],
-                label="Predicted next lambda (GT-active only)",
-                s=22.0,
-                marker="o",
-                color=PRED_COLOR,
-            )
-        else:
-            ax.plot(
-                time_axis,
-                pred_series,
-                label="Predicted next lambda",
-                linewidth=LINEWIDTH,
-                linestyle="--",
-                color=PRED_COLOR,
-            )
-        ax.set_xlabel(x_disp)
-        ax.set_ylabel(
-            rf"$\lambda_{{{lambda_idx}}}$ [N]" if ACADEMIC_PLOTTING else "Value"
-        )
-        if not ACADEMIC_PLOTTING:
-            ax.set_title(f"lambda[{lambda_idx}]")
-        ax.grid(True, alpha=GRID_ALPHA)
-        ax.legend(loc="best")
 
     for extra_idx in range(n, len(axes_arr)):
         axes_arr[extra_idx].set_visible(False)
 
+    fig.tight_layout()
+
+
+def _plot_academic_combined_dashboard(
+    time_axis: np.ndarray,
+    x_label: str,
+    next_states: np.ndarray,
+    predicted_next_states: np.ndarray,
+    next_lambdas: np.ndarray,
+    predicted_next_lambdas: np.ndarray,
+    lambda_start: int,
+    lambda_stop: int,
+    jump_raw: np.ndarray | None = None,
+) -> None:
+    total_lambdas = next_lambdas.shape[1]
+    start = max(0, lambda_start)
+    stop = min(total_lambdas, lambda_stop)
+    if stop <= start:
+        raise ValueError(
+            f"Invalid lambda slice [{lambda_start}:{lambda_stop}] for total {total_lambdas} lambdas"
+        )
+    n_lambda_selected = stop - start
+    if n_lambda_selected != 10:
+        raise ValueError(
+            "Academic combined figure expects exactly 10 lambda indices "
+            f"(slice length {stop}-{start}={n_lambda_selected}); "
+            "adjust --lambda-start/--lambda-stop."
+        )
+
+    x_disp = _format_x_label_for_plot(x_label)
+    selected = list(range(start, stop))
+
+    fig = plt.figure(figsize=(11, 17))
+    outer_gs = fig.add_gridspec(2, 1, height_ratios=[2.7, 5.4], hspace=0.25)
+    ax_state = fig.add_subplot(outer_gs[0, 0])
+    inner_gs = outer_gs[1].subgridspec(5, 2, hspace=0.35, wspace=0.4)
+
+    for i in range(next_states.shape[1]):
+        ax_state.plot(
+            time_axis,
+            next_states[:, i],
+            linewidth=LINEWIDTH,
+            color=SIM_COLOR,
+            label=("Axion simulator" if i == 0 else "_sim_extra"),
+        )
+    for i in range(predicted_next_states.shape[1]):
+        ax_state.plot(
+            time_axis,
+            predicted_next_states[:, i],
+            linewidth=LINEWIDTH,
+            linestyle="--",
+            color=PRED_COLOR,
+            label=("Neural prediction (teacher-forced)" if i == 0 else "_pred_extra"),
+        )
+    n_state = next_states.shape[1]
+    for i in range(min(n_state, 4)):
+        x_end = float(time_axis[-1])
+        y_end = float(next_states[-1, i])
+        ax_state.annotate(
+            _state_component_math_symbol(i),
+            (x_end, y_end),
+            textcoords="offset points",
+            xytext=(
+                ACADEMIC_STATE_TRACE_LABEL_XOFFSET_PTS[i],
+                ACADEMIC_STATE_TRACE_LABEL_YOFFSET_PTS[i],
+            ),
+            color=ACADEMIC_STATE_TRACE_LABEL_COLOR,
+            fontsize=ACADEMIC_STATE_TRACE_LABEL_FONTSIZE,
+            ha="left",
+            va="center",
+            clip_on=False,
+        )
+    ax_state.set_xlabel(x_disp)
+    ax_state.set_ylabel("States")
+    ax_state.grid(True, alpha=GRID_ALPHA)
+    ax_state.legend(loc="best")
+
+    for local_idx, lambda_idx in enumerate(selected):
+        row, col = divmod(local_idx, 2)
+        ax_l = fig.add_subplot(inner_gs[row, col], sharex=ax_state)
+        bottom_row = row == 4
+        _plot_single_lambda_on_ax(
+            ax_l,
+            time_axis,
+            next_lambdas,
+            predicted_next_lambdas,
+            lambda_idx,
+            x_disp,
+            jump_raw=jump_raw,
+            show_xlabel=bottom_row,
+            show_legend=False,
+        )
+        _maybe_apply_small_lambda_ylim(
+            ax_l, next_lambdas[:, lambda_idx], predicted_next_lambdas[:, lambda_idx]
+        )
+        if not bottom_row:
+            plt.setp(ax_l.get_xticklabels(), visible=False)
+        else:
+            plt.setp(
+                ax_l.get_xticklabels(),
+                rotation=ACADEMIC_LAMBDA_SUBPLOT_XTICK_ROTATION_DEG,
+                ha="right",
+                rotation_mode="anchor",
+            )
+
+    # fig.suptitle(
+    #     "Next states and constraint forces: simulator vs neural prediction "
+    #     f"(indices $\\lambda_{{{start}}}\\ldots\\lambda_{{{stop - 1}}}$)"
+    # )
     fig.tight_layout()
 
 
@@ -776,18 +947,43 @@ def main() -> None:
 
     time_axis, x_label = _build_time_axis(next_states.shape[0], args.dt)
 
-    if predicted_next_states is not None:
-        _plot_states(time_axis, x_label, next_states, predicted_next_states)
-    if predicted_next_lambdas is not None:
-        _plot_lambdas(
-            time_axis=time_axis,
-            x_label=x_label,
-            real=next_lambdas,
-            pred=predicted_next_lambdas,
-            lambda_start=args.lambda_start,
-            lambda_stop=args.lambda_stop,
+    academic_dashboard = (
+        ACADEMIC_PLOTTING
+        and predicted_next_states is not None
+        and predicted_next_lambdas is not None
+    )
+    if ACADEMIC_PLOTTING and not academic_dashboard:
+        raise ValueError(
+            "ACADEMIC_PLOTTING requires predicted_next_states and predicted_next_lambdas "
+            "for the combined figure; this log/configuration omits one of them."
+        )
+
+    if academic_dashboard:
+        _plot_academic_combined_dashboard(
+            time_axis,
+            x_label,
+            next_states,
+            predicted_next_states,
+            next_lambdas,
+            predicted_next_lambdas,
+            args.lambda_start,
+            args.lambda_stop,
             jump_raw=lambda_jump_arr if ANALYZE_INCOMPLETE_MTL else None,
         )
+    else:
+        if predicted_next_states is not None:
+            _plot_states(time_axis, x_label, next_states, predicted_next_states)
+        if predicted_next_lambdas is not None:
+            _plot_lambdas(
+                time_axis=time_axis,
+                x_label=x_label,
+                real=next_lambdas,
+                pred=predicted_next_lambdas,
+                lambda_start=args.lambda_start,
+                lambda_stop=args.lambda_stop,
+                jump_raw=lambda_jump_arr if ANALYZE_INCOMPLETE_MTL else None,
+            )
+
     (
         state_mae,
         lambda_mae,
@@ -801,7 +997,8 @@ def main() -> None:
         next_lambdas,
         predicted_next_lambdas,
     )
-    _plot_mae_summary(state_mae, lambda_mae, state_total_abs, lambda_total_abs)
+    if not academic_dashboard:
+        _plot_mae_summary(state_mae, lambda_mae, state_total_abs, lambda_total_abs)
     if not args.no_csv and args.csv is not None:
         _append_comparison_csv(
             args.csv,
@@ -814,7 +1011,7 @@ def main() -> None:
             total_abs_error=total_abs_error,
             total_squared_error=total_squared_error,
         )
-    if activity_pair is not None:
+    if not academic_dashboard and activity_pair is not None:
         lambda_activity, lambda_activity_gt = activity_pair
         _plot_lambda_activity_labels(
             time_axis=time_axis,

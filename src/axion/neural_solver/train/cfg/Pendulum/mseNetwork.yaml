@@ -22,11 +22,11 @@ algorithm:
   grad_norm: 1.0
   eval_interval: 0 # disables rollout eval during training
   loss:
-    state_loss_weight: 1.0    # weight on the state (q + qd) loss term
+    state_loss_weight: 2.0    # weight on the state (q + qd) loss term
     lambda_loss_weight: 1.0   # weight on the lambda loss term
     angular_prediction_l2_weight: 0.5
-    lambda_log_space_loss: false   # compute lambda MSE in signed log space: z = sign(y)*ln(|y|+eps)
-    lambda_log_space_eps: 1.0e-6  # epsilon inside ln(|y| + eps) for numerical stability
+    lambda_log_space_loss: true   # compute lambda MSE in signed log space: z = sign(y)*ln(|y|+eps)
+    lambda_log_space_eps: 1  # epsilon inside ln(|y| + eps) for numerical stability
     
   optimizer:
     name: adamw
@@ -54,16 +54,14 @@ inputs:
     contact_points_1,
     contact_depths,
     gravity_dir,
-    control_active,
-    joint_position_control_error,
   ]
 
 network:
   model_impl: mse
   normalize_input: true
-  normalize_output: false
+  normalize_output: true
   enable_state_head: true
-  enable_lambda_head: false
+  enable_lambda_head: true
   model:
     mlp:
       layer_sizes: []

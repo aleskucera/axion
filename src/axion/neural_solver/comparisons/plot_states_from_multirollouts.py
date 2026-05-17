@@ -8,17 +8,19 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 _LOG_DIR = Path(__file__).resolve().parents[4] / "data/logs/multirollouts"
-TRAJ_ID = 8
+TRAJ_ID = 2
 
 # Edit when running via F5: same stem suffix as log_multiple_rollouts_autoregressive._hdf5_filename_stem
 # (only the engine prefix differs between the files: Axion_, GPT_, TeacherForcedGPT_, AxionNeuralLambdas_).
 
 # _SHARED_STEM = ("100roll_seed0_200steps_dt0p01_qm3p14159_3p14159_qdm5_5_pl0_0_1_0")
-_SHARED_STEM = ("10roll_seed0_200steps_dt0p01_qm3p14159_3p14159_qdm1_1_pl0_0_1_0")
+_SHARED_STEM = ("10roll_seed0_250steps_dt0p01_qm3p14159_3p14159_qdm3_3_pl0_0_1_0_rndplane_dmax2p5")
 
 AXION_H5 = _LOG_DIR / f"Axion_{_SHARED_STEM}.h5"
 GPT_H5 = _LOG_DIR / f"GPT_{_SHARED_STEM}.h5"
 TEACHER_FORCED_GPT_H5 = _LOG_DIR / f"TeacherForcedGPT_{_SHARED_STEM}.h5"
+# e.g. data/logs/AxionNeuralLambdas_100roll_seed0_200steps_dt0p01_qm3p14159_3p14159_qdm5_5_pl0_0_1_0.h5
+INCLUDE_AXION_NEURAL_LAMBDAS = False
 AXION_NEURAL_LAMBDAS_H5 = _LOG_DIR / f"AxionNeuralLambdas_{_SHARED_STEM}.h5"
 
 SIM_DT: float | None = None  # None → x is step index; positive → x is time in seconds
@@ -111,6 +113,38 @@ def _load_rollout_states(
     return arr
 
 
+def _wrap_to_pi_inplace_np(angles: np.ndarray) -> np.ndarray:
+    """In-place wrap of angles to ``[-pi, pi)``.
+
+    Same steps as ``_wrap_to_pi_`` in ``transformer_neural_utils_provider_new``
+    (add ``pi``, ``remainder`` by ``2*pi``, subtract ``pi``).
+    """
+    two_pi = 2.0 * np.pi
+    np.add(angles, np.pi, out=angles)
+    np.remainder(angles, two_pi, out=angles)
+    np.subtract(angles, np.pi, out=angles)
+    return angles
+
+
+def _wrap_joint_positions_to_pi_inplace(states: np.ndarray) -> None:
+    """Wrap minimal-coordinate joint angles ``q0, q1`` (columns 0–1) to ``[-pi, pi)`` in place.
+
+    Same behavior as :func:`plot_error_from_multirollouts._wrap_joint_positions_to_pi_inplace`.
+    """
+    if states.ndim == 2:
+        if states.shape[-1] < 2:
+            raise ValueError(f"Expected (T, 4+) states; got {states.shape}")
+        _wrap_to_pi_inplace_np(states[:, :2])
+    elif states.ndim == 3:
+        if states.shape[-1] < 2:
+            raise ValueError(f"Expected (R, T, 4+) states; got {states.shape}")
+        _wrap_to_pi_inplace_np(states[..., :2])
+    else:
+        raise ValueError(
+            f"Expected (T, 4+) or (R, T, 4+) states; got {states.shape}"
+        )
+
+
 def _build_x_axis(t_len: int) -> tuple[np.ndarray, str]:
     if SIM_DT is None:
         return np.arange(t_len, dtype=float), r"Time step $t$ [-]"
@@ -127,14 +161,26 @@ def main() -> None:
     teacher_forced = _load_rollout_states(
         TEACHER_FORCED_GPT_H5, traj_id=tid, expected_engine="teacher_forced_gpt"
     )
-    axion_neural_lambdas = _load_rollout_states(
-        AXION_NEURAL_LAMBDAS_H5, traj_id=tid, expected_engine="axion_neural_lambdas"
-    )
-    for name, arr in (
+    axion_neural_lambdas: np.ndarray | None = None
+    if INCLUDE_AXION_NEURAL_LAMBDAS:
+        axion_neural_lambdas = _load_rollout_states(
+            AXION_NEURAL_LAMBDAS_H5, traj_id=tid, expected_engine="axion_neural_lambdas"
+        )
+
+    _wrap_joint_positions_to_pi_inplace(axion)
+    _wrap_joint_positions_to_pi_inplace(gpt)
+    _wrap_joint_positions_to_pi_inplace(teacher_forced)
+    if axion_neural_lambdas is not None:
+        _wrap_joint_positions_to_pi_inplace(axion_neural_lambdas)
+
+    to_validate: list[tuple[str, np.ndarray]] = [
         ("GPT", gpt),
         ("TeacherForcedGPT", teacher_forced),
-        ("AxionNeuralLambdas", axion_neural_lambdas),
-    ):
+    ]
+    if axion_neural_lambdas is not None:
+        to_validate.append(("AxionNeuralLambdas", axion_neural_lambdas))
+
+    for name, arr in to_validate:
         if axion.shape[0] != arr.shape[0]:
             raise ValueError(
                 f"Trajectory length mismatch: Axion T={axion.shape[0]}, {name} T={arr.shape[0]}"
@@ -143,16 +189,20 @@ def main() -> None:
     t_len = int(axion.shape[0])
     x_axis, x_label = _build_x_axis(t_len)
 
-    engines: tuple[tuple[np.ndarray, str, str], ...] = (
+    engines_list: list[tuple[np.ndarray, str, str]] = [
         (axion, "Axion", "tab:green"),
         (gpt, "Neural prediction (autoregressive)", "black"),
         (teacher_forced, "Neural prediction (teacher-forced)", "red"),
-        (
-            axion_neural_lambdas,
-            "NN state (Axion+neural lambdas)",
-            "tab:blue",
-        ),
-    )
+    ]
+    if axion_neural_lambdas is not None:
+        engines_list.append(
+            (
+                axion_neural_lambdas,
+                "NN state (Axion+neural lambdas)",
+                "tab:blue",
+            )
+        )
+    engines: tuple[tuple[np.ndarray, str, str], ...] = tuple(engines_list)
 
     fig, axes = plt.subplots(2, 2, figsize=(12, 8))
     axes_flat = axes.ravel()
@@ -185,7 +235,7 @@ def main() -> None:
         handles,
         labels,
         loc="upper center",
-        ncol=4,
+        ncol=len(labels),
         bbox_to_anchor=(0.5, 1.01),
         frameon=True,
     )

@@ -31,11 +31,14 @@ from axion.neural_solver.train.trained_models.selected_trained_models import (
     MTL_CONTACT_MODELS_LAMBDA_REGR_ONLY_Y_CLS_1,
     MSE_STATE_JOINT_LAMBDA_MODELS
 )
-
+# state only prediction
 NN_32_PATH = "03-17-2026-15-12-19" 
 
-NN_BASE_PATH = Path.cwd() /"src"/"axion"/"neural_solver"/"train"/"trained_models"/NN_32_PATH
-NN_PENDULUM_PT_PATH = NN_BASE_PATH/"nn"/"best_eval_model.pt"
+# simultaneouous state and lambda prediction
+BEST_STATES_AND_JOINT_LAMBDAS_NEW = Path("mse") / "05-12-2026-17-30-11" 
+
+NN_BASE_PATH = Path.cwd() /"src"/"axion"/"neural_solver"/"train"/"trained_models"/BEST_STATES_AND_JOINT_LAMBDAS_NEW
+NN_PENDULUM_PT_PATH = NN_BASE_PATH/"nn"/"best_valid_valid_model.pt"
 NN_PENDULUM_CFG_PATH = NN_BASE_PATH/"cfg.yaml"
 
 # Flip to True after running export_to_onnx.py + build_tensorrt_engine.py 

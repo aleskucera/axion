@@ -11,7 +11,11 @@ SEED        : int                — RNG seed for reproducible initial condition
 N_STEPS     : int                — timesteps per rollout (overrides yaml duration)
 Q_RANGE     : (float, float)     — uniform range for joint angles q0, q1  [rad]
 QD_RANGE    : (float, float)     — uniform range for joint velocities qd0, qd1 [rad/s]
-PLANE_COEFF : (a, b, c, d)       — ground-plane equation ax+by+cz+d=0
+PLANE_COEFF : (a, b, c, d)       — fixed plane ax+by+cz+d=0 when RANDOMIZE_PLANES is False
+RANDOMIZE_PLANES : bool          — per rollout, sample a tilted plane (as in
+                                  trajectory_sampler_pendulum + UniformSampler); if the
+                                  rod would cross that plane at t=0, use (0,0,1,0) instead
+MAX_D_COEFFICIENT_OFFSET_M : float — extra d offset uniform in [0, this] (matches training)
 """
 
 import pathlib
@@ -32,10 +36,12 @@ from hydra.core.global_hydra import GlobalHydra
 ENGINE      = "teacher_forced_gpt"           # "axion" | "gpt" | "teacher_forced_gpt" | "axion_neural_lambdas"
 N_ROLLOUTS  = 50
 SEED        = 0
-N_STEPS     = 100               # timesteps per rollout
+N_STEPS     = 300               # timesteps per rollout
 Q_RANGE     = (-np.pi, np.pi)  # q0, q1 sampled uniformly from this range
 QD_RANGE    = (-3.0, 3.0)      # qd0, qd1 sampled uniformly from this range
 PLANE_COEFF = (0.0, 0.0, 1.0, 0.0)  # horizontal ground plane (default)
+RANDOMIZE_PLANES = True
+MAX_D_COEFFICIENT_OFFSET_M = 2.5
 # ---------------------------------------------------------------------------
 
 # Add the examples directory to sys.path so local modules resolve.
@@ -48,7 +54,11 @@ CONFIG_PATH = _EXAMPLES_DIR.parent / "conf"
 from axion import EngineConfig, ExecutionConfig, InteractiveSimulator, JointMode
 from axion import LoggingConfig, RenderingConfig, SimulationConfig
 from axion.neural_solver.logging.state_logger_for_examples import MultiRolloutStateLogger
-from pendulum_articulation_definition import PENDULUM_HEIGHT, build_pendulum_model
+from pendulum_articulation_definition import (
+    LINK_LENGTH,
+    PENDULUM_HEIGHT,
+    build_pendulum_model,
+)
 from pendulum_utils import generalized_to_maximal, set_tilted_plane_from_coefficients
 
 # Whether the chosen engine requires an eval_ik pass before reading joint_q/qd
@@ -197,11 +207,68 @@ def _hdf5_filename_stem(dt: float) -> str:
     q_lo, q_hi = Q_RANGE
     qd_lo, qd_hi = QD_RANGE
     a, b, c, d = PLANE_COEFF
-    return (
+    stem = (
         f"{eng_label}_{N_ROLLOUTS}roll_seed{SEED}_{N_STEPS}steps_dt{fnum(dt)}_"
         f"q{fnum(q_lo)}_{fnum(q_hi)}_qd{fnum(qd_lo)}_{fnum(qd_hi)}_"
         f"pl{fnum(a)}_{fnum(b)}_{fnum(c)}_{fnum(d)}"
     )
+    if RANDOMIZE_PLANES:
+        stem += f"_rndplane_dmax{fnum(MAX_D_COEFFICIENT_OFFSET_M)}"
+    return stem
+
+
+def _sample_plane_normal_uniform(rng: np.random.Generator) -> np.ndarray:
+    """Match UniformSampler.sample_plane_normals (single sample, shape (3,))."""
+    x = rng.uniform(-3.0, 3.0)
+    radicand = max((2.0 * LINK_LENGTH) ** 2 - x * x, 0.0)
+    z = -np.sqrt(radicand)
+    return np.array([x, 0.0, z], dtype=np.float64)
+
+
+def _pendulum_keypoints(ic_q0: float, ic_q1: float) -> np.ndarray:
+    """Pivot and link tips in world frame; same kinematics as TrajectorySamplerPendulum."""
+    q0 = np.pi / 2.0 - ic_q0
+    q1 = q0 - ic_q1
+    x0 = LINK_LENGTH * np.sin(q0)
+    z0 = -LINK_LENGTH * np.cos(q0) + PENDULUM_HEIGHT
+    x1 = LINK_LENGTH * np.sin(q1) + x0
+    z1 = -LINK_LENGTH * np.cos(q1) + z0
+    return np.array(
+        [
+            [0.0, 0.0, PENDULUM_HEIGHT],
+            [x0, 0.0, z0],
+            [x1, 0.0, z1],
+        ],
+        dtype=np.float64,
+    )
+
+
+def _plane_crosses_pendulum(points_xyz: np.ndarray, n_hat: np.ndarray, d: float) -> bool:
+    """True if min(n·p+d) < 0 and max(n·p+d) > 0 over keypoints (training sampler logic)."""
+    signed = (points_xyz * n_hat).sum(axis=-1) + d
+    return bool(signed.min() < 0.0 and signed.max() > 0.0)
+
+
+def _plane_coeff_for_rollout(
+    rng: np.random.Generator,
+    ic: tuple[float, float, float, float],
+) -> tuple[float, float, float, float]:
+    """Sample plane like trajectory generation; on geometric crossing use (0,0,1,0)."""
+    q0, q1, _, _ = ic
+    raw = _sample_plane_normal_uniform(rng)
+    nrm = np.linalg.norm(raw)
+    if nrm < 1e-8:
+        n_hat = np.array([0.0, 0.0, 1.0], dtype=np.float64)
+    else:
+        n_hat = raw / nrm
+    a, b, c = float(n_hat[0]), float(n_hat[1]), float(n_hat[2])
+    x, y, z = float(raw[0]), float(raw[1]), float(raw[2])
+    d0 = -a * x - b * y - c * (z + PENDULUM_HEIGHT)
+    d = d0 + rng.uniform(0.0, MAX_D_COEFFICIENT_OFFSET_M)
+    pts = _pendulum_keypoints(q0, q1)
+    if _plane_crosses_pendulum(pts, n_hat, d):
+        return (0.0, 0.0, 1.0, 0.0)
+    return (-a, -b, -c, -float(d))
 
 
 def _sample_initial_conditions(rng: np.random.Generator) -> tuple[float, float, float, float]:
@@ -229,6 +296,7 @@ def main():
     sim_config.duration_seconds = N_STEPS * dt
 
     rng = np.random.default_rng(seed=SEED)
+    plane_crossing_fallbacks = 0
 
     multi_logger = MultiRolloutStateLogger(
         engine=ENGINE,
@@ -242,6 +310,12 @@ def main():
     with tqdm(total=N_ROLLOUTS, desc=f"Rollouts [{ENGINE}]", unit="rollout", position=1, leave=True) as pbar:
         for i in range(N_ROLLOUTS):
             ic = _sample_initial_conditions(rng)
+            if RANDOMIZE_PLANES:
+                plane_coeff = _plane_coeff_for_rollout(rng, ic)
+                if plane_coeff == (0.0, 0.0, 1.0, 0.0):
+                    plane_crossing_fallbacks += 1
+            else:
+                plane_coeff = PLANE_COEFF
             pbar.set_postfix(q0=f"{ic[0]:.2f}", q1=f"{ic[1]:.2f}", qd0=f"{ic[2]:.2f}", qd1=f"{ic[3]:.2f}")
             multi_logger.start_rollout(ic)
 
@@ -251,13 +325,19 @@ def main():
                 exec_config=exec_config,
                 engine_config=engine_config,
                 logging_config=logging_config,
-                plane_coefficients=PLANE_COEFF,
+                plane_coefficients=plane_coeff,
                 initial_state=ic,
                 state_logger=multi_logger,
             )
             sim.run()
             multi_logger.finish_rollout()
             pbar.update(1)
+
+    if RANDOMIZE_PLANES and plane_crossing_fallbacks:
+        print(
+            f"[log_multiple_rollouts] Plane IC crossing fallback (0,0,1,0): "
+            f"{plane_crossing_fallbacks} / {N_ROLLOUTS} rollouts"
+        )
 
     multi_logger.save()
 

@@ -1,6 +1,6 @@
 defaults:
   - simulation: pendulum
-  - rendering: headless # gl
+  - rendering: gl # headless
   - execution: no_graph # cuda_graph
   - logging: disabled
   - engine: gpt 

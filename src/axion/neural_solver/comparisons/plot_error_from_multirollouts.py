@@ -12,8 +12,8 @@ _LOG_DIR = Path(__file__).resolve().parents[4] / "data/logs/multirollouts"
 # Edit when running via F5: same stem suffix as log_multiple_rollouts_autoregressive._hdf5_filename_stem
 # (only the engine prefix differs between the files: Axion_, GPT_, TeacherForcedGPT_, AxionNeuralLambdas_).
 
-#_SHARED_STEM = ("100roll_seed0_200steps_dt0p01_qm3p14159_3p14159_qdm5_5_pl0_0_1_0")
-_SHARED_STEM = ("50roll_seed0_100steps_dt0p01_qm3p14159_3p14159_qdm3_3_pl0_0_1_0")
+#_SHARED_STEM = ("50roll_seed0_100steps_dt0p01_qm3p14159_3p14159_qdm3_3_pl0_0_1_0") -in thesis
+_SHARED_STEM = ("50roll_seed0_300steps_dt0p01_qm3p14159_3p14159_qdm3_3_pl0_0_1_0_rndplane_dmax2p5")
 
 AXION_H5 = _LOG_DIR / f"Axion_{_SHARED_STEM}.h5"
 GPT_H5 = _LOG_DIR / f"GPT_{_SHARED_STEM}.h5"
@@ -117,25 +117,53 @@ def _wrap_to_pi_inplace_np(angles: np.ndarray) -> np.ndarray:
     return angles
 
 
-def _wrap_axion_joint_positions_to_pi_inplace(axion_rt4: np.ndarray) -> None:
-    """Wrap minimal-coordinate joint angles ``q0, q1`` (columns 0–1) to ``[-pi, pi)`` in place."""
-    if axion_rt4.ndim != 3 or axion_rt4.shape[2] < 2:
-        raise ValueError(f"Expected (R, T, 4+) states; got {axion_rt4.shape}")
-    _wrap_to_pi_inplace_np(axion_rt4[..., :2])
+def _wrap_joint_positions_to_pi_inplace(states: np.ndarray) -> None:
+    """Wrap minimal-coordinate joint angles ``q0, q1`` (columns 0–1) to ``[-pi, pi)`` in place.
+
+    Accepts batched multi-rollout ``(R, T, 4+)`` or a single trajectory ``(T, 4+)``.
+    """
+    if states.ndim == 2:
+        if states.shape[-1] < 2:
+            raise ValueError(f"Expected (T, 4+) states; got {states.shape}")
+        _wrap_to_pi_inplace_np(states[:, :2])
+    elif states.ndim == 3:
+        if states.shape[-1] < 2:
+            raise ValueError(f"Expected (R, T, 4+) states; got {states.shape}")
+        _wrap_to_pi_inplace_np(states[..., :2])
+    else:
+        raise ValueError(
+            f"Expected (T, 4+) or (R, T, 4+) states; got {states.shape}"
+        )
+
+
+def _angular_abs_diff(a: np.ndarray, b: np.ndarray) -> np.ndarray:
+    """Wrap-safe absolute angular difference, mirroring ``angular_prediction_loss``.
+
+    Returns ``|wrap_to_pi(a - b)|``, i.e. the shortest arc distance in ``[0, π]``.
+    Operates on a copy; does not modify inputs.
+    """
+    diff = a - b
+    _wrap_to_pi_inplace_np(diff)
+    return np.abs(diff)
 
 
 def _mean_l1_separation(a: np.ndarray, b: np.ndarray) -> np.ndarray:
-    """Per-time average over rollouts of the L1 state separation.
+    """Per-time average over rollouts of the wrap-aware L1 state separation.
 
-    For each time index ``t``, returns ``(1/R) * sum_r ||a[r,t,:] - b[r,t,:]||_1``
+    For each time index ``t``, returns ``(1/R) * sum_r L1(a[r,t,:], b[r,t,:])``
     where ``a,b`` have shape ``(R, T, 4)``.  Output shape is ``(T,)``.
+
+    Columns 0–1 (``q0``, ``q1``) use the shortest arc distance
+    ``|wrap_to_pi(a - b)|``; columns 2–3 (``qd0``, ``qd1``) use the naive
+    absolute difference.
     """
     if a.shape != b.shape:
         raise ValueError(f"Shape mismatch: {a.shape} vs {b.shape}")
     if a.ndim != 3 or a.shape[2] != 4:
         raise ValueError(f"Expected (R, T, 4); got {a.shape}")
-    diff = a - b
-    l1_per_rollout_and_time = np.sum(np.abs(diff), axis=-1)  # (R, T)
+    angle_err = _angular_abs_diff(a[..., :2], b[..., :2])  # (R, T, 2)
+    vel_err = np.abs(a[..., 2:] - b[..., 2:])              # (R, T, 2)
+    l1_per_rollout_and_time = np.sum(angle_err, axis=-1) + np.sum(vel_err, axis=-1)  # (R, T)
     return np.mean(l1_per_rollout_and_time, axis=0)  # (T,) — mean over rollouts r at each t
 
 
@@ -150,7 +178,6 @@ def _build_x_axis(t_len: int) -> tuple[np.ndarray, str]:
 def main() -> None:
     _apply_plot_style()
     axion = _load_multi_rollout_states(AXION_H5, expected_engine="axion")
-    _wrap_axion_joint_positions_to_pi_inplace(axion)
     gpt = _load_multi_rollout_states(GPT_H5, expected_engine="gpt")
     teacher_forced = _load_multi_rollout_states(
         TEACHER_FORCED_GPT_H5, expected_engine="teacher_forced_gpt"
@@ -160,6 +187,12 @@ def main() -> None:
         axion_neural_lambdas = _load_multi_rollout_states(
             AXION_NEURAL_LAMBDAS_H5, expected_engine="axion_neural_lambdas"
         )
+
+    _wrap_joint_positions_to_pi_inplace(axion)
+    _wrap_joint_positions_to_pi_inplace(gpt)
+    _wrap_joint_positions_to_pi_inplace(teacher_forced)
+    if axion_neural_lambdas is not None:
+        _wrap_joint_positions_to_pi_inplace(axion_neural_lambdas)
 
     to_validate: list[tuple[str, np.ndarray]] = [
         ("GPT", gpt),

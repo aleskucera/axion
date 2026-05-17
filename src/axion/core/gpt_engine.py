@@ -34,15 +34,15 @@ sys.modules['models'] = models
 sys.modules['utils'] = utils
 
 
+BEST_TRAINED_FROM_CONTACT_SWEEP = Path("sweep9e86ytgi")/"a4fvu450"    # jumpy
+BEST_STATE_ONLY_MODEL_CONTACT_INTER = "03-25-2026-11-47-56"
 BEST_STATE_ONLY_MODEL = "03-17-2026-15-12-19"   # debatable. # bet_eval_model.pt
 MODEL_27 = "03-12-2026-16-09-14"
 BEST_STATE_AND_LAMBDA_MODEL = Path("mse") / "05-12-2026-17-30-11"  # best_valid_valid_model.pt
+BEST_STATES_AND_JOINT_LAMBDAS = Path("mse") / "04-24-2026-17-02-15"  # best_valid_valid_model.pt
 
-BEST_TRAINED_FROM_CONTACT_SWEEP = Path("sweep9e86ytgi")/"a4fvu450"    # still bad
-BEST_STATE_ONLY_MODEL_CONTACT_INTER = "03-25-2026-11-47-56"
-
-NN_BASE_PATH = Path.cwd() /"src"/"axion"/"neural_solver"/"train"/"trained_models"/ BEST_TRAINED_FROM_CONTACT_SWEEP
-NN_PENDULUM_PT_PATH = NN_BASE_PATH/"nn"/"best_eval_model.pt"
+NN_BASE_PATH = Path.cwd() /"src"/"axion"/"neural_solver"/"train"/"trained_models"/ BEST_STATE_AND_LAMBDA_MODEL
+NN_PENDULUM_PT_PATH = NN_BASE_PATH/"nn"/"best_valid_valid_model.pt"
 NN_PENDULUM_CFG_PATH = NN_BASE_PATH/"cfg.yaml"
 
 # Flip to True after running export_to_onnx.py + build_tensorrt_engine.py.
