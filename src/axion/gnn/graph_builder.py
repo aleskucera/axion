@@ -3,7 +3,6 @@ import torch
 from torch_geometric.data import HeteroData
 from newton import JointType
 
-
 NODE_FEATURE_DIMS = {"object": 16, "floor": 0}
 EDGE_FEATURE_DIMS = {
     ("object", "contact", "object"): 11,
@@ -452,6 +451,8 @@ def add_joints(
         joint_enabled = joint_enabled[:, non_free]
         joint_compliance = joint_compliance[:, non_free]
         num_joints = int(non_free.sum())
+    elif (~non_free).all():
+        return
 
     W = world_indices.shape[0]
     J = num_joints

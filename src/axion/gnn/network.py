@@ -214,7 +214,9 @@ class Processor(nn.Module):
                 x_count[dst_type] += 1
             for node_type, res_aggr in x_res_aggr.items():
                 count = x_count[node_type]
-                x_dict[node_type] = x_dict[node_type] + (res_aggr / count if count > 0 else res_aggr)
+                x_dict[node_type] = x_dict[node_type] + (
+                    res_aggr / count if count > 0 else res_aggr
+                )
         return x_dict, edge_attr_dict
 
     def forward(

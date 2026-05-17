@@ -146,8 +146,9 @@ def main(config):
     train_loader = DataLoader(train_dataset, batch_size=config["batch_size"], shuffle=True)
     val_loader = DataLoader(val_dataset, batch_size=config["batch_size"], shuffle=False)
     optimizer = torch.optim.AdamW(model.parameters(), lr=config["lr_init"])
-    gamma = (config["lr_final"] / config["lr_init"]) ** (1.0 / config["epochs"])
-    scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=gamma)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+        optimizer, T_max=config["epochs"], eta_min=1e-6
+    )
     model.to(config["device"])
     wandb_group_name = config["wandb"].split("/") if not config["wandb"] is None else [""]
     wandb.init(
