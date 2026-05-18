@@ -7,14 +7,14 @@ NODE_FEATURE_DIMS = {"object": 16, "floor": 0}
 EDGE_FEATURE_DIMS = {
     ("object", "contact", "object"): 11,
     ("floor", "contact", "object"): 11,
-    ("object", "fixed_joint", "object"): 18,
-    ("object", "revolute_joint", "object"): 14,
-    ("object", "prismatic_joint", "object"): 14,
-    ("object", "ball_joint", "object"): 11,
-    ("floor", "fixed_joint", "object"): 18,
-    ("floor", "revolute_joint", "object"): 14,
-    ("floor", "prismatic_joint", "object"): 14,
-    ("floor", "ball_joint", "object"): 11,
+    ("object", "fixed_joint", "object"): 16,
+    ("object", "revolute_joint", "object"): 13,
+    ("object", "prismatic_joint", "object"): 13,
+    ("object", "ball_joint", "object"): 10,
+    ("floor", "fixed_joint", "object"): 16,
+    ("floor", "revolute_joint", "object"): 13,
+    ("floor", "prismatic_joint", "object"): 13,
+    ("floor", "ball_joint", "object"): 10,
 }
 OUTPUT_FEATURE_DIMS = {
     "object": 6,
@@ -41,6 +41,16 @@ def quat_mul(q1: torch.Tensor, q2: torch.Tensor) -> torch.Tensor:
         ],
         dim=-1,
     )
+
+
+def quat_to_rotvec(q: torch.Tensor) -> torch.Tensor:
+    """Convert quaternion [x, y, z, w] to rotation vector (axis * angle)."""
+    xyz = q[..., :3]
+    w = q[..., 3:]
+    norm = torch.norm(xyz, dim=-1, keepdim=True)
+    angle = 2.0 * torch.atan2(norm, w.abs())
+    rotvec = xyz / norm.clamp(min=1e-8) * angle
+    return torch.where(norm < 1e-8, torch.zeros_like(rotvec), rotvec)
 
 
 def quat_to_rot_matrix(q: torch.Tensor) -> torch.Tensor:
@@ -391,12 +401,12 @@ def get_joint_side_features(
     joint_name: str,
     lever: torch.Tensor,
     axis: torch.Tensor,
-    quat: torch.Tensor,
+    rotvec: torch.Tensor,
 ) -> torch.Tensor:
     if joint_name == "fixed_joint":
-        return torch.cat([lever, axis, quat], dim=-1)
+        return torch.cat([lever, axis, rotvec], dim=-1)
     elif joint_name == "ball_joint":
-        return torch.cat([lever, quat], dim=-1)
+        return torch.cat([lever, rotvec], dim=-1)
     else:  # revolute, prismatic
         return torch.cat([lever, axis], dim=-1)
 
@@ -490,16 +500,16 @@ def add_joints(
     axis_local = joint_axis[wi, joint_qd_start.to(torch.long)]  # [W, J, 3]
     R_joint_p = quat_to_rot_matrix(joint_X_p[..., 3:])
     axis_p = torch.einsum("wjmn,wjnk,wjk->wjm", R_body_p, R_joint_p, axis_local)
-    feat_axis_p = torch.cat([axis_p, torch.ones((W, J, 1), device=device)], dim=-1)
 
     R_joint_c = quat_to_rot_matrix(joint_X_c[..., 3:])
     axis_c = torch.einsum("wjmn,wjnk,wjk->wjm", R_body_c, R_joint_c, axis_local)
-    feat_axis_c = torch.cat([axis_c, torch.ones((W, J, 1), device=device)], dim=-1)
 
     # Joint frame quaternion in world space: q_body * q_joint
     # Mirrors: X_w = body_q * joint_X_local → q_w = q_body * q_joint
-    feat_quat_p = quat_mul(body_pose_p[..., 3:], joint_X_p[..., 3:])
-    feat_quat_c = quat_mul(body_pose_c[..., 3:], joint_X_c[..., 3:])
+    joint_quat_p = quat_mul(body_pose_p[..., 3:], joint_X_p[..., 3:])
+    joint_quat_c = quat_mul(body_pose_c[..., 3:], joint_X_c[..., 3:])
+    feat_rotvec_p = quat_to_rotvec(joint_quat_p)
+    feat_rotvec_c = quat_to_rotvec(joint_quat_c)
 
     # Constraint violation errors
     # Linear: world-space anchor position difference (pos_c - pos_p)
@@ -508,8 +518,8 @@ def add_joints(
     linear_err = pos_c_world - pos_p_world  # [W, J, 3]
 
     # Angular: 2 * Im(q_p^{-1} * q_c), mirrors get_angular_component error formula
-    q_p_conj = feat_quat_p * feat_quat_p.new_tensor([-1.0, -1.0, -1.0, 1.0])
-    q_rel = quat_mul(q_p_conj, feat_quat_c)
+    q_p_conj = joint_quat_p * joint_quat_p.new_tensor([-1.0, -1.0, -1.0, 1.0])
+    q_rel = quat_mul(q_p_conj, joint_quat_c)
     angular_err_raw = 2.0 * q_rel[..., :3]
     angular_err = torch.where(q_rel[..., 3:] < 0, -angular_err_raw, angular_err_raw)  # [W, J, 3]
 
@@ -532,14 +542,14 @@ def add_joints(
             feat_p = get_joint_side_features(
                 joint_name,
                 feat_lever_p[w_idx, j_idx],
-                feat_axis_p[w_idx, j_idx],
-                feat_quat_p[w_idx, j_idx],
+                axis_p[w_idx, j_idx],
+                feat_rotvec_p[w_idx, j_idx],
             )
             feat_c = get_joint_side_features(
                 joint_name,
                 feat_lever_c[w_idx, j_idx],
-                feat_axis_c[w_idx, j_idx],
-                feat_quat_c[w_idx, j_idx],
+                axis_c[w_idx, j_idx],
+                feat_rotvec_c[w_idx, j_idx],
             )
             err_all = get_joint_error_features(
                 joint_name,
