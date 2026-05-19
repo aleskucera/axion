@@ -2,23 +2,13 @@
 
 Reads N environments from a dataset HDF5 file, runs all engines headless,
 and writes per-step solver diagnostics (iter_count, initial guesses,
-converged values) to a new HDF5 file.
-
-Usage:
-    python test_engines.py --num-runs 5 --num-steps 300 \
-        --input-hdf5 ../../src/axion/neural_solver/datasets/Pendulum/pendulumContactsValid250klen500envs250seed1.hdf5 \
-        --output-hdf5 ../../data/engine_comparison_YYYYMMDD_HHMMSS.hdf5 \
-        --hybrid-mode neural-warm-start-forces
-
-    # Optional: disable tilted contact plane construction in the model
-    python test_engines.py --no-contacts
+converged values) to a new HDF5 file. Edit the user-configuration constants below.
 """
 from __future__ import annotations
-import argparse
 import pathlib
 from datetime import datetime
 from collections import defaultdict
-from typing import override
+from typing import Literal, override
 
 import h5py
 import hydra.utils
@@ -39,7 +29,15 @@ from pendulum_utils import set_tilted_plane_from_coefficients
 CONFIG_PATH = pathlib.Path(__file__).parent.parent / "conf"
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 
-DEFAULT_INPUT_HDF5 = (
+# ---------------------------------------------------------------------------
+# User configuration
+# ---------------------------------------------------------------------------
+
+NUM_RUNS = 50
+NUM_STEPS = 300
+DT = 0.01
+
+INPUT_HDF5 = (
     REPO_ROOT
     / "src"
     / "axion"
@@ -48,9 +46,33 @@ DEFAULT_INPUT_HDF5 = (
     / "Pendulum"
     / "pendulumContactsValid250klen500envs250seed1.hdf5"
 )
-def default_output_hdf5_path() -> pathlib.Path:
+# None → data/engine_comparison_<timestamp>[_contacts_only|_no_contacts].hdf5
+OUTPUT_HDF5: pathlib.Path | None = None
+
+# "default": first NUM_RUNS envs, contact plane on (may include no-contact rollouts)
+# "contacts_only": only HDF5 rollouts with contact anywhere in the recorded trajectory
+# "no_contacts": disable tilted contact-plane construction in the pendulum model
+CONTACT_MODE: Literal["default", "contacts_only", "no_contacts"] = "default"
+
+HYBRID_MODE: Literal[
+    "no-warm-start-forces",
+    "calculated-warm-start-forces",
+    "neural-warm-start-forces",
+] = "neural-warm-start-forces"
+
+
+def default_output_hdf5_path(
+    *,
+    contacts_only: bool = False,
+    no_contacts: bool = False,
+) -> pathlib.Path:
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    return REPO_ROOT / "data" / f"engine_comparison_{timestamp}.hdf5"
+    suffix = ""
+    if contacts_only:
+        suffix = "_contacts_only"
+    elif no_contacts:
+        suffix = "_no_contacts"
+    return REPO_ROOT / "data" / f"engine_comparison_{timestamp}{suffix}.hdf5"
 
 
 # ---------------------------------------------------------------------------
@@ -202,13 +224,69 @@ class Simulator(InteractiveSimulator):
 # Read dataset
 # ---------------------------------------------------------------------------
 
-def read_dataset(path: pathlib.Path, num_runs: int):
-    # HDF5 layout: (timesteps, environments, 4)
-    # Read timestep 0 (initial state) for the first num_runs environments.
+def _env_indices_with_contact_trajectories(f: h5py.File) -> np.ndarray:
+    """Return env column indices whose recorded rollout has contact at any timestep."""
+    data = f["data"]
+    if "contact_depths" in data:
+        depths = data["contact_depths"][:]  # (T, B, C)
+        has_contact = np.any(depths != 0, axis=(0, 2))
+        return np.flatnonzero(has_contact)
+    axion_grp = data.get("axion_contacts")
+    if axion_grp is not None and "contact_count" in axion_grp:
+        counts = axion_grp["contact_count"][:]  # (T, B)
+        has_contact = np.any(counts > 0, axis=0)
+        return np.flatnonzero(has_contact)
+    raise ValueError(
+        f"Dataset {f.filename} has no contact_depths or axion_contacts/contact_count; "
+        "cannot use contacts_only mode. Use a contact dataset or set CONTACT_MODE to "
+        "'default' or 'no_contacts'."
+    )
+
+
+def read_dataset(
+    path: pathlib.Path,
+    num_runs: int,
+    *,
+    contacts_only: bool = False,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Read initial states and plane coefficients for ``num_runs`` environments.
+
+    HDF5 layout: (timesteps, environments, ...). Uses timestep 0 for ICs.
+
+    Returns:
+        initial_states, plane_coefficients, source_env_indices (original env columns).
+    """
     with h5py.File(path, "r") as f:
-        states = f["data/states"][0, :num_runs, :]
-        plane_coeffs = f["data/plane_coefficients"][0, :num_runs, :]
-    return states.astype(np.float64), plane_coeffs.astype(np.float64)
+        num_envs = int(f["data/states"].shape[1])
+        if contacts_only:
+            candidate_indices = _env_indices_with_contact_trajectories(f)
+            if len(candidate_indices) < num_runs:
+                raise ValueError(
+                    f"Requested {num_runs} contact trajectories but only "
+                    f"{len(candidate_indices)} of {num_envs} environments in "
+                    f"{path} have contact in the recorded rollout."
+                )
+            env_indices = candidate_indices[:num_runs]
+            print(
+                f"Selected {num_runs} contact trajectory env indices "
+                f"{env_indices.tolist()} "
+                f"({len(candidate_indices)}/{num_envs} envs with contact in dataset)"
+            )
+        else:
+            if num_runs > num_envs:
+                raise ValueError(
+                    f"Requested {num_runs} runs but dataset only has {num_envs} environments."
+                )
+            env_indices = np.arange(num_runs, dtype=np.int32)
+
+        states = f["data/states"][0, env_indices, :]
+        plane_coeffs = f["data/plane_coefficients"][0, env_indices, :]
+
+    return (
+        states.astype(np.float64),
+        plane_coeffs.astype(np.float64),
+        env_indices.astype(np.int32),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -315,9 +393,13 @@ def write_output_hdf5(
     engines: dict[str, list[dict[str, np.ndarray]]],
     initial_states: np.ndarray,
     plane_coefficients: np.ndarray,
+    source_env_indices: np.ndarray,
     num_steps: int,
     dt: float,
     source_dataset: str,
+    *,
+    contacts_only: bool,
+    with_contacts: bool,
 ):
     path.parent.mkdir(parents=True, exist_ok=True)
     print(f"Writing output to {path} ...")
@@ -327,6 +409,9 @@ def write_output_hdf5(
         f.attrs["num_steps"] = num_steps
         f.attrs["dt"] = dt
         f.attrs["source_dataset"] = source_dataset
+        f.attrs["contacts_only"] = contacts_only
+        f.attrs["with_contacts"] = with_contacts
+        f.create_dataset("source_env_indices", data=source_env_indices)
 
         for engine_name, runs in engines.items():
             eng_grp = f.create_group(engine_name)
@@ -334,6 +419,7 @@ def write_output_hdf5(
                 run_grp = eng_grp.create_group(f"run_{i:03d}")
                 run_grp.attrs["initial_state"] = initial_states[i]
                 run_grp.attrs["plane_coefficients"] = plane_coefficients[i]
+                run_grp.attrs["source_env_index"] = int(source_env_indices[i])
 
                 for key, arr in run_data.items():
                     run_grp.create_dataset(
@@ -347,67 +433,36 @@ def write_output_hdf5(
 # Main
 # ---------------------------------------------------------------------------
 
-def parse_args():
-    p = argparse.ArgumentParser(
-        description=(
-            "Compare AxionEngine, HybridGPTEngine (warm-start on/off), "
-            "and RepeatedAxionEngine"
-        )
-    )
-    p.add_argument(
-        "--num-runs", type=int, default=5,
-        help="Number of environments (initial conditions) to test",
-    )
-    p.add_argument(
-        "--num-steps", type=int, default=300,
-        help="Number of simulation steps per run",
-    )
-    p.add_argument(
-        "--dt", type=float, default=0.01,
-        help="Simulation timestep (seconds)",
-    )
-    p.add_argument(
-        "--input-hdf5", type=str, default=str(DEFAULT_INPUT_HDF5),
-        help="Path to the source dataset HDF5 file",
-    )
-    p.add_argument(
-        "--output-hdf5", type=str, default=str(default_output_hdf5_path()),
-        help="Path for the output comparison HDF5 file",
-    )
-    p.add_argument(
-        "--no-contacts",
-        action="store_true",
-        help="Disable tilted contact-plane construction in the pendulum model.",
-    )
-    p.add_argument(
-        "--hybrid-mode",
-        type=str,
-        default="neural-warm-start-forces",
-        choices=[
-            "no-warm-start-forces",
-            "calculated-warm-start-forces",
-            "neural-warm-start-forces",
-        ],
-        help=(
-            "Hybrid engine force initialization mode: "
-            "'no-warm-start-forces' (zero init), "
-            "'calculated-warm-start-forces' (analytical warm start), or "
-            "'neural-warm-start-forces' (neural lambda init)."
-        ),
-    )
-    return p.parse_args()
+_VALID_CONTACT_MODES = ("default", "contacts_only", "no_contacts")
 
 
 def main():
-    args = parse_args()
+    if CONTACT_MODE not in _VALID_CONTACT_MODES:
+        raise ValueError(
+            f"CONTACT_MODE must be one of {_VALID_CONTACT_MODES}; got {CONTACT_MODE!r}"
+        )
 
-    input_path = pathlib.Path(args.input_hdf5)
-    output_path = pathlib.Path(args.output_hdf5)
+    contacts_only = CONTACT_MODE == "contacts_only"
+    with_contacts = CONTACT_MODE != "no_contacts"
+    no_contacts = CONTACT_MODE == "no_contacts"
 
-    print(f"Reading {args.num_runs} environments from {input_path} ...")
-    initial_states, plane_coefficients = read_dataset(input_path, args.num_runs)
+    input_path = pathlib.Path(INPUT_HDF5)
+    if OUTPUT_HDF5 is None:
+        output_path = default_output_hdf5_path(
+            contacts_only=contacts_only,
+            no_contacts=no_contacts,
+        )
+    else:
+        output_path = pathlib.Path(OUTPUT_HDF5)
 
-    hybrid_config_name, hybrid_label, hybrid_overrides = hybrid_engine_entry(args.hybrid_mode)
+    print(f"Reading {NUM_RUNS} environments from {input_path} ...")
+    initial_states, plane_coefficients, source_env_indices = read_dataset(
+        input_path,
+        NUM_RUNS,
+        contacts_only=contacts_only,
+    )
+
+    hybrid_config_name, hybrid_label, hybrid_overrides = hybrid_engine_entry(HYBRID_MODE)
     engines_config = [
         ("pendulum", "axion_engine", None),
         (hybrid_config_name, hybrid_label, hybrid_overrides),
@@ -424,9 +479,9 @@ def main():
             engine_label=engine_label,
             initial_states=initial_states,
             plane_coefficients=plane_coefficients,
-            num_steps=args.num_steps,
-            dt=args.dt,
-            with_contacts=not args.no_contacts,
+            num_steps=NUM_STEPS,
+            dt=DT,
+            with_contacts=with_contacts,
             engine_overrides=engine_overrides,
         )
 
@@ -435,9 +490,12 @@ def main():
         engines=results,
         initial_states=initial_states,
         plane_coefficients=plane_coefficients,
-        num_steps=args.num_steps,
-        dt=args.dt,
+        source_env_indices=source_env_indices,
+        num_steps=NUM_STEPS,
+        dt=DT,
         source_dataset=str(input_path),
+        contacts_only=contacts_only,
+        with_contacts=with_contacts,
     )
 
 

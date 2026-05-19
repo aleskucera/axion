@@ -53,9 +53,11 @@ class RepeatedAxionEngine(AxionEngineBase):
         # Call Newton solver 1st time
         self._solve()
 
-        # Initial guess #2:  No need to set body_pose and body_vel, just compute warm start forces
-        # Warm-start constraint forces for the second NR (body_pose / body_vel = 1st solve result)
-        self.compute_warm_start_forces()
+        # Initial guess #2: body_pose/body_vel/_constr_force are already the backtracked
+        # best-candidate from NR #1. _constr_force_prev_iter is not a tracked candidate so
+        # it is not restored by backtracking — sync it here to keep friction Jacobian
+        # assembly consistent in NR #2's first linearization.
+        wp.copy(dest=self.data._constr_force_prev_iter, src=self.data._constr_force)
         self._snapshot_init_guess_after_warm_start()
 
         # Call Newton solver 2nd time (`iter_count` after this is for NR #2 only; see `_solve()`)

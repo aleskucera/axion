@@ -3,7 +3,9 @@
 Analyze `data/engine_comparison*.hdf5`.
 
 Computes, for each run, the total number of Newton iterations (sum of `iter_count`)
-for selected engines and plots them as a bar chart.
+for selected engines and optionally plots them as a bar chart (Figure 1: first K runs).
+Also plots a second figure with three bars: total iterations summed across all
+trajectories per engine (shown via `plt.show()`).
 
 Additionally, for each run, creates a line plot where:
 - x-axis = simulation step index
@@ -14,17 +16,12 @@ Also creates temporal plots for hardcoded slices of:
 - converged lambda components
 - converged state components (from `converged_body_vel` flattened)
 
-Example:
-    python src/axion/neural_solver/comparisons/analyze_engine_test.py \
-        --hdf5 data/engine_comparison_20260424_153000.hdf5 \
-        --axion-group axion_engine \
-        --hybrid-group hybrid_gpt_engine_neural_warm_start_forces \
-        --repeated-group repeated_axion_engine
+Edit the user-configuration constants at the top of this file (HDF5 path, engine group
+names, optional output directories).
 """
 
 from __future__ import annotations
 
-import argparse
 import pathlib
 from datetime import datetime
 
@@ -34,9 +31,72 @@ import numpy as np
 
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[4]
-DEFAULT_H5_PATH = REPO_ROOT / "data" / "engine_comparison_20260427_110026.hdf5"
+
+# ---------------------------------------------------------------------------
+# User configuration
+# ---------------------------------------------------------------------------
+
+INPUT_HDF5 = REPO_ROOT / "data" / "engine_comparison_20260519_173216.hdf5"
+AXION_GROUP = "axion_engine"
+HYBRID_GROUP = "hybrid_gpt_engine_neural_warm_start_forces"
+REPEATED_GROUP = "repeated_axion_engine"
+# If set and Figure 1 is plotted (FIGURE_1_NUM_RUNS_TO_PLOT > 0), save it here.
+FIGURE_1_OUTPUT_PATH: pathlib.Path | None = None
+# None → <hdf5_dir>/iter_count_vs_step_per_run/<timestamp>/
+ITER_PLOTS_DIR: pathlib.Path | None = None
+# None → <hdf5_dir>/temporal_variables_per_run/<timestamp>/
+TEMPORAL_PLOTS_DIR: pathlib.Path | None = None
+
+ENGINE_LEGEND_LABELS = (
+    "Axion engine",
+    "Hybrid engine",
+    "Axion engine (repeated)",
+)
+# Bar colors per engine index (matplotlib default cycle C0..); shared by Figure 1 and 2.
+ENGINE_BAR_FACE_COLORS = ("C0", "C1", "C2")
+SAVE_ITER_COUNTS = False
+# Figure 1: grouped bar chart of total Newton iterations per trajectory.
+# 0 = skip; N > 0 = plot only the first N runs (from overlapping run indices).
+FIGURE_1_NUM_RUNS_TO_PLOT = 5
 LAMBDA_SLICE = (0, 0)
 STATE_SLICE = (0, 0)
+
+BASE_FONTSIZE = 13
+AXES_TICKS_FONTSIZE = BASE_FONTSIZE + 2
+LEGEND_FONTSIZE = BASE_FONTSIZE
+AXES_LABELS_FONTSIZE = BASE_FONTSIZE + 2
+TITLE_FONTSIZE = BASE_FONTSIZE + 2
+LINEWIDTH = 2.5
+GRID_ALPHA = 0.3
+LEGEND_LOC = "upper right"
+Y_LIM_ITERATION_PLOTS: tuple[float, float] | None = None
+
+
+def _figure_2_xtick_labels() -> tuple[str, ...]:
+    """Multi-line x tick strings for narrow Figure 2 (newline before parenthetical)."""
+    out: list[str] = []
+    for lbl in ENGINE_LEGEND_LABELS:
+        if "(" in lbl:
+            left, right = lbl.split("(", 1)
+            out.append(f"{left.strip()}\n({right}")
+        else:
+            out.append(lbl)
+    return tuple(out)
+
+
+def _apply_plot_style() -> None:
+    """Match rcParams from plot_states_from_multirollouts._apply_plot_style."""
+    plt.rcParams.update(
+        {
+            "font.size": BASE_FONTSIZE,
+            "axes.labelsize": AXES_LABELS_FONTSIZE,
+            "axes.titlesize": AXES_LABELS_FONTSIZE + 1,
+            "xtick.labelsize": AXES_TICKS_FONTSIZE,
+            "ytick.labelsize": AXES_TICKS_FONTSIZE,
+            "legend.fontsize": LEGEND_FONTSIZE,
+            "figure.titlesize": TITLE_FONTSIZE,
+        }
+    )
 
 
 def _sorted_run_keys(h5_group: h5py.Group) -> list[str]:
@@ -96,69 +156,32 @@ def _flatten_feature_series(arr: np.ndarray) -> np.ndarray:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(
-        description=(
-            "Plot total Newton iter_count per run and iter_count vs step per run "
-            "(for selected engine outputs)."
-        )
-    )
-    parser.add_argument(
-        "--hdf5",
-        type=str,
-        default=str(DEFAULT_H5_PATH),
-        help=f"Path to engine comparison HDF5 (default: {DEFAULT_H5_PATH})",
-    )
-    parser.add_argument("--axion-group", type=str, default="axion_engine")
-    parser.add_argument(
-        "--hybrid-group",
-        type=str,
-        default="hybrid_gpt_engine_neural_warm_start_forces",
-    )
-    parser.add_argument(
-        "--repeated-group", type=str, default="repeated_axion_engine"
-    )
-    parser.add_argument(
-        "--output",
-        type=str,
-        default="",
-        help="If set, save plot to this path (e.g. data/iter_totals.png).",
-    )
-    parser.add_argument(
-        "--iter-plots-dir",
-        type=str,
-        default="",
-        help="Directory to save per-run iter_count-vs-step plots "
-        "(default: <hdf5_dir>/iter_count_vs_step_per_run/<YYYYMMDD_HHMMSS>).",
-    )
-    parser.add_argument(
-        "--temporal-plots-dir",
-        type=str,
-        default="",
-        help="Directory to save temporal lambda/state plots "
-        "(default: <hdf5_dir>/temporal_variables_per_run/<YYYYMMDD_HHMMSS>).",
-    )
-    args = parser.parse_args()
+    _apply_plot_style()
 
-    h5_path = pathlib.Path(args.hdf5)
+    h5_path = pathlib.Path(INPUT_HDF5)
     if not h5_path.exists():
         raise FileNotFoundError(f"Missing HDF5 file: {h5_path}")
 
     run_stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    if args.iter_plots_dir:
-        iter_plots_dir = pathlib.Path(args.iter_plots_dir)
-    else:
-        iter_plots_dir = h5_path.parent / "iter_count_vs_step_per_run" / run_stamp
-    iter_plots_dir.mkdir(parents=True, exist_ok=True)
-    if args.temporal_plots_dir:
-        temporal_plots_dir = pathlib.Path(args.temporal_plots_dir)
+    iter_plots_dir: pathlib.Path | None = None
+    if SAVE_ITER_COUNTS:
+        if ITER_PLOTS_DIR is not None:
+            iter_plots_dir = pathlib.Path(ITER_PLOTS_DIR)
+        else:
+            iter_plots_dir = (
+                h5_path.parent / "iter_count_vs_step_per_run" / run_stamp
+            )
+        iter_plots_dir.mkdir(parents=True, exist_ok=True)
+    if TEMPORAL_PLOTS_DIR is not None:
+        temporal_plots_dir = pathlib.Path(TEMPORAL_PLOTS_DIR)
     else:
         temporal_plots_dir = h5_path.parent / "temporal_variables_per_run" / run_stamp
     temporal_plots_dir.mkdir(parents=True, exist_ok=True)
 
     engine_groups = [
-        (args.axion_group, "axion_engine"),
-        (args.hybrid_group, "hybrid_gpt_engine_neural_warm_start_forces"),
-        (args.repeated_group, "repeated_axion_engine"),
+        (AXION_GROUP, "axion_engine"),
+        (HYBRID_GROUP, "hybrid_gpt_engine_neural_warm_start_forces"),
+        (REPEATED_GROUP, "repeated_axion_engine"),
     ]
 
     # Load iter_count series per run for each engine.
@@ -184,7 +207,7 @@ def main() -> None:
             f"Run indices per group: {available}"
         )
 
-    # --- Bar plot of total iterations ---
+    # --- Bar plot of total iterations (Figure 1: subset of runs) ---
     totals_by_engine: dict[str, list[int]] = {}
     for engine_group_name, _ in engine_groups:
         totals_by_engine[engine_group_name] = [
@@ -192,68 +215,118 @@ def main() -> None:
             for i in run_indices
         ]
 
-    x = np.arange(len(run_indices))
     engine_count = len(engine_groups)
     width = 0.9 / engine_count
 
-    plt.figure(figsize=(12, 4.5))
-    offsets = np.linspace(-0.45 + width / 2, 0.45 - width / 2, engine_count)
-    for (engine_group_name, _), off in zip(engine_groups, offsets):
-        plt.bar(
-            x + off,
-            totals_by_engine[engine_group_name],
-            width=width,
-            label=engine_group_name,
+    n_fig1 = max(0, int(FIGURE_1_NUM_RUNS_TO_PLOT))
+    if n_fig1 > 0:
+        n_plot = min(n_fig1, len(run_indices))
+        run_indices_fig1 = run_indices[:n_plot]
+        x = np.arange(n_plot)
+        # Narrower than default 12"; scale modestly with bar count; extra height for two-line title.
+        fig1_w = max(4.5, min(9.0, 1.5 * n_plot + 3.5))
+        plt.figure(figsize=(fig1_w, 5.2))
+        offsets = np.linspace(-0.45 + width / 2, 0.45 - width / 2, engine_count)
+        for idx, ((engine_group_name, _), off, legend_label) in enumerate(
+            zip(engine_groups, offsets, ENGINE_LEGEND_LABELS)
+        ):
+            plt.bar(
+                x + off,
+                totals_by_engine[engine_group_name][:n_plot],
+                width=width,
+                label=legend_label,
+                color=ENGINE_BAR_FACE_COLORS[idx],
+            )
+        plt.xticks(x, [str(i) for i in run_indices_fig1], rotation=0)
+        plt.ylabel("Total number of Newton iterations")
+        plt.xlabel("Trajectory number")
+        traj_word_fig1 = "trajectory" if n_plot == 1 else "trajectories"
+        title_top = f"Comparison of physics engines"
+        title_bottom = (
+            "Mix of contact-free and contact-containing trajectories"
         )
-    plt.xticks(x, [str(i) for i in run_indices], rotation=0)
-    plt.ylabel("Total Newton iterations (sum iter_count)")
-    plt.xlabel("Run index")
-    plt.title(f"Total iter_count per run ({engine_count} engines)")
-    plt.grid(True, axis="y", alpha=0.3)
-    plt.legend()
-    plt.tight_layout()
-
-    if args.output:
-        out_path = pathlib.Path(args.output)
-        out_path.parent.mkdir(parents=True, exist_ok=True)
-        plt.savefig(out_path, dpi=150)
-        print(f"Saved plot to: {out_path}")
-    else:
-        plt.show()
-
-    # --- Per-run iter_count vs simulation-step line plots ---
-    for run_idx in run_indices:
-        series_by_engine = {
-            engine_group_name: np.ravel(all_series[engine_group_name][run_idx])
-            for engine_group_name, _ in engine_groups
-        }
-
-        num_steps = int(
-            min(arr.shape[0] for arr in series_by_engine.values())
-        )
-        steps = np.arange(num_steps)
-
-        plt.figure(figsize=(12, 4.5))
-        for engine_group_name, _ in engine_groups:
-            arr = series_by_engine[engine_group_name]
-            plt.plot(steps, arr[:num_steps], label=engine_group_name)
-        plt.xlabel("Simulation step")
-        plt.ylabel("iter_count")
-        plt.title(f"iter_count vs step (run_{run_idx:03d})")
-        plt.grid(True, axis="both", alpha=0.25)
-        plt.legend()
+        plt.title(f"{title_top}\n{title_bottom}")
+        if Y_LIM_ITERATION_PLOTS is not None:
+            plt.ylim(*Y_LIM_ITERATION_PLOTS)
+        plt.grid(True, axis="y", alpha=GRID_ALPHA)
+        plt.legend(loc=LEGEND_LOC)
         plt.tight_layout()
 
-        out_path = iter_plots_dir / f"iter_count_vs_step_run_{run_idx:03d}.png"
-        plt.savefig(out_path, dpi=150)
-        plt.close()
-        print(f"Saved: {out_path}")
+        if FIGURE_1_OUTPUT_PATH is not None:
+            out_path = pathlib.Path(FIGURE_1_OUTPUT_PATH)
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            plt.savefig(out_path, dpi=150)
+            print(f"Saved plot to: {out_path}")
+        else:
+            plt.show()
+
+    # --- Aggregate bar chart: total iterations summed over all trajectories ---
+    grand_totals = [
+        int(sum(totals_by_engine[engine_group_name]))
+        for engine_group_name, _ in engine_groups
+    ]
+    plt.figure(figsize=(4.0, 4.8))
+    x_pos = np.arange(engine_count)
+    bar_colors_fig2 = list(ENGINE_BAR_FACE_COLORS[:engine_count])
+    # Wide bars + tight x limits → minimal gap between columns.
+    bars = plt.bar(x_pos, grand_totals, width=0.88, color=bar_colors_fig2)
+    plt.gca().bar_label(bars, fmt="%d", padding=3)
+    plt.xticks(x_pos, _figure_2_xtick_labels(), rotation=25, ha="right")
+    plt.ylabel("Total Number of Newton iterations")
+    #plt.title(f"Comparison of physics engines - sum over all trajectories")
+    plt.grid(True, axis="y", alpha=GRID_ALPHA)
+    plt.xlim(-0.55, engine_count - 0.45)
+    plt.tight_layout()
+    plt.show()
+
+    # --- Per-run iter_count vs simulation-step line plots ---
+    if SAVE_ITER_COUNTS:
+        assert iter_plots_dir is not None
+        for run_idx in run_indices:
+            series_by_engine = {
+                engine_group_name: np.ravel(
+                    all_series[engine_group_name][run_idx]
+                )
+                for engine_group_name, _ in engine_groups
+            }
+
+            num_steps = int(
+                min(arr.shape[0] for arr in series_by_engine.values())
+            )
+            steps = np.arange(num_steps)
+
+            plt.figure(figsize=(12, 4.5))
+            for (engine_group_name, _), legend_label in zip(
+                engine_groups, ENGINE_LEGEND_LABELS
+            ):
+                arr = series_by_engine[engine_group_name]
+                plt.plot(
+                    steps,
+                    arr[:num_steps],
+                    label=legend_label,
+                    linewidth=LINEWIDTH,
+                )
+            plt.xlabel("Simulation step")
+            plt.ylabel("iter_count")
+            plt.title(f"iter_count vs step (run_{run_idx:03d})")
+            if Y_LIM_ITERATION_PLOTS is not None:
+                plt.ylim(*Y_LIM_ITERATION_PLOTS)
+            plt.grid(True, axis="both", alpha=GRID_ALPHA)
+            plt.legend(loc=LEGEND_LOC)
+            plt.tight_layout()
+
+            out_path = (
+                iter_plots_dir / f"iter_count_vs_step_run_{run_idx:03d}.png"
+            )
+            plt.savefig(out_path, dpi=150)
+            plt.close()
+            print(f"Saved: {out_path}")
 
     # --- Per-run temporal plots for lambda/state slices ---
     with h5py.File(h5_path, "r") as f:
-        axion_grp = _validate_engine_group_exists(f, args.axion_group, h5_path)
-        hybrid_grp = _validate_engine_group_exists(f, args.hybrid_group, h5_path)
-        repeated_grp = _validate_engine_group_exists(f, args.repeated_group, h5_path)
+        axion_grp = _validate_engine_group_exists(f, AXION_GROUP, h5_path)
+        hybrid_grp = _validate_engine_group_exists(f, HYBRID_GROUP, h5_path)
+        repeated_grp = _validate_engine_group_exists(f, REPEATED_GROUP, h5_path)
 
         for run_idx in run_indices:
             run_key = f"run_{run_idx:03d}"
@@ -327,10 +400,18 @@ def main() -> None:
                 hybrid_pred_state.shape[1],
             )
             line_styles = {
-                "axion": {"alpha": 0.9, "linewidth": 2.6, "linestyle": "-"},
-                "repeated": {"alpha": 0.85, "linewidth": 2.2, "linestyle": "--"},
-                "hybrid": {"alpha": 0.9, "linewidth": 2.0, "linestyle": "-."},
-                "hybrid_pred": {"alpha": 0.75, "linewidth": 1.8, "linestyle": ":"},
+                "axion": {"alpha": 0.9, "linewidth": LINEWIDTH, "linestyle": "-"},
+                "repeated": {
+                    "alpha": 0.85,
+                    "linewidth": LINEWIDTH,
+                    "linestyle": "--",
+                },
+                "hybrid": {"alpha": 0.9, "linewidth": LINEWIDTH, "linestyle": "-."},
+                "hybrid_pred": {
+                    "alpha": 0.75,
+                    "linewidth": LINEWIDTH * 0.72,
+                    "linestyle": ":",
+                },
             }
 
             steps_lambda = np.arange(int(lambda_steps))
@@ -339,19 +420,19 @@ def main() -> None:
                 plt.plot(
                     steps_lambda,
                     axion_lambda[: int(lambda_steps), idx],
-                    label="Axion converged",
+                    label=ENGINE_LEGEND_LABELS[0],
                     **line_styles["axion"],
                 )
                 plt.plot(
                     steps_lambda,
                     repeated_lambda[: int(lambda_steps), idx],
-                    label="RepeatedAxion converged",
+                    label=ENGINE_LEGEND_LABELS[2],
                     **line_styles["repeated"],
                 )
                 plt.plot(
                     steps_lambda,
                     hybrid_lambda[: int(lambda_steps), idx],
-                    label="Hybrid converged",
+                    label=ENGINE_LEGEND_LABELS[1],
                     **line_styles["hybrid"],
                 )
                 if hybrid_pred_lambda is not None:
@@ -364,8 +445,8 @@ def main() -> None:
                 plt.xlabel("Simulation step")
                 plt.ylabel(f"lambda[{idx}]")
                 plt.title(f"Temporal lambda[{idx}] (run_{run_idx:03d})")
-                plt.grid(True, axis="both", alpha=0.25)
-                plt.legend()
+                plt.grid(True, axis="both", alpha=GRID_ALPHA)
+                plt.legend(loc=LEGEND_LOC)
                 plt.tight_layout()
                 out_path = temporal_plots_dir / f"lambda_{idx:03d}_run_{run_idx:03d}.png"
                 plt.savefig(out_path, dpi=150)
@@ -378,19 +459,19 @@ def main() -> None:
                 plt.plot(
                     steps_state,
                     axion_state[: int(state_steps), idx],
-                    label="Axion converged",
+                    label=ENGINE_LEGEND_LABELS[0],
                     **line_styles["axion"],
                 )
                 plt.plot(
                     steps_state,
                     repeated_state[: int(state_steps), idx],
-                    label="RepeatedAxion converged",
+                    label=ENGINE_LEGEND_LABELS[2],
                     **line_styles["repeated"],
                 )
                 plt.plot(
                     steps_state,
                     hybrid_state[: int(state_steps), idx],
-                    label="Hybrid converged",
+                    label=ENGINE_LEGEND_LABELS[1],
                     **line_styles["hybrid"],
                 )
                 plt.plot(
@@ -402,8 +483,8 @@ def main() -> None:
                 plt.xlabel("Simulation step")
                 plt.ylabel(f"state_vel_component[{idx}]")
                 plt.title(f"Temporal state component[{idx}] (run_{run_idx:03d})")
-                plt.grid(True, axis="both", alpha=0.25)
-                plt.legend()
+                plt.grid(True, axis="both", alpha=GRID_ALPHA)
+                plt.legend(loc=LEGEND_LOC)
                 plt.tight_layout()
                 out_path = temporal_plots_dir / f"state_{idx:03d}_run_{run_idx:03d}.png"
                 plt.savefig(out_path, dpi=150)

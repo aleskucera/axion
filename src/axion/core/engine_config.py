@@ -682,6 +682,10 @@ class AxionEngineWithNeuralLambdasConfig(AxionEngineConfig):
     before solve.
     """
 
+    neural_model_dir: str | None = None
+    neural_model_pt_path: str | None = None
+    neural_model_cfg_path: str | None = None
+
     def create_engine(
         self,
         model: Any,

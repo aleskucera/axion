@@ -10,6 +10,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.axes import Axes
 
+from axion.neural_solver.utils.pendulum_lambda_layout import expand_pendulum_engine_lambdas_numpy
+
 NO_CONTACT_MODELS_HDF5_LOG_FILE_NAMES = [
     "AxioneEngineWithNeuralLambdas_example_2026-04-24_14-01-52.h5"
 ]
@@ -48,6 +50,10 @@ MODEL_299 = [
     "AxioneEngineWithNeuralLambdas_example_2026-05-17_13-21-25.h5"  # INITIAL_STATE = (-3.1415/3, -0.3, 0.5, -1.5) 
 ]
 
+MODEL_304 = [
+    "AxioneEngineWithNeuralLambdas_example_2026-05-18_10-01-20.h5",
+    "AxioneEngineWithNeuralLambdas_example_2026-05-18_10-07-00.h5"
+] 
 
 NO_CONTACT_MODELS_INFO = [
     "pure mse, w_state = 500",
@@ -61,7 +67,7 @@ MTL_JUMP_MODELS_MODEL_INFOS = [
     "with 0.01*(1-y_{cls}) * SmoothL1(jump_pred, 0) term",
     "y_{cls} * SmoothL1(jump_pred, jump_gt)",
     "y_{cls} * MSE(jump_pred, jump_gt)",
-    "y_{cls} * SmoothL1(jump_pred, jump_gt), 200 epoch",
+    "y_{cls} * SmoothL1(AxioneEngineWithNeuralLambdas_example_2026-05-18_09-45-20.h5jump_pred, jump_gt), 200 epoch",
 ]
 
 CONTACT_MTL_MODELS_LAMBDA_REGR_ONLY_MODEL_INFOS = [
@@ -97,8 +103,8 @@ GRID_ALPHA = 0.3
 ID = 2
 MODEL_INFO = "mse 32"
 COMPARISON_CSV_PATH = None # Path(__file__).resolve().parent / "mse_state_and_joint_lambdas.csv" # None
-DEFAULT_HDF5_PATH = Path(__file__).resolve().parents[4] / "data/logs" /MTL_JUMP_MODELS_HDF5_LOG_FILE_NAMES[0]#MODEL_299[3] #AxioneEngineWithNeuralLambdas_example_2026-05-12_09-07-56.h5"
-DEFAULT_LAMBDA_SLICE = slice(10,20) # FIX: mse models should now have 24 lambdas
+DEFAULT_HDF5_PATH = Path(__file__).resolve().parents[4] / "data/logs" /MODEL_304[1]#MODEL_299[3] #AxioneEngineWithNeuralLambdas_example_2026-05-12_09-07-56.h5"
+DEFAULT_LAMBDA_SLICE = slice(0,24) 
 ANALYZE_INCOMPLETE_MTL = False
 ANALYZE_CONTACT_MTL_LAMBDA_REGR_ONLY = False
 ANALYZE_CONTACT_MTL_CONDITIONED_LAMBDA_REGR_ONLY = False
@@ -275,6 +281,13 @@ def _load_and_validate(
             "predicted_next_lambdas must become shape (T, N) after squeezing; "
             f"got {predicted_next_lambdas.shape}"
         )
+    if (
+        predicted_next_lambdas is not None
+        and next_lambdas.shape[1] < predicted_next_lambdas.shape[1]
+    ):
+        next_lambdas = expand_pendulum_engine_lambdas_numpy(
+            next_lambdas, int(predicted_next_lambdas.shape[1])
+        )
     if predicted_next_states is not None and next_states.shape != predicted_next_states.shape:
         raise ValueError(
             "next_states and predicted_next_states shape mismatch: "
@@ -297,11 +310,16 @@ def _load_and_validate(
 
 
 def _try_load_lambda_activity_pair(
-    hdf5_path: Path, t_len: int
+    hdf5_path: Path,
+    t_len: int,
+    reference_n_lambda: int | None = None,
 ) -> tuple[np.ndarray, np.ndarray] | None:
     """
     Load lambda_activity and lambda_activity_ground_truth if both exist under data/.
     Returns None if either dataset is missing. Validates shape (T, C) and T == t_len.
+    When ``reference_n_lambda`` is set and C is narrower (e.g. engine λ without the
+    control block), both arrays are expanded to canonical Pendulum width with zeros
+    in the inserted slots so they match ``next_lambdas`` / predictions.
     """
     with h5py.File(hdf5_path, "r") as h5f:
         if "data" not in h5f:
@@ -317,9 +335,21 @@ def _try_load_lambda_activity_pair(
             "lambda_activity and lambda_activity_ground_truth must be 2D (T, C) after squeeze; "
             f"got shapes {pred.shape} and {gt.shape}"
         )
+    if pred.shape[0] != gt.shape[0]:
+        raise ValueError(
+            "lambda_activity batch length mismatch: "
+            f"{pred.shape[0]} vs {gt.shape[0]}"
+        )
+    w_pred, w_gt = pred.shape[1], gt.shape[1]
+    if w_pred != w_gt:
+        target_w = max(w_pred, w_gt)
+        if w_pred < target_w:
+            pred = expand_pendulum_engine_lambdas_numpy(pred, target_w)
+        if w_gt < target_w:
+            gt = expand_pendulum_engine_lambdas_numpy(gt, target_w)
     if pred.shape != gt.shape:
         raise ValueError(
-            "lambda_activity and lambda_activity_ground_truth shape mismatch: "
+            "lambda_activity and lambda_activity_ground_truth shape mismatch after alignment: "
             f"{pred.shape} vs {gt.shape}"
         )
     if pred.shape[0] != t_len:
@@ -327,6 +357,12 @@ def _try_load_lambda_activity_pair(
             "lambda_activity length does not match trajectory length: "
             f"{pred.shape[0]} vs {t_len}"
         )
+    if (
+        reference_n_lambda is not None
+        and pred.shape[1] < reference_n_lambda
+    ):
+        pred = expand_pendulum_engine_lambdas_numpy(pred, reference_n_lambda)
+        gt = expand_pendulum_engine_lambdas_numpy(gt, reference_n_lambda)
     return pred, gt
 
 
@@ -344,11 +380,19 @@ def _load_lambda_jump(hdf5_path: Path, t_len: int, n_lambda: int) -> np.ndarray:
             "lambda_jump must be 2D (T, N) after squeeze; "
             f"got shape {jump.shape}"
         )
-    if jump.shape[0] != t_len or jump.shape[1] != n_lambda:
+    if jump.shape[0] != t_len:
         raise ValueError(
             "lambda_jump shape mismatch: "
             f"got {jump.shape}, expected ({t_len}, {n_lambda})"
         )
+    if jump.shape[1] != n_lambda:
+        if jump.shape[1] < n_lambda:
+            jump = expand_pendulum_engine_lambdas_numpy(jump, n_lambda)
+        else:
+            raise ValueError(
+                "lambda_jump shape mismatch: "
+                f"got {jump.shape}, expected ({t_len}, {n_lambda})"
+            )
     return jump
 
 
@@ -907,7 +951,9 @@ def main() -> None:
         args.hdf5
     )
     t_len = int(next_states.shape[0])
-    activity_pair = _try_load_lambda_activity_pair(args.hdf5, t_len)
+    activity_pair = _try_load_lambda_activity_pair(
+        args.hdf5, t_len, reference_n_lambda=int(next_lambdas.shape[1])
+    )
     lambda_jump_arr = None
 
     if ANALYZE_INCOMPLETE_MTL:

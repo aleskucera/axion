@@ -29,16 +29,14 @@ from axion.neural_solver.generate.joint_target_position_error import (
 )
 from axion.neural_solver.generate.simulation_sampler import UniformSampler
 from axion.neural_solver.generate.trajectory_sampler import TrajectorySampler
+from axion.neural_solver.utils.pendulum_lambda_layout import (
+    PENDULUM_FULL_LAMBDA_DIM,
+    expand_pendulum_engine_lambdas_torch,
+)
 from examples.double_pendulum.pendulum_articulation_definition import PENDULUM_HEIGHT, LINK_LENGTH
 
 MAX_ANGLE_WITH_Z_AXIS_RAD = 0.64
 MAX_D_COEFFICIENT_OFFSET_M = 2.5
-
-# Fixed layout for Pendulum + tilted contact plane (joint_dof_mode NONE vs TARGET_POSITION
-# only changes control block width). See EngineDimensions: joint | control | contact.
-PENDULUM_FULL_LAMBDA_DIM = 24
-PENDULUM_LAMBDA_N_J = 10
-PENDULUM_LAMBDA_N_CTRL = 2
 
 """
 Trajectory-mode dataset generator for Pendulum env.
@@ -115,37 +113,9 @@ class TrajectorySamplerPendulum(TrajectorySampler):
         simulator configurations can still expose a 22-wide (joint|contact)
         layout even when generation is run with ``--without-contacts``.
         """
-        dest.zero_()
-        ld = int(src.shape[-1])
-        nj, nc = PENDULUM_LAMBDA_N_J, PENDULUM_LAMBDA_N_CTRL
-        full = PENDULUM_FULL_LAMBDA_DIM
-        passive_with_contact = full - nc
-        active_without_contact = nj + nc
-
-        if ld == full:
-            dest.copy_(src)
-            return
-        if ld == passive_with_contact:
-            # joint | contact (control missing)
-            dest[..., :nj].copy_(src[..., :nj])
-            dest[..., nj + nc :].copy_(src[..., nj:])
-            return
-        if ld == active_without_contact:
-            # joint | control (contact missing)
-            dest[..., :nj].copy_(src[..., :nj])
-            dest[..., nj : nj + nc].copy_(src[..., nj:active_without_contact])
-            return
-        if ld == nj:
-            # joint only (control + contact missing)
-            dest[..., :nj].copy_(src[..., :nj])
-            return
-
-        raise ValueError(
-            f"Unexpected engine lambda width {ld} for Pendulum "
-            f"(with_contacts={self.with_contacts}, passive={passive}); "
-            f"supported widths are {full}, {passive_with_contact}, "
-            f"{active_without_contact}, or {nj}."
-        )
+        del passive  # unused; kept for call-site compatibility
+        expanded = expand_pendulum_engine_lambdas_torch(src, PENDULUM_FULL_LAMBDA_DIM)
+        dest.copy_(expanded)
 
     def compute_pendulum_points(self, initial_states):
         q0 = torch.pi / 2 - initial_states[..., 0] 

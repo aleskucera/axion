@@ -23,6 +23,7 @@ from axion.neural_solver.models.mtl_model import MTLModel
 from axion.neural_solver.models.contact_mtl_model import ContactMTLModel
 from axion.neural_solver.models import residual_model as residual_model_module
 from axion.neural_solver.utils.neural_lambda_hdf5_logger import NeuralLambdaHDF5Logger
+from axion.neural_solver.utils.pendulum_lambda_layout import expand_pendulum_engine_lambdas_torch
 from axion.neural_solver.train.trained_models.selected_trained_models import (
     NO_CONTACT_MODELS,
     CONTACT_MODELS,
@@ -31,13 +32,23 @@ from axion.neural_solver.train.trained_models.selected_trained_models import (
     MTL_CONTACT_MODELS_LAMBDA_REGR_ONLY_Y_CLS_1,
     MSE_STATE_JOINT_LAMBDA_MODELS
 )
+
+TRAINED_MODELS_ROOT = (
+    Path(__file__).resolve().parents[1]
+    / "neural_solver"
+    / "train"
+    / "trained_models"
+)
+
 # state only prediction
 NN_32_PATH = "03-17-2026-15-12-19" 
 
 # simultaneouous state and lambda prediction
-BEST_STATES_AND_JOINT_LAMBDAS_NEW = Path("mse") / "05-12-2026-17-30-11" 
+BEST_STATES_AND_JOINT_LAMBDAS_NEW = Path("mse") / "05-12-2026-17-30-11"
+BEST_STATES_AND_JOINT_AND_CONTACT_LAMBDAS = Path("mse") / "05-17-2026-22-58-43" 
 
-NN_BASE_PATH = Path.cwd() /"src"/"axion"/"neural_solver"/"train"/"trained_models"/BEST_STATES_AND_JOINT_LAMBDAS_NEW
+
+NN_BASE_PATH = TRAINED_MODELS_ROOT / BEST_STATES_AND_JOINT_AND_CONTACT_LAMBDAS
 NN_PENDULUM_PT_PATH = NN_BASE_PATH/"nn"/"best_valid_valid_model.pt"
 NN_PENDULUM_CFG_PATH = NN_BASE_PATH/"cfg.yaml"
 
@@ -211,6 +222,26 @@ class AxionEngineWithNeuralLambdas(AxionEngineBase):
         full[:, contact_lambda_start_index:] = contact_tensor
         return full
 
+    def _resolve_neural_checkpoint_paths(self) -> tuple[Path, Path]:
+        nn_model_pt_path = getattr(self.config, "neural_model_pt_path", None)
+        nn_model_cfg_path = getattr(self.config, "neural_model_cfg_path", None)
+        if nn_model_pt_path is not None or nn_model_cfg_path is not None:
+            if nn_model_pt_path is None or nn_model_cfg_path is None:
+                raise ValueError(
+                    "Both neural_model_pt_path and neural_model_cfg_path must be set "
+                    "when using explicit neural model paths."
+                )
+            return Path(nn_model_pt_path).expanduser(), Path(nn_model_cfg_path).expanduser()
+
+        nn_model_dir = getattr(self.config, "neural_model_dir", None)
+        if nn_model_dir is not None:
+            nn_base_path = Path(nn_model_dir).expanduser()
+            if not nn_base_path.is_absolute():
+                nn_base_path = TRAINED_MODELS_ROOT / nn_base_path
+            return nn_base_path / "nn" / "best_valid_valid_model.pt", nn_base_path / "cfg.yaml"
+
+        return NN_PENDULUM_PT_PATH, NN_PENDULUM_CFG_PATH
+
     def _parse_mtl_outputs(
         self, out: dict[str, torch.Tensor]
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, Optional[torch.Tensor]]:
@@ -298,8 +329,9 @@ class AxionEngineWithNeuralLambdas(AxionEngineBase):
         #########################################
 
         print("AxionEngineWithNeuralLambdas is using the device = ", self.device)
-        nn_model_path = NN_PENDULUM_PT_PATH
-        nn_cfg_path = NN_PENDULUM_CFG_PATH
+        nn_model_path, nn_cfg_path = self._resolve_neural_checkpoint_paths()
+        nn_plan_path = nn_model_path.with_suffix(".plan")
+        nn_meta_path = nn_model_path.with_suffix(".engine_meta.pt")
 
         # The TensorRT engine is built from an MSEModel checkpoint, so when the
         # TRT toggle is on we hard-set the MSE branch and skip the model-type
@@ -308,10 +340,10 @@ class AxionEngineWithNeuralLambdas(AxionEngineBase):
             from axion.neural_solver.fast_inference.tensorrt_mse_engine import (
                 TensorRTMSEEngine,
             )
-            print(f"Loading TensorRT engine: {NN_PENDULUM_PLAN_PATH}")
+            print(f"Loading TensorRT engine: {nn_plan_path}")
             loaded_nn_model = TensorRTMSEEngine(
-                plan_path=NN_PENDULUM_PLAN_PATH,
-                meta_path=NN_PENDULUM_META_PATH,
+                plan_path=nn_plan_path,
+                meta_path=nn_meta_path,
                 device=str(self.device),
             )
             self._use_mtl_model = False
@@ -412,6 +444,17 @@ class AxionEngineWithNeuralLambdas(AxionEngineBase):
         )
 
         next_lambdas_torch = wp.to_torch(self.data._constr_force)
+        target_lambda_w = (
+            int(predicted_next_lambdas.shape[-1])
+            if predicted_next_lambdas is not None
+            else int(next_lambdas_torch.shape[-1])
+        )
+        next_lambdas_torch = expand_pendulum_engine_lambdas_torch(
+            next_lambdas_torch, target_lambda_w
+        )
+        sim_lambdas_before_step = expand_pendulum_engine_lambdas_torch(
+            sim_lambdas_before_step, target_lambda_w
+        )
         if SIM_LAMBDA_ACTIVITY_ABS_DELTA_THRESHOLD is not None:
             lambda_activity_gt = (
                 (next_lambdas_torch - sim_lambdas_before_step).abs()
