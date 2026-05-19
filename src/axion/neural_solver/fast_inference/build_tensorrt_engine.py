@@ -28,10 +28,10 @@ import yaml
 
 # ── configure here ────────────────────────────────────────────────────────────
 ONNX_PATH         = "src/axion/neural_solver/train/trained_models/mse/05-12-2026-17-30-11/nn/best_valid_valid_model.onnx"
-CHECKPOINT_PT     = "src/axion/neural_solver/train/trained_models/mse/05-12-2026-17-30-11/nn/best_valid_valid_model.pt"
-NN_MODEL_CFG      = "src/axion/neural_solver/train/trained_models/mse/05-12-2026-17-30-11/cfg.yaml"
-FP16              = True       # falls back to FP32 if the GPU has no fast FP16
-WORKSPACE_GB      = 1          # tactic-search scratch memory, not runtime memory
+MODEL_PT    = "src/axion/neural_solver/train/trained_models/mse/05-12-2026-17-30-11/nn/best_valid_valid_model.pt"
+NN_MODEL_CFG = "src/axion/neural_solver/train/trained_models/mse/05-12-2026-17-30-11/cfg.yaml"
+FP16              = False       # falls back to FP32 if the GPU has no fast FP16
+WORKSPACE_GB      = 2          # tactic-search scratch memory, not runtime memory
 OUTPUT_PLAN       = None       # None → <onnx_stem>.plan beside the ONNX
 OUTPUT_META       = None       # None → <onnx_stem>.engine_meta.pt beside the ONNX
 RUN_PARITY_CHECK  = True       # compare TRT vs FastMSEModel on a random tensor
@@ -315,23 +315,34 @@ def build(
             stacklevel=2,
         )
 
+    network_cfg = cfg.get("network", {}) if cfg else {}
+    normalize_input = bool(
+        network_cfg.get("normalize_input", getattr(mse_model, "normalize_input", False))
+    )
+    normalize_output = bool(
+        network_cfg.get("normalize_output", getattr(mse_model, "normalize_output", False))
+    )
+
     # ModelMixedInput stores it as `output_rms`; MSEModel as `regression_output_rms`.
-    out_rms = getattr(mse_model, "regression_output_rms", None) or \
-              getattr(mse_model, "output_rms", None)
-    if out_rms is not None:
-        output_rms_meta = {
-            "mean": out_rms.mean.detach().cpu().clone(),
-            "var":  out_rms.var.detach().cpu().clone(),
-        }
-        print(f"  output_rms: mean shape={tuple(output_rms_meta['mean'].shape)}, "
-              f"var shape={tuple(output_rms_meta['var'].shape)}")
+    output_rms_meta = None
+    if normalize_output:
+        out_rms = getattr(mse_model, "regression_output_rms", None) or \
+                  getattr(mse_model, "output_rms", None)
+        if out_rms is not None:
+            output_rms_meta = {
+                "mean": out_rms.mean.detach().cpu().clone(),
+                "var":  out_rms.var.detach().cpu().clone(),
+            }
+            print(f"  output_rms: mean shape={tuple(output_rms_meta['mean'].shape)}, "
+                  f"var shape={tuple(output_rms_meta['var'].shape)}")
+        else:
+            warnings.warn(
+                "[build_tensorrt_engine] normalize_output=True but output_rms "
+                "absent on checkpoint; TRT path will skip output un-normalization.",
+                stacklevel=2,
+            )
     else:
-        output_rms_meta = None
-        warnings.warn(
-            "[build_tensorrt_engine] output_rms absent on checkpoint; "
-            "TRT path will skip output un-normalization.",
-            stacklevel=2,
-        )
+        print("  output_rms: skipped (normalize_output=False)")
 
     meta = {
         "low_dim_keys": low_dim_keys,
@@ -344,13 +355,16 @@ def build(
         "batch_size": B,
         "input_rms": input_rms,
         "output_rms": output_rms_meta,
+        "normalize_input": normalize_input,
+        "normalize_output": normalize_output,
         "engine_filename": plan_path.name,
         "fp16": bool(fp16),
     }
     torch.save(meta, str(meta_path))
     print(f"  wrote {meta_path}")
     print(f"  engine I/O: input{tuple(in_shape)} -> output{tuple(out_shape)} "
-          f"(state={state_output_dim}, lambda={lambda_output_dim})")
+          f"(state={state_output_dim}, lambda={lambda_output_dim}, "
+          f"normalize_input={normalize_input}, normalize_output={normalize_output})")
 
     if run_parity_check:
         print("Running parity check (FastMSEModel vs TRT, no normalization)...")
@@ -365,7 +379,7 @@ def build(
 if __name__ == "__main__":
     build(
         onnx_path=ONNX_PATH,
-        checkpoint_path=CHECKPOINT_PT,
+        checkpoint_path=MODEL_PT,
         cfg_path=NN_MODEL_CFG,
         output_plan=OUTPUT_PLAN,
         output_meta=OUTPUT_META,

@@ -289,6 +289,14 @@ class FastNeuralPredictor:
         )
 
         # NN-config-derived dims.
+        network_cfg = nn_cfg.get("network", {})
+        self.normalize_input = bool(network_cfg.get("normalize_input", False))
+        self.normalize_output = bool(network_cfg.get("normalize_output", False))
+        print(
+            f"FastNeuralPredictor: normalize_input={self.normalize_input}, "
+            f"normalize_output={self.normalize_output}"
+        )
+
         env_cfg = nn_cfg.get("env", {})
         self.neural_integrator_cfg = env_cfg.get("utils_provider_cfg", env_cfg.get("neural_integrator_cfg", {}))
         self.num_states_history = int(self.neural_integrator_cfg.get("num_states_history", 1)       )
@@ -528,14 +536,18 @@ class FastNeuralPredictor:
         # Output denormalization: slice the engine's denorm tensors to match the
         # state output dim. In-place mul_/add_ in predict() undoes the training-time
         # output normalization that FastMSEModel intentionally drops.
-        _out_mean = getattr(nn_model, "_out_denorm_mean", None)
-        _out_std  = getattr(nn_model, "_out_denorm_std", None)
-        if _out_mean is not None:
-            self._out_denorm_mean = _out_mean[: self.state_output_dim]  # (state_output_dim,)
-            self._out_denorm_std  = _out_std[: self.state_output_dim]
+        if self.normalize_output:
+            _out_mean = getattr(nn_model, "_out_denorm_mean", None)
+            _out_std = getattr(nn_model, "_out_denorm_std", None)
+            if _out_mean is not None:
+                self._out_denorm_mean = _out_mean[: self.state_output_dim]
+                self._out_denorm_std = _out_std[: self.state_output_dim]
+            else:
+                self._out_denorm_mean = None
+                self._out_denorm_std = None
         else:
             self._out_denorm_mean = None
-            self._out_denorm_std  = None
+            self._out_denorm_std = None
 
         # Pre-wrap self.lambdas as a warp array for the clip kernel.
         if self.lambdas is not None:
@@ -922,6 +934,8 @@ class FastNeuralPredictor:
 
     def _normalize_raw_keys(self):
         """Apply per-key (x - mean) * inv_std in place on each raw buffer."""
+        if not self.normalize_input:
+            return
         with torch.cuda.stream(self._torch_stream_from_warp()):
             for key in self._low_dim_keys:
                 self._raw[key].sub_(self._norm_mean_per_key[key]).mul_(
