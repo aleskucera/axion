@@ -2,7 +2,7 @@ defaults:
   - simulation: pendulum
   - rendering:  headless # gl
   - logging: hdf5
-  - engine: axion
+  - engine: axion_profile_e2e
   - _self_
 
 # Use the recommended hybrid approach for project names

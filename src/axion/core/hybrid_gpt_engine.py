@@ -21,6 +21,8 @@ from axion.neural_solver.standalone.neural_predictor import (
 )
 from axion.neural_solver.standalone.fast_neural_predictor import FastNeuralPredictor
 from axion.neural_solver.standalone.neural_predictor_helpers import shift_body_qd_to_com_frame
+from axion.neural_solver.utils.legacy_newton_contacts import create_axion_contacts_for_nn
+from axion.neural_solver.utils.legacy_newton_contacts import restore_legacy_newton_contacts_if
 
 # Shared MSE checkpoint with .plan / .engine_meta.pt already built (see
 # docs/torch_to_tensorrt_conversion.md for the rebuild recipe).
@@ -42,6 +44,9 @@ NN_PENDULUM_META_PATH = NN_PENDULUM_PT_PATH.with_suffix(".engine_meta.pt")
 # the predictor so it stays graph-capture-safe.
 HYBRID_LAMBDA_THRESH = 0.01
 HYBRID_LAMBDA_ZERO_FROM = 11
+
+# See axion.neural_solver.utils.legacy_newton_contacts.
+USE_LEGACY_NEWTON_CONTACT_CONVENTION = True
 
 
 class HybridGPTEngine(AxionEngineBase):
@@ -228,7 +233,11 @@ class HybridGPTEngine(AxionEngineBase):
         prewarm_fn = getattr(self.nn_predictor, "prewarm", None)
         if prewarm_fn is None:
             return
-        axion_contacts = self.nn_predictor.create_axion_contacts(contacts)
+        axion_contacts = create_axion_contacts_for_nn(
+            self.nn_predictor,
+            contacts,
+            apply_legacy_convention=USE_LEGACY_NEWTON_CONTACT_CONVENTION,
+        )
         prewarm_fn(state_in, axion_contacts, dt)
 
     def step(
@@ -259,6 +268,9 @@ class HybridGPTEngine(AxionEngineBase):
         if end_to_end:
             prof.record_boundary(1)
         self.load_data(state_in, control, contacts, dt)
+        restore_legacy_newton_contacts_if(
+            USE_LEGACY_NEWTON_CONTACT_CONVENTION, self.axion_contacts
+        )
         if end_to_end:
             prof.record_boundary(2)
 

@@ -24,6 +24,7 @@ from axion.neural_solver.models.contact_mtl_model import ContactMTLModel
 from axion.neural_solver.models import residual_model as residual_model_module
 from axion.neural_solver.utils.neural_lambda_hdf5_logger import NeuralLambdaHDF5Logger
 from axion.neural_solver.utils.pendulum_lambda_layout import expand_pendulum_engine_lambdas_torch
+from axion.neural_solver.utils.legacy_newton_contacts import restore_legacy_newton_contacts_if
 from axion.neural_solver.train.trained_models.selected_trained_models import (
     NO_CONTACT_MODELS,
     CONTACT_MODELS,
@@ -63,6 +64,9 @@ NN_PENDULUM_META_PATH = NN_PENDULUM_PT_PATH.with_suffix(".engine_meta.pt")
 # If it is None: mask = (|lambdas| >= SIM_LAMBDA_ABS_SIZE_THRESHOLD) instead.
 SIM_LAMBDA_ACTIVITY_ABS_DELTA_THRESHOLD: Optional[float] = None
 SIM_LAMBDA_ABS_SIZE_THRESHOLD = 500
+
+# See axion.neural_solver.utils.legacy_newton_contacts.
+USE_LEGACY_NEWTON_CONTACT_CONVENTION = True
 
 # Backward compatibility for checkpoints saved before residual_model.py rename.
 if not hasattr(residual_model_module, "VelAndLambdaModel"):
@@ -509,6 +513,9 @@ class AxionEngineWithNeuralLambdas(AxionEngineBase):
         dt: float,
     ):
         self.load_data(state_in, control, contacts, dt)
+        restore_legacy_newton_contacts_if(
+            USE_LEGACY_NEWTON_CONTACT_CONVENTION, self.axion_contacts
+        )
 
         # Initial guess: use current state (zero-order warm start)
         wp.copy(dest=self.data.body_pose, src=state_in.body_q)

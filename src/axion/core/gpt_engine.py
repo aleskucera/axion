@@ -28,6 +28,7 @@ from axion.neural_solver.standalone.neural_predictor import (
     control_active_mask_from_newton_model,
 )
 from axion.neural_solver.standalone.fast_neural_predictor import FastNeuralPredictor
+from axion.neural_solver.utils.legacy_newton_contacts import create_axion_contacts_for_nn
 from axion.nn_prediction import models, utils
 
 # Allow pickled checkpoints that reference classes under "models.*" and "utils.*"
@@ -43,8 +44,8 @@ MODEL_27 = "03-12-2026-16-09-14"
 BEST_STATE_AND_LAMBDA_MODEL = Path("mse") / "05-12-2026-17-30-11"  # best_valid_valid_model.pt
 BEST_STATES_AND_JOINT_LAMBDAS = Path("mse") / "04-24-2026-17-02-15"  # best_valid_valid_model.pt
 
-NN_BASE_PATH = Path.cwd() /"src"/"axion"/"neural_solver"/"train"/"trained_models"/ BEST_STATE_AND_LAMBDA_MODEL
-NN_PENDULUM_PT_PATH = NN_BASE_PATH/"nn"/"best_valid_valid_model.pt"
+NN_BASE_PATH = Path.cwd() /"src"/"axion"/"neural_solver"/"train"/"trained_models"/ BEST_TRAINED_FROM_CONTACT_SWEEP
+NN_PENDULUM_PT_PATH = NN_BASE_PATH/"nn"/"best_eval_model.pt"
 NN_PENDULUM_CFG_PATH = NN_BASE_PATH/"cfg.yaml"
 
 # Flip to True after running export_to_onnx.py + build_tensorrt_engine.py.
@@ -52,6 +53,11 @@ NN_PENDULUM_CFG_PATH = NN_BASE_PATH/"cfg.yaml"
 USE_TENSORRT_ENGINE = False
 NN_PENDULUM_PLAN_PATH = NN_PENDULUM_PT_PATH.with_suffix(".plan")
 NN_PENDULUM_META_PATH = NN_PENDULUM_PT_PATH.with_suffix(".engine_meta.pt")
+
+# Undo Axion's Newton-1.2 normal flip before NN contact features (see
+# axion.neural_solver.utils.legacy_newton_contacts). Legacy NN checkpoints
+# trained before bd620db (May 2026) need this enabled.
+USE_LEGACY_NEWTON_CONTACT_CONVENTION = True
 
 class GPTEngine(SolverBase):
     """
@@ -150,6 +156,26 @@ class GPTEngine(SolverBase):
                 device=str(self.device),
             )
 
+        # Joint control modes are fixed for a built model; build the mask once so
+        # cuda-graph capture never hits torch.zeros / CPU .item() in step().
+        pred = self.nn_predictor
+        self._control_active_mask = control_active_mask_from_newton_model(
+            self.model,
+            dof_q_per_env=pred.dof_q_per_env,
+            num_worlds=pred.num_worlds,
+            num_joints_per_env=pred.num_joints_per_env,
+            joint_q_start=pred.joint_q_start,
+            joint_q_end=pred.joint_q_end,
+            device=pred.device,
+        )
+
+    def _create_axion_contacts_for_nn(self, newton_contacts: newton.Contacts):
+        return create_axion_contacts_for_nn(
+            self.nn_predictor,
+            newton_contacts,
+            apply_legacy_convention=USE_LEGACY_NEWTON_CONTACT_CONVENTION,
+        )
+
     def prewarm(
         self,
         state_in: newton.State,
@@ -163,7 +189,7 @@ class GPTEngine(SolverBase):
         prewarm_fn = getattr(self.nn_predictor, "prewarm", None)
         if prewarm_fn is None:
             return
-        axion_contacts = self.nn_predictor.create_axion_contacts(contacts)
+        axion_contacts = self._create_axion_contacts_for_nn(contacts)
         prewarm_fn(state_in, axion_contacts, dt)
 
     def step(
@@ -196,21 +222,11 @@ class GPTEngine(SolverBase):
         if end_to_end:
             prof.record_boundary(1)
 
-        axion_contacts = self.nn_predictor.create_axion_contacts(contacts)
+        axion_contacts = self._create_axion_contacts_for_nn(contacts)
         if end_to_end:
             prof.record_boundary(2)
 
         joint_target_pos = wp.to_torch(control.joint_target_pos).unsqueeze(0)
-        pred = self.nn_predictor
-        control_active = control_active_mask_from_newton_model(
-            self.model,
-            dof_q_per_env=pred.dof_q_per_env,
-            num_worlds=pred.num_worlds,
-            num_joints_per_env=pred.num_joints_per_env,
-            joint_q_start=pred.joint_q_start,
-            joint_q_end=pred.joint_q_end,
-            device=pred.device,
-        )
 
         # Process the inputs (Neural Predictor does this internally using process_inputs)
         self.nn_predictor.process_inputs(
@@ -218,7 +234,7 @@ class GPTEngine(SolverBase):
             axion_contacts,
             dt,
             joint_target_pos=joint_target_pos,
-            control_active=control_active,
+            control_active=self._control_active_mask,
         )
         if end_to_end:
             prof.record_boundary(3)

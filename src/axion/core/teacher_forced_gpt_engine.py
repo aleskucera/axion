@@ -38,6 +38,7 @@ from .engine_config import AxionEngineConfig
 from .logging_config import LoggingConfig
 from axion.neural_solver.standalone.neural_predictor import NeuralPredictor
 from axion.nn_prediction import models, utils
+from axion.neural_solver.utils.legacy_newton_contacts import create_axion_contacts_for_nn
 
 # Allow pickled checkpoints that reference classes under "models.*" and "utils.*"
 # (saved when the trainer was run with a different sys.path) to load correctly.
@@ -55,6 +56,9 @@ BEST_STATES_AND_JOINT_LAMBDAS_NEW = Path("mse") / "05-12-2026-17-30-11"
 NN_BASE_PATH = Path.cwd() / "src" / "axion" / "neural_solver" / "train" / "trained_models" / BEST_STATES_AND_JOINT_LAMBDAS_NEW
 NN_PENDULUM_PT_PATH = NN_BASE_PATH / "nn" / "best_valid_valid_model.pt"
 NN_PENDULUM_CFG_PATH = NN_BASE_PATH / "cfg.yaml"
+
+# See axion.neural_solver.utils.legacy_newton_contacts.
+USE_LEGACY_NEWTON_CONTACT_CONVENTION = True
 
 
 class TeacherForcedGPTEngine(AxionEngineBase):
@@ -144,7 +148,11 @@ class TeacherForcedGPTEngine(AxionEngineBase):
         # from the same Axion trajectory (not the NN-driven outer trajectory).
         # ------------------------------------------------------------------
         teacher_newton_contacts = self.model.collide(self._teacher_state_in)
-        teacher_axion_contacts = self.nn_predictor.create_axion_contacts(teacher_newton_contacts)
+        teacher_axion_contacts = create_axion_contacts_for_nn(
+            self.nn_predictor,
+            teacher_newton_contacts,
+            apply_legacy_convention=USE_LEGACY_NEWTON_CONTACT_CONVENTION,
+        )
 
         # ------------------------------------------------------------------
         # Teacher forcing: feed the current Axion state to the NN's window.
