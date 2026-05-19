@@ -1,0 +1,9 @@
+# @package engine
+# HybridGPTEngineConfig with end-to-end forward-step profiling enabled.
+# NN warm-start maps to warm_start_copy; NR phases match AxionEngine.
+defaults:
+  - hybrid
+  - _self_
+
+profiling:
+  mode: end_to_end

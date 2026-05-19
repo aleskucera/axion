@@ -5,7 +5,6 @@ import hydra
 import newton
 import warp as wp
 from axion import EngineConfig
-from axion import ExecutionConfig
 from axion import InteractiveSimulator
 from axion import LoggingConfig
 from axion import RenderingConfig
@@ -24,7 +23,6 @@ class Simulator(InteractiveSimulator):
         self,
         sim_config: SimulationConfig,
         render_config: RenderingConfig,
-        exec_config: ExecutionConfig,
         engine_config: EngineConfig,
         logging_config: LoggingConfig,
         plane_coefficients: tuple[float, float, float, float] = (0.0, 0.0, 1.0, 0.0),
@@ -34,7 +32,6 @@ class Simulator(InteractiveSimulator):
         super().__init__(
             sim_config,
             render_config,
-            exec_config,
             engine_config,
             logging_config,
         )
@@ -136,7 +133,6 @@ class Simulator(InteractiveSimulator):
 def basic_pendulum_example(cfg: DictConfig):
     sim_config: SimulationConfig = hydra.utils.instantiate(cfg.simulation)
     render_config: RenderingConfig = hydra.utils.instantiate(cfg.rendering)
-    exec_config: ExecutionConfig = hydra.utils.instantiate(cfg.execution)
     logging_config: LoggingConfig = hydra.utils.instantiate(cfg.logging)
     engine_config: EngineConfig = hydra.utils.instantiate(cfg.engine)
     # Checkpoint .pt / cfg.yaml paths are set only in axion_engine_with_neural_lambdas.py (NN_BASE_PATH / NN_PENDULUM_*).
@@ -171,7 +167,6 @@ def basic_pendulum_example(cfg: DictConfig):
     simulator = Simulator(
         sim_config=sim_config,
         render_config=render_config,
-        exec_config=exec_config,
         engine_config=engine_config,
         logging_config=logging_config,
         plane_coefficients=plane_coefficients,

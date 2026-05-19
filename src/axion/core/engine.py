@@ -32,13 +32,21 @@ class AxionEngine(AxionEngineBase):
     ):
         prof = self.profiler
         end_to_end = prof.enabled and prof.mode == "end_to_end"
-        # End-to-end phase boundaries (matches END_TO_END_PHASES order):
-        # 0: collide-start (simulator) | 1: load_data-start
-        # 2: warm_start_copy-start    | 3: nr_solve-start
-        # 4: backtracking-start (in _solve) | 5: output_copy-start
-        # 6: output_copy-end
-        # The simulator brackets the collide phase (boundaries 0 -> 1);
-        # the engine brackets the rest.
+        # End-to-end phase boundaries (matches END_TO_END_PHASES / EngineProfiler):
+        #   0: collide-start (simulator records before engine.step)
+        #   1: load_data-start
+        #   2: warm_start_copy-start
+        #   3: nr_solve-start
+        #   4: backtracking-start (inside _solve)
+        #   5: output_copy-start
+        #   6: output_copy-end
+        #
+        # AxionEngine phase mapping (profiler summary rows):
+        #   collide / load_data — simulator collide + load_data
+        #   warm_start_copy — zero-order body copy + optional lambda seed
+        #   nr_solve / backtracking — Newton-Raphson + backtracking in _solve
+        #   output_copy — body_q/body_qd write to state_out
+        # The simulator brackets collide (0 -> 1); the engine brackets the rest.
         if end_to_end:
             prof.record_boundary(1)
         self.load_data(state_in, control, contacts, dt)

@@ -1,7 +1,6 @@
 defaults:
   - simulation: pendulum_w_neural_lambdas
   - rendering: gl # headless
-  - execution: no_graph # cuda_graph
   - logging: neuralLambdas
   - engine: axion_w_neural_lambdas 
   - _self_

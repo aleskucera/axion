@@ -51,7 +51,7 @@ if str(_EXAMPLES_DIR) not in sys.path:
 
 CONFIG_PATH = _EXAMPLES_DIR.parent / "conf"
 
-from axion import EngineConfig, ExecutionConfig, InteractiveSimulator, JointMode
+from axion import EngineConfig, InteractiveSimulator, JointMode
 from axion import LoggingConfig, RenderingConfig, SimulationConfig
 from axion.neural_solver.logging.state_logger_for_examples import MultiRolloutStateLogger
 from pendulum_articulation_definition import (
@@ -78,7 +78,6 @@ class Simulator(InteractiveSimulator):
         self,
         sim_config: SimulationConfig,
         render_config: RenderingConfig,
-        exec_config: ExecutionConfig,
         engine_config: EngineConfig,
         logging_config: LoggingConfig,
         plane_coefficients: tuple[float, float, float, float] = (0.0, 0.0, 1.0, 0.0),
@@ -87,7 +86,7 @@ class Simulator(InteractiveSimulator):
     ):
         self.plane_coefficients = plane_coefficients
         self.state_logger = state_logger
-        super().__init__(sim_config, render_config, exec_config, engine_config, logging_config)
+        super().__init__(sim_config, render_config, engine_config, logging_config)
 
         if initial_state is not None:
             q0, q1, qd0, qd1 = initial_state
@@ -287,7 +286,6 @@ def main():
     # Instantiate configs
     sim_config: SimulationConfig = hydra.utils.instantiate(cfg.simulation)
     render_config: RenderingConfig = hydra.utils.instantiate(cfg.rendering)
-    exec_config: ExecutionConfig = hydra.utils.instantiate(cfg.execution)
     logging_config: LoggingConfig = hydra.utils.instantiate(cfg.logging)
     engine_config: EngineConfig = hydra.utils.instantiate(cfg.engine)
 
@@ -322,7 +320,6 @@ def main():
             sim = Simulator(
                 sim_config=sim_config,
                 render_config=render_config,
-                exec_config=exec_config,
                 engine_config=engine_config,
                 logging_config=logging_config,
                 plane_coefficients=plane_coeff,

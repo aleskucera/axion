@@ -239,8 +239,28 @@ class HybridGPTEngine(AxionEngineBase):
         contacts: Contacts,
         dt: float,
     ):
-        # Process Newton Contacts -> Axion Contacts
+        prof = self.profiler
+        end_to_end = prof.enabled and prof.mode == "end_to_end"
+        # End-to-end phase boundaries (matches END_TO_END_PHASES / EngineProfiler):
+        #   0: collide-start (simulator records before engine.step)
+        #   1: load_data-start
+        #   2: warm_start_copy-start
+        #   3: nr_solve-start
+        #   4: backtracking-start (inside _solve)
+        #   5: output_copy-start
+        #   6: output_copy-end
+        #
+        # HybridGPTEngine phase mapping (profiler summary rows):
+        #   collide / load_data — same as AxionEngine (simulator + load_data)
+        #   warm_start_copy — _neural_init_state_fn (NN initial guess for NR)
+        #   nr_solve / backtracking / output_copy — same as AxionEngine (_solve + copy)
+        # per_component — NR sub-phases inside _solve() (AxionEngineBase)
+
+        if end_to_end:
+            prof.record_boundary(1)
         self.load_data(state_in, control, contacts, dt)
+        if end_to_end:
+            prof.record_boundary(2)
 
         # Extract joint target positions from control (shape: dof_q -> (1, dof_q)).
         joint_target_pos = wp.to_torch(control.joint_target_pos).unsqueeze(0)
@@ -264,9 +284,16 @@ class HybridGPTEngine(AxionEngineBase):
             joint_target_pos=joint_target_pos,
             control_active=control_active,
         )
+        if end_to_end:
+            prof.record_boundary(3)
 
         # Call Newton solver
         self._solve()
+        if end_to_end:
+            prof.record_boundary(5)
+
         wp.copy(dest=state_out.body_q, src=self.data.body_pose)
         wp.copy(dest=state_out.body_qd, src=self.data.body_vel)
+        if end_to_end:
+            prof.record_boundary(6)
 

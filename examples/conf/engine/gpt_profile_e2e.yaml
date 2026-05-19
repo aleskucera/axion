@@ -1,0 +1,9 @@
+# @package engine
+# GPTEngineConfig with end-to-end forward-step profiling enabled.
+# Phase labels match AxionEngine; see GPTEngine.step() for NN mapping.
+defaults:
+  - gpt
+  - _self_
+
+profiling:
+  mode: end_to_end

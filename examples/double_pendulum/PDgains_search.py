@@ -17,7 +17,6 @@ import newton
 import warp as wp
 from tqdm import tqdm
 from axion import AxionEngineConfig
-from axion import ExecutionConfig
 from axion import JointMode
 from axion import LoggingConfig
 from axion import RenderingConfig
@@ -172,16 +171,15 @@ class PDGainsSearchSim(BaseSimulator):
         sim_config = SimulationConfig(
             duration_seconds=NUM_STEPS * DT,
             target_timestep_seconds=DT,
+            use_cuda_graph=False,
         )
         render_cfg = RenderingConfig(vis_type="null")
-        exec_cfg = ExecutionConfig(use_cuda_graph=False)
         log_cfg = LoggingConfig()
         engine_cfg = AxionEngineConfig()
 
         super().__init__(
             sim_config,
             render_cfg,
-            exec_cfg,
             engine_cfg,
             log_cfg,
         )

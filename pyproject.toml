@@ -75,13 +75,10 @@ conflicts = [
 
 [tool.uv.sources]
 newton = { workspace = true }
-<<<<<<< HEAD
-=======
 torch = [{ index = "pytorch-cu128", extra = "sim" }]
 tensorrt-cu12 = { index = "nvidia" }
 tensorrt-cu12-bindings = { index = "nvidia" }
 tensorrt-cu12-libs = { index = "nvidia" }
->>>>>>> c08d799 (fast-inference: Add tensorrt sucessfully to the project)
 warp-lang = { index = "nvidia" }
 
 [[tool.uv.index]]

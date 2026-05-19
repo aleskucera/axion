@@ -19,7 +19,7 @@ from hydra import compose, initialize_config_dir
 from hydra.core.global_hydra import GlobalHydra
 from tqdm import tqdm
 
-from axion import EngineConfig, ExecutionConfig, InteractiveSimulator
+from axion import EngineConfig, InteractiveSimulator
 from axion import LoggingConfig, RenderingConfig, SimulationConfig
 from axion.core.hybrid_gpt_engine import HybridGPTEngine
 from axion.core.repeated_engine import RepeatedAxionEngine
@@ -91,10 +91,9 @@ def load_hydra_config(config_name: str, overrides: list[str] | None = None):
 def instantiate_configs(cfg):
     sim_config: SimulationConfig = hydra.utils.instantiate(cfg.simulation)
     render_config: RenderingConfig = hydra.utils.instantiate(cfg.rendering)
-    exec_config: ExecutionConfig = hydra.utils.instantiate(cfg.execution)
     logging_config: LoggingConfig = hydra.utils.instantiate(cfg.logging)
     engine_config: EngineConfig = hydra.utils.instantiate(cfg.engine)
-    return sim_config, render_config, exec_config, engine_config, logging_config
+    return sim_config, render_config, engine_config, logging_config
 
 
 # ---------------------------------------------------------------------------
@@ -127,7 +126,6 @@ class Simulator(InteractiveSimulator):
         self,
         sim_config: SimulationConfig,
         render_config: RenderingConfig,
-        exec_config: ExecutionConfig,
         engine_config: EngineConfig,
         logging_config: LoggingConfig,
         plane_coefficients: tuple[float, float, float, float] = (0.0, 0.0, 1.0, 0.0),
@@ -141,7 +139,6 @@ class Simulator(InteractiveSimulator):
         super().__init__(
             sim_config,
             render_config,
-            exec_config,
             engine_config,
             logging_config,
         )
@@ -295,7 +292,7 @@ def read_dataset(
 
 HYDRA_OVERRIDES = [
     "rendering=headless",
-    "execution=no_graph",
+    "simulation.use_cuda_graph=false",
     "logging=disabled",
 ]
 
@@ -319,7 +316,7 @@ def run_engine(
     if engine_overrides:
         overrides.extend(engine_overrides)
     cfg = load_hydra_config(config_name, overrides)
-    sim_cfg, render_cfg, exec_cfg, engine_cfg, log_cfg = instantiate_configs(cfg)
+    sim_cfg, render_cfg, engine_cfg, log_cfg = instantiate_configs(cfg)
 
     num_runs = len(initial_states)
     all_runs: list[dict[str, np.ndarray]] = []
@@ -337,7 +334,6 @@ def run_engine(
         sim = Simulator(
             sim_config=sim_cfg,
             render_config=render_cfg,
-            exec_config=exec_cfg,
             engine_config=engine_cfg,
             logging_config=log_cfg,
             plane_coefficients=pc,

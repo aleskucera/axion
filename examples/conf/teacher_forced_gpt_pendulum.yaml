@@ -1,7 +1,6 @@
 defaults:
   - simulation: pendulum
   - rendering: gl # headless
-  - execution: no_graph
   - logging: disabled
   - engine: teacher_forced_gpt
   - _self_

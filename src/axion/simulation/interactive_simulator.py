@@ -90,7 +90,8 @@ class InteractiveSimulator(BaseSimulator, ABC):
             if callable(save_logs_fn):
                 # self.solver.events.print_timings()
                 self.solver.save_logs()
-                if self.solver.profiler.enabled:
+                prof = getattr(self.solver, "profiler", None)
+                if prof is not None and prof.enabled:
                     if self.steps_per_segment != 1:
                         # Only fires in render mode where steps_per_segment
                         # is sized by render fps vs dt; in headless mode it
@@ -101,7 +102,7 @@ class InteractiveSimulator(BaseSimulator, ABC):
                             "segment is timed. For accurate stats, match render "
                             "fps to dt or run headless."
                         )
-                    self.solver.profiler.print_summary()
+                    prof.print_summary()
 
             if self.rendering_config.vis_type == "usd":
                 self.viewer.close()
@@ -176,8 +177,9 @@ class InteractiveSimulator(BaseSimulator, ABC):
         # when the captured graph contains exactly one engine.step (i.e.
         # steps_per_segment == 1); otherwise events get overwritten by
         # the unrolled copies and only the last copy's times survive.
-        if isinstance(self.solver, AxionEngine) and self.solver.profiler.enabled:
-            self.solver.profiler.collect()
+        prof = getattr(self.solver, "profiler", None)
+        if prof is not None and prof.enabled:
+            prof.collect()
 
     def _capture_cuda_graphs(self):
         n_steps = self.steps_per_segment

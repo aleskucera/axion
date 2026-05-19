@@ -20,7 +20,6 @@ for _path in (_EXAMPLES_DIR, _SRC_DIR):
         sys.path.insert(0, str(_path))
 
 from axion import EngineConfig
-from axion import ExecutionConfig
 from axion import InteractiveSimulator
 from axion import LoggingConfig
 from axion import RenderingConfig
@@ -54,7 +53,6 @@ class Simulator(InteractiveSimulator):
         self,
         sim_config: SimulationConfig,
         render_config: RenderingConfig,
-        exec_config: ExecutionConfig,
         engine_config: EngineConfig,
         logging_config: LoggingConfig,
         plane_coefficients: tuple[float, float, float, float],
@@ -64,7 +62,6 @@ class Simulator(InteractiveSimulator):
         super().__init__(
             sim_config,
             render_config,
-            exec_config,
             engine_config,
             logging_config,
         )
@@ -104,7 +101,7 @@ def _load_cfg():
             config_name="axion_w_neural_lambdas_pendulum",
             overrides=[
                 "rendering=headless",
-                "execution=no_graph",
+                "simulation.use_cuda_graph=false",
                 "project_name=axionEngineWithNeuralLambdasComparison",
             ],
         )
@@ -119,7 +116,6 @@ def main():
 
     base_sim_config: SimulationConfig = hydra.utils.instantiate(cfg.simulation)
     render_config: RenderingConfig = hydra.utils.instantiate(cfg.rendering)
-    exec_config: ExecutionConfig = hydra.utils.instantiate(cfg.execution)
     base_logging_config: LoggingConfig = hydra.utils.instantiate(cfg.logging)
     base_engine_config: EngineConfig = hydra.utils.instantiate(cfg.engine)
 
@@ -149,7 +145,6 @@ def main():
         simulator = Simulator(
             sim_config=sim_config,
             render_config=render_config,
-            exec_config=exec_config,
             engine_config=engine_config,
             logging_config=logging_config,
             plane_coefficients=PLANE_COEFFICIENTS,

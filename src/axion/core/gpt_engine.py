@@ -14,6 +14,8 @@ from newton.solvers import SolverBase
 from newton import Model
 
 # classic axion
+from axion.profiling import EngineProfiler
+
 from .engine_config import GPTEngineConfig
 from .engine_logger import EngineLogger
 
@@ -89,6 +91,12 @@ class GPTEngine(SolverBase):
         self.logger = logger
         self.config = config
         self.model = model
+
+        self.profiler = EngineProfiler(
+            mode=config.profiling.mode,
+            max_newton_iters=1,
+            device=self.device,
+        )
 
         #########################################
         #  Neural network initialization
@@ -166,11 +174,32 @@ class GPTEngine(SolverBase):
         contacts: newton.Contacts,
         dt: float,
     ):
-        # PASS ALL THE INPUTS TO THE NN------------------------------------------------------------
-        # Create AxionContacts object from Newton contacts
-        axion_contacts = self.nn_predictor.create_axion_contacts(contacts)
+        prof = self.profiler
+        end_to_end = prof.enabled and prof.mode == "end_to_end"
+        # End-to-end phase boundaries (matches END_TO_END_PHASES / EngineProfiler):
+        #   0: collide-start (simulator records before engine.step)
+        #   1: load_data-start
+        #   2: warm_start_copy-start
+        #   3: nr_solve-start
+        #   4: backtracking-start (not recorded for pure NN)
+        #   5: output_copy-start
+        #   6: output_copy-end
+        #
+        # GPTEngine phase mapping (shared labels, NN meaning):
+        #   collide / load_data — simulator collide + step entry through contact setup
+        #   warm_start_copy — create_axion_contacts + process_inputs
+        #   nr_solve — nn_predictor.predict
+        #   backtracking — not recorded (boundary 4 skipped)
+        #   output_copy — joint wp.copy + eval_fk
+        # per_component mode is N/A (no NR loop); use end_to_end only.
 
-        # Extract joint target positions from control (shape: dof_q -> (1, dof_q)).
+        if end_to_end:
+            prof.record_boundary(1)
+
+        axion_contacts = self.nn_predictor.create_axion_contacts(contacts)
+        if end_to_end:
+            prof.record_boundary(2)
+
         joint_target_pos = wp.to_torch(control.joint_target_pos).unsqueeze(0)
         pred = self.nn_predictor
         control_active = control_active_mask_from_newton_model(
@@ -191,9 +220,13 @@ class GPTEngine(SolverBase):
             joint_target_pos=joint_target_pos,
             control_active=control_active,
         )
+        if end_to_end:
+            prof.record_boundary(3)
 
         # Predict using self.nn_predictor
         state_predicted, _ = self.nn_predictor.predict(dt=dt)
+        if end_to_end:
+            prof.record_boundary(5)
 
         # Write the prediction back to state_out via wp.copy(...)
         wp.copy(
@@ -206,3 +239,5 @@ class GPTEngine(SolverBase):
         )
 
         newton.eval_fk(self.model, state_out.joint_q, state_out.joint_qd, state_out)
+        if end_to_end:
+            prof.record_boundary(6)

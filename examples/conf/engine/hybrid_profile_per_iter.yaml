@@ -1,0 +1,9 @@
+# @package engine
+# HybridGPTEngineConfig with per-iteration NR profiling enabled.
+# Replaces wp.capture_while inside _solve with a fixed-K Python `for`.
+defaults:
+  - hybrid
+  - _self_
+
+profiling:
+  mode: per_component

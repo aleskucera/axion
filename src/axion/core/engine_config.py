@@ -22,7 +22,7 @@ live at the bottom of this module and remain flat — they wrap upstream
 Newton solvers which keep their own conventions.
 """
 from dataclasses import dataclass, field, fields
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 from axion.collision import ContactReductionConfig
 
@@ -524,6 +524,13 @@ class GPTEngineConfig(EngineConfig):
     """
     Configuration for the GPTEngine solver (neural-network-based physics).
     """
+
+    profiling: ProfilingConfig = field(default_factory=ProfilingConfig)
+
+    def __post_init__(self):
+        coerced = ProfilingConfig.coerce(self.profiling)
+        if coerced is not self.profiling:
+            object.__setattr__(self, "profiling", coerced)
 
     def _get_solver_class(self):
         from axion.core.gpt_engine import GPTEngine
