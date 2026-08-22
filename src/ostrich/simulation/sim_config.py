@@ -95,8 +95,14 @@ def _keep_glx_off_the_compute_gpu():
 
     The process only notices one readback later, as **CUDA error 719** -- which
     reads as a physics divergence, not a driver fault, and has cost real
-    debugging time. Any GL example dies within ~60 s of starting; headless runs
-    never do.
+    debugging time. Headless runs never hit it.
+
+    How quickly it bites depends on how much CUDA is running alongside: with a
+    second heavy consumer (an elevation node) a GL example dies in under a
+    minute, but examples/helhest_junior/control.py alone soaked 5 minutes and
+    25k steps on the discrete GPU with a state readback every step and no Xid at
+    all. So the pin is a real risk, not a certainty -- see the doc before
+    assuming the iGPU is the only option.
 
     Clearing the variable sends GL to the integrated GPU and leaves the discrete
     one for compute. CUDA is unaffected: it never goes through libglvnd, and
@@ -122,8 +128,9 @@ def _keep_glx_off_the_compute_gpu():
     if os.environ.get("OSTRICH_ALLOW_NVIDIA_GLX") == "1":
         print(
             "WARNING: __GLX_VENDOR_LIBRARY_NAME=nvidia with OSTRICH_ALLOW_NVIDIA_GLX=1. "
-            "GL and CUDA share the discrete GPU; expect Xid 13 surfacing as "
-            "'CUDA error 719' within ~60s. See docs/gl_viewer_gpu_contention.md."
+            "GL and CUDA share the discrete GPU. Risk of Xid 13 surfacing as "
+            "'CUDA error 719' -- likeliest with another heavy CUDA process on the "
+            "same card. See docs/gl_viewer_gpu_contention.md."
         )
         return
     del os.environ["__GLX_VENDOR_LIBRARY_NAME"]
