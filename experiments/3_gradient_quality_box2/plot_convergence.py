@@ -8,12 +8,14 @@ optimize_ostrich.py / optimize_mjx.py / optimize_semi_implicit.py.
 Specifically picks `ostrich_all_fixes.json`, `mjx_all_fixes.json`, etc. when
 present (the final tuned runs) and falls back to `<engine>.json` otherwise.
 
-Caveat (inherited from box1): the per-trial wall_s is a single total, so
-per-iter time is approximated as ``min(wall_s) / iterations`` per engine
-(the warmest trial's average). Within an engine all trials use the same
-per-iter estimate so the loss IQR band reflects only loss-curve variance,
-not wall-clock variance. Absolute x-axis times exclude one-time JIT compile
-or CUDA-graph capture costs.
+Per-iteration time comes from PER_ITER_S below: an exclusive measurement
+(one job, one GPU) fitted over 5 and 15 iterations, which separates the
+marginal per-iteration cost from each engine's one-time setup and EXCLUDES
+that setup from the x-axis. This replaces the old min(wall_s)/iterations
+estimate, which took the single fastest trial and amortised setup into every
+iteration (badly wrong for Semi-Implicit, whose setup is ~29 min per trial).
+Within an engine all trials share one per-iter estimate, so the IQR band
+reflects loss-curve variance only, not wall-clock variance.
 
 Usage:
     python experiments/3_gradient_quality_box2/plot_convergence.py
@@ -53,6 +55,19 @@ LABELS = {
     "Semi-Implicit": "Semi-Impl.",
 }
 SIM_ORDER = ["Ostrich", "MJX", "Semi-Implicit"]
+
+# Paper figure pinning (RA-L revision). Explicit rather than glob-preferred so
+# the figure is reproducible from a named result set.
+PAPER_JSON = {
+    "Ostrich":       "ostrich_postfix_vjp.json",
+    "MJX":           "mjx_2ms_lr0.3_final.json",   # 2 ms, swept lr = 0.3
+    "Semi-Implicit": "semi_implicit_all_fixes.json",
+}
+
+# Warm per-iteration seconds, measured exclusively (one job alone on one GPU)
+# as marginal = (wall_15 - wall_5) / 10. Setup is EXCLUDED from the x-axis;
+# it is 1.2 s (Ostrich), 84 s (MJX), 1731 s (Semi-Implicit).
+PER_ITER_S = {"Ostrich": 0.552, "MJX": 116.393, "Semi-Implicit": 2.559}
 
 N_GRID = 80
 
@@ -133,7 +148,9 @@ def main():
 
     engines = {}
     for sim in sim_order:
-        path = _pick_json_for_engine(engine_file_keys[sim])
+        pinned = RESULTS_DIR / PAPER_JSON.get(sim, "")
+        path = pinned if pinned.is_file() \
+               else _pick_json_for_engine(engine_file_keys[sim])
         if path is None:
             print(f"  [skip] {sim}: no <engine>.json or <engine>_all_fixes.json found")
             continue
@@ -142,9 +159,10 @@ def main():
             print(f"  [skip] {path.name} ({sim}): only {d.get('iterations')} iters "
                   f"(< {args.min_iters}) — sanity run, not production.")
             continue
-        # Use warmest-trial per-iter time as the uniform x-axis estimate.
-        warm_wall_s = min(t["wall_s"] for t in d["trials"])
-        per_iter_s = warm_wall_s / d["iterations"]
+        # Exclusive measured marginal per-iteration time (setup excluded).
+        per_iter_s = PER_ITER_S.get(sim)
+        if per_iter_s is None:
+            per_iter_s = min(t["wall_s"] for t in d["trials"]) / d["iterations"]
         eff_iters = d["iterations"] if args.max_iters is None \
                     else min(args.max_iters, d["iterations"])
         curves = []

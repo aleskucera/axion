@@ -49,8 +49,14 @@ def main():
     parser.add_argument("--seed", type=int, default=24,
                         help="Seed for the example trajectory panel "
                              "(default: 24, the example shown in the paper)")
+    parser.add_argument("--mid-iter", type=int, default=None,
+                        help="Force the intermediate iteration shown in the "
+                             "example panel (default: auto, closest to 50%% RMSE)")
+    parser.add_argument("--max-iters", type=int, default=None,
+                        help="Truncate all curves to the first N iterations")
     parser.add_argument("--show", action="store_true")
     args = parser.parse_args()
+    N = args.max_iters
 
     batch_dir = pathlib.Path(args.batch_dir)
 
@@ -79,7 +85,7 @@ def main():
     # ===== Panel 1: Example trajectory (init, intermediate, best, target) =====
     trajs = example.get("trajectories", {})
     target = example.get("target_trajectory")
-    rmse = np.array(example["rmse_m"])
+    rmse = np.array(example["rmse_m"])[:N]
     best_iters = example.get("best_iters", [])
 
     # Pick 3 trajectories: init (iter 0), one intermediate, and the best
@@ -88,8 +94,11 @@ def main():
     init_rmse = rmse[0]
 
     # Intermediate: pick the iteration closest to 50% between init and best RMSE
-    target_rmse = (init_rmse + best_rmse) / 2.0
-    mid_iter = int(np.argmin(np.abs(rmse - target_rmse)))
+    if args.mid_iter is not None:
+        mid_iter = args.mid_iter
+    else:
+        target_rmse = (init_rmse + best_rmse) / 2.0
+        mid_iter = int(np.argmin(np.abs(rmse - target_rmse)))
     mid_rmse = rmse[mid_iter]
 
     INTERMEDIATE_COLOR = "#64B5F6"
@@ -128,8 +137,8 @@ def main():
                    handlelength=1.5)
 
     # ===== Panel 2: Convergence envelope =====
-    all_rmse = np.array([d["rmse_m"] for d in all_data])
-    iters = np.array(all_data[0]["iterations"])
+    all_rmse = np.array([d["rmse_m"][:N] for d in all_data])
+    iters = np.array(all_data[0]["iterations"][:N])
 
     median_rmse = np.median(all_rmse, axis=0)
     p25 = np.percentile(all_rmse, 25, axis=0)
@@ -149,7 +158,7 @@ def main():
     ax_conv.legend(loc="upper right", fontsize=10)
     ax_conv.set_title(f"{num_seeds} random terrains", fontsize=11)
 
-    all_best = np.array([min(d["rmse_m"]) for d in all_data])
+    all_best = np.array([min(d["rmse_m"][:N]) for d in all_data])
 
     plt.tight_layout(pad=0.5)
 
