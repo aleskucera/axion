@@ -113,9 +113,12 @@ def main():
 
     # 24 GB ceiling, drawn first so the curves sit on top of it
     ax_m.axhline(CARD_MB, color="0.45", ls=(0, (5, 3)), lw=1.0, zorder=1)
-    ax_m.annotate(r"24\,GB", xy=(0.015, CARD_MB), xycoords=("axes fraction", "data"),
-                  ha="left", va="top", fontsize=ann, color="0.35",
-                  textcoords="offset points", xytext=(0, -3), zorder=2,
+    # Above the line, and out at ~40% of the width: below it the label runs
+    # into the plain-BPTT curve's marker at 4 worlds, and the band above the
+    # ceiling is empty between the crimson X at 8 and the orange X at 1024.
+    ax_m.annotate(r"24\,GB", xy=(0.42, CARD_MB), xycoords=("axes fraction", "data"),
+                  ha="center", va="bottom", fontsize=ann, color="0.35",
+                  textcoords="offset points", xytext=(0, 3), zorder=2,
                   path_effects=[pe.withStroke(linewidth=3.0, foreground="white")])
 
     handles = {}
