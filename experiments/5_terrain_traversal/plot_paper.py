@@ -127,8 +127,8 @@ def main():
     if t_best:
         ax_traj.plot(t_best["x"][0], t_best["y"][0], "o", color=OSTRICH_COLOR, markersize=ps.MS * S, zorder=5)
 
-    ax_traj.set_xlabel("$x$ (m)")
-    ax_traj.set_ylabel("$y$ (m)")
+    ax_traj.set_xlabel("$x$ [m]")
+    ax_traj.set_ylabel("$y$ [m]")
     ax_traj.set_aspect("auto")
     ax_traj.grid(True, which="major", alpha=ps.GRID_MAJOR["alpha"],
                  linewidth=ps.GRID_MAJOR["lw"] * S)
@@ -155,7 +155,7 @@ def main():
                  alpha=0.7, label="best median")
 
     ax_conv.set_xlabel("Iteration")
-    ax_conv.set_ylabel("RMSE (m)")
+    ax_conv.set_ylabel("RMSE [m]")
     ax_conv.grid(True, which="major", alpha=ps.GRID_MAJOR["alpha"],
                  linewidth=ps.GRID_MAJOR["lw"] * S)
     ax_conv.legend(loc="upper right", fontsize=ps.PRINT["legend"] * S)

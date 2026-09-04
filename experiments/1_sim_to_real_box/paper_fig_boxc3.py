@@ -128,8 +128,8 @@ def panel_xy(ax, trajs, gt):
         zord = 9 if sim == "MuJoCo" else 5
         ax.plot(sr[:, 0], sr[:, 1], "-", color=SIM_COLORS[sim], lw=1.1,
                 label=_display(sim), zorder=zord)
-    ax.set_xlabel("x (m)")
-    ax.set_ylabel("y (m)")
+    ax.set_xlabel("x [m]")
+    ax.set_ylabel("y [m]")
     ax.set_xlim(-0.1, max(real_x.max(), cc[:, 0].max()) + 0.3)
     ax.set_ylim(-0.9, 0.6)
     # equal data scale so the (rotated) obstacle rectangle stays orthogonal
@@ -152,8 +152,8 @@ def panel_z(ax, trajs, gt):
         zord = 9 if sim == "MuJoCo" else 5
         ax.plot(st[sel], z[sel] - baseline, "-", color=SIM_COLORS[sim],
                 lw=1.1, label=_display(sim), zorder=zord)
-    ax.set_xlabel("time (s)")
-    ax.set_ylabel(r"base $z$ rise (m)")
+    ax.set_xlabel("time [s]")
+    ax.set_ylabel(r"base $z$ rise [m]")
     ax.set_xlim(t_lo, t_hi)
     ax.set_ylim(-0.07, 0.24)
     ax.grid(True, alpha=0.3)
@@ -171,7 +171,7 @@ def panel_bar(ax):
                 va="center", ha="left", fontsize=11)
     ax.set_yticks(y_pos)
     ax.set_yticklabels([_display(s) for s in sims])
-    ax.set_xlabel(r"Combined pos. + yaw error (m)")
+    ax.set_xlabel(r"Combined pos. + yaw error [m]")
     ax.set_title("Accuracy over held-out runs (lower is better)", pad=18)
     ax.grid(True, axis="x", alpha=0.3, zorder=0)
     ax.set_ylim(-0.5, len(sims) - 0.5)

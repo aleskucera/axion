@@ -213,7 +213,7 @@ def main():
                 markevery=max(1, len(t_grid) // 12),
                 label=LABELS[sim], zorder=st["zorder"])
 
-    ax.set_xlabel("Wall-clock time (s)")
+    ax.set_xlabel("Wall-clock time [s]")
     ax.set_ylabel(r"Running-best loss")
     ax.set_xscale("log")
     ax.set_yscale("log")

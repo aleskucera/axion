@@ -185,7 +185,7 @@ def main():
     ax_t.set_ylim(4e-3, 8.0e2)
     ax_m.set_ylim(1.8e2, 5.5e4)
     if args.titles == "above":
-        ax_t.set_ylabel("world-iterations / s")
+        ax_t.set_ylabel("throughput [world-it./s]")
         ax_m.set_ylabel("peak memory [MB]")
         ax_t.set_title("(a) throughput (fwd+bwd)")
         ax_m.set_title("(b) peak GPU memory")
