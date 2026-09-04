@@ -23,31 +23,34 @@ Usage:
 import argparse
 import json
 import pathlib
+import sys
 
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
 import numpy as np
 
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
+import paper_style as ps  # noqa: E402
+
 RESULTS_DIR = pathlib.Path(__file__).parent / "results"
 PAPER_DIR = pathlib.Path(__file__).resolve().parents[2] / ".." / "ostrich_paper" / "figures"
 
-plt.rcParams.update({
-    "text.usetex": True,
-    "text.latex.preamble": r"\usepackage{amsmath}",
-    "font.family": "serif",
-    "font.size": 12,
-    "axes.labelsize": 12,
-    "xtick.labelsize": 11,
-    "ytick.labelsize": 11,
-    "legend.fontsize": 11,
-    "axes.spines.top": False,
-    "axes.spines.right": False,
-})
+# savefig crops with bbox_inches="tight", so what LaTeX scales to
+# \columnwidth is the CROPPED width, which itself moves with the font sizes.
+# DRAWN_IN is that cropped width, measured from the emitted PNG and pinned
+# here; the script prints the measured value and the achieved printed text
+# size on every run, so a drift is visible immediately.
+FIG_W = 7.0
+DRAWN_IN = 6.23
+S = ps.apply(drawn_in=DRAWN_IN)
 
 STYLES = {
-    "Ostrich":         {"color": "#2196F3", "marker": "o", "lw": 2.0, "zorder": 5},
-    "MJX":           {"color": "#E91E63", "marker": "s", "lw": 1.8, "zorder": 4},
-    "Semi-Implicit": {"color": "#FF9800", "marker": "^", "lw": 1.8, "zorder": 3},
+    "Ostrich":       {"color": ps.COLORS["Ostrich"], "marker": ps.MARKERS["Ostrich"],
+                      "zorder": 5},
+    "MJX":           {"color": ps.COLORS["MJX"], "marker": ps.MARKERS["MJX"],
+                      "zorder": 4},
+    "Semi-Implicit": {"color": ps.COLORS["Semi-Implicit"],
+                      "marker": ps.MARKERS["Semi-Implicit"], "zorder": 3},
 }
 LABELS = {
     "Ostrich":         r"\textbf{Ostrich}",
@@ -124,6 +127,9 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                   formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--save", default=str(RESULTS_DIR / "convergence_box2.png"))
+    ap.add_argument("--fig-h", type=float, default=2.6,
+                    help="canvas height in inches; the printed height is "
+                         "3.40 in / (cropped width / cropped height)")
     ap.add_argument("--min-iters", type=int, default=10,
                     help="skip engine JSONs with fewer iters than this "
                     "(filters out sanity-test JSONs).")
@@ -185,7 +191,7 @@ def main():
         print(f"No production results in {RESULTS_DIR} — run optimize_*.py first.")
         return
 
-    fig, ax = plt.subplots(figsize=(7.0, 3.4))
+    fig, ax = plt.subplots(figsize=(FIG_W, args.fig_h))
 
     for sim in sim_order:
         if sim not in engines:
@@ -195,7 +201,7 @@ def main():
         if len(curves) == 1:
             cum, best = curves[0]
             ax.plot(cum, best, color=st["color"], marker=st["marker"],
-                    linewidth=st["lw"], markersize=4,
+                    linewidth=ps.LW * S, markersize=ps.MS * S,
                     markevery=max(1, len(cum) // 12),
                     label=LABELS[sim], zorder=st["zorder"])
             continue
@@ -203,7 +209,7 @@ def main():
         ax.fill_between(t_grid, q1, q3, color=st["color"], alpha=0.18,
                         linewidth=0, zorder=st["zorder"] - 1)
         ax.plot(t_grid, median, color=st["color"], marker=st["marker"],
-                linewidth=st["lw"], markersize=4,
+                linewidth=ps.LW * S, markersize=ps.MS * S,
                 markevery=max(1, len(t_grid) // 12),
                 label=LABELS[sim], zorder=st["zorder"])
 
@@ -211,18 +217,26 @@ def main():
     ax.set_ylabel(r"Running-best loss")
     ax.set_xscale("log")
     ax.set_yscale("log")
-    ax.grid(True, which="both", alpha=0.35, linewidth=0.6)
+    ax.grid(True, which="major", alpha=ps.GRID_MAJOR["alpha"],
+            linewidth=ps.GRID_MAJOR["lw"] * S)
+    ax.grid(True, which="minor", alpha=ps.GRID_MINOR["alpha"],
+            linewidth=ps.GRID_MINOR["lw"] * S)
     ax.xaxis.set_major_formatter(ticker.LogFormatterSciNotation())
 
     handles, labels = ax.get_legend_handles_labels()
     ax.legend(handles, labels, loc="upper center",
               bbox_to_anchor=(0.5, -0.22), ncol=len(handles),
-              fontsize=11, frameon=False, columnspacing=1.5, handlelength=1.5)
+              fontsize=ps.PRINT["legend"] * S, frameon=False,
+              columnspacing=1.5, handlelength=1.5)
 
     out = pathlib.Path(args.save)
     out.parent.mkdir(parents=True, exist_ok=True)
     plt.savefig(out, dpi=200, bbox_inches="tight")
-    print(f"\nSaved {out}")
+    _px = plt.imread(out)
+    _w, _h = _px.shape[1] / 200.0, _px.shape[0] / 200.0
+    print(f"\nSaved {out}  (cropped canvas {_w:.2f} x {_h:.2f} in -> printed "
+          f"{ps.COLUMN_IN:.2f} x {ps.COLUMN_IN * _h / _w:.2f} in; DRAWN_IN is "
+          f"{DRAWN_IN:.2f}, printed label {ps.PRINT['label'] * DRAWN_IN / _w:.2f} pt)")
 
     paper_dir = PAPER_DIR.resolve()
     if paper_dir.is_dir():
