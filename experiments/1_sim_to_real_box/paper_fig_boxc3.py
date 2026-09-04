@@ -167,11 +167,11 @@ def panel_bar(ax):
         err, dt = BAR[sim]
         ax.barh(y, err, color=SIM_COLORS[sim], height=0.5,
                 edgecolor="black", linewidth=0.8, zorder=3)
-        ax.text(err + 0.02, y, rf" {err:.3f}  ($\Delta t={dt}$\,s)",
+        ax.text(err + 0.02, y, rf" {err:.3f}  ($h={dt}$\,s)",
                 va="center", ha="left", fontsize=11)
     ax.set_yticks(y_pos)
     ax.set_yticklabels([_display(s) for s in sims])
-    ax.set_xlabel(r"Combined $L_2$ error (m)")
+    ax.set_xlabel(r"Combined pos. + yaw error (m)")
     ax.set_title("Accuracy over held-out runs (lower is better)", pad=18)
     ax.grid(True, axis="x", alpha=0.3, zorder=0)
     ax.set_ylim(-0.5, len(sims) - 0.5)
